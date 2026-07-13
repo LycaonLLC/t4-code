@@ -143,7 +143,12 @@ export class DesktopLifecycle {
     }
     if (this.serviceManager !== undefined) {
       try {
-        await this.ensureServiceReady(this.serviceManager, executable ?? "");
+        // A healthy appserver may have been launched outside T4 Code. Use it
+        // as-is; service installation/startup is only a cold-start fallback.
+        // This keeps opening the desktop app read-only for an already-live
+        // runtime while retaining the manager for later explicit actions.
+        const alreadyReady = await this.appserverProbe(executable ?? "").catch(() => false);
+        if (!alreadyReady) await this.ensureServiceReady(this.serviceManager, executable ?? "");
       } catch (error) {
         this.startupServiceError = error;
       }

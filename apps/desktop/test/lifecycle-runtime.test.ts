@@ -59,7 +59,10 @@ class FakeIpc implements IpcMainLike {
   handle(channel: string, listener: unknown): void { this.handlers.set(channel, listener); }
   removeHandler(channel: string): void { this.handlers.delete(channel); }
 }
-function setup(serviceManager?: ServiceManager) {
+function setup(
+  serviceManager?: ServiceManager,
+  probeAppserver: (executable: string) => Promise<boolean> = async () => true,
+) {
   const app = new FakeApp();
   const windows: FakeWindow[] = [];
   const ipc = new FakeIpc();
@@ -81,7 +84,7 @@ function setup(serviceManager?: ServiceManager) {
     createCursorStore: () => ({ load: () => [], save: () => {} }),
     createCredentials: () => undefined,
     discoverExecutable: serviceManager === undefined ? async () => undefined : async () => "/opt/omp/bin/omp",
-    ...(serviceManager === undefined ? {} : { createServiceManager: () => serviceManager, probeAppserver: async () => true }),
+    ...(serviceManager === undefined ? {} : { createServiceManager: () => serviceManager, probeAppserver }),
     createTargetManager: (options) => { managerOptions = options; return manager as never; },
   });
   return { app, windows, ipc, registries, runtimes, lifecycle, manager, get managerOptions() { return managerOptions; }, get closeCount() { return closeCount; } };
@@ -149,9 +152,42 @@ describe("desktop Electron lifecycle", () => {
       restart: async () => {},
       uninstall: async () => {},
     };
-    const fixture = setup(service);
+    let probes = 0;
+    const fixture = setup(service, async () => {
+      probes += 1;
+      return probes >= 2;
+    });
     await fixture.lifecycle.start();
     expect(calls).toEqual(["inspect", "install", "inspect", "start", "inspect"]);
+    expect(probes).toBe(2);
+    expect(fixture.windows).toHaveLength(1);
+    await fixture.lifecycle.stop();
+  });
+  it("uses an already healthy appserver without inspecting or mutating its service", async () => {
+    const calls: string[] = [];
+    const service: ServiceManager = {
+      inspect: async () => {
+        calls.push("inspect");
+        return { definition: "missing", service: "unknown", diagnostics: "" };
+      },
+      install: async () => { calls.push("install"); },
+      start: async () => { calls.push("start"); },
+      stop: async () => { calls.push("stop"); },
+      restart: async () => { calls.push("restart"); },
+      uninstall: async () => { calls.push("uninstall"); },
+    };
+    let probes = 0;
+    const fixture = setup(service, async (executable) => {
+      probes += 1;
+      expect(executable).toBe("/opt/omp/bin/omp");
+      return true;
+    });
+
+    await fixture.lifecycle.start();
+
+    expect(probes).toBe(1);
+    expect(calls).toEqual([]);
+    expect(fixture.runtimes[0]).toMatchObject({ serviceManager: service });
     expect(fixture.windows).toHaveLength(1);
     await fixture.lifecycle.stop();
   });
