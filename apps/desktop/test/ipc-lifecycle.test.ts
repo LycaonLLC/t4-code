@@ -14,10 +14,10 @@ function fakeWindow() {
   const window = { webContents, isDestroyed: () => false };
   return { window, sent };
 }
-function makeRuntime(serviceManager?: ServiceManager) {
+function makeRuntime(serviceManager?: ServiceManager, serviceUnavailableReason?: string) {
   const view = fakeWindow();
   const manager = { isConnected: () => true, connect: async () => "connected", disconnect: async () => {}, command: async () => ({ targetId: "local", requestId: "1", commandId: "1", accepted: true }), pairStart: async () => ({ targetId: "remote", paired: true }), listTargets: async () => [], addRemoteTarget: async (target: unknown) => target, removeTarget: async () => {} };
-  return { view, runtime: { manager, window: view.window, trustedRenderer: { origin: "file://", url: "file:///trusted/index.html" }, ...(serviceManager === undefined ? {} : { serviceManager }) } as unknown as IpcRuntime };
+  return { view, runtime: { manager, window: view.window, trustedRenderer: { origin: "file://", url: "file:///trusted/index.html" }, ...(serviceManager === undefined ? {} : { serviceManager }), ...(serviceUnavailableReason === undefined ? {} : { serviceUnavailableReason }) } as unknown as IpcRuntime };
 }
 const request = (channel: string, payload: unknown = {}): unknown => ({ channel, payload });
 
@@ -63,6 +63,16 @@ describe("desktop IPC lifecycle proof", () => {
     expect(error.message).not.toContain("SECRET");
     expect(error.message).not.toContain("/tmp/private");
     expect(error.message).not.toContain("https://private.example");
+  });
+  it("preserves a safe service-unavailable reason at the inspect boundary", async () => {
+    const ipc = new FakeIpc();
+    const reason = "Installed OMP is incompatible; `omp appserver status --json` is required.";
+    const { runtime } = makeRuntime(undefined, reason);
+    new DesktopIpcRegistry(runtime, ipc).install();
+    const event = { sender: runtime.window.webContents, senderFrame: runtime.window.webContents.mainFrame };
+    await expect(
+      ipc.handlers.get("omp:service:inspect")!(event, request("omp:service:inspect")),
+    ).rejects.toThrow(reason);
   });
   it("does not send events to destroyed windows", () => {
     const ipc = new FakeIpc();

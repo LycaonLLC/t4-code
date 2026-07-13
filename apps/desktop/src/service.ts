@@ -40,6 +40,18 @@ export function createSafeServiceEnvironment(
 const APP_SERVER_PROBE_TIMEOUT_MS = 1_500;
 const APP_SERVER_PROBE_MAX_OUTPUT_BYTES = 16 * 1024;
 
+export class OmpAppserverCompatibilityError extends Error {
+  readonly code = "omp_appserver_status_json_required" as const;
+
+  constructor() {
+    super(
+      "Installed OMP is incompatible with this T4 Code build. T4 Code requires `omp appserver status --json`. Update OMP, then choose Check again.",
+    );
+    this.name = "OmpAppserverCompatibilityError";
+    Object.defineProperty(this, "stack", { value: undefined, enumerable: false, configurable: true });
+  }
+}
+
 export interface OmpExecutableDiscoveryOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly homeDirectory?: string;
@@ -66,7 +78,7 @@ function isAppserverStatus(value: unknown): boolean {
   return value.reason === "unreachable" || value.reason === "malformed" || value.reason === "failed";
 }
 
-type AppserverProbeState = "running" | "stopped" | false;
+type AppserverProbeState = "running" | "stopped" | "incompatible" | false;
 async function probesAppserverStatus(
   executable: string,
   environment: NodeJS.ProcessEnv,
@@ -89,7 +101,16 @@ async function probesAppserverStatus(
       result.stderrTruncated ||
       stdoutBytes > maxOutputBytes ||
       stderrBytes > maxOutputBytes ||
-      stdoutBytes + stderrBytes > maxOutputBytes ||
+      stdoutBytes + stderrBytes > maxOutputBytes
+    )
+      return false;
+    const diagnosticOutput = `${result.stdout}\n${result.stderr}`;
+    if (
+      /(?:unknown|unrecognized)\s+(?:flag|option)\s*:?\s*--json\b/iu.test(diagnosticOutput) ||
+      /flag provided but not defined\s*:\s*-json\b/iu.test(diagnosticOutput)
+    )
+      return "incompatible";
+    if (
       (result.exitCode !== 0 && result.exitCode !== 1) ||
       result.stderr.trim().length > 0
     )
@@ -134,6 +155,7 @@ export async function discoverOmpExecutable(
   ])
     candidates.push(entry);
   const seen = new Set<string>();
+  let incompatible = false;
   for (const candidate of candidates.slice(0, 80)) {
     if (
       seen.has(candidate) ||
@@ -148,8 +170,11 @@ export async function discoverOmpExecutable(
     } catch {
       continue;
     }
-    if (await probesAppserverStatus(candidate, environment, runner, timeoutMs, maxOutputBytes) !== false) return candidate;
+    const state = await probesAppserverStatus(candidate, environment, runner, timeoutMs, maxOutputBytes);
+    if (state === "running" || state === "stopped") return candidate;
+    if (state === "incompatible") incompatible = true;
   }
+  if (incompatible) throw new OmpAppserverCompatibilityError();
   return undefined;
 }
 

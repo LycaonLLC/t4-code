@@ -209,11 +209,16 @@ export class DesktopLifecycle {
     if (manager === undefined) return;
     this.mainWindow = handle.window;
     this.ipc?.uninstall();
+    const serviceUnavailableReason =
+      this.serviceManager === undefined && this.startupServiceError !== undefined
+        ? runtimeError(this.startupServiceError).message
+        : undefined;
     this.ipc = this.ipcFactory({
       manager,
       window: handle.window,
       trustedRenderer: handle.trustedRenderer,
       ...(this.serviceManager === undefined ? {} : { serviceManager: this.serviceManager }),
+      ...(serviceUnavailableReason === undefined ? {} : { serviceUnavailableReason }),
       drainPairLinks: () => this.pendingPairs.drain(),
     });
     this.ipc.install();

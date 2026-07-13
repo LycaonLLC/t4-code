@@ -38,6 +38,8 @@ export interface IpcRuntime {
   readonly window: BrowserWindow;
   readonly trustedRenderer: TrustedRenderer;
   readonly serviceManager?: ServiceManager;
+  /** Safe, user-facing reason service management could not be created. */
+  readonly serviceUnavailableReason?: string;
   readonly drainPairLinks?: () => readonly PairLinkEvent[];
 }
 export class RemotePairingUnavailableError extends Error {
@@ -195,7 +197,7 @@ export class DesktopIpcRegistry {
   }
   private inspectService(): Promise<ServiceInspection> {
     const manager = this.runtime.serviceManager;
-    if (manager === undefined) throw new Error("appserver service is unavailable");
+    if (manager === undefined) throw new Error(this.runtime.serviceUnavailableReason ?? "appserver service is unavailable");
     const result = manager.inspect();
     return result.then((inspection) => {
       if (!["missing", "current", "drifted"].includes(inspection.definition) || !["stopped", "starting", "running", "failed", "unknown"].includes(inspection.service) || typeof inspection.diagnostics !== "string") throw new Error("invalid service inspection");
@@ -204,7 +206,7 @@ export class DesktopIpcRegistry {
   }
   private runServiceAction(action: "install" | "start" | "stop" | "restart" | "uninstall"): Promise<void> {
     const manager = this.runtime.serviceManager;
-    if (manager === undefined) return Promise.reject(new Error("appserver service is unavailable"));
+    if (manager === undefined) return Promise.reject(new Error(this.runtime.serviceUnavailableReason ?? "appserver service is unavailable"));
     const operation = () => manager[action]();
     const result = this.serviceQueue.tail.then(operation, operation);
     this.serviceQueue.tail = result.then(() => undefined, () => undefined);

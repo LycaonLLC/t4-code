@@ -260,6 +260,101 @@ async function openSession(page: Page, mobile: boolean): Promise<void> {
 
 test.describe.configure({ mode: "serial" });
 
+test("settles a rejected desktop service inspection and recovers without a stale retry", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await page.addInitScript(() => {
+    const inspection = { definition: "current", service: "running", diagnostics: "" } as const;
+    const control: {
+      inspectCalls: number;
+      mode: "reject" | "pending" | "resolve";
+      resolvePending?: (value: typeof inspection) => void;
+    } = { inspectCalls: 0, mode: "reject" };
+    Object.assign(globalThis, { __t4ServiceInspectControl: control });
+    Object.assign(window, {
+      ompShell: {
+        kind: "desktop",
+        platform: "darwin",
+        bootstrap: async () => ({ platform: "darwin", version: "omp-app/1", connected: false }),
+        listTargets: async () => ({
+          targets: [
+            {
+              targetId: "local",
+              label: "This machine",
+              kind: "local",
+              state: "disconnected",
+              paired: true,
+            },
+          ],
+        }),
+        connectTarget: async () => ({ targetId: "local", state: "error" }),
+        serviceInspect: async () => {
+          control.inspectCalls += 1;
+          if (control.mode === "reject") {
+            throw new Error(
+              "Installed OMP is incompatible with this T4 Code build. T4 Code requires `omp appserver status --json`. Update OMP, then choose Check again.",
+            );
+          }
+          if (control.mode === "pending") {
+            return new Promise<typeof inspection>((resolveInspection) => {
+              control.resolvePending = resolveInspection;
+            });
+          }
+          return inspection;
+        },
+        onServerFrame: () => () => undefined,
+        onConnectionState: () => () => undefined,
+        onRuntimeError: () => () => undefined,
+      },
+    });
+  });
+
+  const inspectCalls = () =>
+    page.evaluate(
+      () =>
+        (globalThis as typeof globalThis & {
+          __t4ServiceInspectControl: { inspectCalls: number };
+        }).__t4ServiceInspectControl.inspectCalls,
+    );
+  await page.goto(web.url, { waitUntil: "domcontentloaded" });
+
+  await expect(page.getByText("OMP update required", { exact: true })).toBeVisible();
+  await expect(page.getByText("Checking", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Check again", exact: true })).toBeVisible();
+  await expect.poll(inspectCalls).toBe(1);
+  await page.clock.fastForward(1_000);
+  expect(await inspectCalls()).toBe(1);
+
+  await page.evaluate(() => {
+    (globalThis as typeof globalThis & {
+      __t4ServiceInspectControl: { mode: "reject" | "pending" | "resolve" };
+    }).__t4ServiceInspectControl.mode = "pending";
+  });
+  await page.getByRole("button", { name: "Check again", exact: true }).click();
+  await expect.poll(inspectCalls).toBe(2);
+  await page.clock.fastForward(5_000);
+  expect(await inspectCalls()).toBe(2);
+
+  await page.evaluate(() => {
+    const control = (globalThis as typeof globalThis & {
+      __t4ServiceInspectControl: {
+        mode: "reject" | "pending" | "resolve";
+        resolvePending?: (inspection: {
+          definition: "current";
+          service: "running";
+          diagnostics: "";
+        }) => void;
+      };
+    }).__t4ServiceInspectControl;
+    control.mode = "resolve";
+    control.resolvePending?.({ definition: "current", service: "running", diagnostics: "" });
+  });
+  await expect(page.getByText("Running", { exact: true })).toBeVisible();
+  await page.clock.fastForward(60_000);
+  expect(await inspectCalls()).toBe(2);
+});
+
 test("uses an injected backend, streams once, settles durably, and reloads history", async ({
   page,
 }) => {

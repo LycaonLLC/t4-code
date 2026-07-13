@@ -25,6 +25,8 @@ import {
   createHomeActions,
   deriveDesktopHomeState,
   deriveHomeServiceView,
+  homeServiceRetryDelay,
+  shouldInspectHomeService,
   type HomeActions,
 } from "../platform/home-state.ts";
 import { rendererPlatform, workspaceStore } from "../state/store-instance.ts";
@@ -74,13 +76,32 @@ function DesktopHomePane({
   const browserDirect = shell.serviceInspect === undefined;
   const needsInspection = state !== null && state.kind === "service";
 
-  // Entering the service state reads the real service once; every action
-  // re-inspects on its own, so this never polls and never guesses.
+  // Entering the service state reads the real service once. A failed read
+  // settles visibly instead of being retriggered by its own pending-state
+  // update (the old behavior produced a tight IPC loop).
   useEffect(() => {
-    if (needsInspection && actionsState.inspection === null && actionsState.pending === null) {
+    if (shouldInspectHomeService(needsInspection, shell.serviceInspect !== undefined, actionsState)) {
       void actions.run("inspect");
     }
-  }, [needsInspection, actions, actionsState.inspection, actionsState.pending]);
+  }, [needsInspection, shell, actions, actionsState]);
+
+  // Recovery is paced independently of renders: 5s, 15s, 30s, then at
+  // most once a minute. The action controller still deduplicates in-flight
+  // work, and a successful read resets the backoff.
+  useEffect(() => {
+    if (
+      !needsInspection ||
+      shell.serviceInspect === undefined ||
+      actionsState.pending !== null ||
+      actionsState.failure === null ||
+      actionsState.consecutiveInspectionFailures < 1
+    )
+      return;
+    const retry = setTimeout(() => {
+      void actions.run("inspect");
+    }, homeServiceRetryDelay(actionsState.consecutiveInspectionFailures));
+    return () => clearTimeout(retry);
+  }, [needsInspection, shell, actions, actionsState]);
 
   if (state === null) return null;
 
@@ -197,11 +218,15 @@ function ServiceAttention({
   readonly shell: DesktopShellPort;
 }) {
   const actionsState = useSyncExternalStore(actions.subscribe, actions.getState);
-  const view = deriveHomeServiceView(actionsState.inspection, {
-    inspect: shell.serviceInspect !== undefined,
-    install: shell.serviceInstall !== undefined,
-    start: shell.serviceStart !== undefined,
-  });
+  const view = deriveHomeServiceView(
+    actionsState.inspection,
+    {
+      inspect: shell.serviceInspect !== undefined,
+      install: shell.serviceInstall !== undefined,
+      start: shell.serviceStart !== undefined,
+    },
+    actionsState.failure,
+  );
   const busy = actionsState.pending !== null;
   return (
     <div className="flex flex-1 items-center justify-center px-6">
@@ -225,7 +250,7 @@ function ServiceAttention({
               {view.diagnostics}
             </p>
           )}
-          {actionsState.failure !== null && (
+          {actionsState.failure !== null && actionsState.failure !== view.detail && (
             <p className="text-warning-foreground text-xs" role="status">
               {actionsState.failure}
             </p>

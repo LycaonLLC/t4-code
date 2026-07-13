@@ -8,6 +8,7 @@ import {
   createSafeServiceEnvironment,
   discoverOmpExecutable,
   NodeServiceRunner,
+  OmpAppserverCompatibilityError,
 } from "../src/service.ts";
 
 describe("desktop lifecycle boundaries", () => {
@@ -76,6 +77,40 @@ describe("desktop lifecycle boundaries", () => {
       }),
     };
     expect(await discoverOmpExecutable({ environment: { OMP_EXECUTABLE: executable }, homeDirectory: root, runner })).toBeUndefined();
+  });
+  it("reports old OMP builds that reject the required JSON status flag", async () => {
+    const root = await mkdtemp(join(tmpdir(), "t4-desktop-"));
+    const executable = join(root, "omp");
+    await writeFile(executable, "");
+    await chmod(executable, 0o755);
+    let calls = 0;
+    const runner: ProcessRunner = {
+      spawn: async (spec) => {
+        calls += 1;
+        expect(spec.args).toEqual(["appserver", "status", "--json"]);
+        return {
+          kill: () => {},
+          result: Promise.resolve({
+            exitCode: 2,
+            signal: null,
+            stdout: "",
+            stderr: "Error: unknown flag: --json\nRun omp --help for usage.\n",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          }),
+        };
+      },
+    };
+    const error = await discoverOmpExecutable({
+      environment: { OMP_EXECUTABLE: executable, PATH: "" },
+      homeDirectory: root,
+      runner,
+    }).catch((cause: unknown) => cause);
+    expect(error instanceof OmpAppserverCompatibilityError).toBe(true);
+    if (!(error instanceof OmpAppserverCompatibilityError)) throw new Error("expected compatibility error");
+    expect(error.code).toBe("omp_appserver_status_json_required");
+    expect(error.message.includes("requires `omp appserver status --json`")).toBe(true);
+    expect(calls).toBe(1);
   });
   it("rejects malformed, oversized, and timed-out appserver probes", async () => {
     const root = await mkdtemp(join(tmpdir(), "t4-desktop-"));

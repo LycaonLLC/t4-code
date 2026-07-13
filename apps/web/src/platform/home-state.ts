@@ -85,6 +85,7 @@ export interface HomeServiceSupport {
 export function deriveHomeServiceView(
   inspection: ServiceInspection | null,
   support: HomeServiceSupport,
+  failure: string | null = null,
 ): HomeServiceView {
   if (!support.inspect) {
     return {
@@ -95,6 +96,17 @@ export function deriveHomeServiceView(
       diagnostics: null,
       primary: "retry",
       primaryLabel: "Retry connection",
+    };
+  }
+  if (inspection === null && failure !== null) {
+    return {
+      label: failure.includes("incompatible") ? "OMP update required" : "Check failed",
+      tone: "error",
+      live: false,
+      detail: failure,
+      diagnostics: null,
+      primary: null,
+      primaryLabel: null,
     };
   }
   if (inspection === null) {
@@ -195,6 +207,8 @@ export interface HomeActionsState {
   readonly inspection: ServiceInspection | null;
   /** Set when the last action did not complete; cleared on the next one. */
   readonly failure: string | null;
+  /** Consecutive failed service reads, used only to pace automatic recovery. */
+  readonly consecutiveInspectionFailures: number;
 }
 
 export interface HomeActions {
@@ -216,8 +230,46 @@ const ACTION_FAILURE: Readonly<Record<HomeServiceActionId, string>> = {
   inspect: "Could not read the service state. Try again.",
 };
 
+const SERVICE_RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000] as const;
+
+export function homeServiceRetryDelay(failureCount: number): number {
+  const index = Math.max(0, Math.min(Math.trunc(failureCount) - 1, SERVICE_RETRY_DELAYS_MS.length - 1));
+  return SERVICE_RETRY_DELAYS_MS[index] ?? SERVICE_RETRY_DELAYS_MS[0];
+}
+
+export function shouldInspectHomeService(
+  needsInspection: boolean,
+  inspectAvailable: boolean,
+  state: HomeActionsState,
+): boolean {
+  return (
+    needsInspection &&
+    inspectAvailable &&
+    state.inspection === null &&
+    state.pending === null &&
+    state.failure === null
+  );
+}
+
+function boundedActionFailure(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message : "";
+  if (message.length === 0) return fallback;
+  return message
+    .replace(/https?:\/\/[^\s]+/giu, "[redacted]")
+    .replace(/\b(?:token|secret|password|credential|authorization)\s*[:=]\s*[^\s,;]+/giu, "$1=[redacted]")
+    .replace(/(?:^|\s)(?:~|\/(?:home|tmp|var|etc|opt|srv|mnt|run|usr)\/[^\s,;]*)/gu, " [redacted]")
+    .replace(/\p{Cc}/gu, " ")
+    .slice(0, 512)
+    .trim();
+}
+
 export function createHomeActions(deps: HomeActionsDeps): HomeActions {
-  let state: HomeActionsState = { pending: null, inspection: null, failure: null };
+  let state: HomeActionsState = {
+    pending: null,
+    inspection: null,
+    failure: null,
+    consecutiveInspectionFailures: 0,
+  };
   const listeners = new Set<() => void>();
   const replace = (next: HomeActionsState) => {
     state = next;
@@ -238,18 +290,21 @@ export function createHomeActions(deps: HomeActionsDeps): HomeActions {
         if (action === "install") await deps.serviceInstall?.();
         else if (action === "start") await deps.serviceStart?.();
         else if (action === "retry") await deps.connectLocal();
-      } catch {
-        failure = ACTION_FAILURE[action];
+      } catch (error) {
+        failure = boundedActionFailure(error, ACTION_FAILURE[action]);
       }
       let inspection = state.inspection;
+      let consecutiveInspectionFailures = state.consecutiveInspectionFailures;
       if (deps.serviceInspect !== undefined) {
         try {
           inspection = await deps.serviceInspect();
-        } catch {
-          failure = failure ?? ACTION_FAILURE.inspect;
+          consecutiveInspectionFailures = 0;
+        } catch (error) {
+          failure = failure ?? boundedActionFailure(error, ACTION_FAILURE.inspect);
+          consecutiveInspectionFailures += 1;
         }
       }
-      replace({ pending: null, inspection, failure });
+      replace({ pending: null, inspection, failure, consecutiveInspectionFailures });
     },
   };
 }

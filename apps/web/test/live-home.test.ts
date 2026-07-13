@@ -13,6 +13,8 @@ import {
   createHomeActions,
   deriveDesktopHomeState,
   deriveHomeServiceView,
+  homeServiceRetryDelay,
+  shouldInspectHomeService,
 } from "../src/platform/home-state.ts";
 import { deferred, FakeShell, makeTarget, makeWelcome } from "./fake-shell.ts";
 
@@ -128,6 +130,53 @@ describe("service card view model", () => {
 });
 
 describe("service actions", () => {
+  it("settles an incompatible inspect once, backs off, and recovers on a later read", async () => {
+    let available = false;
+    let inspectCalls = 0;
+    const actions = createHomeActions({
+      serviceInspect: async () => {
+        inspectCalls += 1;
+        if (!available) {
+          throw new Error(
+            "Installed OMP is incompatible with this T4 Code build. T4 Code requires `omp appserver status --json`. Update OMP, then choose Check again.",
+          );
+        }
+        return { definition: "current", service: "running", diagnostics: "" };
+      },
+      connectLocal: async () => undefined,
+    });
+
+    const first = actions.run("inspect");
+    const duplicate = actions.run("inspect");
+    await Promise.all([first, duplicate]);
+    const failed = actions.getState();
+    expect(inspectCalls).toBe(1);
+    expect(failed.pending).toBeNull();
+    expect(failed.consecutiveInspectionFailures).toBe(1);
+    expect(failed.failure).toContain("Installed OMP is incompatible");
+    expect(shouldInspectHomeService(true, true, failed)).toBe(false);
+    expect(deriveHomeServiceView(null, FULL_SUPPORT, failed.failure)).toMatchObject({
+      label: "OMP update required",
+      tone: "error",
+      live: false,
+    });
+    expect([1, 2, 3, 4, 99].map(homeServiceRetryDelay)).toEqual([
+      5_000,
+      15_000,
+      30_000,
+      60_000,
+      60_000,
+    ]);
+
+    available = true;
+    await actions.run("inspect");
+    const recovered = actions.getState();
+    expect(inspectCalls).toBe(2);
+    expect(recovered.failure).toBeNull();
+    expect(recovered.consecutiveInspectionFailures).toBe(0);
+    expect(recovered.inspection?.service).toBe("running");
+  });
+
   it("starts a stopped service, serializes concurrent actions, and re-inspects after completion", async () => {
     const shell = new FakeShell();
     shell.inspection = { definition: "current", service: "stopped", diagnostics: "" };
