@@ -50,26 +50,83 @@ describe("desktop IPC lifecycle proof", () => {
     await Promise.all([start, stop]);
     expect(order).toEqual(["start", "stop"]);
   });
+  it("linearizes inspection with actions and never reuses a pre-write snapshot", async () => {
+    const ipc = new FakeIpc();
+    let resolveFirst!: (value: { definition: "current"; service: "stopped"; diagnostics: string }) => void;
+    const firstInspection = new Promise<{ definition: "current"; service: "stopped"; diagnostics: string }>((resolve) => {
+      resolveFirst = resolve;
+    });
+    let inspectCalls = 0;
+    let service: "stopped" | "running" = "stopped";
+    let startCalls = 0;
+    const serviceManager = {
+      inspect: async () => {
+        inspectCalls += 1;
+        if (inspectCalls === 1) return firstInspection;
+        return { definition: "current" as const, service, diagnostics: "" };
+      },
+      start: async () => {
+        startCalls += 1;
+        service = "running";
+      },
+    } as never as ServiceManager;
+    const { runtime } = makeRuntime(serviceManager);
+    new DesktopIpcRegistry(runtime, ipc).install();
+    const event = { sender: runtime.window.webContents, senderFrame: runtime.window.webContents.mainFrame };
+    const inspect = ipc.handlers.get("omp:service:inspect")!;
+    const start = ipc.handlers.get("omp:service:start")!;
+
+    const before = inspect(event, request("omp:service:inspect"));
+    await Promise.resolve();
+    const write = start(event, request("omp:service:start"));
+    await Promise.resolve();
+    expect(startCalls).toBe(0);
+    resolveFirst({ definition: "current", service: "stopped", diagnostics: "" });
+    await before;
+    await write;
+    const after = await inspect(event, request("omp:service:inspect"));
+
+    expect(inspectCalls).toBe(2);
+    expect(startCalls).toBe(1);
+    expect(after).toEqual({ definition: "current", service: "running", diagnostics: "" });
+  });
   it("bounds service inspection and redacts diagnostic details", async () => {
     const ipc = new FakeIpc();
-    const serviceManager = { inspect: async () => ({ definition: "drifted", service: "failed", diagnostics: `Authorization: Bearer BEARER_SECRET authorization=Basic BASIC_SECRET token=SECRET https://private.example/x "/Users/alice/My Secret/file" '/home/alice/My Secret/file' /usr/local/private ~/Library/Application Support/Secret ${"x".repeat(1000)}` }) } as never as ServiceManager;
+    const attack = [
+      "Authorization: Bearer BEARER_SECRET authorization=Basic BASIC_SECRET",
+      "Bearer BARE_BEARER_SECRET Basic BARE_BASIC_SECRET",
+      "ws://alice:WS_SECRET@tailnet.local/private/path",
+      "wss://tailnet.local/socket?token=QUERY_SECRET",
+      "/Users/alice/Library/Application Support/T4 Code/auth.json",
+      "at (/Users/alice/private/main.js:1:2)",
+      "path=/home/alice/.config/t4-code/auth.json",
+      "cwd=/home/alice/My Project",
+      "file:///Users/alice/private/file.ts",
+      '{"token":"TOPSECRET"}',
+      '{"authorization":"Bearer JSON_SECRET"}',
+      'token="secret with spaces"',
+      "password='two words'",
+      "access_token=ACCESS_SECRET",
+      "client_secret=CLIENT_SECRET",
+      "api_key=API_SECRET",
+    ].join("\n");
+    const serviceManager = { inspect: async () => ({ definition: "drifted", service: "failed", diagnostics: attack }) } as never as ServiceManager;
     const { runtime } = makeRuntime(serviceManager);
     new DesktopIpcRegistry(runtime, ipc).install();
     const event = { sender: runtime.window.webContents, senderFrame: runtime.window.webContents.mainFrame };
     const result = await ipc.handlers.get("omp:service:inspect")!(event, request("omp:service:inspect"));
     const inspection = result as { diagnostics: string };
     expect(inspection.diagnostics.length).toBeLessThanOrEqual(512);
-    expect(inspection.diagnostics).not.toContain("SECRET");
-    expect(inspection.diagnostics).not.toContain("/Users/alice");
-    expect(inspection.diagnostics).not.toContain("/home/alice");
-    expect(inspection.diagnostics).not.toContain("/usr/local");
-    expect(inspection.diagnostics).not.toContain("~/Library");
-    const error = runtimeError(new Error("failed Authorization: Bearer BEARER_SECRET authorization=Basic BASIC_SECRET token=SECRET '/tmp/private path' /usr/private ~/Library/private https://private.example/x"));
-    expect(error.message).not.toContain("SECRET");
-    expect(error.message).not.toContain("/tmp/private");
-    expect(error.message).not.toContain("/usr/private");
-    expect(error.message).not.toContain("~/Library");
-    expect(error.message).not.toContain("https://private.example");
+    const error = runtimeError(new Error(attack));
+    for (const leaked of [
+      "BEARER_SECRET", "BASIC_SECRET", "BARE_BEARER_SECRET", "BARE_BASIC_SECRET",
+      "WS_SECRET", "QUERY_SECRET", "tailnet.local", "TOPSECRET", "JSON_SECRET",
+      "secret with spaces", "two words", "ACCESS_SECRET", "CLIENT_SECRET", "API_SECRET",
+      "alice", "auth.json", "main.js", "file.ts", "/Users/", "/home/", "file:///",
+    ]) {
+      expect(inspection.diagnostics).not.toContain(leaked);
+      expect(error.message).not.toContain(leaked);
+    }
   });
   it("preserves a typed service-unavailable reason at the inspect boundary", async () => {
     const ipc = new FakeIpc();

@@ -176,16 +176,23 @@ export function frameId(frame: RendererServerFrame, name: "hostId" | "sessionId"
   return typeof value === "string" ? value : undefined;
 }
 
-export function redactedMessage(message: string): string {
+export function redactedMessage(message: string, maxLength = 512): string {
+  const limit = Number.isSafeInteger(maxLength) && maxLength > 0
+    ? Math.min(maxLength, 2_048)
+    : 512;
   const redacted = message
-    .replace(/https?:\/\/[^\s]+/giu, "[redacted]")
-    .replace(/\b(authorization\s*[:=]\s*)(?:["']?)(?:bearer|basic)\s+[^\s,;"']+(?:["']?)/giu, "$1[redacted]")
-    .replace(/\b(token|secret|password|credential|authorization)\s*[:=]\s*[^\s,;]+/giu, "$1=[redacted]")
-    .replace(/(["'])(?:~\/|\/(?:Users|home|tmp|var|etc|opt|srv|mnt|run|usr)\/)[^"'\r\n]*\1/gu, "$1[redacted]$1")
-    // A tilde path is user-home data; redact the full remaining tail so
-    // unquoted macOS paths containing spaces cannot leak suffixes.
-    .replace(/(?:^|\s)~\/[^\r\n,;]*/gu, " [redacted]")
-    .replace(/(?:^|\s)\/(?:Users|home|tmp|var|etc|opt|srv|mnt|run|usr)\/[^\s,;)"']*/gu, " [redacted]");
+    // Error strings are display-only. For ambiguous URLs and unquoted paths,
+    // redact the rest of the logical field instead of risking a spaced suffix.
+    .replace(/\b(?:https?|wss?|file):\/\/[^\r\n,;]*/giu, "[redacted]")
+    .replace(/\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+/giu, "[redacted]")
+    .replace(
+      /(["']?)(authorization|access[_-]?token|client[_-]?secret|api[_-]?key|token|secret|password|credential)\1\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:bearer|basic)\s+[^\s,;}\]]+|[^\s,;}\]]+)/giu,
+      "$2=[redacted]",
+    )
+    .replace(
+      /(?:~\/|\/(?:Users|home|tmp|var|private|etc|opt|srv|mnt|run|usr|Library|Applications|Volumes|dev|proc|sys)(?:\/|$))[^\r\n,;]*/gu,
+      "[redacted]",
+    );
   let firstControl = -1;
   for (let index = 0; index < redacted.length; index += 1) {
     const code = redacted.charCodeAt(index);
@@ -200,9 +207,9 @@ export function redactedMessage(message: string): string {
       const code = redacted.charCodeAt(index);
       sanitized += code <= 0x1f || (code >= 0x7f && code <= 0x9f) ? " " : redacted[index];
     }
-    return sanitized.slice(0, 512);
+    return sanitized.slice(0, limit);
   }
-  return redacted.slice(0, 512);
+  return redacted.slice(0, limit);
 }
 
 export function targetCopy(target: DesktopTarget): DesktopTarget {

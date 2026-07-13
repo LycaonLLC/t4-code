@@ -32,6 +32,7 @@ import {
 } from "@t4-code/protocol/desktop-ipc";
 import type { RendererServerFrame } from "@t4-code/protocol/desktop-ipc";
 import type { ServiceManager } from "@t4-code/service-manager";
+import { redactedMessage } from "@t4-code/client";
 import { trustedSender, type TrustedRenderer } from "./security.ts";
 import type { LocalTargetManager } from "./target-manager.ts";
 export interface IpcRuntime {
@@ -60,16 +61,7 @@ export function validEvent(event: IpcMainInvokeEvent, runtime: IpcRuntime): bool
 
 function boundedError(error: unknown): { readonly code: RuntimeErrorEvent["code"]; readonly message: string } {
   const message = error instanceof Error ? error.message : "Desktop operation failed";
-  const safe = message
-    .replace(/https?:\/\/[^\s]+/giu, "[redacted]")
-    .replace(/\b(authorization\s*[:=]\s*)(?:["']?)(?:bearer|basic)\s+[^\s,;"']+(?:["']?)/giu, "$1[redacted]")
-    .replace(/\b(token|secret|password|credential|authorization)\s*[:=]\s*[^\s,;]+/giu, "$1=[redacted]")
-    .replace(/(["'])(?:~\/|\/(?:Users|home|tmp|var|etc|opt|srv|mnt|run|usr)\/)[^"'\r\n]*\1/gu, "$1[redacted]$1")
-    .replace(/(?:^|\s)~\/[^\r\n,;]*/gu, " [redacted]")
-    .replace(/(?:^|\s)(?:~\/|\/(?:Users|home|tmp|var|etc|opt|srv|mnt|run|usr)\/)[^\s,;)"']*/gu, " [redacted]")
-    // Control-code sanitization intentionally covers C0/C1 controls.
-    .replace(new RegExp("[\\u0000-\\u001f\\u007f-\\u009f]", "gu"), " "); // oxlint-disable-line no-control-regex -- security redaction boundary
-  return { code: "internal", message: safe.slice(0, 2048) };
+  return { code: "internal", message: redactedMessage(message, 2_048) };
 }
 function decodeRequest(channel: DesktopInvokeChannel, value: unknown): DesktopInvokeRequest {
   const request = decodeDesktopInvokeRequest(value);
@@ -98,8 +90,9 @@ export class DesktopIpcRegistry {
       this.assertSender(event);
       decodeRequest("omp:bootstrap", payload);
       // Bootstrap reports current truth only. It must not join or suppress a
-      // user-initiated recovery attempt that starts in the same turn.
-      const service = await this.inspectServiceOnce(false);
+      // user-initiated recovery attempt that starts in the same turn, but it
+      // still shares the ordering boundary with every other service read/write.
+      const service = await this.enqueueService(() => this.inspectServiceOnce(false));
       return { platform: process.platform === "darwin" ? "darwin" : "linux", version: "omp-app/1", connected: this.runtime.manager.isConnected(), ...(service === undefined ? {} : { service }) };
     });
     this.ipc.handle("omp:connect", async (event, payload: unknown): Promise<ConnectResult> => {
@@ -207,7 +200,7 @@ export class DesktopIpcRegistry {
   }
   private inspectService(recover = true): Promise<ServiceInspection> {
     if (this.serviceInspectionPromise !== undefined) return this.serviceInspectionPromise;
-    const inspection = this.inspectServiceOnce(recover);
+    const inspection = this.enqueueService(() => this.inspectServiceOnce(recover));
     this.serviceInspectionPromise = inspection;
     const clearInspection = (): void => {
       if (this.serviceInspectionPromise === inspection) this.serviceInspectionPromise = undefined;
@@ -246,11 +239,17 @@ export class DesktopIpcRegistry {
     };
   }
   private runServiceAction(action: "install" | "start" | "stop" | "restart" | "uninstall"): Promise<void> {
+    // A write begins a new inspection epoch. Any read requested from this
+    // point must run after the write instead of reusing a pre-write snapshot.
+    this.serviceInspectionPromise = undefined;
     const operation = async (): Promise<void> => {
       const manager = await this.acquireServiceManager();
       if (manager === undefined) throw new Error(this.unavailableInspection().issue?.message ?? "appserver service is unavailable");
       await manager[action]();
     };
+    return this.enqueueService(operation);
+  }
+  private enqueueService<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.serviceQueue.tail.then(operation, operation);
     this.serviceQueue.tail = result.then(() => undefined, () => undefined);
     return result;

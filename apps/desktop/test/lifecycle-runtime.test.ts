@@ -204,6 +204,117 @@ describe("desktop Electron lifecycle", () => {
     expect(fixture.windows).toHaveLength(1);
     await fixture.lifecycle.stop();
   });
+  it("cancels and awaits in-flight service recovery during teardown", async () => {
+    const calls: string[] = [];
+    const service: ServiceManager = {
+      inspect: async () => {
+        calls.push("inspect");
+        return { definition: "missing", service: "stopped", diagnostics: "" };
+      },
+      install: async () => { calls.push("install"); },
+      start: async () => { calls.push("start"); },
+      stop: async () => { calls.push("stop"); },
+      restart: async () => { calls.push("restart"); },
+      uninstall: async () => { calls.push("uninstall"); },
+    };
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<boolean>();
+    const fixture = setup(service, async () => {
+      entered.resolve();
+      return release.promise;
+    });
+
+    const starting = fixture.lifecycle.start();
+    await entered.promise;
+    const stopping = fixture.lifecycle.stop();
+    release.resolve(false);
+    await Promise.all([starting, stopping]);
+
+    expect(calls).toEqual([]);
+    expect(fixture.windows).toHaveLength(0);
+    expect(fixture.closeCount).toBe(0);
+  });
+  it("does not publish a manager or startup error when recovery rejects during teardown", async () => {
+    const calls: string[] = [];
+    const entered = Promise.withResolvers<void>();
+    const inspection = Promise.withResolvers<{
+      definition: "missing";
+      service: "stopped";
+      diagnostics: string;
+    }>();
+    const service: ServiceManager = {
+      inspect: async () => {
+        calls.push("inspect");
+        entered.resolve();
+        return inspection.promise;
+      },
+      install: async () => { calls.push("install"); },
+      start: async () => { calls.push("start"); },
+      stop: async () => { calls.push("stop"); },
+      restart: async () => { calls.push("restart"); },
+      uninstall: async () => { calls.push("uninstall"); },
+    };
+    const fixture = setup(service, async () => false);
+
+    const starting = fixture.lifecycle.start();
+    await entered.promise;
+    const stopping = fixture.lifecycle.stop();
+    inspection.reject(new Error("late inspect failure"));
+    await Promise.all([starting, stopping]);
+
+    const internal = fixture.lifecycle as unknown as {
+      serviceManager?: ServiceManager;
+      startupServiceError?: unknown;
+      serviceAvailabilityIssue?: unknown;
+    };
+    expect(calls).toEqual(["inspect"]);
+    expect(internal.serviceManager).toBeUndefined();
+    expect(internal.startupServiceError).toBeUndefined();
+    expect(internal.serviceAvailabilityIssue).toBeUndefined();
+    expect(fixture.windows).toHaveLength(0);
+  });
+  it("does not publish a ready manager when teardown wins the final recovery continuation", async () => {
+    const service: ServiceManager = {
+      inspect: async () => ({ definition: "current", service: "running", diagnostics: "" }),
+      install: async () => {},
+      start: async () => {},
+      stop: async () => {},
+      restart: async () => {},
+      uninstall: async () => {},
+    };
+    let probeCalls = 0;
+    let stopPromise: Promise<void> | undefined;
+    let fixture!: ReturnType<typeof setup>;
+    // This must stay non-async: the raw Promise ordering places stop() after
+    // ensureServiceReady() resolves but before recoverServiceManager() resumes.
+    const probe = (): Promise<boolean> => {
+      probeCalls += 1;
+      if (probeCalls === 1) return Promise.resolve(false);
+      return new Promise<boolean>((resolve) => {
+        queueMicrotask(() => {
+          resolve(true);
+          queueMicrotask(() => { stopPromise = fixture.lifecycle.stop(); });
+        });
+      });
+    };
+    fixture = setup(service, probe);
+
+    await fixture.lifecycle.start();
+    await stopPromise!;
+
+    const internal = fixture.lifecycle as unknown as {
+      stopping: boolean;
+      serviceManager?: ServiceManager;
+      startupServiceError?: unknown;
+      serviceAvailabilityIssue?: unknown;
+    };
+    expect(probeCalls).toBe(2);
+    expect(internal.stopping).toBe(true);
+    expect(internal.serviceManager).toBeUndefined();
+    expect(internal.startupServiceError).toBeUndefined();
+    expect(internal.serviceAvailabilityIssue).toBeUndefined();
+    expect(fixture.windows).toHaveLength(0);
+  });
   it("recovers an updated OMP once across concurrent IPC retries and keeps the reason across reopen", async () => {
     const root = await mkdtemp(join(tmpdir(), "t4-recovery-"));
     const executable = join(root, "omp");

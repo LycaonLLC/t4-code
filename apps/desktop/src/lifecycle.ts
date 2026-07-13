@@ -41,6 +41,13 @@ export interface DesktopLifecycleOptions {
   readonly createTargetManager?: (options: TargetManagerOptions) => LocalTargetManager;
 }
 
+class ServiceRecoveryCancelledError extends Error {
+  constructor() {
+    super("desktop service recovery was cancelled");
+    this.name = "ServiceRecoveryCancelledError";
+  }
+}
+
 export class DesktopLifecycle {
   private readonly pendingPairs = new PendingPairQueue(8);
   private readonly electronApp: typeof app;
@@ -63,6 +70,7 @@ export class DesktopLifecycle {
   private serviceRecoveryPromise: Promise<ServiceManager | undefined> | undefined;
   private rendererLoaded = false;
   private startupPromise: Promise<void> | undefined;
+  private stopPromise: Promise<void> | undefined;
   private startupServiceError: unknown;
   private started = false;
   private stopping = false;
@@ -126,6 +134,7 @@ export class DesktopLifecycle {
     const remoteRegistry = this.remoteRegistryFactory();
     const credentials = this.credentialsFactory();
     await this.acquireServiceManager();
+    if (this.stopping) return;
     this.manager = this.targetManagerFactory({
       cursorStore: this.cursorStoreFactory(),
       registry: remoteRegistry,
@@ -140,9 +149,9 @@ export class DesktopLifecycle {
     });
     this.bindWindow(this.windowFactory());
     this.beforeQuitHandler = () => {
-      if (this.stopping) return;
-      this.stopping = true;
-      void this.manager?.close().catch((error: unknown) => this.ipc?.emitRuntimeError(runtimeError(error, "local")));
+      void this.stop().catch(() => {
+        // Electron is already quitting; teardown remains best effort.
+      });
     };
     this.electronApp.on("before-quit", this.beforeQuitHandler);
     this.electronApp.on("activate", () => {
@@ -151,29 +160,48 @@ export class DesktopLifecycle {
     });
   }
 
-  async stop(): Promise<void> {
-    if (this.stopping) return;
+  stop(): Promise<void> {
+    if (this.stopPromise !== undefined) return this.stopPromise;
+    this.stopPromise = this.stopInternal();
+    return this.stopPromise;
+  }
+  private async stopInternal(): Promise<void> {
     this.stopping = true;
     this.ipc?.uninstall();
     this.ipc = undefined;
     this.mainWindow = undefined;
     const manager = this.manager;
     this.manager = undefined;
-    if (manager !== undefined) await manager.close();
+    const recovery = this.serviceRecoveryPromise;
+    await Promise.all([
+      manager?.close() ?? Promise.resolve(),
+      recovery?.then(() => undefined, () => undefined) ?? Promise.resolve(),
+    ]);
     if (this.beforeQuitHandler !== undefined) this.electronApp.removeListener("before-quit", this.beforeQuitHandler);
     this.beforeQuitHandler = undefined;
   }
   private async ensureServiceReady(manager: ServiceManager, executable: string): Promise<void> {
+    this.assertServiceRecoveryActive();
     let inspection = await manager.inspect();
+    this.assertServiceRecoveryActive();
     if (inspection.definition !== "current") {
       await manager.install();
+      this.assertServiceRecoveryActive();
       inspection = await manager.inspect();
+      this.assertServiceRecoveryActive();
     }
-    if (inspection.service !== "running") await manager.start();
+    if (inspection.service !== "running") {
+      await manager.start();
+      this.assertServiceRecoveryActive();
+    }
     const deadline = Date.now() + 5_000;
     while (true) {
+      this.assertServiceRecoveryActive();
       inspection = await manager.inspect();
-      if (inspection.service === "running" && await this.appserverProbe(executable)) return;
+      this.assertServiceRecoveryActive();
+      const ready = inspection.service === "running" && await this.appserverProbe(executable);
+      this.assertServiceRecoveryActive();
+      if (ready) return;
       if (Date.now() >= deadline) throw new Error(`appserver service did not become ready (${inspection.diagnostics.slice(0, 512)})`);
       const delay = Promise.withResolvers<void>();
       setTimeout(delay.resolve, 100);
@@ -187,6 +215,7 @@ export class DesktopLifecycle {
    * when automatic startup fails, and all windows/retries share one attempt.
    */
   private acquireServiceManager(): Promise<ServiceManager | undefined> {
+    if (this.stopping) return Promise.resolve(undefined);
     if (this.serviceManager !== undefined) return Promise.resolve(this.serviceManager);
     if (this.serviceRecoveryPromise !== undefined) return this.serviceRecoveryPromise;
     const recovery = this.recoverServiceManager();
@@ -199,10 +228,13 @@ export class DesktopLifecycle {
   }
 
   private async recoverServiceManager(): Promise<ServiceManager | undefined> {
+    if (this.stopping) return undefined;
     let executable: string | undefined;
     try {
       executable = await this.executableFactory();
+      this.assertServiceRecoveryActive();
     } catch (error) {
+      if (this.stopping || error instanceof ServiceRecoveryCancelledError) return undefined;
       this.recordServiceFailure(error);
       return undefined;
     }
@@ -221,12 +253,15 @@ export class DesktopLifecycle {
         argv: executable.endsWith("/ompd") ? [] : ["appserver", "serve"],
         fs: new NodeServiceFileSystem(),
       });
+      this.assertServiceRecoveryActive();
       // A healthy appserver may have been launched outside T4 Code. Use it
       // as-is; service installation/startup is only a cold-start fallback.
       try {
         const alreadyReady = await this.appserverProbe(executable).catch(() => false);
+        this.assertServiceRecoveryActive();
         if (!alreadyReady) await this.ensureServiceReady(candidate, executable);
       } catch (error) {
+        if (this.stopping || error instanceof ServiceRecoveryCancelledError) return undefined;
         // Creation succeeded, so keep the manager available for authoritative
         // inspection and explicit repair actions even if automatic startup did
         // not finish. The preparation error remains a one-shot runtime event.
@@ -235,14 +270,20 @@ export class DesktopLifecycle {
         this.startupServiceError = error;
         return candidate;
       }
+      this.assertServiceRecoveryActive();
       this.serviceManager = candidate;
       this.serviceAvailabilityIssue = undefined;
       this.startupServiceError = undefined;
       return candidate;
     } catch (error) {
+      if (this.stopping || error instanceof ServiceRecoveryCancelledError) return undefined;
       this.recordServiceFailure(error);
       return undefined;
     }
+  }
+
+  private assertServiceRecoveryActive(): void {
+    if (this.stopping) throw new ServiceRecoveryCancelledError();
   }
 
   private recordServiceFailure(error: unknown): void {
