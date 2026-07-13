@@ -1,10 +1,12 @@
 // Docs content as plain data. Every fact here traces to shipped code or the
-// v0.1.2 release contract; the renderer, search index, and navigation all
+// current release contract; the renderer, search index, and navigation all
 // derive from this one structure.
 
 import {
   OMP_URL,
   RELEASE_ASSETS,
+  RELEASE_TAG,
+  RELEASE_VERSION,
   RELEASES_URL,
   REPO_URL,
 } from "../release.ts";
@@ -43,7 +45,7 @@ const install: DocTopic = {
   blocks: [
     {
       kind: "p",
-      text: `All downloads live on the [v0.1.2 release page](${RELEASES_URL}).`,
+      text: `All downloads live on the [v${RELEASE_VERSION} release page](${RELEASES_URL}).`,
     },
     { kind: "h2", id: "install-linux", text: "Linux (x86_64)" },
     { kind: "p", text: "The `.deb` package is the smoothest path on Debian and Ubuntu:" },
@@ -67,25 +69,29 @@ const install: DocTopic = {
     },
     {
       kind: "note",
-      text: "The v0.1.2 macOS build is unsigned and not notarized. macOS blocks it on first launch. This is expected; the next section shows the two ways past it.",
+      text: `The v${RELEASE_VERSION} macOS build is unsigned and not notarized. Gatekeeper can report a damaged app or an unidentified developer. Only bypass that warning if you trust the release from this repository.`,
     },
     { kind: "h3", id: "install-gatekeeper", text: "First launch on macOS" },
-    { kind: "p", text: "Pick either route:" },
+    { kind: "p", text: "After copying the app into Applications, pick either route:" },
     {
       kind: "ol",
       items: [
-        "Right-click **T4 Code.app** in Finder, choose **Open**, then click **Open** again in the security prompt.",
-        "Or clear the quarantine flag in a terminal:",
+        "If Finder offers it, right-click **T4 Code.app**, choose **Open**, then confirm the security prompt.",
+        "If Gatekeeper still blocks it and you choose to proceed, clear the quarantine attribute in a terminal:",
       ],
     },
     {
       kind: "code",
       code: 'xattr -dr com.apple.quarantine "/Applications/T4 Code.app"',
     },
+    {
+      kind: "note",
+      text: "The `xattr` command does not sign, notarize, or verify T4 Code. It only removes the quarantine attribute from the downloaded app.",
+    },
     { kind: "h2", id: "install-requirements", text: "Requirements" },
     {
       kind: "p",
-      text: `T4 Code is a desktop front end for [Oh My Pi](${OMP_URL}). You need an \`omp\` build with desktop appserver support installed on the machine that runs your sessions, either this one or a remote host you pair with.`,
+      text: `T4 Code is a desktop front end for [Oh My Pi](${OMP_URL}). You need an \`omp\` build with desktop appserver support installed on the machine that runs your sessions, either this one or a remote host you pair with. T4 Code v${RELEASE_VERSION} was tested against OMP 16.4.8 and vendors app-wire 0.5.1.`,
     },
   ],
 };
@@ -142,6 +148,10 @@ const localSessions: DocTopic = {
       kind: "p",
       text: "Pick a project and start a session, with an optional title. The session runs on the OMP host; T4 Code streams everything it does into the transcript.",
     },
+    {
+      kind: "p",
+      text: "New session references retain the project name OMP reports. The rail does not replace that name with an opaque project ID while the new session is attaching.",
+    },
     { kind: "h2", id: "local-sessions-switching", text: "Switching stays instant" },
     {
       kind: "p",
@@ -184,6 +194,19 @@ const remotePairing: DocTopic = {
       kind: "p",
       text: "When a remote connection drops, T4 Code retries on its own: up to 12 attempts with growing delays, capped at 10 seconds between tries. Settings you were editing stay staged locally until the host confirms them; nothing is sent blind during a drop.",
     },
+    { kind: "h2", id: "remote-pairing-tailnet", text: "Phone access over a tailnet" },
+    {
+      kind: "p",
+      text: "A source checkout can serve T4 Code to a phone through Tailscale Serve. This path has no T4 app password: Tailscale identity plus the tailnet ACLs or grants decide who can reach it. Keep it on Serve, never Funnel, and remember that every permitted identity can operate the connected OMP appserver.",
+    },
+    {
+      kind: "p",
+      text: `The v${RELEASE_VERSION} mobile test went through the Tailnet \`.ts.net\` HTTPS URL in a 320 × 568 touch browser. It reached connected state, created a session, selected a model, sent a prompt, received the reply, and kept exactly two durable transcript rows through five reloads. Follow the [Tailnet setup guide](${REPO_URL}/blob/${RELEASE_TAG}/docs/TAILNET_REMOTE.md) to install the source-hosted gateway.`,
+    },
+    {
+      kind: "p",
+      text: "The gateway pings each browser WebSocket every 30 seconds. A half-open tunnel that does not pong is terminated and removed from the active-session count within 60 seconds; responsive sessions stay connected.",
+    },
   ],
 };
 
@@ -195,7 +218,11 @@ const sessionControls: DocTopic = {
     { kind: "h2", id: "session-controls-model", text: "Model" },
     {
       kind: "p",
-      text: "Pick a model by role or by exact selector from the host's catalog. If the host declines the change, the session keeps its current model and T4 Code tells you.",
+      text: "The primary picker follows the connected OMP profile's `Ctrl+P` cycle in exact order instead of exposing the full catalog. On narrow touch screens, the menu has a bounded vertical scroller. The profile used in the mobile test exposed six choices: Luna 5.6, Opus 4.6, Fable 5, GPT 5.6 Sol, Kimi K2.7, and Grok 4.5.",
+    },
+    {
+      kind: "p",
+      text: "Model, thinking, and fast-mode changes finish before an immediately submitted prompt reads the next host revision. This preserves command order when you pick a model and tap Send without waiting.",
     },
     { kind: "h2", id: "session-controls-thinking", text: "Thinking effort" },
     {
@@ -297,7 +324,7 @@ const settings: DocTopic = {
     { kind: "h2", id: "settings-cycle", text: "Quick-switch cycle" },
     {
       kind: "p",
-      text: "The cycle order lists the roles you flip between with the quick-switch command. Put your two or three real choices in it and skip the rest.",
+      text: "The cycle order lists the roles you flip between with `Ctrl+P` in OMP. T4 Code uses that same ordered list for the session model picker, so models outside the cycle stay in advanced settings instead of filling the high-frequency menu.",
     },
     { kind: "h2", id: "settings-task-agents", text: "Task agents" },
     {
@@ -405,7 +432,7 @@ const security: DocTopic = {
     { kind: "h2", id: "security-unsigned", text: "The unsigned macOS build" },
     {
       kind: "p",
-      text: `The v0.1.2 macOS build is unsigned and not notarized, so macOS warns before first launch. If you would rather not trust a downloaded binary, [build from source](#build-from-source). The repository is public at [LycaonLLC/t4-code](${REPO_URL}).`,
+      text: `The v${RELEASE_VERSION} macOS build is unsigned and not notarized, so macOS warns before first launch. Clearing \`com.apple.quarantine\` changes Gatekeeper handling but does not sign, notarize, or verify the app. If you would rather not trust a downloaded binary, [build from source](#build-from-source). The repository is public at [LycaonLLC/t4-code](${REPO_URL}).`,
     },
     { kind: "h2", id: "security-credentials", text: "Credentials" },
     {
