@@ -747,6 +747,12 @@ footer.site-footer {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.925rem;
+  margin: 0;
+}
+
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
   margin: 0.75rem 0 1.5rem;
 }
 
@@ -981,6 +987,10 @@ dialog::backdrop {
 }
 
 @media (max-width: 520px) {
+  .topbar-inner {
+    gap: 0.75rem;
+  }
+  .wordmark .docs-suffix,
   .topbar .hide-narrow {
     display: none;
   }
