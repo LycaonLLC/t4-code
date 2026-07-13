@@ -16,6 +16,12 @@ import type {
 import { ImmutableSet } from "./immutable-set.ts";
 import { ImmutableMap } from "./immutable-map.ts";
 import { decodeProjectionCacheValue, encodeProjectionCache, type ProjectionCacheStore } from "./projection-cache.ts";
+import {
+  boundedIdentity,
+  safeValue,
+  sameSafeValue,
+  sanitizeSessionRef,
+} from "./projection-sanitize.ts";
 
 export type ProjectionFrame = Exclude<ServerFrame, Extract<ServerFrame, { type: "pair.ok" }>>;
 export type ProjectionFreshness = "fresh" | "catching-up" | "cached";
@@ -210,66 +216,22 @@ function cursorState(session: SessionProjection, cursor: Cursor): "accept" | "du
   if (cursor.seq <= session.cursor.seq) return "duplicate";
   return cursor.seq === session.cursor.seq + 1 ? "accept" : "gap";
 }
-function safeValue(value: unknown, depth = 0): unknown {
-  if (depth > 4 || value === undefined || value === null) return depth > 4 ? undefined : value;
-  if (typeof value === "string") return value.slice(0, 8192);
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
-  if (Array.isArray(value)) return Object.freeze(value.slice(0, 128).map((item) => safeValue(item, depth + 1)).filter((item) => item !== undefined));
-  if (typeof value !== "object") return undefined;
-  const output: Record<string, unknown> = {};
-  for (const [name, item] of Object.entries(value as Record<string, unknown>).slice(0, 128)) {
-    if (/token|secret|password|credential|authorization|endpoint|stack/i.test(name)) continue;
-    const safe = safeValue(item, depth + 1);
-    if (safe !== undefined) output[name] = safe;
-  }
-  return Object.freeze(output);
-}
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-function boundedIdentity(value: unknown): string | undefined {
-  // eslint-disable-next-line no-control-regex -- preserve intentional control-character redaction.
-  if (typeof value !== "string" || value.length === 0 || value.length > 256 || /[\u0000-\u001f\u007f]/u.test(value)) return undefined;
-  return value;
-}
-function sanitizeSessionRef(value: unknown): SessionRef | undefined {
-  const safe = safeValue(value);
-  if (!isRecord(safe)) return undefined;
-  const hostId = boundedIdentity(safe.hostId);
-  const sessionId = boundedIdentity(safe.sessionId);
-  const project = isRecord(safe.project) ? safe.project : undefined;
-  const projectId = boundedIdentity(project?.projectId);
-  const revision = boundedIdentity(safe.revision);
-  const title = typeof safe.title === "string" ? safe.title : undefined;
-  const status = typeof safe.status === "string" ? safe.status : undefined;
-  const updatedAt = typeof safe.updatedAt === "string" ? safe.updatedAt : undefined;
-  if (hostId === undefined || sessionId === undefined || projectId === undefined || revision === undefined || title === undefined || status === undefined || updatedAt === undefined) return undefined;
-  return Object.freeze({
-    ...safe,
-    hostId: hostId as SessionRef["hostId"],
-    sessionId: sessionId as SessionRef["sessionId"],
-    project: Object.freeze({ ...project, projectId: projectId as SessionRef["project"]["projectId"] }),
-    revision: revision as SessionRef["revision"],
-    title,
-    status,
-    updatedAt,
-  }) as SessionRef;
-}
-function sameSafeValue(left: unknown, right: unknown, depth = 0): boolean {
-  if (Object.is(left, right)) return true;
-  if (depth > 5 || left === null || right === null || typeof left !== "object" || typeof right !== "object") return false;
-  if (Array.isArray(left) || Array.isArray(right)) {
-    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
-    return left.every((item, index) => sameSafeValue(item, right[index], depth + 1));
-  }
-  if (!isRecord(left) || !isRecord(right)) return false;
-  const leftKeys = Object.keys(left);
-  const rightKeys = Object.keys(right);
-  return leftKeys.length === rightKeys.length && leftKeys.every((name) => Object.prototype.hasOwnProperty.call(right, name) && sameSafeValue(left[name], right[name], depth + 1));
-}
 function sessionDeltaCursorIsStale(previous: Cursor | undefined, cursor: Cursor): boolean {
   return previous !== undefined && previous.epoch === cursor.epoch && cursor.seq <= previous.seq;
+}
+function mostRecentSessionKey(sessionIndex: ReadonlyMap<string, SessionRef>): string | undefined {
+  let selected: { readonly key: string; readonly updatedAt: string } | undefined;
+  for (const [sessionKey, ref] of sessionIndex) {
+    const updatedAt = String(ref.updatedAt);
+    if (
+      selected === undefined ||
+      updatedAt > selected.updatedAt ||
+      (updatedAt === selected.updatedAt && sessionKey < selected.key)
+    ) {
+      selected = { key: sessionKey, updatedAt };
+    }
+  }
+  return selected?.key;
 }
 function authoritativeSessionHosts(
   frame: ProjectionFrame & { readonly type: "sessions" },
@@ -291,6 +253,23 @@ function sessionFrameMetadata(
   const totalCount = typeof raw.totalCount === "number" && Number.isSafeInteger(raw.totalCount) && raw.totalCount >= 0 ? raw.totalCount : undefined;
   const truncated = typeof raw.truncated === "boolean" ? raw.truncated : totalCount === undefined ? refs.length >= maxIndexedSessions : totalCount > refs.length;
   return immutableMap([...hosts].map((hostId) => [hostId, Object.freeze({ totalCount: totalCount ?? refs.filter((ref) => String(ref.hostId) === hostId).length, truncated })] as const));
+}
+
+function sessionFrameIsComplete(
+  frame: ProjectionFrame & { readonly type: "sessions" },
+  refs: readonly SessionRef[],
+  maxIndexedSessions: number,
+): boolean {
+  const raw = frame as unknown as Record<string, unknown>;
+  if (raw.truncated === true) return false;
+  if (
+    typeof raw.totalCount === "number" &&
+    Number.isSafeInteger(raw.totalCount) &&
+    raw.totalCount > refs.length
+  ) {
+    return false;
+  }
+  return raw.truncated === false || refs.length < maxIndexedSessions;
 }
 
 function resultProjection(frame: ResultFrame): ResultProjection {
@@ -315,22 +294,25 @@ export function applyPublicFrame(
       const refs = frame.sessions.slice(0, config.maxIndexedSessions).map((ref) => sanitizeSessionRef(ref)).filter((ref): ref is SessionRef => ref !== undefined);
       const authoritativeHosts = authoritativeSessionHosts(frame, refs);
       const incomingKeys = new Set(refs.map((ref) => key(String(ref.hostId), String(ref.sessionId))));
+      const complete = sessionFrameIsComplete(frame, refs, config.maxIndexedSessions);
       let sessionIndex = snapshot.sessionIndex;
       let sessions = snapshot.sessions;
       let sessionDeltaCursors = snapshot.sessionDeltaCursors;
       let activeSessionKey = snapshot.activeSessionKey;
-      for (const [existingKey, existingRef] of snapshot.sessionIndex) {
-        if (!authoritativeHosts.has(String(existingRef.hostId)) || incomingKeys.has(existingKey)) continue;
-        sessionIndex = mapWithout(sessionIndex, existingKey);
-        sessions = mapWithout(sessions, existingKey);
-        sessionDeltaCursors = mapWithout(sessionDeltaCursors, existingKey);
-        if (activeSessionKey === existingKey) activeSessionKey = undefined;
-      }
-      for (const [warmKey, warm] of sessions) {
-        if (!authoritativeHosts.has(warm.hostId) || incomingKeys.has(warmKey)) continue;
-        sessions = mapWithout(sessions, warmKey);
-        sessionDeltaCursors = mapWithout(sessionDeltaCursors, warmKey);
-        if (activeSessionKey === warmKey) activeSessionKey = undefined;
+      if (complete) {
+        for (const [existingKey, existingRef] of snapshot.sessionIndex) {
+          if (!authoritativeHosts.has(String(existingRef.hostId)) || incomingKeys.has(existingKey)) continue;
+          sessionIndex = mapWithout(sessionIndex, existingKey);
+          sessions = mapWithout(sessions, existingKey);
+          sessionDeltaCursors = mapWithout(sessionDeltaCursors, existingKey);
+          if (activeSessionKey === existingKey) activeSessionKey = undefined;
+        }
+        for (const [warmKey, warm] of sessions) {
+          if (!authoritativeHosts.has(warm.hostId) || incomingKeys.has(warmKey)) continue;
+          sessions = mapWithout(sessions, warmKey);
+          sessionDeltaCursors = mapWithout(sessionDeltaCursors, warmKey);
+          if (activeSessionKey === warmKey) activeSessionKey = undefined;
+        }
       }
       const lru = freezeArray(snapshot.lru.filter((sessionKey) => sessions.has(sessionKey)));
       for (const ref of refs) {
@@ -347,7 +329,7 @@ export function applyPublicFrame(
         sessionIndexMetadata = mapWith(sessionIndexMetadata, hostId, metadata, config.maxIndexedSessions);
       }
       let next = Object.freeze({ ...snapshot, sessionIndex, sessionIndexMetadata, sessionDeltaCursors, sessions, lru, activeSessionKey });
-      const active = activeSessionKey ?? [...sessionIndex.keys()].sort()[0];
+      const active = activeSessionKey ?? mostRecentSessionKey(sessionIndex);
       if (active !== undefined) next = Object.freeze({ ...touch(next, active, config), activeSessionKey: active });
       for (const ref of refs) {
         const refKey = key(String(ref.hostId), String(ref.sessionId));
@@ -373,8 +355,6 @@ export function applyPublicFrame(
       const previousCursor = snapshot.sessionDeltaCursors.get(ownerKey);
       if (sessionDeltaCursorIsStale(previousCursor, frame.cursor)) return snapshot;
       const ownerWarm = snapshot.sessions.get(ownerKey);
-      const ownerCursorResult = ownerWarm === undefined ? "accept" : cursorState(ownerWarm, frame.cursor);
-      if (ownerCursorResult === "duplicate") return snapshot;
       let sessionDeltaCursors = mapWith(snapshot.sessionDeltaCursors, ownerKey, Object.freeze({ ...frame.cursor }), config.maxIndexedSessions);
       let sessionIndex = snapshot.sessionIndex;
       let sessionIndexMetadata = snapshot.sessionIndexMetadata;
@@ -386,15 +366,12 @@ export function applyPublicFrame(
         if (existingRef === undefined && sessionIndex.size < config.maxIndexedSessions) sessionIndex = mapWith(sessionIndex, targetKey, upsert, config.maxIndexedSessions);
         else if (existingRef !== undefined && !sameSafeValue(existingRef, upsert)) sessionIndex = mapWith(sessionIndex, targetKey, upsert, config.maxIndexedSessions);
         const metadata = sessionIndexMetadata.get(hostId);
-        if (metadata !== undefined && existingRef === undefined) sessionIndexMetadata = mapWith(sessionIndexMetadata, hostId, Object.freeze({ ...metadata, totalCount: metadata.totalCount + 1 }), config.maxIndexedSessions);
+        if (metadata !== undefined && existingRef === undefined && !metadata.truncated) sessionIndexMetadata = mapWith(sessionIndexMetadata, hostId, Object.freeze({ ...metadata, totalCount: metadata.totalCount + 1 }), config.maxIndexedSessions);
         if (ownerWarm !== undefined) {
           const nextWarm: SessionProjection = Object.freeze({
             ...ownerWarm,
             ref: upsert,
             revision: String(upsert.revision),
-            ...(ownerCursorResult === "accept"
-              ? { cursor: frame.cursor, epoch: frame.cursor.epoch, freshness: "fresh" as const, gap: undefined }
-              : { freshness: "catching-up" as const }),
           });
           sessions = mapWith(sessions, ownerKey, nextWarm, config.maxWarmSessions);
         }
@@ -405,15 +382,6 @@ export function applyPublicFrame(
         if (activeSessionKey === targetKey) activeSessionKey = lru.at(-1);
         const metadata = sessionIndexMetadata.get(hostId);
         if (metadata !== undefined && existingRef !== undefined) sessionIndexMetadata = mapWith(sessionIndexMetadata, hostId, Object.freeze({ ...metadata, totalCount: Math.max(0, metadata.totalCount - 1) }), config.maxIndexedSessions);
-        if (targetKey !== ownerKey && ownerWarm !== undefined) {
-          const nextWarm: SessionProjection = Object.freeze({
-            ...ownerWarm,
-            ...(ownerCursorResult === "accept"
-              ? { cursor: frame.cursor, epoch: frame.cursor.epoch, freshness: "fresh" as const, gap: undefined }
-              : { freshness: "catching-up" as const }),
-          });
-          sessions = mapWith(sessions, ownerKey, nextWarm, config.maxWarmSessions);
-        }
       }
       return Object.freeze({ ...snapshot, sessionIndex, sessionIndexMetadata, sessionDeltaCursors, sessions, lru, activeSessionKey });
     }
@@ -530,9 +498,28 @@ export function applyPublicFrame(
       }), config);
     }
     case "welcome": {
-      if (snapshot.epoch === undefined || snapshot.epoch === frame.epoch) return updateRoot(snapshot, { epoch: frame.epoch, freshness: "fresh" });
+      // A welcome starts a new inventory bootstrap even when the durable
+      // session epoch is unchanged. Retain cached/indexed rows for continuity,
+      // but do not let their old completeness metadata prove that a route is
+      // gone until the host sends the next authoritative sessions frame.
+      const sessionIndexMetadata = mapWithout(
+        snapshot.sessionIndexMetadata,
+        String(frame.hostId),
+      );
+      if (snapshot.epoch === undefined || snapshot.epoch === frame.epoch) {
+        return updateRoot(
+          Object.freeze({ ...snapshot, sessionIndexMetadata }),
+          { epoch: frame.epoch, freshness: "fresh" },
+        );
+      }
       const sessions = immutableMap([...snapshot.sessions.entries()].map(([sessionKey, session]) => [sessionKey, Object.freeze({ ...session, freshness: "catching-up" })] as const));
-      return Object.freeze({ ...snapshot, sessions, epoch: frame.epoch, freshness: "catching-up" });
+      return Object.freeze({
+        ...snapshot,
+        sessionIndexMetadata,
+        sessions,
+        epoch: frame.epoch,
+        freshness: "catching-up",
+      });
     }
     default:
       return snapshot;

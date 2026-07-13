@@ -116,7 +116,7 @@ describe("phone touch targets", () => {
     expect(session).toContain("flex size-11 shrink-0 cursor-pointer");
     expect(session).toContain("flex min-h-11 w-full cursor-pointer items-center");
     expect(rail).toContain("flex min-h-11 min-w-0 flex-1 items-center");
-    expect(rail).toContain('className="size-11 shrink-0 sm:size-6"');
+    expect(rail).toContain('"size-11 shrink-0 sm:size-6"');
     expect(css).toContain('[data-slot="sheet-popup"]');
     expect(css).toContain('input:not([type="checkbox"]):not([type="radio"])');
     expect(css).toContain("min-height: 2.75rem");

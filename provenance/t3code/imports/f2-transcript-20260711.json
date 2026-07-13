@@ -9,14 +9,14 @@
       "sourceBlobSha": "1a4dc6b689558a9f8d834c12d7ecb2bb64e0d7c8",
       "targetPath": "apps/web/src/features/transcript/TranscriptTimeline.tsx",
       "classification": "adapted",
-    "checksum": "sha256:2f9f66aef73a73364416897ca72a716cb6428e825ec98d33ff06a8bb6845d21f"
+    "checksum": "sha256:e47a30af1647a6a47a163d2185acfeec06ef947491a8e31c93a7746ae35f5f07"
     },
     {
       "sourcePath": "apps/web/src/components/chat/MessagesTimeline.tsx",
       "sourceBlobSha": "1a4dc6b689558a9f8d834c12d7ecb2bb64e0d7c8",
       "targetPath": "apps/web/src/features/transcript/rows.ts",
       "classification": "adapted",
-      "checksum": "sha256:fadd40ef44ac289a3104726c478c16182c8498fc36f1484b92516e6c653f7665"
+      "checksum": "sha256:47759dd83be3db8bf4d4aa7b18709260438577cc345a63c71f6f2f5b87b6ee62"
     },
     {
       "sourcePath": "apps/web/src/components/chat/MessagesTimeline.tsx",

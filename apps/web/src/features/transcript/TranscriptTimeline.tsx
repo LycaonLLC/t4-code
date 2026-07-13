@@ -208,11 +208,13 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
   // Cold-mount mask: LegendList lays rows out a few frames after mount, so
   // a hard refresh briefly shows the shell over an empty transcript. Until
   // the list reports real content, an exact warm overlay renders the tail
-  // rows bottom-aligned with the same measure, padding, and composer inset
-  // — the reveal swaps identical pixels, never a pop. Sessions restored to
-  // a mid-scroll anchor mask with the plain transcript background instead
-  // (never wrong content). Removal is layout-driven (rAF poll of the list's
-  // content), not a timer.
+  // rows bottom-aligned with the same measure, padding, and composer inset.
+  // The measured list stays visibility:hidden during that handoff: both trees
+  // may exist for layout, but only one transcript copy can ever paint. The
+  // reveal atomically removes the overlay and restores the real list. Sessions
+  // restored to a mid-scroll anchor mask with the plain transcript background
+  // instead (never wrong content). Removal is layout-driven (rAF poll of the
+  // list's content), not a timer.
   const REVEAL_STABILITY_FRAMES = 8;
   const [coldMount, setColdMount] = useState(true);
   useEffect(() => {
@@ -267,7 +269,10 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
     <div className="relative h-full min-h-0" ref={containerRef}>
       <DisclosureAnchorContext.Provider value={anchorController}>
       <LegendList<TranscriptRow>
-        className="h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]"
+        className={cn(
+          "h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
+          coldMount && "invisible",
+        )}
         data={rows as TranscriptRow[]}
         estimatedItemSize={72}
         getItemType={getItemType}
@@ -309,6 +314,7 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
         <div
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 z-10 overflow-hidden bg-(--transcript-background)"
+          data-cold-mount-overlay
         >
           {warmOverlayRows.length > 0 && (
             <div

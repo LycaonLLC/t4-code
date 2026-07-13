@@ -17,10 +17,25 @@ export const RELEASE_CONTRACT_PATHS = [
 ];
 
 const REPOSITORY_URL = "https://github.com/LycaonLLC/t4-code";
+const APP_WIRE_VERSION = "0.5.2";
+const APP_WIRE_SOURCE_COMMIT = "5d4315eea317260fec030e2b4726f10fed0cd5f6";
+const APP_WIRE_SOURCE_TREE = "713688e8099d4553a0a30b1bf415a7cffb5963f4";
 const OMP_RUNTIME_VERSION = "16.4.8";
-const OMP_RUNTIME_FIX_COMMIT = "f65bb37970d2186f04ec4b650eb0b53ec3b1337b";
+const OMP_RUNTIME_COMMIT = "932bbaceb256f43eb3b2760341f2175803da4d07";
 const OMP_RUNTIME_REPOSITORY = "https://github.com/lyc-aon/oh-my-pi";
-const OMP_RUNTIME_FIX_URL = `${OMP_RUNTIME_REPOSITORY}/commit/${OMP_RUNTIME_FIX_COMMIT}`;
+const OMP_RUNTIME_COMMIT_URL = `${OMP_RUNTIME_REPOSITORY}/commit/${OMP_RUNTIME_COMMIT}`;
+const OMP_RUNTIME_SOURCE_TAG = "t4code-16.4.8-appserver-4";
+const OMP_RUNTIME_SOURCE_URL = `${OMP_RUNTIME_REPOSITORY}/tree/${OMP_RUNTIME_SOURCE_TAG}`;
+const OMP_INTEGRATION_PATCHES = [
+  "bounded-growing-session-replay",
+  "complete-session-event-projection",
+  "session-lifecycle-management",
+  "ordered-remote-outbound-frames",
+  "restart-safe-rpc-session-teardown",
+  "catalog-advertised-session-management",
+  "cross-client-control-state-convergence",
+  "terminal-streaming-state-settlement",
+];
 const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 
 export function expectedReleaseAssetNames(version) {
@@ -57,7 +72,9 @@ function parseJson(files, path, errors) {
   try {
     return JSON.parse(files.get(path) ?? "");
   } catch (error) {
-    errors.push(`${path} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    errors.push(
+      `${path} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return null;
   }
 }
@@ -77,7 +94,9 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   const expectedTag = `v${version}`;
 
   const packagePaths = [...files.keys()]
-    .filter((path) => path === "package.json" || /^(?:apps|packages)\/[^/]+\/package\.json$/u.test(path))
+    .filter(
+      (path) => path === "package.json" || /^(?:apps|packages)\/[^/]+\/package\.json$/u.test(path),
+    )
     .sort((a, b) => a.localeCompare(b));
   for (const path of packagePaths) {
     const manifest = parseJson(files, path, errors);
@@ -94,37 +113,106 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   if (matrix?.desktop?.version !== version) {
     errors.push(`compat/omp-app-matrix.json desktop version must be ${version}`);
   }
-  if (matrix?.appWire?.version !== "0.5.1") {
-    errors.push("compat/omp-app-matrix.json app-wire version must remain 0.5.1 for this release");
+  const appWire = matrix?.appWire;
+  if (appWire?.version !== APP_WIRE_VERSION) {
+    errors.push(`compat/omp-app-matrix.json app-wire version must be ${APP_WIRE_VERSION}`);
+  }
+  if (appWire?.sourceRepository !== OMP_RUNTIME_REPOSITORY) {
+    errors.push(`compat/omp-app-matrix.json app-wire repository must be ${OMP_RUNTIME_REPOSITORY}`);
+  }
+  if (appWire?.sourceCommit !== APP_WIRE_SOURCE_COMMIT) {
+    errors.push(`compat/omp-app-matrix.json app-wire commit must be ${APP_WIRE_SOURCE_COMMIT}`);
+  }
+  if (appWire?.sourceTreeHash !== APP_WIRE_SOURCE_TREE) {
+    errors.push(`compat/omp-app-matrix.json app-wire source tree must be ${APP_WIRE_SOURCE_TREE}`);
   }
   const verifiedRuntime = matrix?.verifiedRuntime;
   if (verifiedRuntime?.package !== "omp") {
     errors.push("compat/omp-app-matrix.json verified runtime package must be omp");
   }
   if (verifiedRuntime?.version !== OMP_RUNTIME_VERSION) {
-    errors.push(`compat/omp-app-matrix.json verified runtime version must be ${OMP_RUNTIME_VERSION}`);
+    errors.push(
+      `compat/omp-app-matrix.json verified runtime version must be ${OMP_RUNTIME_VERSION}`,
+    );
   }
   if (verifiedRuntime?.sourceRepository !== OMP_RUNTIME_REPOSITORY) {
-    errors.push(`compat/omp-app-matrix.json verified runtime repository must be ${OMP_RUNTIME_REPOSITORY}`);
+    errors.push(
+      `compat/omp-app-matrix.json verified runtime repository must be ${OMP_RUNTIME_REPOSITORY}`,
+    );
   }
-  if (verifiedRuntime?.sourceCommit !== OMP_RUNTIME_FIX_COMMIT) {
-    errors.push(`compat/omp-app-matrix.json verified runtime commit must be ${OMP_RUNTIME_FIX_COMMIT}`);
+  if (verifiedRuntime?.sourceCommit !== OMP_RUNTIME_COMMIT) {
+    errors.push(`compat/omp-app-matrix.json verified runtime commit must be ${OMP_RUNTIME_COMMIT}`);
   }
-  if (verifiedRuntime?.sourceUrl !== OMP_RUNTIME_FIX_URL) {
-    errors.push(`compat/omp-app-matrix.json verified runtime URL must be ${OMP_RUNTIME_FIX_URL}`);
+  if (verifiedRuntime?.sourceUrl !== OMP_RUNTIME_COMMIT_URL) {
+    errors.push(
+      `compat/omp-app-matrix.json verified runtime URL must be ${OMP_RUNTIME_COMMIT_URL}`,
+    );
   }
-  if (verifiedRuntime?.largeSessionFix !== "bounded-growing-session-replay") {
-    errors.push("compat/omp-app-matrix.json must identify the bounded growing-session replay fix");
+  if (verifiedRuntime?.sourceTag !== OMP_RUNTIME_SOURCE_TAG) {
+    errors.push(
+      `compat/omp-app-matrix.json verified runtime tag must be ${OMP_RUNTIME_SOURCE_TAG}`,
+    );
   }
-  if (verifiedRuntime?.upstreamTagContainsLargeSessionFix !== false) {
-    errors.push("compat/omp-app-matrix.json must record that stock upstream v16.4.8 lacks the large-session fix");
+  if (
+    !Array.isArray(verifiedRuntime?.integrationPatches) ||
+    verifiedRuntime.integrationPatches.length !== OMP_INTEGRATION_PATCHES.length ||
+    verifiedRuntime.integrationPatches.some(
+      (patch, index) => patch !== OMP_INTEGRATION_PATCHES[index],
+    )
+  ) {
+    errors.push(
+      `compat/omp-app-matrix.json verified runtime integration patches must be ${OMP_INTEGRATION_PATCHES.join(", ")}`,
+    );
+  }
+  if (verifiedRuntime?.upstreamTagContainsIntegrationPatches !== false) {
+    errors.push(
+      "compat/omp-app-matrix.json must record that stock upstream v16.4.8 lacks the integration patches",
+    );
   }
 
   const site = files.get("apps/site/src/release.ts") ?? "";
-  requireText(site, `export const RELEASE_TAG = "${expectedTag}";`, "apps/site/src/release.ts", errors);
-  requireText(site, `export const RELEASE_VERSION = "${version}";`, "apps/site/src/release.ts", errors);
-  requireText(site, `export const OMP_RUNTIME_VERSION = "${OMP_RUNTIME_VERSION}";`, "apps/site/src/release.ts", errors);
-  requireText(site, `export const OMP_RUNTIME_FIX_COMMIT = "${OMP_RUNTIME_FIX_COMMIT}";`, "apps/site/src/release.ts", errors);
+  requireText(
+    site,
+    `export const RELEASE_TAG = "${expectedTag}";`,
+    "apps/site/src/release.ts",
+    errors,
+  );
+  requireText(
+    site,
+    `export const RELEASE_VERSION = "${version}";`,
+    "apps/site/src/release.ts",
+    errors,
+  );
+  requireText(
+    site,
+    `export const OMP_RUNTIME_VERSION = "${OMP_RUNTIME_VERSION}";`,
+    "apps/site/src/release.ts",
+    errors,
+  );
+  requireText(
+    site,
+    `export const OMP_RUNTIME_COMMIT = "${OMP_RUNTIME_COMMIT}";`,
+    "apps/site/src/release.ts",
+    errors,
+  );
+  requireText(
+    site,
+    `export const OMP_RUNTIME_TAG = "${OMP_RUNTIME_SOURCE_TAG}";`,
+    "apps/site/src/release.ts",
+    errors,
+  );
+  requireText(
+    site,
+    "export const OMP_RUNTIME_URL = `https://github.com/lyc-aon/oh-my-pi/tree/${OMP_RUNTIME_TAG}`;",
+    "apps/site/src/release.ts",
+    errors,
+  );
+  requireText(
+    site,
+    `export const APP_WIRE_VERSION = "${APP_WIRE_VERSION}";`,
+    "apps/site/src/release.ts",
+    errors,
+  );
   for (const filename of expectedReleaseAssetNames(version)) {
     requireText(site, `"${filename}"`, "apps/site/src/release.ts", errors);
   }
@@ -133,27 +221,52 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   for (const assetVersion of siteAssetVersions) {
     if (assetVersion !== version) {
-      errors.push(`apps/site/src/release.ts contains an asset for ${assetVersion}; expected ${version}`);
+      errors.push(
+        `apps/site/src/release.ts contains an asset for ${assetVersion}; expected ${version}`,
+      );
     }
   }
 
   const readme = files.get("README.md") ?? "";
-  requireText(readme, `[**Download ${expectedTag}**](${REPOSITORY_URL}/releases/tag/${expectedTag})`, "README.md", errors);
   requireText(
     readme,
-    `T4 Code ${expectedTag} was verified with OMP ${OMP_RUNTIME_VERSION} built from [\`f65bb379\`](${OMP_RUNTIME_FIX_URL}).`,
+    `[**Download ${expectedTag}**](${REPOSITORY_URL}/releases/tag/${expectedTag})`,
     "README.md",
     errors,
   );
-  requireText(readme, "The stock upstream v16.4.8 tag does not contain this appserver fix", "README.md", errors);
-  requireText(readme, "T4 Code's vendored protocol package remains `@oh-my-pi/app-wire` 0.5.1.", "README.md", errors);
+  requireText(
+    readme,
+    `T4 Code ${expectedTag} was verified with OMP ${OMP_RUNTIME_VERSION} built from [\`${OMP_RUNTIME_COMMIT.slice(0, 8)}\`](${OMP_RUNTIME_COMMIT_URL}), tagged [\`${OMP_RUNTIME_SOURCE_TAG}\`](${OMP_RUNTIME_SOURCE_URL}).`,
+    "README.md",
+    errors,
+  );
+  requireText(
+    readme,
+    "The official upstream v16.4.8 tag has no `appserver` command, so it cannot host T4 Code.",
+    "README.md",
+    errors,
+  );
+  requireText(
+    readme,
+    `T4 Code vendors \`@oh-my-pi/app-wire\` ${APP_WIRE_VERSION} from integration commit [\`${APP_WIRE_SOURCE_COMMIT.slice(0, 8)}\`](${OMP_RUNTIME_REPOSITORY}/commit/${APP_WIRE_SOURCE_COMMIT}), source tree \`${APP_WIRE_SOURCE_TREE}\`.`,
+    "README.md",
+    errors,
+  );
   requireText(readme, `## What changed in ${expectedTag}`, "README.md", errors);
   for (const filename of expectedReleaseAssetNames(version)) {
-    requireText(readme, `${REPOSITORY_URL}/releases/download/${expectedTag}/${filename}`, "README.md", errors);
+    requireText(
+      readme,
+      `${REPOSITORY_URL}/releases/download/${expectedTag}/${filename}`,
+      "README.md",
+      errors,
+    );
   }
   const linkedReleaseTags = new Set(
-    [...readme.matchAll(/https:\/\/github\.com\/LycaonLLC\/t4-code\/releases\/(?:tag|download)\/(v\d+\.\d+\.\d+)/gu)]
-      .map((match) => match[1]),
+    [
+      ...readme.matchAll(
+        /https:\/\/github\.com\/LycaonLLC\/t4-code\/releases\/(?:tag|download)\/(v\d+\.\d+\.\d+)/gu,
+      ),
+    ].map((match) => match[1]),
   );
   for (const linkedTag of linkedReleaseTags) {
     if (linkedTag !== expectedTag) {
@@ -184,34 +297,103 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   }
 
   const siteDocs = files.get("apps/site/src/docs/content.ts") ?? "";
-  requireText(siteDocs, "OMP_RUNTIME_FIX_URL", "apps/site/src/docs/content.ts", errors);
+  requireText(siteDocs, "OMP_RUNTIME_URL", "apps/site/src/docs/content.ts", errors);
   requireText(
     siteDocs,
-    "The stock upstream OMP v${OMP_RUNTIME_VERSION} tag does not contain this appserver fix.",
+    "Official upstream OMP v${OMP_RUNTIME_VERSION} does not ship the \\`appserver\\` command, so it cannot host T4 Code.",
     "apps/site/src/docs/content.ts",
     errors,
   );
-  requireText(siteDocs, 'id: "troubleshooting-large-session"', "apps/site/src/docs/content.ts", errors);
-
   requireText(
-    files.get(".github/workflows/release.yml") ?? "",
+    siteDocs,
+    'id: "troubleshooting-large-session"',
+    "apps/site/src/docs/content.ts",
+    errors,
+  );
+
+  const releaseWorkflow = files.get(".github/workflows/release.yml") ?? "";
+  requireText(
+    releaseWorkflow,
     'node scripts/check-release-consistency.mjs --tag "$RELEASE_TAG"',
     ".github/workflows/release.yml",
     errors,
   );
-  requireText(files.get(".github/workflows/release.yml") ?? "", OMP_RUNTIME_FIX_URL, ".github/workflows/release.yml", errors);
   requireText(
-    files.get(".github/workflows/release.yml") ?? "",
-    "Stock upstream OMP v16.4.8 does not include that bounded large-session snapshot and replay fix.",
+    releaseWorkflow,
+    OMP_RUNTIME_COMMIT_URL,
     ".github/workflows/release.yml",
     errors,
   );
   requireText(
+    releaseWorkflow,
+    OMP_RUNTIME_SOURCE_URL,
+    ".github/workflows/release.yml",
+    errors,
+  );
+  requireText(
+    releaseWorkflow,
+    `This release vendors app-wire ${APP_WIRE_VERSION}`,
+    ".github/workflows/release.yml",
+    errors,
+  );
+  requireText(
+    releaseWorkflow,
+    "Official upstream OMP v16.4.8 has no `appserver` command and cannot host T4 Code.",
+    ".github/workflows/release.yml",
+    errors,
+  );
+  for (const expected of [
+    "github.ref == 'refs/heads/main'",
+    "Check out trusted release-control source",
+    "Resolve immutable release source",
+    'git merge-base --is-ancestor "$source_sha" refs/remotes/origin/main',
+    "ref: ${{ steps.source.outputs.source_sha }}",
+    "ref: ${{ needs.verify.outputs.source_sha }}",
+    "Confirm the release tag still resolves to the verified source",
+    'test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "$SOURCE_SHA"',
+  ]) {
+    requireText(releaseWorkflow, expected, ".github/workflows/release.yml", errors);
+  }
+  if (releaseWorkflow.includes("ref: ${{ env.RELEASE_TAG }}")) {
+    errors.push(
+      ".github/workflows/release.yml must build from the verified immutable source SHA, not env.RELEASE_TAG",
+    );
+  }
+  requireText(
     files.get(".github/workflows/deploy-site.yml") ?? "",
-    "node scripts/wait-for-release-assets.mjs --timeout-ms 2400000 --interval-ms 15000",
+    'node scripts/wait-for-release-assets.mjs --version "$RELEASE_VERSION" --timeout-ms 2400000 --interval-ms 15000',
     ".github/workflows/deploy-site.yml",
     errors,
   );
+  requireText(
+    files.get(".github/workflows/deploy-site.yml") ?? "",
+    "releases/tags/${release_tag}",
+    ".github/workflows/deploy-site.yml",
+    errors,
+  );
+  requireText(
+    files.get(".github/workflows/deploy-site.yml") ?? "",
+    'git merge-base --is-ancestor "$source_sha" "$MAIN_SHA"',
+    ".github/workflows/deploy-site.yml",
+    errors,
+  );
+  requireText(
+    files.get(".github/workflows/deploy-site.yml") ?? "",
+    "ref: ${{ steps.immutable_source.outputs.source_sha }}",
+    ".github/workflows/deploy-site.yml",
+    errors,
+  );
+  requireText(
+    files.get(".github/workflows/deploy-site.yml") ?? "",
+    'release_tag="$expected_tag"',
+    ".github/workflows/deploy-site.yml",
+    errors,
+  );
+  if ((files.get(".github/workflows/deploy-site.yml") ?? "").includes('source_sha="$MAIN_SHA"')) {
+    errors.push(
+      ".github/workflows/deploy-site.yml must deploy the published release tag, not a same-version main SHA",
+    );
+  }
   return errors;
 }
 
@@ -225,16 +407,21 @@ function parseTagArgument(args) {
   throw new Error("usage: node scripts/check-release-consistency.mjs [--tag vX.Y.Z]");
 }
 
-const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
+const isMain =
+  process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (isMain) {
   try {
     const errors = checkReleaseConsistency(process.cwd(), parseTagArgument(process.argv.slice(2)));
     if (errors.length > 0) {
-      console.error(`Release consistency check failed with ${errors.length} error${errors.length === 1 ? "" : "s"}:`);
+      console.error(
+        `Release consistency check failed with ${errors.length} error${errors.length === 1 ? "" : "s"}:`,
+      );
       for (const error of errors) console.error(`- ${error}`);
       process.exitCode = 1;
     } else {
-      const version = JSON.parse(readFileSync(resolve(process.cwd(), "package.json"), "utf8")).version;
+      const version = JSON.parse(
+        readFileSync(resolve(process.cwd(), "package.json"), "utf8"),
+      ).version;
       console.log(`Release consistency check passed for v${version}.`);
     }
   } catch (error) {

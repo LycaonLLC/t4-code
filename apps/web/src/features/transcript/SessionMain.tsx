@@ -23,6 +23,7 @@ import {
   deriveAttention,
   deriveTranscriptRows,
   initialStableRowsState,
+  shouldShowAttention,
   type StableRowsState,
 } from "./rows.ts";
 import { TranscriptTimeline } from "./TranscriptTimeline.tsx";
@@ -68,6 +69,7 @@ function useStableTranscriptRows(rows: ReturnType<typeof deriveTranscriptRows>) 
 }
 
 export function SessionMain({ session }: SessionMainProps) {
+  const archived = session.archivedAt !== undefined;
   const { snapshot, runtime } = useSessionRuntime(session.id, session.freshness);
   const projection = snapshot.projection;
 
@@ -76,10 +78,18 @@ export function SessionMain({ session }: SessionMainProps) {
   const attention = useMemo(() => deriveAttention(projection), [projection]);
 
   const [revisingPlanId, setRevisingPlanId] = useState<string | null>(null);
-  const onIntent = useCallback((intent: SessionIntent) => runtime.dispatch(intent), [runtime]);
+  const onIntent = useCallback(
+    (intent: SessionIntent) => {
+      if (!archived) runtime.dispatch(intent);
+    },
+    [archived, runtime],
+  );
   const submitPrompt = useCallback(
-    (intent: SessionIntent) => runtime.submitPrompt(intent),
-    [runtime],
+    (intent: SessionIntent) =>
+      archived
+        ? Promise.resolve({ kind: "rejected" as const, reason: "Archived sessions are read-only." })
+        : runtime.submitPrompt(intent),
+    [archived, runtime],
   );
 
   // Composer dock height feeds the timeline's end inset so following content
@@ -98,11 +108,7 @@ export function SessionMain({ session }: SessionMainProps) {
   }, []);
 
   const catchingUp = projection.phase === "resyncing" || projection.phase === "paused";
-  const showAttention =
-    attention.approval !== null ||
-    attention.ask !== null ||
-    (attention.plan !== null && revisingPlanId === null) ||
-    attention.error !== null;
+  const showAttention = shouldShowAttention(attention, revisingPlanId, archived);
 
   const retryIntent = useMemo(() => {
     if (attention.error === null || !attention.error.retryable) return null;
@@ -122,6 +128,14 @@ export function SessionMain({ session }: SessionMainProps) {
           Catching up — refreshing this transcript from a snapshot
         </div>
       )}
+      {archived && (
+        <div
+          className="flex min-h-9 shrink-0 items-center justify-center border-border/60 border-b bg-secondary px-3 text-center text-muted-foreground text-xs"
+          role="status"
+        >
+          Archived · read-only. Restore this session before continuing work.
+        </div>
+      )}
       <div aria-label="Transcript" className="relative min-h-0 flex-1" role="log">
         {empty ? (
           <div className="flex h-full items-center justify-center px-6">
@@ -131,7 +145,7 @@ export function SessionMain({ session }: SessionMainProps) {
           </div>
         ) : (
           <TranscriptTimeline
-            bottomInset={dockHeight + 16}
+            bottomInset={archived ? 16 : dockHeight + 16}
             key={session.id}
             nowMs={snapshot.nowMs}
             rows={rows}
@@ -139,50 +153,52 @@ export function SessionMain({ session }: SessionMainProps) {
             streaming={projection.turnActive}
           />
         )}
-        <div
-          className={cn(
-            "pointer-events-none absolute inset-x-0 bottom-0 mx-auto w-full max-w-(--transcript-measure) overflow-x-hidden pr-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] sm:px-6",
-          )}
-          ref={dockRef}
-        >
-          {showAttention && (
-            <div className="pointer-events-auto mb-2">
-              <AttentionStack>
-                {attention.error !== null && (
-                  <TurnErrorBanner error={attention.error} onRetry={retryIntent} />
-                )}
-                {attention.approval !== null && (
-                  <ApprovalPanel approval={attention.approval} onIntent={onIntent} />
-                )}
-                {attention.ask !== null && <AskPanel ask={attention.ask} onIntent={onIntent} />}
-                {attention.plan !== null && revisingPlanId === null && (
-                  <PlanPanel
-                    onIntent={onIntent}
-                    onRevise={() => setRevisingPlanId(attention.plan?.planId ?? null)}
-                    plan={attention.plan}
-                  />
-                )}
-              </AttentionStack>
-            </div>
-          )}
-          <Composer
-            canCancel={snapshot.canCancel}
-            cancelDisabledReason={snapshot.cancelDisabledReason}
-            canPrompt={snapshot.canPrompt}
-            contextUsedTokens={snapshot.contextUsedTokens}
-            contextWindowTokens={snapshot.contextWindowTokens}
-            controls={snapshot.controls}
-            link={snapshot.link}
-            onCancelRevise={() => setRevisingPlanId(null)}
-            onIntent={onIntent}
-            queuedFollowUps={snapshot.queuedFollowUps}
-            revisingPlanId={revisingPlanId}
-            sessionId={session.id}
-            slashCommands={snapshot.slashCommands}
-            submitPrompt={submitPrompt}
-            turnActive={projection.turnActive}
-          />
-        </div>
+        {!archived && (
+          <div
+            className={cn(
+              "pointer-events-none absolute inset-x-0 bottom-0 mx-auto w-full max-w-(--transcript-measure) overflow-x-hidden pr-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] sm:px-6",
+            )}
+            ref={dockRef}
+          >
+            {showAttention && (
+              <div className="pointer-events-auto mb-2">
+                <AttentionStack>
+                  {attention.error !== null && (
+                    <TurnErrorBanner error={attention.error} onRetry={retryIntent} />
+                  )}
+                  {attention.approval !== null && (
+                    <ApprovalPanel approval={attention.approval} onIntent={onIntent} />
+                  )}
+                  {attention.ask !== null && <AskPanel ask={attention.ask} onIntent={onIntent} />}
+                  {attention.plan !== null && revisingPlanId === null && (
+                    <PlanPanel
+                      onIntent={onIntent}
+                      onRevise={() => setRevisingPlanId(attention.plan?.planId ?? null)}
+                      plan={attention.plan}
+                    />
+                  )}
+                </AttentionStack>
+              </div>
+            )}
+            <Composer
+              canCancel={snapshot.canCancel}
+              cancelDisabledReason={snapshot.cancelDisabledReason}
+              canPrompt={snapshot.canPrompt}
+              contextUsedTokens={snapshot.contextUsedTokens}
+              contextWindowTokens={snapshot.contextWindowTokens}
+              controls={snapshot.controls}
+              link={snapshot.link}
+              onCancelRevise={() => setRevisingPlanId(null)}
+              onIntent={onIntent}
+              queuedFollowUps={snapshot.queuedFollowUps}
+              revisingPlanId={revisingPlanId}
+              sessionId={session.id}
+              slashCommands={snapshot.slashCommands}
+              submitPrompt={submitPrompt}
+              turnActive={projection.turnActive}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

@@ -23,7 +23,6 @@ import type {
   GapFrame,
   LiveEventFrame,
   Revision,
-  SessionDeltaFrame,
   SessionEvent,
   SessionSnapshotFrame,
 } from "@t4-code/protocol";
@@ -184,7 +183,6 @@ export type TranscriptFrame =
   | SessionSnapshotFrame
   | DurableEntryFrame
   | LiveEventFrame
-  | SessionDeltaFrame
   | GapFrame;
 
 // app-wire exports DurableEntryFrame from its envelope module; mirror the
@@ -567,8 +565,7 @@ export function reduceTranscript(
     case "gap":
       return applyGap(projection, frame);
     case "entry":
-    case "event":
-    case "session.delta": {
+    case "event": {
       // A paused stream applies nothing until a snapshot arrives — applying
       // past a gap would reorder history.
       if (projection.phase === "paused" || projection.phase === "resyncing") {
@@ -593,13 +590,7 @@ export function reduceTranscript(
         };
       }
       if (frame.type === "entry") return applyEntry(projection, frame);
-      if (frame.type === "event") return applyEvent(projection, frame);
-      return {
-        ...projection,
-        cursor: frame.cursor,
-        revision: frame.revision,
-        phase: "active",
-      };
+      return applyEvent(projection, frame);
     }
   }
 }

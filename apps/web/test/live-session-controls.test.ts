@@ -9,10 +9,13 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   catalogId,
   hostId,
+  projectId,
   revision,
   sessionId,
   type CatalogFrame,
   type CatalogItem,
+  type LiveEventFrame,
+  type SessionDeltaFrame,
   type SessionsFrame,
   type SettingsFrame,
 } from "@t4-code/protocol";
@@ -141,6 +144,35 @@ function sessionsUpsert(seq: number, extra: Record<string, unknown>): SessionsFr
       },
     ],
   };
+}
+
+function sessionDelta(
+  seq: number,
+  revisionValue: string,
+  extra: Record<string, unknown> = {},
+): SessionDeltaFrame {
+  return {
+    v: V,
+    type: "session.delta",
+    cursor: { epoch: "epoch-1", seq },
+    revision: revision(revisionValue),
+    hostId: hostId(HOST),
+    sessionId: sessionId(SESSION),
+    upsert: {
+      hostId: hostId(HOST),
+      sessionId: sessionId(SESSION),
+      project: { projectId: projectId("project-1") },
+      revision: revision(revisionValue),
+      title: "Session",
+      status: "idle",
+      updatedAt: "2026-07-12T10:00:01Z",
+      ...extra,
+    },
+  };
+}
+
+async function settle(rounds = 12): Promise<void> {
+  for (let index = 0; index < rounds; index += 1) await Promise.resolve();
 }
 
 describe("defaults from live host settings", () => {
@@ -310,12 +342,13 @@ describe("control commands leave immediately with exact payloads", () => {
     expect(after.modelLabel).toBe("Luna 5.6");
   });
 
-  it("holds a fast prompt behind an in-flight model revision", async () => {
+  it("holds a fast prompt until the accepted model revision reconciles", async () => {
     const { shell, runtime } = await startedRuntime();
-    const gate = deferred<boolean>();
-    shell.commandBehavior = { kind: "defer", gate };
+    const modelGate = deferred<boolean>();
+    const listGate = deferred<boolean>();
+    shell.commandBehavior = { kind: "defer", gate: modelGate };
 
-    runtime.dispatch({ kind: "setModel", selector: null, role: "smol" });
+    const model = runtime.submitPrompt({ kind: "setModel", selector: null, role: "smol" });
     const prompt = runtime.submitPrompt({
       kind: "prompt",
       text: "send after the model switch",
@@ -325,16 +358,59 @@ describe("control commands leave immediately with exact payloads", () => {
     expect(runtime.getSnapshot().controls.pendingControl).toBe("model");
     expect(shell.commandCount("session.prompt")).toBe(0);
 
-    gate.resolve(true);
+    // The control response arrives before its session.delta. The runtime must
+    // keep Send behind an authoritative session.list reconciliation instead
+    // of reusing rev-1 and provoking a stale_revision rejection.
+    shell.commandBehavior = { kind: "defer", gate: listGate };
+    modelGate.resolve(true);
+    await settle();
+    expect(shell.commandCount("session.list")).toBe(1);
+    expect(shell.commandCount("session.prompt")).toBe(0);
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: sessionDelta(2, "rev-2", { model: "google/gemini-3.5-flash" }),
+    });
+    listGate.resolve(true);
+    expect((await model).kind).toBe("accepted");
     expect((await prompt).kind).toBe("accepted");
     const commands = shell.commands.map((request) => request.intent.command);
     expect(commands.indexOf("session.model.set")).toBeGreaterThanOrEqual(0);
     expect(commands.indexOf("session.prompt")).toBeGreaterThan(commands.indexOf("session.model.set"));
+    expect(
+      shell.commands.find((request) => request.intent.command === "session.prompt")?.intent
+        .expectedRevision,
+    ).toBe(revision("rev-2"));
     expect(runtime.getSnapshot().controls.pendingControl).toBeNull();
   });
 });
 
 describe("server reconciliation", () => {
+  it("keeps session-index cursors out of the transcript cursor domain", async () => {
+    const { shell, runtime } = await startedRuntime();
+    const delta = sessionDelta(900, "rev-index-2", {
+      model: "google/gemini-3.5-flash",
+    });
+    shell.emitFrame({ targetId: "local", frame: delta });
+
+    expect(runtime.getSnapshot().projection.cursor).toEqual({ epoch: "epoch-1", seq: 1 });
+    expect(runtime.getSnapshot().projection.phase).toBe("active");
+    expect(runtime.getSnapshot().controls.modelLabel).toContain("google/gemini-3.5-flash");
+
+    const turn: LiveEventFrame = {
+      v: V,
+      type: "event",
+      cursor: { epoch: "epoch-1", seq: 2 },
+      hostId: hostId(HOST),
+      sessionId: sessionId(SESSION),
+      event: { type: "turn.start", at: "2026-07-12T10:00:02Z" },
+    };
+    shell.emitFrame({ targetId: "local", frame: turn });
+    expect(runtime.getSnapshot().projection.cursor).toEqual({ epoch: "epoch-1", seq: 2 });
+    expect(runtime.getSnapshot().projection.phase).toBe("active");
+    expect(runtime.getSnapshot().projection.turnActive).toBe(true);
+  });
+
   it("follows session state for model, thinking, and fast from the session index", async () => {
     const { shell, runtime } = await startedRuntime();
     shell.emitFrame({

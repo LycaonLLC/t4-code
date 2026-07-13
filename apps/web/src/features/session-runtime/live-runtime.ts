@@ -75,7 +75,6 @@ const TRANSCRIPT_FRAME_TYPES: ReadonlySet<string> = new Set([
   "snapshot",
   "entry",
   "event",
-  "session.delta",
   "gap",
 ]);
 
@@ -172,8 +171,9 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     args: Record<string, unknown>,
     withRevision: boolean,
     usePromptLease = true,
+    revisionOverride?: Revision,
   ): Promise<PromptOutcome> => {
-    const revisionValue = withRevision ? expectedRevision() : undefined;
+    const revisionValue = withRevision ? (revisionOverride ?? expectedRevision()) : undefined;
     if (withRevision && revisionValue === undefined) return { kind: "unknown", reason: UNKNOWN_REASON };
     try {
       const intentPayload = {
@@ -189,6 +189,27 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
       return result.accepted ? { kind: "accepted" } : { kind: "rejected", reason: REJECTED_REASON };
     } catch {
       return { kind: "unknown", reason: UNKNOWN_REASON };
+    }
+  };
+
+  /**
+   * Some valid hosts enqueue a revision-changing control response before the
+   * matching host-wide session.delta reaches this client (notably when another
+   * attached client is ahead of it in the broadcast loop). An authoritative
+   * session.list round-trip closes that ordering window without guessing a
+   * revision or weakening stale-write protection.
+   */
+  const reconcileAcceptedControl = async (sentRevision: Revision): Promise<boolean> => {
+    if (String(expectedRevision()) !== String(sentRevision)) return true;
+    try {
+      const refreshed = await controller.command(targetId, {
+        hostId: wireHostId,
+        command: "session.list",
+        args: {},
+      });
+      return refreshed.accepted && expectedRevision() !== undefined;
+    } catch {
+      return false;
     }
   };
 
@@ -244,7 +265,18 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     pendingControl = control;
     controlError = null;
     notify();
-    const outcome = await sendCommand(command, args, true, false);
+    const sentRevision = expectedRevision();
+    let outcome =
+      sentRevision === undefined
+        ? ({ kind: "unknown", reason: UNKNOWN_REASON } as const)
+        : await sendCommand(command, args, true, false, sentRevision);
+    if (
+      outcome.kind === "accepted" &&
+      sentRevision !== undefined &&
+      !(await reconcileAcceptedControl(sentRevision))
+    ) {
+      outcome = { kind: "unknown", reason: CONTROL_UNKNOWN };
+    }
     pendingControl = null;
     if (outcome.kind === "rejected") controlError = CONTROL_REJECTED[control];
     else if (outcome.kind === "unknown") controlError = CONTROL_UNKNOWN;
@@ -346,7 +378,10 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
       targetId,
       hostId: options.hostId,
       sessionId: options.sessionId,
-      types: ["snapshot", "entry", "event", "session.delta", "gap"],
+      // session.delta belongs to the host-wide session-index cursor domain,
+      // not this session's transcript cursor domain. The shared desktop
+      // projection already consumes it for ref/revision/control truth.
+      types: ["snapshot", "entry", "event", "gap"],
     },
     (event) => {
       if (isTranscriptFrame(event.frame)) applyFrame(event.frame);

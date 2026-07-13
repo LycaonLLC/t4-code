@@ -11,6 +11,11 @@ on:
       - "pnpm-lock.yaml"
       - ".github/workflows/deploy-site.yml"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published release tag whose immutable source must be deployed.
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -22,14 +27,29 @@ concurrency:
 
 jobs:
   deploy:
+    if: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     environment:
       name: production
       url: https://t4code.net
     steps:
-      - name: Check out source
+      - name: Check out trusted workflow source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Read trusted main release version
+        id: source
+        shell: bash
+        env:
+          MAIN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          printf 'version=%s\nmain_sha=%s\n' "$version" "$MAIN_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Install pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -42,19 +62,84 @@ jobs:
           node-version: 24.13.1
           cache: pnpm
 
-      - name: Wait for the complete public release
-        run: node scripts/wait-for-release-assets.mjs --timeout-ms 2400000 --interval-ms 15000
+      - name: Confirm the published release from the release workflow
+        id: published_release
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          RELEASE_VERSION: ${{ steps.source.outputs.version }}
+        run: node scripts/wait-for-release-assets.mjs --version "$RELEASE_VERSION" --timeout-ms 2400000 --interval-ms 15000
+
+      - name: Check whether an ordinary main push references an existing release
+        id: existing_release
+        if: ${{ github.event_name == 'push' }}
+        continue-on-error: true
+        env:
+          RELEASE_VERSION: ${{ steps.source.outputs.version }}
+        run: node scripts/wait-for-release-assets.mjs --version "$RELEASE_VERSION" --timeout-ms 15000 --interval-ms 3000
+
+      - name: Defer a release-version site update until publication
+        if: ${{ github.event_name == 'push' && steps.existing_release.outcome == 'failure' }}
+        run: echo "The referenced release is not public yet; the release workflow will deploy this site after publication."
+
+      - name: Resolve immutable deployment source
+        id: immutable_source
+        if: ${{ steps.published_release.outcome == 'success' || steps.existing_release.outcome == 'success' }}
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          MAIN_SHA: ${{ steps.source.outputs.main_sha }}
+          REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
+          TRUSTED_VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          set -euo pipefail
+          expected_tag="v${TRUSTED_VERSION}"
+          release_tag="$expected_tag"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$REQUESTED_RELEASE_TAG" != "$expected_tag" ]]; then
+              echo "release_tag must be the current release ${expected_tag}" >&2
+              exit 1
+            fi
+            release_tag="$REQUESTED_RELEASE_TAG"
+          fi
+          release_flags=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}" --jq '[.draft, .prerelease] | @tsv')
+          if [[ "$release_flags" != $'false\tfalse' ]]; then
+            echo "release_tag must name a published, non-prerelease GitHub release" >&2
+            exit 1
+          fi
+          git fetch --force origin "refs/tags/${release_tag}:refs/tags/${release_tag}"
+          source_sha=$(git rev-parse "${release_tag}^{commit}")
+          tag_version=$(git show "${source_sha}:package.json" | jq -er '.version')
+          if [[ "$tag_version" != "$TRUSTED_VERSION" ]]; then
+            echo "release tag package version ${tag_version} does not match trusted main ${TRUSTED_VERSION}" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$source_sha" "$MAIN_SHA"; then
+            echo "release tag source is not reachable from trusted main" >&2
+            exit 1
+          fi
+          printf 'release_tag=%s\nsource_sha=%s\n' "$release_tag" "$source_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Check out immutable deployment source
+        if: ${{ steps.published_release.outcome == 'success' || steps.existing_release.outcome == 'success' }}
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ steps.immutable_source.outputs.source_sha }}
+          persist-credentials: false
 
       - name: Install dependencies
+        if: ${{ steps.published_release.outcome == 'success' || steps.existing_release.outcome == 'success' }}
         run: pnpm install --frozen-lockfile
 
       - name: Authenticate to AWS with GitHub OIDC
+        if: ${{ steps.published_release.outcome == 'success' || steps.existing_release.outcome == 'success' }}
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: us-east-1
 
       - name: Build and deploy static site
+        if: ${{ steps.published_release.outcome == 'success' || steps.existing_release.outcome == 'success' }}
         env:
           T4_SITE_BUCKET: ${{ vars.T4_SITE_BUCKET }}
           T4_CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.T4_CLOUDFRONT_DISTRIBUTION_ID }}

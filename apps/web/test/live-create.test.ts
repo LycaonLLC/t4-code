@@ -19,9 +19,43 @@ function controller() {
 function sessionFrame(requestId: string, sessionId = "session-1", command = "session.create", extra: Record<string, unknown> = {}) { return { requestId, command, ok: true, result: { session: { hostId: address.hostId, sessionId, project: { projectId: address.projectId }, ...extra } } }; }
 
 describe("resolveLiveProject", () => {
-  const snapshot = { targetHosts: new Map([["target-1", "host-1"]]) } as never;
+  const snapshot = {
+    connections: new Map([["target-1", "connected"]]),
+    targetHosts: new Map([["target-1", "host-1"]]),
+  } as never;
   it.each([["%", null], ["host-1/project-1/extra", null], ["/project-1", null], ["host-1/", null], ["host-2/project-1", null], ["host-1/project-1", { targetId: "target-1", hostId: "host-1", projectId: "project-1" }]])("resolves %s", (id, expected) => expect(resolveLiveProject(snapshot, id)).toEqual(expected));
   it("rejects empty decoded ids", () => expect(resolveLiveProject(snapshot, "host-1/")).toEqual(null));
+  it("prefers a connected duplicate over the first disconnected binding", () => {
+    const duplicate = {
+      connections: new Map([
+        ["disconnected", "disconnected"],
+        ["connected", "connected"],
+      ]),
+      targetHosts: new Map([
+        ["disconnected", "host-1"],
+        ["connected", "host-1"],
+      ]),
+    } as never;
+    expect(resolveLiveProject(duplicate, "host-1/project-1")).toEqual({
+      targetId: "connected",
+      hostId: "host-1",
+      projectId: "project-1",
+    });
+  });
+  it("skips the first binding when its target was removed", () => {
+    const removedFirst = {
+      connections: new Map([["current", "connected"]]),
+      targetHosts: new Map([
+        ["removed", "host-1"],
+        ["current", "host-1"],
+      ]),
+    } as never;
+    expect(resolveLiveProject(removedFirst, "host-1/project-1")).toEqual({
+      targetId: "current",
+      hostId: "host-1",
+      projectId: "project-1",
+    });
+  });
 });
 
 describe("createLiveSession", () => {

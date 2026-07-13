@@ -60,6 +60,38 @@ describe("client projections", () => {
     expect(legacy.sessionIndexMetadata.get(String(HOST))).toEqual({ totalCount: 1, truncated: false });
   });
 
+  it("invalidates inventory completeness on welcome until the next sessions frame", () => {
+    const listed = ref(String(HOST), "cached");
+    let state = applyPublicFrame(createProjectionSnapshot(), {
+      v: V,
+      type: "sessions",
+      hostId: HOST,
+      cursor: { epoch: "e1", seq: 1 },
+      sessions: [listed],
+      totalCount: 1,
+      truncated: false,
+    } as unknown as ProjectionFrame);
+    expect(state.sessionIndexMetadata.has(String(HOST))).toBe(true);
+
+    state = applyPublicFrame(state, frame("welcome"));
+    expect(state.sessionIndex.has(sessionKey("cached"))).toBe(true);
+    expect(state.sessionIndexMetadata.has(String(HOST))).toBe(false);
+
+    state = applyPublicFrame(state, {
+      v: V,
+      type: "sessions",
+      hostId: HOST,
+      cursor: { epoch: "e1", seq: 2 },
+      sessions: [listed],
+      totalCount: 1,
+      truncated: false,
+    } as unknown as ProjectionFrame);
+    expect(state.sessionIndexMetadata.get(String(HOST))).toEqual({
+      totalCount: 1,
+      truncated: false,
+    });
+  });
+
   it("reconciles authoritative session lists per host without retaining stale subagent rows", () => {
     const hostB = "projection-host-b";
     let state = applyPublicFrame(createProjectionSnapshot(), {
@@ -78,7 +110,7 @@ describe("client projections", () => {
       sessions: [ref(String(HOST), "keep")],
       totalCount: 1,
       truncated: false,
-    } as ProjectionFrame;
+    } as unknown as ProjectionFrame;
     state = applyPublicFrame(state, replacement);
     expect(state.sessionIndex.has(sessionKey("stale"))).toBe(false);
     expect(state.sessions.has(sessionKey("stale"))).toBe(false);
@@ -95,15 +127,83 @@ describe("client projections", () => {
       sessions: [],
       totalCount: 0,
       truncated: false,
-    } as ProjectionFrame;
+    } as unknown as ProjectionFrame;
     state = applyPublicFrame(state, empty);
     expect([...state.sessionIndex.values()].some((session) => session.hostId === HOST)).toBe(false);
     expect(state.sessionIndex.has(`${hostB}\u0000other-host`)).toBe(true);
     expect(state.sessionIndexMetadata.get(String(HOST))).toEqual({ totalCount: 0, truncated: false });
   });
 
-  it("applies session deltas to cold index and advances warm transcript cursors", () => {
-    let state = applyPublicFrame(createProjectionSnapshot(), frame("snapshot"));
+  it("retains absent indexed and warm sessions when the inventory is truncated", () => {
+    let state = applyPublicFrame(createProjectionSnapshot(), {
+      v: V,
+      type: "sessions",
+      cursor: { epoch: "e1", seq: 1 },
+      sessions: [ref(String(HOST), "present"), ref(String(HOST), "not-in-page")],
+    });
+    state = applyPublicFrame(state, frame("snapshot", "not-in-page"));
+    state = applyPublicFrame(
+      state,
+      delta(String(HOST), "not-in-page", 4, ref(String(HOST), "not-in-page")),
+    );
+    const truncated = applyPublicFrame(state, {
+      v: V,
+      type: "sessions",
+      hostId: HOST,
+      cursor: { epoch: "e1", seq: 2 },
+      sessions: [ref(String(HOST), "present")],
+      totalCount: 2,
+      truncated: true,
+    } as unknown as ProjectionFrame);
+    expect(truncated.sessionIndex.has(sessionKey("not-in-page"))).toBe(true);
+    expect(truncated.sessions.has(sessionKey("not-in-page"))).toBe(true);
+    expect(truncated.sessionDeltaCursors.get(sessionKey("not-in-page"))?.seq).toBe(4);
+    expect(truncated.lru).toContain(sessionKey("not-in-page"));
+    expect(truncated.sessionIndexMetadata.get(String(HOST))).toEqual({
+      totalCount: 2,
+      truncated: true,
+    });
+  });
+
+  it("does not inflate an authoritative truncated total for omitted-session deltas", () => {
+    let state = applyPublicFrame(createProjectionSnapshot(), {
+      v: V,
+      type: "sessions",
+      hostId: HOST,
+      cursor: { epoch: "e1", seq: 1 },
+      sessions: [ref(String(HOST), "visible")],
+      totalCount: 5000,
+      truncated: true,
+    } as unknown as ProjectionFrame);
+
+    state = applyPublicFrame(
+      state,
+      delta(String(HOST), "omitted", 2, ref(String(HOST), "omitted")),
+      { maxIndexedSessions: 1 },
+    );
+    state = applyPublicFrame(
+      state,
+      delta(String(HOST), "omitted", 3, ref(String(HOST), "omitted")),
+      { maxIndexedSessions: 1 },
+    );
+    state = applyPublicFrame(
+      state,
+      delta(String(HOST), "absent-remove", 4, undefined, "absent-remove"),
+      { maxIndexedSessions: 1 },
+    );
+
+    expect(state.sessionIndex.size).toBe(1);
+    expect(state.sessionIndexMetadata.get(String(HOST))).toEqual({
+      totalCount: 5000,
+      truncated: true,
+    });
+  });
+
+  it("orders index deltas independently without advancing warm transcript cursors", () => {
+    let state = applyPublicFrame(createProjectionSnapshot(), {
+      ...frame("snapshot"),
+      cursor: { epoch: "e1", seq: 2 },
+    });
     const listed = ref(String(HOST), "session-a");
     state = applyPublicFrame(state, { v: V, type: "sessions", cursor: { epoch: "e1", seq: 1 }, sessions: [listed] });
     const changed = ref(String(HOST), "session-a", {
@@ -113,12 +213,13 @@ describe("client projections", () => {
       liveState: { phase: "running", queue: 2 },
       contextUsage: { used: 20, limit: 100 },
     });
-    const next = applyPublicFrame(state, delta(String(HOST), "session-a", 2, changed));
+    const next = applyPublicFrame(state, delta(String(HOST), "session-a", 9, changed));
     expect(next.sessionIndex.get(sessionKey("session-a"))).toMatchObject({ title: "Changed", model: "model-b", contextUsage: { used: 20 }, liveState: { phase: "running", queue: 2 } });
     expect(next.sessions.get(sessionKey("session-a"))?.ref).toBe(next.sessionIndex.get(sessionKey("session-a")));
     expect(next.sessions.get(sessionKey("session-a"))?.cursor?.seq).toBe(2);
     expect(next.sessions.get(sessionKey("session-a"))?.revision).toBe("r2");
     expect(next.sessions.get(sessionKey("session-a"))?.freshness).toBe("fresh");
+    expect(next.sessionDeltaCursors.get(sessionKey("session-a"))?.seq).toBe(9);
     const streamed = applyPublicFrame(next, {
       ...frame("event"),
       cursor: { epoch: "e1", seq: 3 },
@@ -126,7 +227,8 @@ describe("client projections", () => {
     expect(streamed.sessions.get(sessionKey("session-a"))?.events).toHaveLength(1);
     expect(streamed.sessions.get(sessionKey("session-a"))?.cursor?.seq).toBe(3);
     expect(streamed.sessions.get(sessionKey("session-a"))?.freshness).toBe("fresh");
-    expect(applyPublicFrame(streamed, delta(String(HOST), "session-a", 2, changed))).toBe(streamed);
+    expect(applyPublicFrame(streamed, delta(String(HOST), "session-a", 9, changed))).toBe(streamed);
+    expect(applyPublicFrame(streamed, delta(String(HOST), "session-a", 8, changed))).toBe(streamed);
   });
 
   it("retires transient message frames through an authoritative settlement id", () => {
@@ -169,7 +271,7 @@ describe("client projections", () => {
     expect(settled.events).toHaveLength(0);
     expect(settled.entries.map((entry) => entry.id)).toEqual(["durable-1"]);
   });
-  it("uses the emitting owner cursor for remove-other deltas and keeps warm transcripts aligned", () => {
+  it("uses the emitting owner cursor for remove-other deltas without touching transcript state", () => {
     let state = applyPublicFrame(createProjectionSnapshot(), frame("snapshot"));
     state = applyPublicFrame(state, { v: V, type: "sessions", cursor: { epoch: "e1", seq: 1 }, sessions: [ref(String(HOST), "session-a"), ref(String(HOST), "session-b")] });
     const before = state.sessions.get(sessionKey("session-a"))!;
@@ -178,10 +280,10 @@ describe("client projections", () => {
     expect(state.sessionIndex.has(sessionKey("session-b"))).toBe(false);
     expect(afterRemove.entries).toBe(before.entries);
     expect(afterRemove.events).toBe(before.events);
-    expect(afterRemove.cursor?.seq).toBe(2);
+    expect(afterRemove.cursor?.seq).toBe(1);
     expect(afterRemove.freshness).toBe("fresh");
     expect(state.sessionDeltaCursors.get(sessionKey("session-a"))?.seq).toBe(2);
-    state = applyPublicFrame(state, { ...frame("event"), cursor: { epoch: "e1", seq: 3 } });
+    state = applyPublicFrame(state, { ...frame("event"), cursor: { epoch: "e1", seq: 2 } });
     expect(state.sessions.get(sessionKey("session-a"))?.events).toHaveLength(1);
     expect(state.sessions.get(sessionKey("session-a"))?.freshness).toBe("fresh");
   });
@@ -193,19 +295,21 @@ describe("client projections", () => {
     expect(applyPublicFrame(state, delta(String(HOST), "session-a", 1, undefined, "session-b"))).toBe(state);
     expect(state.sessionIndex.has(sessionKey("session-b"))).toBe(true);
   });
-  it("rejects stale upserts against a warm cursor when the delta cursor cache is missing", () => {
+  it("accepts the first index upsert independently of a newer warm transcript cursor", () => {
     let state = applyPublicFrame(createProjectionSnapshot(), { v: V, type: "sessions", cursor: { epoch: "e1", seq: 1 }, sessions: [ref(String(HOST), "session-a")] });
     state = applyPublicFrame(state, { ...frame("snapshot"), cursor: { epoch: "e1", seq: 10 } });
     const warm = state.sessions.get(sessionKey("session-a"))!;
-    const indexed = state.sessionIndex.get(sessionKey("session-a"))!;
-    const next = applyPublicFrame(state, delta(String(HOST), "session-a", 5, ref(String(HOST), "session-a", { title: "Stale" })));
-    expect(next).toBe(state);
-    expect(next.sessions.get(sessionKey("session-a"))?.ref).toBe(warm.ref);
-    expect(next.sessionIndex.get(sessionKey("session-a"))).toBe(indexed);
+    const next = applyPublicFrame(state, delta(String(HOST), "session-a", 5, ref(String(HOST), "session-a", { title: "Indexed" })));
+    expect(next).not.toBe(state);
+    expect(next.sessionIndex.get(sessionKey("session-a"))?.title).toBe("Indexed");
+    expect(next.sessions.get(sessionKey("session-a"))?.ref?.title).toBe("Indexed");
+    expect(next.sessions.get(sessionKey("session-a"))?.cursor).toBe(warm.cursor);
+    expect(next.sessions.get(sessionKey("session-a"))?.freshness).toBe("fresh");
+    expect(next.sessionDeltaCursors.get(sessionKey("session-a"))?.seq).toBe(5);
   });
 
 
-  it("does not make warm owners fresh on skipped or epoch-changing direct deltas", () => {
+  it("never changes warm transcript freshness on skipped or epoch-changing index deltas", () => {
     let state = applyPublicFrame(createProjectionSnapshot(), frame("snapshot"));
     const gap: ProjectionFrame = { v: V, type: "gap", hostId: HOST, sessionId: sessionId("session-a"), from: { epoch: "e1", seq: 2 }, to: { epoch: "e1", seq: 4 }, reason: "test" };
     state = applyPublicFrame(state, gap);
@@ -217,7 +321,7 @@ describe("client projections", () => {
     expect(afterSkipped.gap).toBe(before.gap);
     let epochChanged = applyPublicFrame(createProjectionSnapshot(), frame("snapshot"));
     epochChanged = applyPublicFrame(epochChanged, { ...delta(String(HOST), "session-a", 1, ref(String(HOST), "session-a", { title: "New epoch" })), cursor: { epoch: "e2", seq: 1 } });
-    expect(epochChanged.sessions.get(sessionKey("session-a"))?.freshness).toBe("catching-up");
+    expect(epochChanged.sessions.get(sessionKey("session-a"))?.freshness).toBe("fresh");
     expect(epochChanged.sessions.get(sessionKey("session-a"))?.cursor?.epoch).toBe("e1");
     expect(epochChanged.sessions.get(sessionKey("session-a"))?.cursor?.seq).toBe(1);
   });
@@ -259,6 +363,91 @@ describe("client projections", () => {
     expect(restored?.sessionIndexMetadata.get(String(HOST))).toEqual({ totalCount: 5000, truncated: true });
     expect(restored?.sessionDeltaCursors.get(sessionKey("cached"))?.seq).toBe(2);
     expect(restored?.sessionIndex.get(sessionKey("cached"))?.title).toBe("Cached update");
+  });
+
+  it("restores the current warm session and revision without reviving a stale confirmation", () => {
+    const store = new ProjectionStore();
+    store.applyPublicFrame({
+      v: V,
+      type: "sessions",
+      cursor: { epoch: "e1", seq: 1 },
+      sessions: [
+        ref(String(HOST), "current", { updatedAt: "2026-07-11T00:00:00Z" }),
+        ref(String(HOST), "newer", { updatedAt: "2026-07-12T00:00:00Z" }),
+      ],
+    });
+    store.applyPublicFrame({
+      ...frame("snapshot", "current"),
+      revision: revision("current-warm-revision"),
+    });
+    store.applyPublicFrame({
+      v: V,
+      type: "confirmation",
+      confirmationId: "stale-after-restart" as never,
+      commandId: "stale-command" as never,
+      hostId: HOST,
+      sessionId: sessionId("current"),
+      commandHash: "stale-hash",
+      revision: revision("current-warm-revision"),
+      expiresAt: "2999-01-01T00:00:00.000Z",
+      summary: "must not survive restart",
+    });
+    store.activateSession(String(HOST), "current");
+
+    const encoded = encodeProjectionCache(store.snapshot);
+    const restored = decodeProjectionCacheValue(encoded);
+
+    expect(encoded).not.toContain("stale-after-restart");
+    expect(restored?.activeSessionKey).toBe(sessionKey("current"));
+    expect(restored?.sessions.get(sessionKey("current"))?.revision).toBe("current-warm-revision");
+    expect(restored?.sessions.get(sessionKey("current"))?.confirmations.size).toBe(0);
+  });
+
+  it("drops a stale cached selection, chooses the latest authoritative session, and clears an empty host", () => {
+    const store = new ProjectionStore();
+    store.applyPublicFrame({
+      v: V,
+      type: "sessions",
+      cursor: { epoch: "e1", seq: 1 },
+      sessions: [
+        ref(String(HOST), "a-old", { updatedAt: "2026-07-10T00:00:00Z" }),
+        ref(String(HOST), "m-stale", { updatedAt: "2026-07-11T00:00:00Z" }),
+        ref(String(HOST), "z-latest", { updatedAt: "2026-07-12T00:00:00Z" }),
+      ],
+    });
+    store.applyPublicFrame(frame("snapshot", "m-stale"));
+    store.activateSession(String(HOST), "m-stale");
+    const cached = decodeProjectionCacheValue(encodeProjectionCache(store.snapshot))!;
+    expect(cached.activeSessionKey).toBe(sessionKey("m-stale"));
+
+    const reconciled = applyPublicFrame(cached, {
+      v: V,
+      type: "sessions",
+      hostId: HOST,
+      cursor: { epoch: "e2", seq: 0 },
+      sessions: [
+        ref(String(HOST), "a-old", { updatedAt: "2026-07-10T00:00:00Z" }),
+        ref(String(HOST), "z-latest", { updatedAt: "2026-07-12T00:00:00Z" }),
+      ],
+      totalCount: 2,
+      truncated: false,
+    } as ProjectionFrame);
+    expect(reconciled.sessionIndex.has(sessionKey("m-stale"))).toBe(false);
+    expect(reconciled.sessions.has(sessionKey("m-stale"))).toBe(false);
+    expect(reconciled.activeSessionKey).toBe(sessionKey("z-latest"));
+
+    const empty = applyPublicFrame(reconciled, {
+      v: V,
+      type: "sessions",
+      hostId: HOST,
+      cursor: { epoch: "e2", seq: 1 },
+      sessions: [],
+      totalCount: 0,
+      truncated: false,
+    } as ProjectionFrame);
+    expect([...empty.sessionIndex.values()].some((item) => item.hostId === HOST)).toBe(false);
+    expect(empty.sessions.size).toBe(0);
+    expect(empty.activeSessionKey).toBeUndefined();
   });
 
   it("deduplicates cursors and durable IDs while preserving untouched identity", () => {
@@ -423,6 +612,23 @@ describe("client projections", () => {
     expect(decodeProjectionCacheValue("not-json")).toBeUndefined();
     expect(decodeProjectionCacheValue(JSON.stringify({ kind: "t4-code-projection", version: 0, data: {} }))).toBeUndefined();
     expect(decodeProjectionCacheValue("x".repeat(MAX_PROJECTION_CACHE_BYTES + 1))).toBeUndefined();
+  });
+
+  it("preserves an existing truncated-history marker across cache re-encoding", () => {
+    const base = applyPublicFrame(createProjectionSnapshot(), frame("snapshot"));
+    const key = sessionKey("session-a");
+    const warm = base.sessions.get(key)!;
+    const truncated = Object.freeze({
+      ...base,
+      sessions: new Map([
+        [key, Object.freeze({ ...warm, historyTruncated: true })],
+      ]),
+    });
+
+    const restored = decodeProjectionCacheValue(encodeProjectionCache(truncated));
+    expect(restored?.sessions.get(key)?.historyTruncated).toBe(true);
+    const restoredAgain = decodeProjectionCacheValue(encodeProjectionCache(restored!));
+    expect(restoredAgain?.sessions.get(key)?.historyTruncated).toBe(true);
   });
 
   it("serializes cache saves and disposes listeners", async () => {

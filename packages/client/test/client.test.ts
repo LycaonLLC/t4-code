@@ -537,7 +537,7 @@ describe("OmpClient protocol state machine", () => {
     expect(client.resources()).toEqual({ timers: 0, socket: false, socketHandlers: 0, pending: 0, cursorSaves: 0, listeners: 0 });
   });
 
-  it("advances the durable cursor across session metadata deltas", async () => {
+  it("keeps session-index cursors independent from transcript contiguity", async () => {
     const transport = new FakeTransport({ welcome: welcome() });
     const client = await readyClient(transport);
     const frames: PublicServerFrame[] = [];
@@ -546,10 +546,19 @@ describe("OmpClient protocol state machine", () => {
     client.onError((error) => errors.push(error.code));
     transport.emit(snapshot());
     transport.emit(sessionDelta(1));
-    transport.emit(event(2));
-    expect(frames.map((frame) => frame.type)).toEqual(["snapshot", "session.delta", "event"]);
+    // A host-wide index subscriber can miss transcript traffic and still
+    // receive a later metadata delta. Neither delta advances the attached
+    // transcript cursor, so its next seq=1 event remains contiguous.
+    transport.emit(sessionDelta(9));
+    transport.emit(event(1));
+    expect(frames.map((frame) => frame.type)).toEqual([
+      "snapshot",
+      "session.delta",
+      "session.delta",
+      "event",
+    ]);
     expect(errors).not.toContain("desync");
-    expect(client.snapshot().cursor?.seq).toBe(2);
+    expect(client.snapshot().cursor?.seq).toBe(1);
     await client.close();
   });
 

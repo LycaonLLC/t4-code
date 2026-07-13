@@ -80,14 +80,17 @@ export function encodeProjectionCache(snapshot: ProjectionSnapshot, savedAt = Da
         sessionId: value.sessionId,
         ...(value.ref === undefined ? {} : { ref: safeJson(value.ref) as SessionRef }),
         entries: value.entries.slice(-10_000).map((entry) => safeJson(entry) as DurableEntry),
-        historyTruncated: value.entries.length > 10_000,
+        historyTruncated: value.historyTruncated === true || value.entries.length > 10_000,
         events: value.events.slice(-512).map((event) => safeJson(event)),
         agents: arrayFromMap(value.agents),
         terminals: arrayFromMap(value.terminals),
         files: arrayFromMap(value.files),
         reviews: arrayFromMap(value.reviews),
         audit: value.audit.slice(-256).map((item) => safeJson(item) as AuditFrame),
-        confirmations: arrayFromMap(value.confirmations),
+        // Confirmation challenges are bound to one live connection on the
+        // appserver. Persisting them makes a restarted client offer an approval
+        // that the new connection can never consume.
+        confirmations: [],
         results: arrayFromMap(value.results),
         ...(value.revision === undefined ? {} : { revision: value.revision }),
         ...(value.cursor === undefined ? {} : { cursor: value.cursor }),
@@ -139,7 +142,6 @@ function resultValue(value: Record<string, unknown>): ResultProjection { if (typ
 function fileValue(value: Record<string, unknown>): FileFrame { if (typeof value.path !== "string") throw new Error("invalid file cache"); return identity(value) as unknown as FileFrame; }
 function reviewValue(value: Record<string, unknown>): ReviewFrame { if (typeof value.reviewId !== "string" || typeof value.status !== "string" || !Array.isArray(value.findings)) throw new Error("invalid review cache"); return identity(value) as unknown as ReviewFrame; }
 function agentValue(value: Record<string, unknown>): AgentFrame { if (typeof value.agentId !== "string" || typeof value.state !== "string") throw new Error("invalid agent cache"); return identity(value) as unknown as AgentFrame; }
-function confirmationValue(value: Record<string, unknown>): ConfirmationChallenge { if (typeof value.confirmationId !== "string" || typeof value.commandId !== "string") throw new Error("invalid confirmation cache"); return identity(value) as unknown as ConfirmationChallenge; }
 function restoredSessionRef(value: unknown): SessionRef | undefined {
   const safe = safeJson(value);
   if (!isRecord(safe) || typeof safe.hostId !== "string" || typeof safe.sessionId !== "string" || typeof safe.revision !== "string" || typeof safe.title !== "string" || typeof safe.status !== "string" || typeof safe.updatedAt !== "string" || !isRecord(safe.project) || typeof safe.project.projectId !== "string") return undefined;
@@ -163,9 +165,12 @@ function restoreSession(value: unknown): SessionProjection | undefined {
     files: asMap<FileFrame>(value.files, fileValue),
     reviews: asMap<ReviewFrame>(value.reviews, reviewValue),
     audit: Object.freeze(audit),
-    confirmations: asMap<ConfirmationChallenge>(value.confirmations, confirmationValue),
+    // Never revive a connection-bound challenge, including from an older cache
+    // written before challenges were excluded from persistence.
+    confirmations: new ImmutableMap<string, ConfirmationChallenge>(),
     results: asMap<ResultProjection>(value.results, resultValue),
     entryIds: new ImmutableSet(entries.map((entry) => String(entry.id))),
+    ...(typeof value.revision === "string" && value.revision.length > 0 && value.revision.length <= 256 ? { revision: value.revision } : {}),
     ...(isRecord(value.cursor) && typeof value.cursor.epoch === "string" && typeof value.cursor.seq === "number" ? { cursor: Object.freeze({ epoch: value.cursor.epoch, seq: value.cursor.seq }) } : {}),
     ...(typeof value.epoch === "string" ? { epoch: value.epoch } : {}),
     freshness: value.freshness === "catching-up" ? "catching-up" : "cached",
@@ -210,7 +215,15 @@ export function decodeProjectionCache(serialized: string | Uint8Array | Projecti
       sessionDeltaCursors.set(item[0], Object.freeze({ epoch: item[1].epoch, seq: item[1].seq }));
     }
   }
-  const lru = Array.isArray(data.lru) ? data.lru.filter((item): item is string => typeof item === "string").slice(0, MAX_PROJECTION_CACHE_SESSIONS) : [];
+  const lru = Array.isArray(data.lru)
+    ? data.lru
+      .filter((item): item is string => typeof item === "string" && sessions.has(item))
+      .slice(0, MAX_PROJECTION_CACHE_SESSIONS)
+    : [];
+  const activeSessionKey =
+    typeof data.activeSessionKey === "string" && sessions.has(data.activeSessionKey) && lru.includes(data.activeSessionKey)
+      ? data.activeSessionKey
+      : undefined;
   return Object.freeze({
     version: 1 as const,
     sessions: new ImmutableMap(sessions),
@@ -218,6 +231,7 @@ export function decodeProjectionCache(serialized: string | Uint8Array | Projecti
     sessionIndexMetadata: new ImmutableMap(sessionIndexMetadata),
     sessionDeltaCursors: new ImmutableMap(sessionDeltaCursors),
     lru: Object.freeze(lru),
+    ...(activeSessionKey === undefined ? {} : { activeSessionKey }),
     ...(isRecord(data.cursor) && typeof data.cursor.epoch === "string" && typeof data.cursor.seq === "number" ? { cursor: Object.freeze({ epoch: data.cursor.epoch, seq: data.cursor.seq }) } : {}),
     ...(typeof data.epoch === "string" ? { epoch: data.epoch } : {}),
     freshness: "cached" as const,

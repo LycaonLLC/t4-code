@@ -12,6 +12,7 @@ import type {
   WorkspaceProject,
   WorkspaceSession,
 } from "../lib/workspace-data.ts";
+import { resolveCurrentHostTargetId } from "../lib/host-target.ts";
 
 /** Composite route id for one live session; unambiguous and URL-safe. */
 export function sessionViewId(hostId: string, sessionId: string): string {
@@ -33,10 +34,8 @@ export function resolveLiveSession(
   if (separator <= 0) return null;
   const hostId = decodeURIComponent(viewId.slice(0, separator));
   const sessionId = decodeURIComponent(viewId.slice(separator + 1));
-  for (const [targetId, boundHost] of snapshot.targetHosts) {
-    if (boundHost === hostId) return { targetId, hostId, sessionId };
-  }
-  return null;
+  const targetId = resolveCurrentHostTargetId(snapshot, hostId);
+  return targetId === null ? null : { targetId, hostId, sessionId };
 }
 
 /** Composite route id for one live project. */
@@ -59,9 +58,8 @@ export function resolveLiveProject(
     const hostId = decodeURIComponent(viewId.slice(0, separator));
     const projectId = decodeURIComponent(viewId.slice(separator + 1));
     if (hostId === "" || projectId === "") return null;
-    for (const [targetId, boundHost] of snapshot.targetHosts) {
-      if (boundHost === hostId) return { targetId, hostId, projectId };
-    }
+    const targetId = resolveCurrentHostTargetId(snapshot, hostId);
+    if (targetId !== null) return { targetId, hostId, projectId };
   } catch {
     return null;
   }
@@ -88,12 +86,10 @@ function hostConnection(
   snapshot: DesktopRuntimeSnapshot,
   hostId: string,
 ): { readonly targetId: string | null; readonly state: string | null } {
-  for (const [targetId, boundHost] of snapshot.targetHosts) {
-    if (boundHost === hostId) {
-      return { targetId, state: snapshot.connections.get(targetId) ?? null };
-    }
-  }
-  return { targetId: null, state: null };
+  const targetId = resolveCurrentHostTargetId(snapshot, hostId);
+  return targetId === null
+    ? { targetId: null, state: null }
+    : { targetId, state: snapshot.connections.get(targetId) ?? null };
 }
 
 const derived = new WeakMap<DesktopRuntimeSnapshot, WorkspaceData>();
@@ -163,6 +159,11 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
         ? "cached"
         : "live";
     const pendingApprovals = warm?.confirmations.size ?? (ref.pendingApproval === true ? 1 : 0);
+    const rawArchivedAt = (ref as unknown as { readonly archivedAt?: unknown }).archivedAt;
+    const archivedAt =
+      typeof rawArchivedAt === "string" && Number.isFinite(Date.parse(rawArchivedAt))
+        ? rawArchivedAt
+        : null;
     let status: SessionStatus | null = null;
     if (connection.state === "connecting") status = "connecting";
     else if (pendingApprovals > 0) status = "pendingApproval";
@@ -181,6 +182,7 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
       createdAt: ref.updatedAt,
       updatedAt: ref.updatedAt,
       lastActivity: "",
+      ...(archivedAt === null ? {} : { archivedAt }),
     });
   }
 

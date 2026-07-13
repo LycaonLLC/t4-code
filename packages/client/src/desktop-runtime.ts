@@ -29,7 +29,6 @@ import {
   asRecord,
   frameId,
   freezeClone,
-  hostMetadata,
   mapValue,
   redactedMessage,
   targetCopy,
@@ -45,12 +44,11 @@ import {
   type DesktopRuntimeSnapshotListener,
   type DesktopShellPort,
 } from "./desktop-runtime-contracts.ts";
-import { boundedText, commandFailure, leasePayload, type DesktopControllerLeaseEntry } from "./desktop-runtime-policy.ts";
+import { DesktopRuntimeHostState } from "./desktop-runtime-hosts.ts";
+import { boundedText, commandFailure, DEFAULT_MAX_RUNTIME_ERRORS, leasePayload, type DesktopControllerLeaseEntry } from "./desktop-runtime-policy.ts";
 import { bootstrapDesktopHost } from "./desktop-runtime-bootstrap.ts";
 import { PromptLeaseStore } from "./prompt-lease.ts";
-export {
-  DesktopRuntimeError,
-} from "./desktop-runtime-contracts.ts";
+export { DesktopRuntimeError } from "./desktop-runtime-contracts.ts";
 export type {
   DesktopControllerLease,
   DesktopControllerLeaseAcquireResult,
@@ -68,7 +66,6 @@ export type {
   DesktopShellPort,
 } from "./desktop-runtime-contracts.ts";
 const noop = (): void => undefined;
-const DEFAULT_MAX_ERRORS = 32;
 export class DesktopRuntimeController {
   private readonly shell: DesktopShellPort;
   private readonly projection: ProjectionStore;
@@ -84,6 +81,7 @@ export class DesktopRuntimeController {
   private readonly controllerLeases = new Map<string, DesktopControllerLeaseEntry>();
   private readonly promptLeases: PromptLeaseStore;
   private readonly connectionGenerations = new Map<string, number>();
+  private readonly hostState = new DesktopRuntimeHostState();
   private readonly controllerLeaseFallbackTtlMs = 20_000;
   constructor(options: DesktopRuntimeOptions) {
     this.shell = options.shell;
@@ -91,7 +89,7 @@ export class DesktopRuntimeController {
     this.ownsProjection = options.projection === undefined;
     this.clock = options.clock ?? { now: () => Date.now() };
     this.promptLeases = new PromptLeaseStore({ clock: this.clock, issue: (request) => this.shell.command(request), invalidateTarget: async (targetId) => { try { await this.disconnect(targetId); } catch { /* uncertain acquire cleanup is best effort */ } } });
-    this.maxRuntimeErrors = Math.max(1, Math.min(options.maxRuntimeErrors ?? DEFAULT_MAX_ERRORS, 128));
+    this.maxRuntimeErrors = Math.max(1, Math.min(options.maxRuntimeErrors ?? DEFAULT_MAX_RUNTIME_ERRORS, 128));
     this.current = Object.freeze({
       version: 1 as const,
       platform: this.shell.platform,
@@ -171,12 +169,7 @@ export class DesktopRuntimeController {
   async removeTarget(targetId: string): Promise<TargetRemoveResult> {
     const result = await this.shell.removeTarget(freezeClone({ targetId }));
     if (result.removed) {
-      const targets = new Map(this.current.targets);
-      const connections = new Map(this.current.connections);
-      targets.delete(targetId); connections.delete(targetId);
-      this.invalidateTargetLeases(targetId);
-      this.connectionGenerations.delete(targetId);
-      this.replace({ targets: mapValue(targets), connections: mapValue(connections) });
+      this.applyTargets([...this.current.targets.values()].filter((target) => target.targetId !== targetId));
     }
     return freezeClone(result);
   }
@@ -551,17 +544,18 @@ export class DesktopRuntimeController {
     }
   }
   private handleWelcome(targetId: string, frame: WelcomeFrame): boolean {
-    const hostIdValue = String(frame.hostId);
-    const previous = this.current.targetHosts.get(targetId);
-    if (previous !== undefined && previous !== hostIdValue) {
+    const reconciled = this.hostState.acceptWelcome(
+      targetId,
+      frame,
+      this.current.targetHosts,
+      this.current.hosts,
+    );
+    if (!reconciled.accepted) {
       this.recordError({ targetId, code: "protocol", message: "target host binding changed" });
       return false;
     }
-    const previousHost = previous === undefined ? undefined : this.current.hosts.get(previous);
-    if (previousHost !== undefined && previousHost.epoch !== frame.epoch) this.invalidateTargetLeases(targetId);
-    const targetHosts = new Map(this.current.targetHosts).set(targetId, hostIdValue);
-    const hosts = new Map(this.current.hosts).set(hostIdValue, hostMetadata(targetId, frame));
-    this.replace({ targetHosts: mapValue(targetHosts), hosts: mapValue(hosts) });
+    if (reconciled.epochChanged) this.invalidateTargetLeases(targetId);
+    this.replace({ targetHosts: reconciled.targetHosts, hosts: reconciled.hosts });
     this.applyProjection(targetId, frame);
     void this.bootstrapHost(targetId, frame);
     return true;
@@ -595,14 +589,21 @@ export class DesktopRuntimeController {
     }
   }
   private applyTargets(targets: readonly DesktopTarget[]): void {
-    const nextTargets = new Map<string, DesktopTarget>();
-    const nextConnections = new Map<string, DesktopTarget["state"]>();
-    for (const target of targets) {
-      const copy = targetCopy(target);
-      nextTargets.set(copy.targetId, copy);
-      nextConnections.set(copy.targetId, copy.state);
+    const reconciled = this.hostState.reconcileTargets(
+      this.current,
+      targets,
+      this.connectionGenerations.keys(),
+    );
+    for (const targetId of reconciled.removedTargetIds) {
+      this.invalidateTargetLeases(targetId);
+      this.connectionGenerations.delete(targetId);
     }
-    this.replace({ targets: mapValue(nextTargets), connections: mapValue(nextConnections) });
+    this.replace({
+      targets: reconciled.targets,
+      connections: reconciled.connections,
+      targetHosts: reconciled.targetHosts,
+      hosts: reconciled.hosts,
+    });
   }
   private upsertTarget(target: DesktopTarget): void {
     const targets = new Map(this.current.targets).set(target.targetId, targetCopy(target));
@@ -646,5 +647,4 @@ export class DesktopRuntimeController {
     for (const listener of [...this.listeners]) { try { listener(this.current); } catch { /* subscriber isolation */ } }
   }
 }
-
 export function createDesktopRuntimeController(options: DesktopRuntimeOptions): DesktopRuntimeController { return new DesktopRuntimeController(options); }

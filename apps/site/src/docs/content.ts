@@ -3,9 +3,11 @@
 // derive from this one structure.
 
 import {
+  APP_WIRE_VERSION,
   OMP_URL,
-  OMP_RUNTIME_FIX_COMMIT,
-  OMP_RUNTIME_FIX_URL,
+  OMP_RUNTIME_COMMIT,
+  OMP_RUNTIME_TAG,
+  OMP_RUNTIME_URL,
   OMP_RUNTIME_VERSION,
   RELEASE_ASSETS,
   RELEASE_TAG,
@@ -98,11 +100,11 @@ const install: DocTopic = {
     },
     {
       kind: "p",
-      text: `T4 Code v${RELEASE_VERSION} was verified with OMP ${OMP_RUNTIME_VERSION} built from [\`${OMP_RUNTIME_FIX_COMMIT.slice(0, 8)}\`](${OMP_RUNTIME_FIX_URL}). That build bounds snapshots and replay payloads for large, growing sessions. T4 Code vendors app-wire 0.5.1.`,
+      text: `T4 Code v${RELEASE_VERSION} was verified with OMP ${OMP_RUNTIME_VERSION} integration tag [\`${OMP_RUNTIME_TAG}\`](${OMP_RUNTIME_URL}), commit \`${OMP_RUNTIME_COMMIT}\`. The build bounds snapshots and replay payloads for growing sessions. It also publishes host-wide session updates and keeps rename, archive, restore, and permanent delete under OMP authority. T4 Code vendors \`@oh-my-pi/app-wire\` ${APP_WIRE_VERSION}.`,
     },
     {
       kind: "note",
-      text: `The stock upstream OMP v${OMP_RUNTIME_VERSION} tag does not contain this appserver fix. It remains protocol-compatible, but a very large active session can disconnect while attaching.`,
+      text: `Official upstream OMP v${OMP_RUNTIME_VERSION} does not ship the \`appserver\` command, so it cannot host T4 Code. Use the public integration tag above. It builds from that repository like any other OMP checkout; T4 Code has no dependency on private home-directory files, an auth broker, or a custom Codex CLI fork.`,
     },
   ],
 };
@@ -152,16 +154,34 @@ const firstRun: DocTopic = {
 const localSessions: DocTopic = {
   id: "local-sessions",
   title: "Local sessions",
-  lede: "Open projects, start sessions, and switch between them without losing your place.",
+  lede: "Open working folders, start sessions, and switch between them without losing your place.",
   blocks: [
     { kind: "h2", id: "local-sessions-create", text: "Start a session" },
     {
       kind: "p",
-      text: "Pick a project and start a session, with an optional title. The session runs on the OMP host; T4 Code streams everything it does into the transcript.",
+      text: "Pick a working folder and start a session, with an optional title. The session runs on the OMP host; T4 Code streams everything it does into the transcript.",
     },
     {
       kind: "p",
       text: "New session references retain the project name OMP reports. The rail does not replace that name with an opaque project ID while the new session is attaching.",
+    },
+    { kind: "h2", id: "local-sessions-folders", text: "What a working folder means" },
+    {
+      kind: "p",
+      text: "A heading in the left rail is the working directory reported by the sessions beneath it. It is not a separate T4 Code project record. A folder group disappears when it has no Current or Archived sessions to show.",
+    },
+    {
+      kind: "note",
+      text: "This release does not independently alias, pin, reorder, or hide working-folder groups. Those controls need a server-owned workspace registry so desktop and phone agree; a browser-only preference would drift between clients.",
+    },
+    { kind: "h2", id: "local-sessions-lifecycle", text: "Rename, archive, restore, or delete" },
+    {
+      kind: "p",
+      text: "The rail has Current and Archived views. Rename changes a session title. Archive is reversible and keeps the transcript and artifacts. Restore returns the session to Current.",
+    },
+    {
+      kind: "p",
+      text: "Permanent delete removes the session transcript and its artifact directory. T4 Code asks you to type the exact session title, and OMP refuses the operation if the session is busy or its revision changed during confirmation.",
     },
     { kind: "h2", id: "local-sessions-switching", text: "Switching stays instant" },
     {
@@ -229,7 +249,7 @@ const sessionControls: DocTopic = {
     { kind: "h2", id: "session-controls-model", text: "Model" },
     {
       kind: "p",
-      text: "The primary picker follows the connected OMP profile's `Ctrl+P` cycle in exact order instead of exposing the full catalog. On narrow touch screens, the menu has a bounded vertical scroller. The profile used in the mobile test exposed six choices: Luna 5.6, Opus 4.6, Fable 5, GPT 5.6 Sol, Kimi K2.7, and Grok 4.5.",
+      text: "The primary picker follows the connected OMP profile's `Ctrl+P` cycle in exact order instead of exposing the full catalog. It shows the choices and labels reported by that host, so changing the OMP profile changes the picker without a T4 Code rebuild. On narrow touch screens, the menu has a bounded vertical scroller.",
     },
     {
       kind: "p",
@@ -412,7 +432,11 @@ const troubleshooting: DocTopic = {
       kind: "p",
       text: "If that fails, look at the logs: `~/.local/state/t4-code/appserver` on Linux, `~/Library/Logs/T4 Code/appserver` on macOS. If `omp` is installed somewhere unusual, point T4 Code at it with the `OMP_EXECUTABLE` environment variable.",
     },
-    { kind: "h2", id: "troubleshooting-connection", text: "\u201cConnection Lost\u201d / \u201cNo Connection\u201d" },
+    {
+      kind: "h2",
+      id: "troubleshooting-connection",
+      text: "\u201cConnection Lost\u201d / \u201cNo Connection\u201d",
+    },
     {
       kind: "p",
       text: "The link to the app server (or the network) dropped. You can reconnect right away or keep working offline with what already streamed in. Remote hosts reconnect on their own; local ones restart with the service manager.",
@@ -420,7 +444,7 @@ const troubleshooting: DocTopic = {
     { kind: "h2", id: "troubleshooting-large-session", text: "Session appears but never loads" },
     {
       kind: "p",
-      text: `A large, actively growing transcript can exceed the stock OMP v${OMP_RUNTIME_VERSION} appserver's replay limit during attach. T4 Code v${RELEASE_VERSION} stops the resulting reconnect loop, but the client cannot repair a snapshot the host never delivered. Use the [verified OMP fix](${OMP_RUNTIME_FIX_URL}) or a later upstream build that contains the same bounded replay behavior.`,
+      text: `First confirm that \`omp appserver status --json\` succeeds. Official upstream OMP v${OMP_RUNTIME_VERSION} cannot answer that command and cannot host T4 Code. On older public appserver integration builds, a large, actively growing transcript can exceed the replay limit during attach. T4 Code v${RELEASE_VERSION} stops the resulting reconnect loop, but the client cannot repair a snapshot the host never delivered. Use the [verified OMP integration tag](${OMP_RUNTIME_URL}) or a later public or upstream build that includes appserver support and the same bounded replay behavior.`,
     },
     { kind: "h2", id: "troubleshooting-declined", text: "\u201cThe host declined…\u201d" },
     {

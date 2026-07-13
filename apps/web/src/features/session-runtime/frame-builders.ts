@@ -12,7 +12,6 @@ import {
   type LiveEventFrame,
   PROTOCOL_VERSION,
   revision,
-  type SessionDeltaFrame,
   type SessionEvent,
   sessionId,
   type SessionSnapshotFrame,
@@ -118,20 +117,6 @@ export class FrameFactory {
       event,
     };
   }
-  delta(): SessionDeltaFrame {
-    this.revisionCounter += 1;
-    return {
-      v: PROTOCOL_VERSION,
-      type: "session.delta",
-      cursor: this.nextCursor(),
-      revision: revision(`rev-${this.revisionCounter}`),
-      hostId: this.hostId,
-      sessionId: this.sessionId,
-      remove: sessionId("removed"),
-    };
-  }
-
-
   gap(reason: string, missing = 1): GapFrame {
     const from = this.cursor();
     this.seq += missing;

@@ -168,6 +168,7 @@ export class FixtureWebSocketServer {
       try {
         const frames = this.engine.receive(clientId, data as string | Uint8Array);
         this.sendFrames(socket, frames);
+        this.flushAll();
       } catch (error) {
         try {
           decodeClientFrame(data as string | Uint8Array);

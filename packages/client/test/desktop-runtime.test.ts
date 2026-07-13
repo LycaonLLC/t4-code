@@ -28,6 +28,18 @@ import { createDesktopRuntimeController, type DesktopRuntimeController, type Des
 import { redactedMessage } from "../src/desktop-runtime-contracts.ts";
 
 const target = (targetId: string, state: DesktopTarget["state"] = "disconnected"): DesktopTarget => ({ targetId, label: targetId, kind: targetId === "local" ? "local" : "remote", state, paired: true });
+const remoteTargetRequest = (targetId: string): TargetAddRequest => ({
+  target: {
+    targetId,
+    label: targetId,
+    mode: "direct",
+    address: "100.64.0.1",
+    port: 4210,
+    requestedCapabilities: [],
+    grantedCapabilities: [],
+    status: "unknown",
+  },
+});
 const welcome = (host: string, capabilities: readonly string[], features: readonly string[], epoch = "epoch-1"): WelcomeFrame => ({
   v: "omp-app/1", type: "welcome", selectedProtocol: "omp-app/1", hostId: hostId(host), ompVersion: "omp", ompBuild: "test", appserverVersion: "app", appserverBuild: "test", epoch, grantedCapabilities: [...capabilities], grantedFeatures: [...features], negotiatedLimits: {}, authentication: "local", resumed: false,
 });
@@ -246,6 +258,51 @@ describe("desktop runtime projection", () => {
     shell.rejectConnect = false;
     await runtime.connect("local");
     expect(runtime.getSnapshot().connections.get("local")).toBe("connected");
+  });
+  it("removes a target's host binding and owned host metadata", async () => {
+    const shell = new FakeShell();
+    const runtime = createDesktopRuntimeController({ shell });
+    await runtime.start();
+    await runtime.addTarget(remoteTargetRequest("removed"));
+    shell.emitFrame({ targetId: "removed", frame: welcome("shared-host", [], []) });
+    expect(runtime.getSnapshot().targetHosts.get("removed")).toBe("shared-host");
+    expect(runtime.getSnapshot().hosts.get("shared-host")?.targetId).toBe("removed");
+
+    await runtime.removeTarget("removed");
+
+    expect(runtime.getSnapshot().targets.has("removed")).toBe(false);
+    expect(runtime.getSnapshot().connections.has("removed")).toBe(false);
+    expect(runtime.getSnapshot().targetHosts.has("removed")).toBe(false);
+    expect(runtime.getSnapshot().hosts.has("shared-host")).toBe(false);
+  });
+  it("restores host metadata from a surviving binding when its duplicate owner is removed", async () => {
+    const shell = new FakeShell();
+    const runtime = createDesktopRuntimeController({ shell });
+    await runtime.start();
+    shell.emitFrame({ targetId: "local", frame: welcome("shared-host", [], []) });
+    await runtime.addTarget(remoteTargetRequest("remote"));
+    shell.emitFrame({ targetId: "remote", frame: welcome("shared-host", [], []) });
+    expect(runtime.getSnapshot().hosts.get("shared-host")?.targetId).toBe("remote");
+
+    await runtime.removeTarget("remote");
+
+    expect(runtime.getSnapshot().targetHosts.get("local")).toBe("shared-host");
+    expect(runtime.getSnapshot().targetHosts.has("remote")).toBe(false);
+    expect(runtime.getSnapshot().hosts.get("shared-host")?.targetId).toBe("local");
+  });
+  it("prunes removed target bindings during authoritative list reconciliation", async () => {
+    const shell = new FakeShell();
+    const runtime = createDesktopRuntimeController({ shell });
+    await runtime.start();
+    await runtime.addTarget(remoteTargetRequest("stale"));
+    shell.emitFrame({ targetId: "stale", frame: welcome("stale-host", [], []) });
+
+    await runtime.listTargets();
+
+    expect(runtime.getSnapshot().targets.has("stale")).toBe(false);
+    expect(runtime.getSnapshot().connections.has("stale")).toBe(false);
+    expect(runtime.getSnapshot().targetHosts.has("stale")).toBe(false);
+    expect(runtime.getSnapshot().hosts.has("stale-host")).toBe(false);
   });
   it("keeps target attribution and rejects spoofed host frames", async () => {
     const shell = new FakeShell();

@@ -1,6 +1,6 @@
 {
   "name": "@t4-code/protocol",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "type": "module",
   "exports": {
@@ -8,7 +8,7 @@
     "./desktop-ipc": "./src/desktop-ipc.ts"
   },
   "dependencies": {
-    "@oh-my-pi/app-wire": "file:../../vendor/app-wire/oh-my-pi-app-wire-0.5.1.tgz"
+    "@oh-my-pi/app-wire": "file:../../vendor/app-wire/oh-my-pi-app-wire-0.5.2.tgz"
   },
   "scripts": {
     "build": "tsgo --noEmit",

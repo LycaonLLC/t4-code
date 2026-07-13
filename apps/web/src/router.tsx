@@ -27,7 +27,12 @@ import { SettingsWorkspace } from "./features/settings/index.ts";
 import { LiveSettingsScreen } from "./features/settings/LiveSettingsScreen.tsx";
 import { TargetsScreen } from "./features/targets/TargetsScreen.tsx";
 import { createTargetsStore, type TargetsStoreApi } from "./features/targets/targets-store.ts";
-import { latestSessionViewId } from "./platform/live-workspace.ts";
+import {
+  applySessionRoutePendingGrace,
+  createSessionRoutePendingGrace,
+  decideSessionRoute,
+  preferredHomeSessionId,
+} from "./lib/session-route.ts";
 import { desktopRuntime, useDesktopRuntimeSnapshot } from "./platform/desktop-runtime.ts";
 import { useShellData } from "./state/shell-data.ts";
 import { RAIL_OVERLAY_QUERY, useMediaQuery } from "./hooks/useMediaQuery.ts";
@@ -39,24 +44,24 @@ const rootRoute = createRootRoute({ component: AppShell });
 function HomeRoute() {
   const railOverlaid = useMediaQuery(RAIL_OVERLAY_QUERY);
   const activeSessionId = useWorkspace((state) => state.activeSessionId);
+  const sessionListView = useWorkspace((state) => state.sessionListView);
   const shellData = useShellData();
   const runtimeSnapshot = useDesktopRuntimeSnapshot();
-  const browserDirect = rendererPlatform.shell !== null && rendererPlatform.shell.serviceInspect === undefined;
-  const resumable =
-    !browserDirect &&
-    activeSessionId !== null &&
-    shellData.sessions.some((session) => session.id === activeSessionId);
-  if (resumable) {
-    return <Navigate params={{ sessionId: activeSessionId }} to="/sessions/$sessionId" />;
-  }
-  // Desktop mode: the first real sessions frame selects the latest session.
+  const browserDirect =
+    rendererPlatform.shell !== null && rendererPlatform.shell.serviceInspect === undefined;
+  const preferredSessionId = preferredHomeSessionId({
+    activeSessionId,
+    browserDirect,
+    data: shellData,
+    liveRuntime: runtimeSnapshot !== null,
+    sessionListView,
+  });
+  // Desktop mode resumes a visible current session or selects the latest one
+  // while Current is selected. Empty Archived remains an explicit home state.
   // A browser-direct Tailnet bridge intentionally stays on the live landing
   // page so opening the URL never implicitly attaches a session.
-  if (runtimeSnapshot !== null && !browserDirect) {
-    const latest = latestSessionViewId(runtimeSnapshot);
-    if (latest !== null) {
-      return <Navigate params={{ sessionId: latest }} to="/sessions/$sessionId" />;
-    }
+  if (preferredSessionId !== null) {
+    return <Navigate params={{ sessionId: preferredSessionId }} to="/sessions/$sessionId" />;
   }
   return <HomePane railOverlaid={railOverlaid} />;
 }
@@ -71,21 +76,91 @@ function SessionRoute() {
   const { sessionId } = useParams({ from: "/sessions/$sessionId" });
   const navigate = useNavigate();
   const [nowMs] = useState(() => Date.now());
+  const [pendingTimedOut, setPendingTimedOut] = useState(false);
+  const [pendingGrace] = useState(() => createSessionRoutePendingGrace(setPendingTimedOut));
   const shellData = useShellData();
+  const runtimeSnapshot = useDesktopRuntimeSnapshot();
+  const browserDirect =
+    rendererPlatform.shell !== null && rendererPlatform.shell.serviceInspect === undefined;
   const session = shellData.sessions.find((entry) => entry.id === sessionId);
   const project =
     session === undefined
       ? undefined
       : shellData.projects.find((entry) => entry.id === session.projectId);
+  const rawDecision = decideSessionRoute({
+    browserDirect,
+    data: shellData,
+    routeSessionId: sessionId,
+    snapshot: runtimeSnapshot,
+  });
+  const pendingKey = rawDecision.kind === "pending" ? sessionId : null;
+  const decision = applySessionRoutePendingGrace(rawDecision, pendingTimedOut);
+
+  // Arm grace only when raw route truth enters pending. A healthy session does
+  // not burn its future reconnect grace, and an expired pending route remains
+  // unavailable until raw truth recovers or the route changes.
+  useEffect(() => {
+    pendingGrace.update(pendingKey);
+  }, [pendingGrace, pendingKey]);
+  useEffect(() => () => pendingGrace.dispose(), [pendingGrace]);
 
   // Activation stamps the visit and closes the overlay rail.
   useEffect(() => {
-    if (session !== undefined) {
+    if (decision.kind === "present" && session !== undefined) {
       workspaceStore.getState().activateSession(session.id, new Date().toISOString());
     }
-  }, [session]);
+  }, [decision.kind, session]);
 
-  if (session === undefined || project === undefined) {
+  if (decision.kind === "pending") {
+    return (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="surface-subheader px-3">
+          <span className="font-medium text-muted-foreground text-xs">Checking session</span>
+        </div>
+        <div
+          aria-live="polite"
+          className="flex flex-1 items-center justify-center text-muted-foreground text-sm"
+          role="status"
+        >
+          Loading the current session list…
+        </div>
+      </div>
+    );
+  }
+  if (decision.kind === "redirect-home") {
+    return <Navigate replace to="/" />;
+  }
+  if (decision.kind === "redirect-session") {
+    return (
+      <Navigate params={{ sessionId: decision.sessionId }} replace to="/sessions/$sessionId" />
+    );
+  }
+
+  if (decision.kind === "unavailable") {
+    return (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="surface-subheader px-3">
+          <span className="font-medium text-muted-foreground text-xs">Host unavailable</span>
+        </div>
+        <Empty className="flex-1 border-0">
+          <EmptyHeader>
+            <EmptyTitle>This session host is not answering</EmptyTitle>
+            <EmptyDescription>
+              T4 Code has not received a complete session list from this host. It may still be
+              starting or it may be offline; this page will recover automatically if it reconnects.
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button onClick={() => void navigate({ to: "/" })} variant="outline">
+              Back to all sessions
+            </Button>
+          </EmptyContent>
+        </Empty>
+      </div>
+    );
+  }
+
+  if (decision.kind === "not-found" || session === undefined || project === undefined) {
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="surface-subheader px-3">

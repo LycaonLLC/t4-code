@@ -20,6 +20,7 @@ import {
   deriveTranscriptRows,
   formatElapsed,
   initialStableRowsState,
+  shouldShowAttention,
 } from "../src/features/transcript/rows.ts";
 import { toolDetail } from "../src/features/transcript/TranscriptRows.tsx";
 
@@ -88,23 +89,6 @@ describe("sequenced frames", () => {
     // Same frame again: duplicate seq → strict no-op, same reference.
     projection = reduceTranscript(projection, event);
     expect(projection).toBe(afterFirst);
-  });
-
-  it("advances across a session delta without changing transcript state", () => {
-    const factory = makeFactory();
-    let projection = withSnapshot(factory);
-    const before = projection;
-    projection = reduceTranscript(projection, factory.delta());
-    expect(projection.cursor?.seq).toBe(1);
-    expect(projection.phase).toBe("active");
-    expect(projection.entries).toBe(before.entries);
-    expect(projection.liveMessages).toBe(before.liveMessages);
-    projection = reduceTranscript(
-      projection,
-      factory.event({ type: "turn.start", turnId: "turn-1" }),
-    );
-    expect(projection.cursor?.seq).toBe(2);
-    expect(projection.turnActive).toBe(true);
   });
 
   it("pauses the stream on a sequence gap and applies nothing after", () => {
@@ -279,6 +263,23 @@ describe("live/durable exclusion", () => {
 });
 
 describe("attention and notice states", () => {
+  it("never exposes interactive attention controls in an archived read-only transcript", () => {
+    const factory = makeFactory();
+    let projection = withSnapshot(factory);
+    projection = reduceTranscript(
+      projection,
+      factory.event({
+        type: "ask.request",
+        askId: "archived-question",
+        question: "Choose a path",
+        options: [{ id: "one", label: "One" }],
+      }),
+    );
+    const attention = deriveAttention(projection);
+    expect(shouldShowAttention(attention, null, false)).toBe(true);
+    expect(shouldShowAttention(attention, null, true)).toBe(false);
+  });
+
   it("models approval, ask, and plan requests and their resolution", () => {
     const factory = makeFactory();
     let projection = withSnapshot(factory);

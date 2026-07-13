@@ -17,23 +17,23 @@ function changed(path, replace) {
 }
 
 test("current source tree has one consistent release version", () => {
-  assert.deepEqual(collectReleaseConsistencyErrors(files, "v0.1.5"), []);
+  assert.deepEqual(collectReleaseConsistencyErrors(files, "v0.1.6"), []);
 });
 
 test("rejects a tag that differs from the package version", () => {
   assert.ok(
     collectReleaseConsistencyErrors(files, "v9.9.9").some((error) =>
-      error.includes("release tag v9.9.9 does not match v0.1.5"),
+      error.includes("release tag v9.9.9 does not match v0.1.6"),
     ),
   );
 });
 
 test("rejects workspace, site, README, and runtime version drift", () => {
   const cases = [
-    ["apps/web/package.json", (text) => text.replace('"version": "0.1.5"', '"version": "0.1.3"')],
-    ["apps/site/src/release.ts", (text) => text.replace('RELEASE_TAG = "v0.1.5"', 'RELEASE_TAG = "v0.1.3"')],
-    ["README.md", (text) => text.replace("Download v0.1.5", "Download v0.1.3")],
-    ["apps/desktop/src/target-manager.ts", (text) => text.replace('version: "0.1.5"', 'version: "0.1.3"')],
+    ["apps/web/package.json", (text) => text.replace('"version": "0.1.6"', '"version": "0.1.3"')],
+    ["apps/site/src/release.ts", (text) => text.replace('RELEASE_TAG = "v0.1.6"', 'RELEASE_TAG = "v0.1.3"')],
+    ["README.md", (text) => text.replace("Download v0.1.6", "Download v0.1.3")],
+    ["apps/desktop/src/target-manager.ts", (text) => text.replace('version: "0.1.6"', 'version: "0.1.3"')],
     ["apps/site/src/docs/content.ts", (text) => text.replace('id: "troubleshooting-large-session"', 'id: "missing-large-session"')],
   ];
   for (const [path, replace] of cases) {
@@ -57,27 +57,55 @@ test("rejects version drift in a newly added workspace package", () => {
   );
 });
 
-test("rejects an app-wire compatibility bump hidden inside a desktop release", () => {
+test("rejects app-wire version drift inside a desktop release", () => {
   const drifted = changed("compat/omp-app-matrix.json", (text) =>
-    text.replace('"version": "0.5.1"', '"version": "0.5.2"'),
+    text.replace('"version": "0.5.2"', '"version": "0.5.1"'),
   );
   assert.ok(
-    collectReleaseConsistencyErrors(drifted).some((error) => error.includes("must remain 0.5.1")),
+    collectReleaseConsistencyErrors(drifted).some((error) => error.includes("must be 0.5.2")),
+  );
+});
+
+test("rejects drift in frozen app-wire source provenance", () => {
+  const drifted = changed("compat/omp-app-matrix.json", (text) =>
+    text.replace(
+      '"sourceCommit": "5d4315eea317260fec030e2b4726f10fed0cd5f6"',
+      '"sourceCommit": "0000000000000000000000000000000000000000"',
+    ),
+  );
+  assert.ok(
+    collectReleaseConsistencyErrors(drifted).some((error) => error.includes("app-wire commit")),
   );
 });
 
 test("rejects drift in verified OMP runtime provenance", () => {
   const cases = [
     (text) => text.replace(
-      "f65bb37970d2186f04ec4b650eb0b53ec3b1337b",
+      "932bbaceb256f43eb3b2760341f2175803da4d07",
       "0000000000000000000000000000000000000000",
     ),
-    (text) => text.replace('"upstreamTagContainsLargeSessionFix": false', '"upstreamTagContainsLargeSessionFix": true'),
+    (text) => text.replace(
+      '"sourceTag": "t4code-16.4.8-appserver-4"',
+      '"sourceTag": "wrong-tag"',
+    ),
+    (text) => text.replace(
+      '"complete-session-event-projection"',
+      '"wrong-integration-patch"',
+    ),
+    (text) => text.replace(
+      '"upstreamTagContainsIntegrationPatches": false',
+      '"upstreamTagContainsIntegrationPatches": true',
+    ),
   ];
   for (const replace of cases) {
     const drifted = changed("compat/omp-app-matrix.json", replace);
     assert.ok(
-      collectReleaseConsistencyErrors(drifted).some((error) => error.includes("verified runtime") || error.includes("stock upstream")),
+      collectReleaseConsistencyErrors(drifted).some(
+        (error) =>
+          error.includes("app-wire") ||
+          error.includes("verified runtime") ||
+          error.includes("stock upstream"),
+      ),
     );
   }
 });
@@ -90,8 +118,60 @@ test("rejects stale README release URLs while allowing historical prose", () => 
   );
   assert.ok(
     collectReleaseConsistencyErrors(staleLink).some((error) =>
-      error.includes("release URL for v0.1.3; expected v0.1.5"),
+      error.includes("release URL for v0.1.3; expected v0.1.6"),
     ),
   );
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);
+});
+
+test("deploys release site source only after artifact publication", () => {
+  const releaseWorkflow = files.get(".github/workflows/release.yml");
+  const deployWorkflow = files.get(".github/workflows/deploy-site.yml");
+
+  assert.ok(releaseWorkflow.includes("github.ref == 'refs/heads/main'"));
+  assert.ok(releaseWorkflow.includes("Check out trusted release-control source"));
+  assert.ok(releaseWorkflow.includes("fetch-depth: 0"));
+  assert.ok(releaseWorkflow.includes("Resolve immutable release source"));
+  assert.ok(
+    releaseWorkflow.includes(
+      'git merge-base --is-ancestor "$source_sha" refs/remotes/origin/main',
+    ),
+  );
+  assert.ok(releaseWorkflow.includes("ref: ${{ steps.source.outputs.source_sha }}"));
+  assert.ok(releaseWorkflow.includes("ref: ${{ needs.verify.outputs.source_sha }}"));
+  assert.ok(releaseWorkflow.includes("needs: [verify, build-linux, build-macos]"));
+  assert.ok(
+    releaseWorkflow.includes("Confirm the release tag still resolves to the verified source"),
+  );
+  assert.ok(
+    releaseWorkflow.includes(
+      'test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "$SOURCE_SHA"',
+    ),
+  );
+  assert.ok(!releaseWorkflow.includes("ref: ${{ env.RELEASE_TAG }}"));
+  assert.ok(releaseWorkflow.includes("Dispatch site deployment after release publication"));
+  assert.ok(releaseWorkflow.includes("needs: publish"));
+  assert.ok(releaseWorkflow.includes("actions: write"));
+  assert.ok(releaseWorkflow.includes("GH_REPO: ${{ github.repository }}"));
+  assert.ok(releaseWorkflow.includes("gh workflow run deploy-site.yml"));
+  assert.ok(releaseWorkflow.includes("--ref main"));
+  assert.ok(releaseWorkflow.includes('-f release_tag="$RELEASE_TAG"'));
+
+  assert.ok(deployWorkflow.includes("workflow_dispatch:"));
+  assert.ok(deployWorkflow.includes("release_tag:"));
+  assert.ok(deployWorkflow.includes("github.ref == 'refs/heads/main'"));
+  assert.ok(deployWorkflow.includes('expected_tag="v${TRUSTED_VERSION}"'));
+  assert.ok(deployWorkflow.includes('release_tag="$expected_tag"'));
+  assert.ok(deployWorkflow.includes("releases/tags/${release_tag}"));
+  assert.ok(deployWorkflow.includes('git merge-base --is-ancestor "$source_sha" "$MAIN_SHA"'));
+  assert.ok(deployWorkflow.includes("ref: ${{ steps.immutable_source.outputs.source_sha }}"));
+  assert.ok(!deployWorkflow.includes('source_sha="$MAIN_SHA"'));
+  assert.ok(
+    deployWorkflow.indexOf("Resolve immutable deployment source") >
+      deployWorkflow.indexOf("Check whether an ordinary main push references an existing release"),
+  );
+  assert.ok(!deployWorkflow.includes("source_ref:"));
+  assert.ok(!deployWorkflow.includes("release_published:"));
+  assert.ok(deployWorkflow.includes("steps.existing_release.outcome == 'failure'"));
+  assert.ok(deployWorkflow.includes("branches: [main, master]"));
 });

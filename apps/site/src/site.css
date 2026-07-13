@@ -38,8 +38,8 @@
   --motion-ease: cubic-bezier(0, 0, 0.2, 1);
 
   --font-sans: "DM Sans Variable", -apple-system, "Segoe UI", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo,
-    monospace;
+  --font-mono:
+    "JetBrains Mono", "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
 
   --topbar-height: 56px;
   --measure: 44rem;
@@ -100,6 +100,7 @@ pre {
   background: var(--code-background);
   border: 1px solid var(--border);
   border-radius: 4px;
+  overflow-wrap: anywhere;
   padding: 0.1em 0.35em;
 }
 
@@ -477,7 +478,6 @@ pre.code {
 .codeblock .copy-btn:hover {
   color: var(--foreground);
 }
-
 .notice {
   border: 1px solid var(--border-strong);
   border-left: 3px solid var(--warning-foreground);

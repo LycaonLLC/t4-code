@@ -54,6 +54,10 @@ import { OmpClientEvents } from "./omp-client-events.ts";
 import { OmpClientConnection } from "./omp-client-connection.ts";
 import { OmpClientFrameDispatcher, safeFrameDecodeFailure, sendClientHello } from "./omp-client-frames.ts";
 import { OmpClientReconnectHealth } from "./omp-client-reconnect-health.ts";
+import {
+  buildCommandFrameInput,
+  decodeOutgoingFrame,
+} from "./omp-client-outbound.ts";
 import { handleResponseFrame } from "./omp-client-response.ts";
 import { isLegalClientTransition } from "./omp-client-state.ts";
 export * from "./omp-client-contracts.ts";
@@ -153,7 +157,13 @@ export class OmpClient {
       pairError: (frame) => { if (frame.requestId !== undefined) this.settlePairError(frame); this.publish(frame); },
       gap: (frame) => { this.markDesynced(sessionKey(String(frame.hostId), String(frame.sessionId)), "cursor gap requires a snapshot"); this.publish(frame); },
       snapshot: (frame) => this.acceptSnapshot(frame),
-      durable: (frame) => { if (this.acceptDurable(frame)) this.publish(frame); },
+      durable: (frame) => {
+        // Host-wide session-index deltas have their own per-session ordering in
+        // ProjectionStore. They must not inherit transcript cursor contiguity:
+        // an unattached client can legitimately miss entry/event frames.
+        if (frame.type === "session.delta") this.publish(frame);
+        else if (this.acceptDurable(frame)) this.publish(frame);
+      },
       other: (frame) => this.publish(frame),
     });
   }
@@ -235,7 +245,7 @@ export class OmpClient {
   confirm(intent: ConfirmIntent, options: CommandOptions = {}): Promise<ResultFrame> {
     if (this.stateValue !== "ready") return Promise.reject(this.error("invalid_state", "client is not ready"));
     const request = this.ids.next("request");
-    const frame = this.decodeOutgoing({
+    const frame = decodeOutgoingFrame({
       v: PROTOCOL_VERSION,
       type: "confirm",
       requestId: request,
@@ -264,7 +274,7 @@ export class OmpClient {
   pairStart(intent: PairStartIntent, options: CommandOptions = {}): Promise<PairOkFrame> {
     if (this.stateValue !== "pairing") return Promise.reject(this.error("invalid_state", "pairing is not required"));
     const request = this.ids.next("request");
-    const frame = this.decodeOutgoing({
+    const frame = decodeOutgoingFrame({
       v: PROTOCOL_VERSION,
       type: "pair.start",
       requestId: request,
@@ -291,26 +301,8 @@ export class OmpClient {
     }
     const request = this.ids.next("request");
     const command = this.ids.next("command");
-    const frame = this.decodeOutgoing({
-      v: PROTOCOL_VERSION,
-      type: "command",
-      requestId: request,
-      commandId: command,
-      hostId: intent.hostId,
-      ...(intent.sessionId === undefined ? {} : { sessionId: intent.sessionId }),
-      command: intent.command,
-      ...(intent.expectedRevision === undefined ? {} : { expectedRevision: intent.expectedRevision }),
-      ...(intent.confirmationId === undefined ? {} : { confirmationId: intent.confirmationId }),
-      args: intent.command === "session.prompt" && intent.args?.message === undefined
-        ? typeof intent.args?.text === "string"
-          ? { ...intent.args, message: intent.args.text }
-          : typeof intent.args?.prompt === "string"
-            ? { ...intent.args, message: intent.args.prompt }
-            : intent.args && Object.keys(intent.args).length === 0
-              ? { message: "" }
-              : intent.args ?? {}
-        : intent.args ?? {},
-    });
+    const rawFrame = buildCommandFrameInput(intent, request, command);
+    const frame = decodeOutgoingFrame(rawFrame);
     if (frame === undefined || frame.type !== "command") return Promise.reject(this.error("protocol", "invalid command intent"));
     const kind = intent.command === "session.attach" ? "attach" : "command";
     return this.sendPending(frame, request, options, kind, intent).then((result) => {
@@ -320,7 +312,7 @@ export class OmpClient {
   }
   private sendTerminalFrame(input: Record<string, unknown>): void {
     if (this.stateValue !== "ready") throw this.error("invalid_state", "client is not ready");
-    const frame = this.decodeOutgoing(input);
+    const frame = decodeOutgoingFrame(input);
     if (frame === undefined || (frame.type !== "terminal.input" && frame.type !== "terminal.resize" && frame.type !== "terminal.close"))
       throw this.error("protocol", "invalid terminal intent");
     const encoded = JSON.stringify(frame);
@@ -330,14 +322,6 @@ export class OmpClient {
     } catch (error) {
       if (error instanceof OmpClientError) throw error;
       throw this.error("transport", "transport send failed", true);
-    }
-  }
-
-  private decodeOutgoing(input: Record<string, unknown>): ClientFrame | undefined {
-    try {
-      return decodeClientFrame(input);
-    } catch {
-      return undefined;
     }
   }
 
@@ -375,7 +359,7 @@ export class OmpClient {
       this.options,
       [...this.cursorJournal.records.values()],
       (encoded) => this.connection.send(encoded),
-      (input) => this.decodeOutgoing(input),
+      (input) => decodeOutgoingFrame(input),
       () => this.fatal(this.error("auth", "authentication provider failed")),
       () => this.protocolFailure("hello could not be sent"),
     );
@@ -564,7 +548,12 @@ export class OmpClient {
       () => {
         const nonce = this.ids.next("ping");
         this.heartbeatNonce = nonce;
-        const frame = this.decodeOutgoing({ v: PROTOCOL_VERSION, type: "ping", nonce, timestamp: new Date(this.clock.now()).toISOString() });
+        const frame = decodeOutgoingFrame({
+          v: PROTOCOL_VERSION,
+          type: "ping",
+          nonce,
+          timestamp: new Date(this.clock.now()).toISOString(),
+        });
         try {
           if (frame === undefined) throw new Error("invalid ping");
           const encoded = JSON.stringify(frame);
