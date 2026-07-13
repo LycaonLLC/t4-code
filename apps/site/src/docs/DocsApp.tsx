@@ -104,24 +104,26 @@ function renderBlock(block: Block, key: number): ReactNode {
       );
     case "table":
       return (
-        <table key={key}>
-          <thead>
-            <tr>
-              <th scope="col">{block.head[0]}</th>
-              <th scope="col">{block.head[1]}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {block.rows.map(([a, b], i) => (
-              <tr key={i}>
-                <td>
-                  <code>{a}</code>
-                </td>
-                <td>{renderInline(b)}</td>
+        <div className="table-scroll" key={key} tabIndex={0}>
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">{block.head[0]}</th>
+                <th scope="col">{block.head[1]}</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {block.rows.map(([a, b], i) => (
+                <tr key={i}>
+                  <td>
+                    <code>{a}</code>
+                  </td>
+                  <td>{renderInline(b)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       );
   }
 }

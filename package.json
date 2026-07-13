@@ -28,7 +28,7 @@
     "check": "pnpm check:structure && pnpm check:provenance && pnpm lint && pnpm typecheck",
     "typecheck": "vp run -r typecheck",
     "test": "vp run -r test",
-    "test:e2e": "pnpm build:web && playwright test",
+    "test:e2e": "pnpm build:web && pnpm build:site && playwright test",
     "test:protocol": "vp run --filter @t4-code/protocol --filter @t4-code/fixture-server test"
   },
   "devDependencies": {
