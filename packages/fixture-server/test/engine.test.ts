@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
-import { decodeServerFrame } from "@t4-code/protocol";
+import { decodeServerFrame, DESKTOP_CATALOG_COMMANDS } from "@t4-code/protocol";
 import { FixtureEngine } from "../src/engine.ts";
+import { fixtureCatalogItems } from "../src/fixture-catalog.ts";
 import { loadScenario, type ScenarioSeed } from "../src/seeds.ts";
 
 const hello = (savedCursors: unknown[] = []) => ({
@@ -19,8 +20,22 @@ const command = (
   providedArgs: Record<string, unknown> = {},
   extra: Record<string, unknown> = {},
 ) => {
-  const hostCommand = ["host.list", "session.list", "session.create", "audit.read", "audit.tail", "config.write", "settings.read", "settings.write", "catalog.get", "host.watch"].includes(commandName);
-  const args = commandName === "session.prompt" && !("message" in providedArgs) ? { message: "fixture prompt", ...providedArgs } : providedArgs;
+  const hostCommand = [
+    "host.list",
+    "session.list",
+    "session.create",
+    "audit.read",
+    "audit.tail",
+    "config.write",
+    "settings.read",
+    "settings.write",
+    "catalog.get",
+    "host.watch",
+  ].includes(commandName);
+  const args =
+    commandName === "session.prompt" && !("message" in providedArgs)
+      ? { message: "fixture prompt", ...providedArgs }
+      : providedArgs;
   return {
     v: "omp-app/1",
     type: "command",
@@ -40,6 +55,25 @@ function ready(engine: FixtureEngine, id: string): void {
 }
 
 describe("deterministic fixture engine", () => {
+  it("advertises exactly the desktop commands exported by the pinned OMP wire package", () => {
+    const names = fixtureCatalogItems()
+      .filter((item) => item.kind === "command")
+      .map((item) => item.name)
+      .sort();
+    expect(names).toEqual([...DESKTOP_CATALOG_COMMANDS].sort());
+    expect(names).toEqual([
+      "session.archive",
+      "session.cancel",
+      "session.create",
+      "session.delete",
+      "session.fast.set",
+      "session.model.set",
+      "session.rename",
+      "session.restore",
+      "session.thinking.set",
+    ]);
+  });
+
   it("decodes every handshake, snapshot, list, and ping frame for all ten seeds", () => {
     for (const scenario of [
       "basic-v1",
@@ -91,6 +125,145 @@ describe("deterministic fixture engine", () => {
       ok: false,
       error: { code: "not_found" },
     });
+  });
+  it("creates unique current sessions that converge and remain attachable and writable", () => {
+    const engine = new FixtureEngine(loadScenario("stream-v1"));
+    const manager = engine.connect("create-manager");
+    const observer = engine.connect("create-observer");
+    engine.receive(manager.id, hello());
+    engine.receive(observer.id, hello());
+
+    const first = engine.receive(
+      manager.id,
+      command(engine.seed, "session.create", "create-first-command", "create-first-request", {
+        projectId: engine.seed.projectId,
+        title: "First created session",
+      }),
+    );
+    const firstResponse = first.find((frame) => frame.type === "response");
+    if (firstResponse?.type !== "response" || !firstResponse.ok)
+      throw new Error("fixture did not create the first session");
+    const firstRef = (firstResponse.result as { session: { sessionId: string; revision: string } })
+      .session;
+    expect(firstRef).toMatchObject({
+      project: { projectId: engine.seed.projectId },
+      title: "First created session",
+      status: "idle",
+      liveState: { phase: "idle" },
+    });
+    expect(firstRef.sessionId).not.toBe(engine.seed.sessionId);
+    expect(firstRef).not.toHaveProperty("archivedAt");
+    expect(first).toContainEqual(
+      expect.objectContaining({
+        type: "session.delta",
+        sessionId: firstRef.sessionId,
+        upsert: expect.objectContaining({ sessionId: firstRef.sessionId }),
+      }),
+    );
+    expect(engine.drain(observer.id)).toContainEqual(
+      expect.objectContaining({
+        type: "session.delta",
+        sessionId: firstRef.sessionId,
+        upsert: expect.objectContaining({ sessionId: firstRef.sessionId }),
+      }),
+    );
+
+    const replay = engine.receive(
+      manager.id,
+      command(engine.seed, "session.create", "create-first-command", "create-replay-request", {
+        projectId: engine.seed.projectId,
+        title: "First created session",
+      }),
+    );
+    expect(replay).toEqual([firstResponse]);
+    expect(engine.drain(observer.id)).toHaveLength(0);
+
+    const second = engine.receive(
+      manager.id,
+      command(engine.seed, "session.create", "create-second-command", "create-second-request", {
+        projectId: engine.seed.projectId,
+      }),
+    );
+    const secondResponse = second.find((frame) => frame.type === "response");
+    if (secondResponse?.type !== "response" || !secondResponse.ok)
+      throw new Error("fixture did not create the second session");
+    const secondRef = (secondResponse.result as { session: { sessionId: string } }).session;
+    expect(secondRef.sessionId).not.toBe(firstRef.sessionId);
+    expect(engine.drain(observer.id)).toContainEqual(
+      expect.objectContaining({
+        type: "session.delta",
+        upsert: expect.objectContaining({ sessionId: secondRef.sessionId }),
+      }),
+    );
+
+    const listed = engine.receive(
+      manager.id,
+      command(engine.seed, "session.list", "list-created-command"),
+    );
+    expect(listed).toContainEqual(
+      expect.objectContaining({
+        type: "sessions",
+        sessions: expect.arrayContaining([
+          expect.objectContaining({ sessionId: engine.seed.sessionId }),
+          expect.objectContaining({ sessionId: firstRef.sessionId }),
+          expect.objectContaining({ sessionId: secondRef.sessionId }),
+        ]),
+      }),
+    );
+
+    const attached = engine.receive(observer.id, {
+      ...command(engine.seed, "session.attach", "attach-created-command"),
+      sessionId: firstRef.sessionId,
+    });
+    expect(attached).toContainEqual(
+      expect.objectContaining({
+        type: "response",
+        ok: true,
+        result: { attached: true, cursor: { epoch: engine.seed.epoch, seq: 0 } },
+      }),
+    );
+    expect(attached).toContainEqual(
+      expect.objectContaining({
+        type: "snapshot",
+        sessionId: firstRef.sessionId,
+        entries: [],
+      }),
+    );
+
+    const prompted = engine.receive(observer.id, {
+      ...command(
+        engine.seed,
+        "session.prompt",
+        "prompt-created-command",
+        "prompt-created-request",
+        { message: "write in the created session" },
+        { expectedRevision: firstRef.revision },
+      ),
+      sessionId: firstRef.sessionId,
+    });
+    expect(prompted).toContainEqual(
+      expect.objectContaining({ type: "response", ok: true, result: { accepted: true } }),
+    );
+    engine.advanceBy(30);
+    const createdJournal = engine
+      .drain(observer.id)
+      .filter((frame) => frame.type === "entry" || frame.type === "event");
+    expect(createdJournal).toHaveLength(8);
+    expect(createdJournal.every((frame) => frame.sessionId === firstRef.sessionId)).toBe(true);
+    expect(
+      createdJournal.map((frame) => (frame.type === "event" ? frame.event.type : frame.type)),
+    ).toEqual([
+      "agent.start",
+      "turn.start",
+      "message.update",
+      "message.update",
+      "message.settled",
+      "entry",
+      "turn.end",
+      "agent.end",
+    ]);
+    for (const frame of [...first, ...second, ...listed, ...attached, ...createdJournal])
+      expect(() => decodeServerFrame(frame)).not.toThrow();
   });
   it("broadcasts only to attached clients and keeps the stream contiguous", () => {
     const engine = new FixtureEngine(loadScenario("stream-v1"));
@@ -226,12 +399,7 @@ describe("deterministic fixture engine", () => {
     const client = engine.connect("a");
     ready(engine, client.id);
 
-    const cancel = command(
-      engine.seed,
-      "session.cancel",
-      "cancel-command",
-      "cancel-request",
-    );
+    const cancel = command(engine.seed, "session.cancel", "cancel-command", "cancel-request");
     const challenge = engine.receive(client.id, cancel)[0];
     expect(challenge).toMatchObject({
       type: "confirmation",
@@ -257,12 +425,7 @@ describe("deterministic fixture engine", () => {
       ok: true,
     });
 
-    const deniedCommand = command(
-      engine.seed,
-      "session.cancel",
-      "deny-command",
-      "deny-request",
-    );
+    const deniedCommand = command(engine.seed, "session.cancel", "deny-command", "deny-request");
     const deniedChallenge = engine.receive(client.id, deniedCommand)[0];
     if (deniedChallenge?.type !== "confirmation") throw new Error("fixture did not challenge deny");
     const denied = engine.receive(client.id, {
@@ -298,6 +461,290 @@ describe("deterministic fixture engine", () => {
       ok: false,
       error: { code: "confirmation_invalid" },
     });
+  });
+  it("converges rename, archive, restore, and challenged delete across clients", () => {
+    const engine = new FixtureEngine(loadScenario("basic-v1"));
+    const a = engine.connect("manager-a");
+    const b = engine.connect("observer-b");
+    engine.receive(a.id, hello());
+    engine.receive(b.id, hello());
+    expect(engine.currentCursor.seq).toBe(0);
+
+    const renamed = engine.receive(
+      a.id,
+      command(
+        engine.seed,
+        "session.rename",
+        "rename-command",
+        "rename-request",
+        { name: "Useful title" },
+        { expectedRevision: engine.currentRevision },
+      ),
+    );
+    expect(renamed).toContainEqual(
+      expect.objectContaining({
+        type: "response",
+        ok: true,
+        result: { renamed: true },
+      }),
+    );
+    expect(renamed).toContainEqual(
+      expect.objectContaining({
+        type: "session.delta",
+        cursor: { epoch: engine.seed.epoch, seq: 1 },
+        upsert: expect.objectContaining({ title: "Useful title" }),
+      }),
+    );
+    expect(engine.drain(b.id)).toContainEqual(
+      expect.objectContaining({
+        type: "session.delta",
+        upsert: expect.objectContaining({ title: "Useful title" }),
+      }),
+    );
+
+    const archived = engine.receive(
+      a.id,
+      command(
+        engine.seed,
+        "session.archive",
+        "archive-command",
+        "archive-request",
+        {},
+        { expectedRevision: engine.currentRevision },
+      ),
+    );
+    expect(archived).toContainEqual(
+      expect.objectContaining({
+        type: "response",
+        command: "session.archive",
+        ok: true,
+        result: { archived: true },
+      }),
+    );
+    const archiveDelta = archived.find((frame) => frame.type === "session.delta");
+    expect(archiveDelta).toMatchObject({
+      cursor: { epoch: engine.seed.epoch, seq: 2 },
+      upsert: { archivedAt: engine.seed.baseTime },
+    });
+    expect(engine.currentCursor.seq).toBe(0);
+    for (const frame of archived) expect(() => decodeServerFrame(frame)).not.toThrow();
+    expect(engine.drain(b.id)).toContainEqual(
+      expect.objectContaining({
+        type: "session.delta",
+        upsert: expect.objectContaining({ archivedAt: engine.seed.baseTime }),
+      }),
+    );
+
+    const restored = engine.receive(
+      a.id,
+      command(
+        engine.seed,
+        "session.restore",
+        "restore-command",
+        "restore-request",
+        {},
+        { expectedRevision: engine.currentRevision },
+      ),
+    );
+    expect(restored).toContainEqual(
+      expect.objectContaining({
+        type: "response",
+        command: "session.restore",
+        ok: true,
+        result: { restored: true },
+      }),
+    );
+    expect(restored).toContainEqual(
+      expect.objectContaining({
+        type: "session.delta",
+        cursor: { epoch: engine.seed.epoch, seq: 3 },
+        upsert: expect.not.objectContaining({ archivedAt: expect.anything() }),
+      }),
+    );
+    engine.drain(b.id);
+
+    const expectedRevision = engine.currentRevision;
+    const challenge = engine.receive(
+      a.id,
+      command(
+        engine.seed,
+        "session.delete",
+        "delete-command",
+        "delete-request",
+        {},
+        { expectedRevision },
+      ),
+    )[0];
+    expect(challenge).toMatchObject({
+      type: "confirmation",
+      commandId: "delete-command",
+      revision: expectedRevision,
+      summary: "session.delete",
+    });
+    if (challenge?.type !== "confirmation") throw new Error("fixture did not challenge delete");
+    expect(engine.drain(b.id)).toHaveLength(0);
+
+    const deleted = engine.receive(a.id, {
+      v: "omp-app/1",
+      type: "confirm",
+      requestId: "delete-confirm-request",
+      confirmationId: challenge.confirmationId,
+      commandId: challenge.commandId,
+      hostId: challenge.hostId,
+      sessionId: challenge.sessionId,
+      decision: "approve",
+    });
+    expect(deleted).toContainEqual(
+      expect.objectContaining({
+        type: "response",
+        command: "session.delete",
+        ok: true,
+        result: { deleted: true },
+      }),
+    );
+    expect(deleted).toContainEqual(
+      expect.objectContaining({
+        type: "session.delta",
+        cursor: { epoch: engine.seed.epoch, seq: 4 },
+        remove: engine.seed.sessionId,
+      }),
+    );
+    expect(engine.drain(b.id)).toContainEqual(
+      expect.objectContaining({
+        type: "session.delta",
+        remove: engine.seed.sessionId,
+      }),
+    );
+    const listed = engine.receive(a.id, command(engine.seed, "session.list", "list-after-delete"));
+    expect(listed).toContainEqual(expect.objectContaining({ type: "sessions", sessions: [] }));
+  });
+  it("publishes the host-confirmed model after a session model switch", () => {
+    const engine = new FixtureEngine(loadScenario("basic-v1"));
+    const manager = engine.connect("model-manager");
+    const observer = engine.connect("model-observer");
+    engine.receive(manager.id, hello());
+    engine.receive(observer.id, hello());
+
+    const switched = engine.receive(
+      manager.id,
+      command(
+        engine.seed,
+        "session.model.set",
+        "model-command",
+        "model-request",
+        { role: "cycle-12", persistence: "session" },
+        { expectedRevision: engine.currentRevision },
+      ),
+    );
+
+    expect(switched).toContainEqual(
+      expect.objectContaining({
+        type: "response",
+        command: "session.model.set",
+        ok: true,
+        result: { accepted: true },
+      }),
+    );
+    expect(switched).toContainEqual(
+      expect.objectContaining({
+        type: "session.delta",
+        upsert: expect.objectContaining({ model: "fixture/model-012" }),
+      }),
+    );
+    expect(engine.drain(observer.id)).toContainEqual(
+      expect.objectContaining({
+        type: "session.delta",
+        upsert: expect.objectContaining({ model: "fixture/model-012" }),
+      }),
+    );
+  });
+  it("does not mutate session state when lifecycle commands fail revision checks", () => {
+    const engine = new FixtureEngine(loadScenario("basic-v1"));
+    const manager = engine.connect("manager");
+    const observer = engine.connect("observer");
+    engine.receive(manager.id, hello());
+    engine.receive(observer.id, hello());
+
+    const rejectedArchive = engine.receive(
+      manager.id,
+      command(
+        engine.seed,
+        "session.archive",
+        "stale-archive-command",
+        "stale-archive-request",
+        {},
+        { expectedRevision: "revision-stale" },
+      ),
+    );
+    expect(rejectedArchive).toContainEqual(
+      expect.objectContaining({
+        type: "response",
+        command: "session.archive",
+        ok: false,
+        error: { code: "stale_revision", message: expect.any(String), details: expect.any(Object) },
+      }),
+    );
+    expect(rejectedArchive).not.toContainEqual(expect.objectContaining({ type: "session.delta" }));
+    expect(engine.drain(observer.id)).toHaveLength(0);
+
+    const revisionBeforeDelete = engine.currentRevision;
+    const challenge = engine.receive(
+      manager.id,
+      command(
+        engine.seed,
+        "session.delete",
+        "stale-delete-command",
+        "stale-delete-request",
+        {},
+        { expectedRevision: revisionBeforeDelete },
+      ),
+    )[0];
+    if (challenge?.type !== "confirmation") throw new Error("fixture did not challenge delete");
+
+    engine.receive(
+      manager.id,
+      command(
+        engine.seed,
+        "session.rename",
+        "intervening-rename-command",
+        "intervening-rename-request",
+        { name: "Changed after challenge" },
+        { expectedRevision: revisionBeforeDelete },
+      ),
+    );
+    engine.drain(observer.id);
+
+    const rejectedDelete = engine.receive(manager.id, {
+      v: "omp-app/1",
+      type: "confirm",
+      requestId: "stale-delete-confirm-request",
+      confirmationId: challenge.confirmationId,
+      commandId: challenge.commandId,
+      hostId: challenge.hostId,
+      sessionId: challenge.sessionId,
+      decision: "approve",
+    });
+    expect(rejectedDelete).toContainEqual(
+      expect.objectContaining({
+        type: "response",
+        command: "session.delete",
+        ok: false,
+        error: { code: "stale_revision", message: expect.any(String), details: expect.any(Object) },
+      }),
+    );
+    expect(rejectedDelete).not.toContainEqual(expect.objectContaining({ type: "session.delta" }));
+    expect(engine.drain(observer.id)).toHaveLength(0);
+
+    const listed = engine.receive(
+      manager.id,
+      command(engine.seed, "session.list", "list-after-rejections"),
+    );
+    expect(listed).toContainEqual(
+      expect.objectContaining({
+        type: "sessions",
+        sessions: [expect.objectContaining({ title: "Changed after challenge" })],
+      }),
+    );
   });
   it("closes a client at the bounded queue and deletes disconnected clients", () => {
     const base = loadScenario("basic-v1");
@@ -360,7 +807,8 @@ describe("deterministic fixture engine", () => {
       sessionId: engine.seed.sessionId,
       terminalId: "terminal-fixture",
     });
-    for (const frame of [...terminalOutput, ...terminalExit]) expect(() => decodeServerFrame(frame)).not.toThrow();
+    for (const frame of [...terminalOutput, ...terminalExit])
+      expect(() => decodeServerFrame(frame)).not.toThrow();
   });
   it("is deterministic across two identical runs", () => {
     const run = () => {

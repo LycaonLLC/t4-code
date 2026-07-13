@@ -3,6 +3,7 @@
 // the user terminal drawer affordance. The center body, pane bodies, and
 // drawer live in feature seams (transcript/panes/terminal) for later lanes.
 import {
+  Badge,
   cn,
   IconButton,
   ScrollArea,
@@ -128,6 +129,7 @@ export function SessionScreen({
   project: WorkspaceProject;
   nowMs: number;
 }) {
+  const archived = session.archivedAt !== undefined;
   const view = useWorkspace((state) => selectSessionView(state, session.id));
   const paneDocks = useMediaQuery(RIGHT_PANE_DOCK_QUERY);
   const [panePreviewWidth, setPanePreviewWidth] = useState<number | null>(null);
@@ -150,6 +152,13 @@ export function SessionScreen({
     if (paneOpen) setPaneRendered(true);
     else if (reducedMotion) setPaneRendered(false);
   }, [paneOpen, reducedMotion]);
+  useEffect(() => {
+    const state = workspaceStore.getState();
+    state.setSessionListView(archived ? "archived" : "current");
+    if (!archived) return;
+    state.setPaneOpen(session.id, false);
+    state.setTerminalDrawerOpen(session.id, false);
+  }, [archived, session.id]);
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -161,6 +170,7 @@ export function SessionScreen({
         <span className="hidden shrink-0 font-mono text-muted-foreground text-xs md:inline">
           {session.model}
         </span>
+        {archived && <Badge variant="outline">Archived · read-only</Badge>}
         {session.status !== null && (
           <>
             <StatusPill className="hidden shrink-0 sm:inline-flex" status={session.status} />
@@ -171,9 +181,9 @@ export function SessionScreen({
           <FreshnessBadge session={session} />
         </span>
         <span className="min-w-0 flex-1" />
-        <FamilyToggles sessionId={session.id} view={view} />
-        <span aria-hidden="true" className="mx-1 hidden h-4 w-px bg-border sm:block" />
-        <Tooltip>
+        {!archived && <FamilyToggles sessionId={session.id} view={view} />}
+        {!archived && <span aria-hidden="true" className="mx-1 hidden h-4 w-px bg-border sm:block" />}
+        {!archived && <Tooltip>
           <TooltipTrigger
             render={
               <IconButton
@@ -196,7 +206,7 @@ export function SessionScreen({
           <TooltipPopup side="bottom">
             {view.terminalDrawerOpen ? "Close terminal drawer" : "Open terminal drawer"}
           </TooltipPopup>
-        </Tooltip>
+        </Tooltip>}
       </div>
 
       <div className="flex min-h-0 flex-1">
@@ -204,10 +214,10 @@ export function SessionScreen({
           <div className="min-h-0 flex-1 overflow-hidden">
             <SessionMain nowMs={nowMs} project={project} session={session} />
           </div>
-          <TerminalDrawer open={view.terminalDrawerOpen} sessionId={session.id} />
+          {!archived && <TerminalDrawer open={view.terminalDrawerOpen} sessionId={session.id} />}
         </div>
 
-        {paneDocks && paneRendered && activeMeta !== undefined && (
+        {!archived && paneDocks && paneRendered && activeMeta !== undefined && (
           <div
             aria-hidden={paneOpen ? undefined : "true"}
             className="pane-dock flex min-h-0 shrink-0"
@@ -259,7 +269,7 @@ export function SessionScreen({
         )}
       </div>
 
-      {!paneDocks && activeMeta !== undefined && (
+      {!archived && !paneDocks && activeMeta !== undefined && (
         <Sheet
           onOpenChange={(open) => workspaceStore.getState().setPaneOpen(session.id, open)}
           open={view.paneOpen}

@@ -7,6 +7,7 @@ import { isSessionUnread } from "../state/workspace-store.ts";
 import type {
   WorkspaceData,
   WorkspaceHost,
+  SessionListView,
   WorkspaceProject,
   WorkspaceSession,
 } from "./workspace-data.ts";
@@ -31,13 +32,20 @@ export function buildProjectGroups(
   data: WorkspaceData,
   projectExpandedById: Readonly<Record<string, boolean>>,
   lastVisitedAtBySessionId: Readonly<Record<string, string>>,
+  view: SessionListView = "current",
 ): ProjectGroup[] {
   const groups: ProjectGroup[] = [];
   for (const project of data.projects) {
     const host = data.hosts.find((entry) => entry.id === project.hostId);
     if (host === undefined) continue;
     const sessions = data.sessions
-      .filter((session) => session.projectId === project.id)
+      .filter(
+        (session) =>
+          session.projectId === project.id &&
+          (view === "archived"
+            ? session.archivedAt !== undefined
+            : session.archivedAt === undefined),
+      )
       .map((session) => ({
         session,
         unread: isSessionUnread(
@@ -45,7 +53,11 @@ export function buildProjectGroups(
           session.latestTurnCompletedAt,
         ),
       }));
-    if (sessions.length === 0) continue;
+    // Current is also the project-management view. Keep known projects
+    // reachable after their final current session is archived so the user can
+    // immediately create another session in that working folder. Archived is
+    // session-only and should not duplicate empty project headers.
+    if (sessions.length === 0 && view === "archived") continue;
     groups.push({
       project,
       host,

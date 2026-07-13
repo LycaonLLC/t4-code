@@ -1,6 +1,8 @@
-# OMP Desktop Feature and Surface Matrix
+# OMP Desktop Product Surface Map
 
-This matrix is the parity contract. T3 Code is the presentation and interaction reference. OMP is the behavioral authority. A feature is not complete because a button exists; the listed runtime state, transitions, errors, permissions, and proof must work.
+This file maps product ideas to their OMP authority and intended T4 Code surface. It is a design and ownership reference, not a list of features shipped in the current release. A row can describe planned work, partial work, or verified behavior; its presence here is not completion proof.
+
+The README and release notes are the release contract. They must only claim behavior exercised by the current build. OMP remains the behavioral authority, and T3 Code remains a presentation and interaction reference where noted below.
 
 ## 1. Hosts, connections, and environments
 

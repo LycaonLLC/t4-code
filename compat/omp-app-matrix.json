@@ -2,25 +2,35 @@
   "appProtocol": "omp-app/1",
   "appWire": {
     "package": "@oh-my-pi/app-wire",
-    "version": "0.5.1",
+    "version": "0.5.2",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "b69b07ffef6b482447c37bed9a0c734b6711a721",
-    "sourceTreeHash": "da95aa7b76cf089e64bd65e800e6ef75a1787134",
-    "tarball": "vendor/app-wire/oh-my-pi-app-wire-0.5.1.tgz",
-    "tarballSha256": "e347b33de1faffa701bcef668d6d64b211d5c73c585c95cd490f08189d5c924a",
-    "goldenCorpusSha256": "d183c8d99721920a3aee66f29c50183c232315b1c2c9d07dcc8f079d5e92ab6c"
+    "sourceCommit": "5d4315eea317260fec030e2b4726f10fed0cd5f6",
+    "sourceTreeHash": "713688e8099d4553a0a30b1bf415a7cffb5963f4",
+    "tarball": "vendor/app-wire/oh-my-pi-app-wire-0.5.2.tgz",
+    "tarballSha256": "fb9b608d7a2245001c334808475fabd9e05603729f48cff88b21a5165b4fb63a",
+    "goldenCorpusSha256": "36811f39241c6c491c967a8f969f14c43431366289750538a40893d0dc267324"
   },
   "verifiedRuntime": {
     "package": "omp",
     "version": "16.4.8",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "f65bb37970d2186f04ec4b650eb0b53ec3b1337b",
-    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/f65bb37970d2186f04ec4b650eb0b53ec3b1337b",
-    "largeSessionFix": "bounded-growing-session-replay",
-    "upstreamTagContainsLargeSessionFix": false
+    "sourceCommit": "932bbaceb256f43eb3b2760341f2175803da4d07",
+    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/932bbaceb256f43eb3b2760341f2175803da4d07",
+    "sourceTag": "t4code-16.4.8-appserver-4",
+    "integrationPatches": [
+      "bounded-growing-session-replay",
+      "complete-session-event-projection",
+      "session-lifecycle-management",
+      "ordered-remote-outbound-frames",
+      "restart-safe-rpc-session-teardown",
+      "catalog-advertised-session-management",
+      "cross-client-control-state-convergence",
+      "terminal-streaming-state-settlement"
+    ],
+    "upstreamTagContainsIntegrationPatches": false
   },
   "desktop": {
     "package": "@t4-code/protocol",
-    "version": "0.1.5"
+    "version": "0.1.6"
   }
 }

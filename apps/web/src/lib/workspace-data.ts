@@ -7,6 +7,7 @@ import type { SessionStatus } from "@t4-code/ui";
 
 /** How current the projection of a session is. */
 export type SessionFreshness = "live" | "cached" | "offline";
+export type SessionListView = "current" | "archived";
 
 export interface WorkspaceHost {
   readonly id: string;
@@ -38,6 +39,8 @@ export interface WorkspaceSession {
   readonly updatedAt: string;
   /** One-line summary of where the session left off. */
   readonly lastActivity: string;
+  /** Host authority for archive state; absent means current/default. */
+  readonly archivedAt?: string;
 }
 
 export interface WorkspaceData {

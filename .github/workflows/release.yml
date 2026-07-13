@@ -23,13 +23,57 @@ env:
 
 jobs:
   verify:
+    if: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      version: ${{ steps.source.outputs.version }}
     steps:
-      - name: Check out release tag
+      - name: Check out trusted release-control source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve immutable release source
+        id: source
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MAIN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          trusted_version=$(node -p "require('./package.json').version")
+          expected_tag="v${trusted_version}"
+          if [[ "$RELEASE_TAG" != "$expected_tag" ]]; then
+            echo "release tag must be the current package tag ${expected_tag}" >&2
+            exit 1
+          fi
+          git fetch --force --no-tags origin "refs/heads/main:refs/remotes/origin/main"
+          git fetch --force origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          source_sha=$(git rev-parse "${RELEASE_TAG}^{commit}")
+          tag_version=$(git show "${source_sha}:package.json" | jq -er '.version')
+          if [[ "$tag_version" != "$trusted_version" ]]; then
+            echo "release tag package version ${tag_version} does not match trusted source ${trusted_version}" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$source_sha" refs/remotes/origin/main; then
+            echo "release tag source is not reachable from main" >&2
+            exit 1
+          fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$MAIN_SHA" != "$(git rev-parse HEAD)" ]]; then
+            echo "manual releases must run from the checked-out main commit" >&2
+            exit 1
+          fi
+          printf 'source_sha=%s\nversion=%s\n' "$source_sha" "$tag_version" >> "$GITHUB_OUTPUT"
+
+      - name: Check out immutable release source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ steps.source.outputs.source_sha }}
+          persist-credentials: false
 
       - name: Install pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -74,10 +118,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
-      - name: Check out release tag
+      - name: Check out verified release source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ needs.verify.outputs.source_sha }}
+          persist-credentials: false
 
       - name: Install pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -119,10 +164,11 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 40
     steps:
-      - name: Check out release tag
+      - name: Check out verified release source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ needs.verify.outputs.source_sha }}
+          persist-credentials: false
 
       - name: Install pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -162,12 +208,28 @@ jobs:
           retention-days: 7
 
   publish:
-    needs: [build-linux, build-macos]
+    needs: [verify, build-linux, build-macos]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
+      - name: Check out verified release source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Confirm the release tag still resolves to the verified source
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --force origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "$SOURCE_SHA"
+
       - name: Download built artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -192,7 +254,7 @@ jobs:
 
             ## Runtime compatibility
 
-            This release vendors app-wire 0.5.1 and was verified with OMP 16.4.8 built from [f65bb379](https://github.com/lyc-aon/oh-my-pi/commit/f65bb37970d2186f04ec4b650eb0b53ec3b1337b). Stock upstream OMP v16.4.8 does not include that bounded large-session snapshot and replay fix. It remains protocol-compatible, but a very large active session can disconnect while attaching.
+            This release vendors app-wire 0.5.2 from public integration commit [5d4315ee](https://github.com/lyc-aon/oh-my-pi/commit/5d4315eea317260fec030e2b4726f10fed0cd5f6) and was verified with OMP 16.4.8 built from [932bbace](https://github.com/lyc-aon/oh-my-pi/commit/932bbaceb256f43eb3b2760341f2175803da4d07), tagged [t4code-16.4.8-appserver-4](https://github.com/lyc-aon/oh-my-pi/tree/t4code-16.4.8-appserver-4). That runtime adds bounded growing-session replay, complete session event projection, catalog-backed session lifecycle management, ordered remote outbound frames, cross-client control-state convergence, terminal streaming-state settlement, and restart-safe session teardown. Official upstream OMP v16.4.8 has no `appserver` command and cannot host T4 Code. The verified runtime is built normally from the public `lyc-aon/oh-my-pi` source; it does not require private home-directory files, an auth broker, or a custom Codex CLI fork.
 
             The macOS build is unsigned and unnotarized. Gatekeeper will block the first launch. After copying T4 Code to Applications, run:
 
@@ -207,3 +269,21 @@ jobs:
             artifacts/T4-Code-*.dmg
             artifacts/T4-Code-*.zip
             artifacts/SHA256SUMS.txt
+
+  dispatch-site:
+    name: Dispatch site deployment after release publication
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Dispatch the production workflow from main with exact release source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: >-
+          gh workflow run deploy-site.yml
+          --ref main
+          -f release_tag="$RELEASE_TAG"

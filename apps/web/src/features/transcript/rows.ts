@@ -71,6 +71,21 @@ export interface AttentionState {
   readonly error: Extract<TranscriptNotice, { kind: "error" }> | null;
 }
 
+/** Read-only transcript views never expose interactive attention controls. */
+export function shouldShowAttention(
+  attention: AttentionState,
+  revisingPlanId: string | null,
+  readOnly: boolean,
+): boolean {
+  return (
+    !readOnly &&
+    (attention.approval !== null ||
+      attention.ask !== null ||
+      (attention.plan !== null && revisingPlanId === null) ||
+      attention.error !== null)
+  );
+}
+
 function textOf(data: Record<string, unknown>, key: string): string {
   const value = data[key];
   return typeof value === "string" ? value : "";

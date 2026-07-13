@@ -106,4 +106,188 @@ describe("loopback fixture websocket", () => {
     expect(server.engine.clientCount).toBe(0);
     await server.stop();
   });
+  it("broadcasts a session-management delta to another live websocket client", async () => {
+    const server = await start();
+    const manager = new WebSocket(server.address);
+    const observer = new WebSocket(server.address);
+    await Promise.all([opened(manager), opened(observer)]);
+    const managerHello = messages(manager, 3);
+    const observerHello = messages(observer, 3);
+    manager.send(JSON.stringify(hello));
+    observer.send(JSON.stringify(hello));
+    await Promise.all([managerHello, observerHello]);
+
+    const managerFrames = messages(manager, 2);
+    const observerDelta = nextMessage(observer);
+    manager.send(
+      JSON.stringify({
+        v: "omp-app/1",
+        type: "command",
+        requestId: "archive-request",
+        commandId: "archive-command",
+        hostId: server.engine.seed.hostId,
+        sessionId: server.engine.seed.sessionId,
+        command: "session.archive",
+        expectedRevision: server.engine.currentRevision,
+        args: {},
+      }),
+    );
+
+    expect(await managerFrames).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "response", ok: true, result: { archived: true } }),
+        expect.objectContaining({
+          type: "session.delta",
+          upsert: expect.objectContaining({ archivedAt: expect.any(String) }),
+        }),
+      ]),
+    );
+    expect(await observerDelta).toMatchObject({
+      type: "session.delta",
+      upsert: { archivedAt: server.engine.seed.baseTime },
+    });
+
+    manager.close();
+    observer.close();
+    await server.stop();
+  });
+  it("creates a distinct session and converges list, attach, and prompt over two sockets", async () => {
+    const server = new FixtureWebSocketServer({ scenario: "stream-v1" });
+    await server.start();
+    const manager = new WebSocket(server.address);
+    const observer = new WebSocket(server.address);
+    await Promise.all([opened(manager), opened(observer)]);
+    const managerHello = messages(manager, 3);
+    const observerHello = messages(observer, 3);
+    manager.send(JSON.stringify(hello));
+    observer.send(JSON.stringify(hello));
+    await Promise.all([managerHello, observerHello]);
+
+    const managerCreate = messages(manager, 2);
+    const observerCreate = nextMessage(observer);
+    manager.send(
+      JSON.stringify({
+        v: "omp-app/1",
+        type: "command",
+        requestId: "create-request",
+        commandId: "create-command",
+        hostId: server.engine.seed.hostId,
+        command: "session.create",
+        args: { projectId: server.engine.seed.projectId, title: "Created over websocket" },
+      }),
+    );
+
+    const createFrames = await managerCreate;
+    const createResponse = createFrames.find(
+      (frame) =>
+        typeof frame === "object" &&
+        frame !== null &&
+        (frame as { type?: unknown }).type === "response",
+    ) as { ok: true; result: { session: { sessionId: string; revision: string } } } | undefined;
+    expect(createResponse).toMatchObject({
+      ok: true,
+      result: {
+        session: {
+          project: { projectId: server.engine.seed.projectId },
+          title: "Created over websocket",
+        },
+      },
+    });
+    if (createResponse === undefined) throw new Error("fixture websocket did not create a session");
+    const createdSessionId = createResponse.result.session.sessionId;
+    expect(createdSessionId).not.toBe(server.engine.seed.sessionId);
+    expect(createFrames).toContainEqual(
+      expect.objectContaining({
+        type: "session.delta",
+        sessionId: createdSessionId,
+        upsert: expect.objectContaining({ sessionId: createdSessionId }),
+      }),
+    );
+    expect(await observerCreate).toMatchObject({
+      type: "session.delta",
+      sessionId: createdSessionId,
+      upsert: { sessionId: createdSessionId },
+    });
+
+    const observerList = messages(observer, 2);
+    observer.send(
+      JSON.stringify({
+        v: "omp-app/1",
+        type: "command",
+        requestId: "list-request",
+        commandId: "list-command",
+        hostId: server.engine.seed.hostId,
+        command: "session.list",
+        args: {},
+      }),
+    );
+    expect(await observerList).toContainEqual(
+      expect.objectContaining({
+        type: "sessions",
+        sessions: expect.arrayContaining([
+          expect.objectContaining({ sessionId: server.engine.seed.sessionId }),
+          expect.objectContaining({ sessionId: createdSessionId }),
+        ]),
+      }),
+    );
+
+    const attached = messages(observer, 2);
+    observer.send(
+      JSON.stringify({
+        v: "omp-app/1",
+        type: "command",
+        requestId: "attach-created-request",
+        commandId: "attach-created-command",
+        hostId: server.engine.seed.hostId,
+        sessionId: createdSessionId,
+        command: "session.attach",
+        args: {},
+      }),
+    );
+    expect(await attached).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "response",
+          ok: true,
+          result: expect.objectContaining({ attached: true }),
+        }),
+        expect.objectContaining({ type: "snapshot", sessionId: createdSessionId, entries: [] }),
+      ]),
+    );
+
+    const promptResponse = nextMessage(observer);
+    observer.send(
+      JSON.stringify({
+        v: "omp-app/1",
+        type: "command",
+        requestId: "prompt-created-request",
+        commandId: "prompt-created-command",
+        hostId: server.engine.seed.hostId,
+        sessionId: createdSessionId,
+        command: "session.prompt",
+        expectedRevision: createResponse.result.session.revision,
+        args: { message: "write through the created websocket session" },
+      }),
+    );
+    expect(await promptResponse).toMatchObject({
+      type: "response",
+      ok: true,
+      result: { accepted: true },
+    });
+    const streamed = messages(observer, 9);
+    server.advanceBy(30);
+    const journal = (await streamed).filter(
+      (frame) =>
+        typeof frame === "object" &&
+        frame !== null &&
+        ((frame as { type?: unknown }).type === "entry" ||
+          (frame as { type?: unknown }).type === "event"),
+    ) as Array<{ sessionId: string }>;
+    expect(journal).toHaveLength(8);
+    expect(journal.every((frame) => frame.sessionId === createdSessionId)).toBe(true);
+
+    manager.close();
+    observer.close();
+    await server.stop();
+  });
 });

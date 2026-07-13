@@ -5,10 +5,15 @@ import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AddressInfo } from "node:net";
 import { expect, test, type Page } from "@playwright/test";
+import { installColdMountObserver, readColdMountSamples } from "./cold-mount-observer.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const WEB_DIST = resolve(REPO_ROOT, "apps/web/dist");
-const JITI = resolve(REPO_ROOT, "node_modules/.bin", process.platform === "win32" ? "jiti.cmd" : "jiti");
+const JITI = resolve(
+  REPO_ROOT,
+  "node_modules/.bin",
+  process.platform === "win32" ? "jiti.cmd" : "jiti",
+);
 const FIXTURE_PROCESS = resolve(REPO_ROOT, "e2e/fixture-process.ts");
 const SESSION_VIEW_ID = "host-stream/session-stream";
 const SESSION_TITLE = "stream-v1 fixture";
@@ -243,12 +248,15 @@ async function openSession(page: Page, mobile: boolean): Promise<void> {
     const toggle = page.getByRole("button", { name: "Show session list", exact: true });
     await expect(toggle).toBeVisible();
     await toggle.click();
-    await expect(page.getByRole("dialog", { name: "Projects and sessions" })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Working folders and sessions" })).toBeVisible();
   }
 
   const session = page.locator(`[data-session-row="${SESSION_VIEW_ID}"]`);
   await expect(session).toBeVisible();
-  await expect(session).toHaveAttribute("aria-label", `${SESSION_TITLE}, fixture-model, working`);
+  await expect(session).toHaveAttribute(
+    "aria-label",
+    new RegExp(`^${SESSION_TITLE}, fixture(?:-model|/model-\\d{3}), Idle$`, "u"),
+  );
   await session.click();
 
   await expect(page).toHaveURL(/#\/sessions\//u);
@@ -291,12 +299,13 @@ test("settles a typed incompatible desktop inspection and recovers without a sta
         connectTarget: async () => ({ targetId: "local", state: "error" }),
         serviceInspect: async () => {
           control.inspectCalls += 1;
-          if (control.mode === "issue") return {
-            definition: "missing",
-            service: "unknown",
-            diagnostics: "",
-            issue: { code: "omp_incompatible", message: "Update OMP, then choose Check again." },
-          };
+          if (control.mode === "issue")
+            return {
+              definition: "missing",
+              service: "unknown",
+              diagnostics: "",
+              issue: { code: "omp_incompatible", message: "Update OMP, then choose Check again." },
+            };
           if (control.mode === "pending") {
             return new Promise<typeof inspection>((resolveInspection) => {
               control.resolvePending = resolveInspection;
@@ -314,9 +323,11 @@ test("settles a typed incompatible desktop inspection and recovers without a sta
   const inspectCalls = () =>
     page.evaluate(
       () =>
-        (globalThis as typeof globalThis & {
-          __t4ServiceInspectControl: { inspectCalls: number };
-        }).__t4ServiceInspectControl.inspectCalls,
+        (
+          globalThis as typeof globalThis & {
+            __t4ServiceInspectControl: { inspectCalls: number };
+          }
+        ).__t4ServiceInspectControl.inspectCalls,
     );
   await page.goto(web.url, { waitUntil: "domcontentloaded" });
 
@@ -328,9 +339,11 @@ test("settles a typed incompatible desktop inspection and recovers without a sta
   expect(await inspectCalls()).toBe(1);
 
   await page.evaluate(() => {
-    (globalThis as typeof globalThis & {
-      __t4ServiceInspectControl: { mode: "issue" | "pending" | "resolve" };
-    }).__t4ServiceInspectControl.mode = "pending";
+    (
+      globalThis as typeof globalThis & {
+        __t4ServiceInspectControl: { mode: "issue" | "pending" | "resolve" };
+      }
+    ).__t4ServiceInspectControl.mode = "pending";
   });
   await page.getByRole("button", { name: "Check again", exact: true }).click();
   await expect.poll(inspectCalls).toBe(2);
@@ -338,16 +351,18 @@ test("settles a typed incompatible desktop inspection and recovers without a sta
   expect(await inspectCalls()).toBe(2);
 
   await page.evaluate(() => {
-    const control = (globalThis as typeof globalThis & {
-      __t4ServiceInspectControl: {
-        mode: "reject" | "pending" | "resolve";
-        resolvePending?: (inspection: {
-          definition: "current";
-          service: "running";
-          diagnostics: "";
-        }) => void;
-      };
-    }).__t4ServiceInspectControl;
+    const control = (
+      globalThis as typeof globalThis & {
+        __t4ServiceInspectControl: {
+          mode: "reject" | "pending" | "resolve";
+          resolvePending?: (inspection: {
+            definition: "current";
+            service: "running";
+            diagnostics: "";
+          }) => void;
+        };
+      }
+    ).__t4ServiceInspectControl;
     control.mode = "resolve";
     control.resolvePending?.({ definition: "current", service: "running", diagnostics: "" });
   });
@@ -395,7 +410,9 @@ test("caps generic desktop inspection retries and clears timers on manual work a
           throw new Error("temporary IPC failure");
         },
         onServerFrame: () => () => undefined,
-        onConnectionState: (listener: (event: { targetId: string; state: "connected" }) => void) => {
+        onConnectionState: (
+          listener: (event: { targetId: string; state: "connected" }) => void,
+        ) => {
           control.stateListener = listener;
           return () => {
             if (control.stateListener === listener) control.stateListener = undefined;
@@ -406,37 +423,50 @@ test("caps generic desktop inspection retries and clears timers on manual work a
     });
   });
 
-  const inspectCalls = () => page.evaluate(
-    () => (globalThis as typeof globalThis & {
-      __t4GenericInspectControl: { inspectCalls: number };
-    }).__t4GenericInspectControl.inspectCalls,
-  );
+  const inspectCalls = () =>
+    page.evaluate(
+      () =>
+        (
+          globalThis as typeof globalThis & {
+            __t4GenericInspectControl: { inspectCalls: number };
+          }
+        ).__t4GenericInspectControl.inspectCalls,
+    );
   await page.goto(web.url, { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Check failed", { exact: true })).toBeVisible();
   await expect.poll(inspectCalls).toBe(1);
 
   await page.evaluate(() => {
-    (globalThis as typeof globalThis & {
-      __t4GenericInspectControl: { mode: "reject" | "pending" };
-    }).__t4GenericInspectControl.mode = "pending";
+    (
+      globalThis as typeof globalThis & {
+        __t4GenericInspectControl: { mode: "reject" | "pending" };
+      }
+    ).__t4GenericInspectControl.mode = "pending";
   });
   await page.getByRole("button", { name: "Check again", exact: true }).click();
   await expect.poll(inspectCalls).toBe(2);
   await page.clock.fastForward(5_000);
   expect(await inspectCalls()).toBe(2);
   await page.evaluate(() => {
-    const control = (globalThis as typeof globalThis & {
-      __t4GenericInspectControl: {
-        mode: "reject" | "pending";
-        rejectPending?: (error: Error) => void;
-      };
-    }).__t4GenericInspectControl;
+    const control = (
+      globalThis as typeof globalThis & {
+        __t4GenericInspectControl: {
+          mode: "reject" | "pending";
+          rejectPending?: (error: Error) => void;
+        };
+      }
+    ).__t4GenericInspectControl;
     control.mode = "reject";
     control.rejectPending?.(new Error("temporary IPC failure"));
   });
   await expect(page.getByText("Check failed", { exact: true })).toBeVisible();
 
-  for (const [delay, count] of [[5_000, 3], [15_000, 4], [30_000, 5], [60_000, 6]] as const) {
+  for (const [delay, count] of [
+    [5_000, 3],
+    [15_000, 4],
+    [30_000, 5],
+    [60_000, 6],
+  ] as const) {
     await page.clock.fastForward(delay);
     await expect.poll(inspectCalls).toBe(count);
   }
@@ -448,11 +478,13 @@ test("caps generic desktop inspection retries and clears timers on manual work a
   await page.getByRole("button", { name: "Check again", exact: true }).click();
   await expect.poll(inspectCalls).toBe(7);
   await page.evaluate(() => {
-    const control = (globalThis as typeof globalThis & {
-      __t4GenericInspectControl: {
-        stateListener?: (event: { targetId: string; state: "connected" }) => void;
-      };
-    }).__t4GenericInspectControl;
+    const control = (
+      globalThis as typeof globalThis & {
+        __t4GenericInspectControl: {
+          stateListener?: (event: { targetId: string; state: "connected" }) => void;
+        };
+      }
+    ).__t4GenericInspectControl;
     control.stateListener?.({ targetId: "local", state: "connected" });
   });
   await expect(page.getByText("No sessions yet", { exact: true })).toBeVisible();
@@ -505,12 +537,29 @@ test("uses an injected backend, streams once, settles durably, and reloads histo
   await expect(rows.nth(1)).toContainText("Hello world");
   await expect(rows.nth(1).getByRole("button", { name: "Copy response" })).toBeVisible();
 
+  await installColdMountObserver(page, "Hello world");
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.getByRole("log", { name: "Transcript" })).toBeVisible();
   const reloadedRows = page.locator("[data-transcript-row]");
   await expect(reloadedRows).toHaveCount(2);
   await expect(reloadedRows.nth(0)).toContainText("Hello world");
   await expect(reloadedRows.nth(1)).toContainText("Hello world");
+  await expect
+    .poll(async () => (await readColdMountSamples(page)).length)
+    .toBeGreaterThan(0);
+  await expect(
+    page.getByRole("log", { name: "Transcript" }).locator("[data-cold-mount-overlay]"),
+  ).toHaveCount(0);
+  const coldMountSamples = await readColdMountSamples(page);
+  expect(coldMountSamples.some((sample) => sample.overlayCopies > 0)).toBe(true);
+  expect(
+    coldMountSamples.some(
+      (sample) => sample.overlayCopies > 0 && sample.visibleCopies === sample.overlayCopies,
+    ),
+  ).toBe(true);
+  expect(
+    coldMountSamples.every((sample) => sample.visibleCopies <= sample.overlayCopies),
+  ).toBe(true);
 
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
@@ -523,7 +572,7 @@ test("keeps the mobile rail controls separate and the configured model cycle scr
   await openConnectedRoot(page);
 
   await page.getByRole("button", { name: "Show session list", exact: true }).click();
-  const rail = page.getByRole("dialog", { name: "Projects and sessions" });
+  const rail = page.getByRole("dialog", { name: "Working folders and sessions" });
   await expect(rail).toBeVisible();
   const close = rail.getByRole("button", { name: "Close", exact: true });
   const create = rail.getByRole("button", { name: /^New session in /u });
@@ -603,6 +652,34 @@ test("keeps the mobile rail controls separate and the configured model cycle scr
   await expect(last).toBeVisible();
   await last.click();
   await expect(modelList).toBeHidden();
+  // The composer does not optimistically echo a click. This label changes
+  // only after the fixture host accepts session.model.set and publishes the
+  // reconciled session ref, so the touch path proves command receipt too.
+  await expect(modelTrigger).toHaveAccessibleName(/^Model — this session: Fixture 12/u);
+});
+
+test("keeps an empty Archived filter selected on the home route", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openConnectedRoot(page);
+
+  const rail = page.getByRole("navigation", { name: "Working folders and sessions" });
+  const archived = rail.getByRole("button", { name: "Archived · 0", exact: true });
+  await archived.click();
+
+  await expect(page).toHaveURL(
+    (url) => url.pathname === "/" && (url.hash === "" || url.hash === "#/"),
+  );
+  await expect(archived).toHaveAttribute("aria-pressed", "true");
+  await expect(rail.getByText("No archived sessions.", { exact: true })).toBeVisible();
+  await expect(rail.locator("[data-session-row]")).toHaveCount(0);
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.getByText(CONNECTED_COPY, { exact: true })).toBeVisible();
+  await expect(
+    page
+      .getByRole("navigation", { name: "Working folders and sessions" })
+      .getByRole("button", { name: "Archived · 0", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
 });
 
 for (const viewport of [
@@ -678,12 +755,8 @@ for (const viewport of [
       });
       expect(actionGeometry.left, name).toBeGreaterThanOrEqual(0);
       expect(actionGeometry.top, name).toBeGreaterThanOrEqual(0);
-      expect(actionGeometry.right, name).toBeLessThanOrEqual(
-        actionGeometry.viewportWidth + 0.5,
-      );
-      expect(actionGeometry.bottom, name).toBeLessThanOrEqual(
-        actionGeometry.viewportHeight + 0.5,
-      );
+      expect(actionGeometry.right, name).toBeLessThanOrEqual(actionGeometry.viewportWidth + 0.5);
+      expect(actionGeometry.bottom, name).toBeLessThanOrEqual(actionGeometry.viewportHeight + 0.5);
       expect(actionGeometry.width, name).toBeGreaterThanOrEqual(44);
       expect(actionGeometry.height, name).toBeGreaterThanOrEqual(44);
     }
@@ -720,3 +793,200 @@ for (const viewport of [
     await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
   });
 }
+
+test("manages a session from a phone and converges another live client", async ({
+  browser,
+  page,
+}) => {
+  const managedTitle = "Managed from phone";
+  await page.setViewportSize({ width: 390, height: 844 });
+  const observerContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const observer = await observerContext.newPage();
+  try {
+    await Promise.all([openSession(page, true), openSession(observer, false)]);
+
+    await page.getByRole("button", { name: "Show session list", exact: true }).click();
+    const rail = page.getByRole("dialog", { name: "Working folders and sessions" });
+    await expect(rail).toBeVisible();
+    await expect(rail.getByRole("heading", { name: "Working folders", exact: true })).toBeVisible();
+    await expect(
+      rail.getByText("OMP groups sessions by the folder they were started in.", { exact: true }),
+    ).toBeVisible();
+    await expect(rail.getByRole("button", { name: "Current · 1", exact: true })).toBeVisible();
+    await expect(rail.getByRole("button", { name: "Archived · 0", exact: true })).toBeVisible();
+
+    const initialActions = rail.getByRole("button", { name: `Actions for ${SESSION_TITLE}` });
+    const initialActionsBox = await initialActions.boundingBox();
+    expect(initialActionsBox).not.toBeNull();
+    expect(initialActionsBox!.width).toBeGreaterThanOrEqual(44);
+    expect(initialActionsBox!.height).toBeGreaterThanOrEqual(44);
+    await initialActions.click();
+    const renameAction = page.getByRole("button", { name: "Rename", exact: true });
+    await expect(renameAction).toBeVisible();
+    const renameActionBox = await renameAction.boundingBox();
+    expect(renameActionBox).not.toBeNull();
+    expect(renameActionBox!.x).toBeGreaterThanOrEqual(0);
+    expect(renameActionBox!.y).toBeGreaterThanOrEqual(0);
+    expect(renameActionBox!.x + renameActionBox!.width).toBeLessThanOrEqual(390.5);
+    expect(renameActionBox!.y + renameActionBox!.height).toBeLessThanOrEqual(844.5);
+    await renameAction.click();
+
+    const renameDialog = page.getByRole("dialog", { name: "Rename session", exact: true });
+    await expect(renameDialog).toBeVisible();
+    const renameInput = renameDialog.getByRole("textbox", { name: "Session name" });
+    await renameInput.fill(managedTitle);
+    await renameDialog.getByRole("button", { name: "Rename", exact: true }).click();
+    await expect(renameDialog).toBeHidden();
+    await expect(page.getByText(managedTitle, { exact: true }).first()).toBeVisible();
+    await expect(observer.getByText(managedTitle, { exact: true }).first()).toBeVisible();
+
+    await page.getByRole("button", { name: "Show session list", exact: true }).click();
+    await expect(rail).toBeVisible();
+    const managedRow = page.locator(`[data-session-row="${SESSION_VIEW_ID}"]`);
+    await expect(managedRow).toContainText(managedTitle);
+
+    await rail.getByRole("button", { name: `Actions for ${managedTitle}` }).click();
+    await page.getByRole("button", { name: "Archive", exact: true }).click();
+    await expect(rail).toBeHidden();
+    await expect(page).toHaveURL(/#\/$/u);
+
+    await page.getByRole("button", { name: "Show session list", exact: true }).click();
+    await expect(rail).toBeVisible();
+    await expect(rail.getByText("No current sessions.", { exact: true })).toBeVisible();
+    await expect(rail.getByRole("button", { name: "Current · 0", exact: true })).toBeVisible();
+    const createAfterArchivingLastSession = rail.getByRole("button", {
+      name: /^New session in /u,
+    });
+    await expect(createAfterArchivingLastSession).toBeVisible();
+    await expect(createAfterArchivingLastSession).toBeEnabled();
+    const archivedFilter = rail.getByRole("button", { name: "Archived · 1", exact: true });
+    const archivedFilterBox = await archivedFilter.boundingBox();
+    expect(archivedFilterBox).not.toBeNull();
+    expect(archivedFilterBox!.height).toBeGreaterThanOrEqual(44);
+
+    await expect(observer.getByText(/Archived · read-only/u).first()).toBeVisible();
+    await expect(observer.getByRole("textbox", { name: "Message the session" })).toHaveCount(0);
+    await expect(observer.getByRole("button", { name: "Run options", exact: true })).toHaveCount(0);
+    await expect(
+      observer
+        .getByRole("navigation", { name: "Working folders and sessions" })
+        .getByRole("button", { name: "Archived · 1", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    // Create for real after the only previous session is archived. The host
+    // must allocate a distinct id, publish it to both clients, and expose a
+    // writable empty session rather than returning the archived seed again.
+    await createAfterArchivingLastSession.click();
+    await expect(rail).toBeHidden();
+    await expect(page).toHaveURL((url) => {
+      const route = decodeURIComponent(url.hash.replace(/^#\/sessions\//u, ""));
+      return url.hash.startsWith("#/sessions/") && route !== SESSION_VIEW_ID;
+    });
+    const createdViewId = decodeURIComponent(
+      new URL(page.url()).hash.replace(/^#\/sessions\//u, ""),
+    );
+    expect(createdViewId).not.toBe(SESSION_VIEW_ID);
+    await expect(
+      page.getByText("Nothing here yet. Say what you need and the work lands in this transcript.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Message the session" })).toBeEnabled();
+    await expect(page.getByText(/Archived · read-only/u)).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Show session list", exact: true }).click();
+    await expect(rail).toBeVisible();
+    await expect(rail.getByRole("button", { name: "Current · 1", exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(rail.getByRole("button", { name: "Archived · 1", exact: true })).toBeVisible();
+    const createdRow = rail.locator(`[data-session-row="${createdViewId}"]`);
+    await expect(createdRow).toBeVisible();
+    await expect(createdRow).toContainText("New session 1");
+
+    const observerRail = observer.getByRole("navigation", {
+      name: "Working folders and sessions",
+    });
+    const observerCurrent = observerRail.getByRole("button", {
+      name: "Current · 1",
+      exact: true,
+    });
+    await expect(observerCurrent).toBeVisible();
+    await observerCurrent.click();
+    await expect(observer).toHaveURL((url) => {
+      const route = decodeURIComponent(url.hash.replace(/^#\/sessions\//u, ""));
+      return route === createdViewId;
+    });
+    await expect(observer.locator(`[data-session-row="${createdViewId}"]`)).toBeVisible();
+    await expect(observer.getByRole("textbox", { name: "Message the session" })).toBeEnabled();
+
+    await rail.getByRole("button", { name: "Archived · 1", exact: true }).click();
+    await expect(rail).toBeHidden();
+    await expect(page.getByText(/Archived · read-only/u).first()).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Message the session" })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Show session list", exact: true }).click();
+    await expect(rail).toBeVisible();
+    await rail.getByRole("button", { name: `Actions for ${managedTitle}` }).click();
+    await expect(page.getByRole("button", { name: "Restore", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Rename", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Archive", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Restore", exact: true }).click();
+    await expect(rail).toBeHidden();
+    await expect(page.getByRole("textbox", { name: "Message the session" })).toBeEnabled();
+    await expect(observer.getByRole("textbox", { name: "Message the session" })).toBeEnabled();
+    await expect(
+      observerRail.getByRole("button", { name: "Current · 2", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    await page.getByRole("button", { name: "Show session list", exact: true }).click();
+    await expect(rail).toBeVisible();
+    await expect(rail.getByRole("button", { name: "Current · 2", exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await rail.getByRole("button", { name: `Actions for ${managedTitle}` }).click();
+    await page.getByRole("button", { name: "Permanently delete", exact: true }).click();
+
+    const deleteDialog = page.getByRole("dialog", {
+      name: `Permanently delete “${managedTitle}”?`,
+      exact: true,
+    });
+    await expect(
+      deleteDialog.getByRole("heading", {
+        name: `Permanently delete “${managedTitle}”?`,
+      }),
+    ).toBeVisible();
+    const deleteButton = deleteDialog.getByRole("button", {
+      name: "Permanently delete",
+      exact: true,
+    });
+    const deleteInput = deleteDialog.getByRole("textbox", {
+      name: "Type the exact session title to confirm",
+    });
+    await deleteInput.fill(`${managedTitle}!`);
+    await expect(deleteButton).toBeDisabled();
+    await deleteInput.fill(managedTitle);
+    await expect(deleteButton).toBeEnabled();
+    await deleteButton.click();
+
+    await expect(deleteDialog).toBeHidden();
+    await expect(page).toHaveURL((url) => {
+      const route = decodeURIComponent(url.hash.replace(/^#\/sessions\//u, ""));
+      return route === createdViewId;
+    });
+    await expect(page.locator(`[data-session-row="${SESSION_VIEW_ID}"]`)).toHaveCount(0);
+    await expect(page.locator(`[data-session-row="${createdViewId}"]`)).toHaveCount(1);
+    await expect(page.getByRole("textbox", { name: "Message the session" })).toBeEnabled();
+    await expect(observer).toHaveURL((url) => {
+      const route = decodeURIComponent(url.hash.replace(/^#\/sessions\//u, ""));
+      return route === createdViewId;
+    });
+    await expect(
+      observerRail.getByRole("button", { name: "Current · 1", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+  } finally {
+    await observerContext.close();
+  }
+});

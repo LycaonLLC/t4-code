@@ -26,16 +26,24 @@ export function AppShell() {
   const railCollapsed = useWorkspace((state) => state.railCollapsed);
   const railWidth = useWorkspace((state) => state.railWidth);
   const railOverlayOpen = useWorkspace((state) => state.railOverlayOpen);
+  const sessionListView = useWorkspace((state) => state.sessionListView);
   const projectExpandedById = useWorkspace((state) => state.projectExpandedById);
   const lastVisitedAtBySessionId = useWorkspace((state) => state.lastVisitedAtBySessionId);
   const [railPreviewWidth, setRailPreviewWidth] = useState<number | null>(null);
   const [nowMs] = useState(() => Date.now());
 
   const shellData = useShellData();
-  const groups = useMemo(
-    () => buildProjectGroups(shellData, projectExpandedById, lastVisitedAtBySessionId),
+  const currentGroups = useMemo(
+    () => buildProjectGroups(shellData, projectExpandedById, lastVisitedAtBySessionId, "current"),
     [shellData, projectExpandedById, lastVisitedAtBySessionId],
   );
+  const archivedGroups = useMemo(
+    () => buildProjectGroups(shellData, projectExpandedById, lastVisitedAtBySessionId, "archived"),
+    [shellData, projectExpandedById, lastVisitedAtBySessionId],
+  );
+  const groups = sessionListView === "archived" ? archivedGroups : currentGroups;
+  const currentCount = shellData.sessions.filter((session) => session.archivedAt === undefined).length;
+  const archivedCount = shellData.sessions.length - currentCount;
 
   // Desktop mode: start the runtime once. StrictMode's doubled effect and
   // HMR remounts are safe — start is idempotent on a global singleton.
@@ -79,6 +87,7 @@ export function AppShell() {
             getShellData(),
             state.projectExpandedById,
             state.lastVisitedAtBySessionId,
+            state.sessionListView,
           ),
         );
         const sessionId = visible[action.index];
@@ -120,7 +129,7 @@ export function AppShell() {
               {railCollapsed ? (
                 <div className="h-full" style={{ width: RAIL_COLLAPSED_WIDTH }}>
                   <CollapsedRail
-                    groups={groups}
+                    groups={currentGroups}
                     onExpand={(projectId) => {
                       const state = workspaceStore.getState();
                       state.setRailCollapsed(false);
@@ -130,7 +139,13 @@ export function AppShell() {
                 </div>
               ) : (
                 <div className="flex h-full flex-col" style={{ width: effectiveRailWidth }}>
-                  <Rail groups={groups} nowMs={nowMs} />
+                  <Rail
+                    archivedCount={archivedCount}
+                    currentCount={currentCount}
+                    groups={groups}
+                    nowMs={nowMs}
+                    view={sessionListView}
+                  />
                 </div>
               )}
             </div>
@@ -157,13 +172,16 @@ export function AppShell() {
           open={railOverlayOpen}
         >
           <SheetPopup
-            aria-label="Projects and sessions"
-            className="w-72 p-0"
+            aria-label="Working folders and sessions"
+            className="w-[min(20rem,calc(100vw-1rem))] p-0"
             showCloseButton={false}
             side="left"
           >
             <div className="flex h-14 shrink-0 items-center border-border border-b px-3">
-              <SheetTitle className="text-sm">Projects and sessions</SheetTitle>
+              <SheetTitle className="text-sm">
+                <span aria-hidden="true">Sessions</span>
+                <span className="sr-only">Working folders and sessions</span>
+              </SheetTitle>
               <SheetClose
                 aria-label="Close"
                 className="ml-auto size-11"
@@ -173,13 +191,19 @@ export function AppShell() {
               </SheetClose>
             </div>
             <div className="min-h-0 flex-1">
-              <Rail groups={groups} nowMs={nowMs} />
+              <Rail
+                archivedCount={archivedCount}
+                currentCount={currentCount}
+                groups={groups}
+                nowMs={nowMs}
+                view={sessionListView}
+              />
             </div>
           </SheetPopup>
         </Sheet>
       )}
 
-      <CommandPalette groups={groups} />
+      <CommandPalette groups={currentGroups} />
     </div>
   );
 }

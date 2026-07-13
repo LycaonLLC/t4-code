@@ -75,6 +75,9 @@ export const SESSION_EVENT_VOCABULARY = {
   notice: { activityKind: "system", projection: "inspect-only" },
   "thinking.level.changed": { activityKind: "system", projection: "inspect-only" },
   "goal.updated": { activityKind: "system", projection: "inspect-only" },
+  session_archived: { activityKind: "system", projection: "inspect-only" },
+  session_restored: { activityKind: "system", projection: "inspect-only" },
+  session_deleted: { activityKind: "system", projection: "inspect-only" },
 
   // Compatibility spellings used by the original Activity fixtures.
   "tool.end": { activityKind: "tool", projection: "tool-result" },
@@ -122,6 +125,9 @@ export const OMP_APPSERVER_SESSION_EVENT_TYPES = [
   "notice",
   "thinking.level.changed",
   "goal.updated",
+  "session_archived",
+  "session_restored",
+  "session_deleted",
   "agent.event",
   "approval.request",
   "approval.resolved",

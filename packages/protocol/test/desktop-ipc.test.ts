@@ -48,6 +48,49 @@ describe("desktop IPC boundary", () => {
       { channel: "omp:terminal:input", payload: { targetId: "remote-1", hostId: "h", sessionId: "s", terminalId: "t", data: "%%%%", encoding: "base64" } },
     ]) expect(() => decodeDesktopInvokeRequest(value)).toThrow();
   });
+  it("carries planned session management commands and results across strict desktop IPC", () => {
+    const request = decodeDesktopInvokeRequest({
+      channel: "omp:command",
+      payload: {
+        targetId: "remote-1",
+        intent: {
+          hostId: "host-1",
+          sessionId: "session-1",
+          command: "session.archive",
+          expectedRevision: "revision-1",
+          args: {},
+        },
+      },
+    });
+    expect(request).toMatchObject({
+      channel: "omp:command",
+      payload: {
+        targetId: "remote-1",
+        intent: { command: "session.archive", expectedRevision: "revision-1" },
+      },
+    });
+    expect(
+      decodeDesktopEvent({
+        channel: "omp:server-frame",
+        payload: {
+          targetId: "remote-1",
+          frame: {
+            v: "omp-app/1",
+            type: "response",
+            requestId: "request-1",
+            commandId: "command-1",
+            command: "session.archive",
+            hostId: "host-1",
+            sessionId: "session-1",
+            ok: true,
+            result: { archived: true },
+          },
+        },
+      }),
+    ).toMatchObject({
+      payload: { frame: { command: "session.archive", ok: true, result: { archived: true } } },
+    });
+  });
   it("decodes events and rejects hostile shapes", () => {
     expect(
       decodeDesktopEvent({

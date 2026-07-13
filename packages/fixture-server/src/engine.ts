@@ -9,62 +9,53 @@ import {
   type DurableEntry,
   type EntryId,
   type HostId,
-  type LiveEventFrame,
-  type ProjectId,
   type Revision,
   type ServerFrame,
   type SessionId,
+  type SessionRef,
 } from "@t4-code/protocol";
+import { buildCommandSideFrames } from "./fixture-command-frames.ts";
+import {
+  applyCreatedSessionManagementMutation,
+  applyCreatedSessionModelMutation,
+  branded,
+  buildEntry,
+  buildHistory,
+  buildHistoryParts,
+  createCreatedFixtureSession,
+  type CreatedFixtureSession,
+  type Cursor,
+  decodeCursor,
+  derivedRevision,
+  type JournalFrame,
+  scheduleFixturePrompt,
+  sessionCursor,
+  sessionRef,
+  snapshotEntries,
+} from "./fixture-sessions.ts";
 import { canonicalSha256, type ScenarioSeed } from "./seeds.ts";
+import { fixtureCatalogItems, fixtureSettings } from "./fixture-catalog.ts";
+import { VirtualScheduler } from "./virtual-scheduler.ts";
+
+export { VirtualScheduler } from "./virtual-scheduler.ts";
+export { buildHistory, buildHistoryParts };
 
 const V = "omp-app/1" as const;
 export const MAX_QUEUE = 128;
 export const MAX_JOURNAL = 256;
 const MAX_HISTORY_SNAPSHOT = 900;
+const SESSION_LIFECYCLE_COMMANDS = new Set([
+  "session.archive",
+  "session.restore",
+  "session.delete",
+]);
 
-type Cursor = { epoch: string; seq: number };
-type JournalFrame = Extract<ServerFrame, { type: "entry" | "event" }>;
+function isSessionLifecycleCommand(command: string): boolean {
+  return SESSION_LIFECYCLE_COMMANDS.has(command);
+}
+
 type SavedCommand = { payloadHash: string; response: Extract<ServerFrame, { type: "response" }> };
 type SavedChallenge = { command: CommandFrame };
-
-export interface ScheduledTask {
-  readonly atMs: number;
-  readonly order: number;
-  readonly run: () => void;
-}
-export class VirtualScheduler {
-  private nowValue = 0;
-  private orderValue = 0;
-  private tasks: ScheduledTask[] = [];
-  get now(): number {
-    return this.nowValue;
-  }
-  schedule(delayMs: number, run: () => void): void {
-    if (!Number.isSafeInteger(delayMs) || delayMs < 0)
-      throw new RangeError("delayMs must be a non-negative integer");
-    this.tasks.push({ atMs: this.nowValue + delayMs, order: this.orderValue++, run });
-    this.tasks.sort((a, b) => a.atMs - b.atMs || a.order - b.order);
-  }
-  advanceBy(deltaMs: number): void {
-    this.advanceTo(this.nowValue + deltaMs);
-  }
-  advanceTo(targetMs: number): void {
-    if (!Number.isSafeInteger(targetMs) || targetMs < this.nowValue)
-      throw new RangeError("virtual time cannot move backwards");
-    while (this.tasks.length > 0 && this.tasks[0]!.atMs <= targetMs) {
-      const task = this.tasks.shift()!;
-      this.nowValue = task.atMs;
-      task.run();
-    }
-    this.nowValue = targetMs;
-  }
-  pending(): number {
-    return this.tasks.length;
-  }
-  clear(): void {
-    this.tasks = [];
-  }
-}
 
 interface ClientState {
   id: string;
@@ -83,157 +74,13 @@ export interface FixtureClient {
   readonly attached: boolean;
 }
 
-function branded<T extends string>(value: string): T {
-  return value as T;
-}
-function sessionCursor(seed: ScenarioSeed, seq: number, epoch: string): Cursor {
-  return { epoch, seq };
-}
-function sessionRef(seed: ScenarioSeed) {
-  return {
-    hostId: branded<HostId>(seed.hostId),
-    sessionId: branded<SessionId>(seed.sessionId),
-    project: {
-      projectId: branded<ProjectId>(seed.projectId),
-      canonicalCwd: `/workspace/${seed.id}`,
-    },
-    revision: branded<Revision>(seed.revision),
-    title: `${seed.id} fixture`,
-    status: "active" as const,
-    updatedAt: seed.baseTime,
-    liveState: { phase: "idle" },
-    model: "fixture-model",
-  };
-}
-
-const FIXTURE_CYCLE_ROLES = Array.from({ length: 12 }, (_, index) =>
-  index === 0 ? "default" : `cycle-${String(index + 1).padStart(2, "0")}`,
-);
-
-/** A production-shaped profile large enough to exercise phone popup scrolling. */
-function fixtureSettings(): Record<string, unknown> {
-  const modelRoles = Object.fromEntries(
-    FIXTURE_CYCLE_ROLES.map((role, index) => [
-      role,
-      `fixture/model-${String(index + 1).padStart(3, "0")}`,
-    ]),
-  );
-  const modelTags = Object.fromEntries(
-    FIXTURE_CYCLE_ROLES.map((role, index) => [
-      role,
-      { name: `Fixture ${String(index + 1).padStart(2, "0")}` },
-    ]),
-  );
-  return {
-    cycleOrder: { effective: FIXTURE_CYCLE_ROLES, configured: true },
-    modelRoles: { effective: modelRoles, configured: true },
-    modelTags: { effective: modelTags, configured: true },
-    defaultThinkingLevel: { effective: "medium", configured: true },
-  };
-}
-
-/** Mirrors tonight's live ratio: a short Ctrl-P cycle over a much larger catalog. */
-function fixtureCatalogItems(): Record<string, unknown>[] {
-  const commands = ["session.cancel", "session.model.set", "session.thinking.set", "session.fast.set"].map(
-    (name) => ({
-      id: `cmd-${name.replaceAll(".", "-")}`,
-      kind: "command",
-      name,
-      description: `${name} fixture command`,
-      capabilities: [name === "session.cancel" ? "sessions.control" : "sessions.prompt"],
-      supported: true,
-    }),
-  );
-  const models = Array.from({ length: 184 }, (_, index) => {
-    const ordinal = String(index + 1).padStart(3, "0");
-    return {
-      id: `model-fixture-${ordinal}`,
-      kind: "model",
-      name: `Fixture model ${ordinal}`,
-      metadata: { provider: "fixture", modelId: `model-${ordinal}` },
-      supported: true,
-    };
-  });
-  const modes = FIXTURE_CYCLE_ROLES.map((role, index) => ({
-    id: `mode-role-${role}`,
-    kind: "mode",
-    name: role,
-    description: `Fixture ${String(index + 1).padStart(2, "0")}`,
-    metadata: {
-      role,
-      modelId: `fixture/model-${String(index + 1).padStart(3, "0")}`,
-      cycle: true,
-      cycleIndex: index,
-    },
-  }));
-  return [...commands, ...models, ...modes];
-}
-
-export function buildHistory(seed: ScenarioSeed): DurableEntry[] {
-  const count = seed.historyMessages ?? 1;
-  const entries: DurableEntry[] = [];
-  let parentId: string | null = null;
-  for (let i = 0; i < count; i++) {
-    const id = `entry-${seed.id}-${String(i + 1).padStart(5, "0")}`;
-    entries.push({
-      id: branded(id),
-      parentId: parentId === null ? null : branded<EntryId>(parentId),
-      hostId: branded(seed.hostId),
-      sessionId: branded(seed.sessionId),
-      kind: "message",
-      timestamp: new Date(Date.parse(seed.baseTime) + i * 1000).toISOString(),
-      data: { role: i % 2 === 0 ? "user" : "assistant", text: `message-${i + 1}` },
-    });
-    parentId = id;
-  }
-  return entries;
-}
-export function buildHistoryParts(seed: ScenarioSeed): readonly Record<string, unknown>[] {
-  const count = seed.historyParts ?? (seed.historyMessages ?? 1) * 3;
-  return Array.from({ length: count }, (_, i) => ({
-    id: `part-${seed.id}-${String(i + 1).padStart(5, "0")}`,
-    messageIndex: Math.floor(i / 3),
-    ordinal: i % 3,
-    text: `part-${i + 1}`,
-  }));
-}
-function buildEntry(
-  seed: ScenarioSeed,
-  ordinal: number,
-  text: string,
-  parentId: string | null = null,
-  entryId = `entry-${seed.id}-${ordinal}`,
-): DurableEntry {
-  return {
-    id: branded(entryId),
-    parentId: parentId === null ? null : branded<EntryId>(parentId),
-    hostId: branded(seed.hostId),
-    sessionId: branded(seed.sessionId),
-    kind: "message",
-    timestamp: new Date(Date.parse(seed.baseTime) + ordinal * 1000).toISOString(),
-    data: { role: "assistant", text },
-  };
-}
-function snapshotEntries(seed: ScenarioSeed): DurableEntry[] {
-  if (seed.historyMessages !== undefined) return buildHistory(seed).slice(-MAX_HISTORY_SNAPSHOT);
-  const prompt = seed.scripts.prompt.filter((step) => step.kind === "entry");
-  if (prompt.length === 0) return [buildEntry(seed, 1, "fixture ready")];
-  return prompt.map((step, i) =>
-    buildEntry(
-      seed,
-      i + 1,
-      step.text ?? `entry-${i + 1}`,
-      i === 0 ? null : `entry-${seed.id}-${i}`,
-    ),
-  );
-}
-
 export class FixtureEngine {
   readonly scheduler: VirtualScheduler;
   readonly seed: ScenarioSeed;
   private clients = new Map<string, ClientState>();
   private nextClient = 1;
   private seq = 0;
+  private sessionIndexSeq = 0;
   private durableCount = 0;
   private epoch: string;
   private revision: Revision;
@@ -241,11 +88,20 @@ export class FixtureEngine {
   private durableEntries: DurableEntry[];
   private closed = false;
   private nextLiveEntry = 1;
+  private archivedAt: string | undefined;
+  private sessionDeleted = false;
+  private sessionTitle: string;
+  private sessionModel = "fixture-model";
+  private managementRevision = 0;
+  private controlRevision = 0;
+  private createdSessions = new Map<string, CreatedFixtureSession>();
+  private nextCreatedSession = 1;
   constructor(seed: ScenarioSeed, scheduler = new VirtualScheduler()) {
     this.seed = seed;
     this.scheduler = scheduler;
     this.epoch = seed.epoch;
     this.revision = branded<Revision>(seed.revision);
+    this.sessionTitle = `${seed.id} fixture`;
     this.durableEntries = snapshotEntries(seed);
   }
   get virtualTime(): number {
@@ -268,7 +124,9 @@ export class FixtureEngine {
       seed: this.seed,
       epoch: this.epoch,
       seq: this.seq,
+      sessionIndexSeq: this.sessionIndexSeq,
       revision: this.revision,
+      sessions: this.currentSessionRefs(),
       journal: this.journal.map((frame) => frame.cursor),
       durableEntries: this.durableEntries.map((entry) => entry.id),
       clients: [...this.clients].map(([id, state]) => ({
@@ -376,8 +234,17 @@ export class FixtureEngine {
     if (epoch.length === 0 || epoch === this.epoch) throw new Error("restart requires a new epoch");
     this.epoch = epoch;
     this.seq = 0;
+    this.sessionIndexSeq = 0;
     this.durableCount = 0;
     this.revision = branded<Revision>(this.seed.revision);
+    this.managementRevision = 0;
+    this.controlRevision = 0;
+    this.archivedAt = undefined;
+    this.sessionDeleted = false;
+    this.sessionTitle = `${this.seed.id} fixture`;
+    this.sessionModel = "fixture-model";
+    this.createdSessions.clear();
+    this.nextCreatedSession = 1;
     this.journal = [];
     for (const state of this.clients.values()) {
       state.queue = [];
@@ -450,6 +317,63 @@ export class FixtureEngine {
     if (!state) throw new Error(`unknown fixture client: ${id}`);
     return state;
   }
+  private currentSessionRef() {
+    return sessionRef(this.seed, {
+      ...(this.archivedAt === undefined ? {} : { archivedAt: this.archivedAt }),
+      model: this.sessionModel,
+      revision: this.revision,
+      title: this.sessionTitle,
+    });
+  }
+  private createdSessionRef(session: CreatedFixtureSession): SessionRef {
+    return sessionRef(this.seed, {
+      ...(session.archivedAt === undefined ? {} : { archivedAt: session.archivedAt }),
+      model: session.model,
+      projectId: session.projectId,
+      revision: session.revision,
+      sessionId: session.sessionId,
+      title: session.title,
+      updatedAt: session.updatedAt,
+    });
+  }
+  private sessionRefFor(sessionId: SessionId): SessionRef {
+    const created = this.createdSessions.get(String(sessionId));
+    return created === undefined ? this.currentSessionRef() : this.createdSessionRef(created);
+  }
+  private currentSessionRefs(): SessionRef[] {
+    return [
+      ...(this.sessionDeleted ? [] : [this.currentSessionRef()]),
+      ...[...this.createdSessions.values()]
+        .filter((session) => !session.deleted)
+        .map((session) => this.createdSessionRef(session)),
+    ];
+  }
+  private isKnownSession(sessionId: SessionId | undefined): boolean {
+    if (sessionId === undefined) return false;
+    return sessionId === this.seed.sessionId || this.createdSessions.has(String(sessionId));
+  }
+  private revisionFor(sessionId: SessionId | undefined): Revision {
+    if (sessionId === undefined || sessionId === this.seed.sessionId) return this.revision;
+    return this.createdSessions.get(String(sessionId))?.revision ?? this.revision;
+  }
+  private cursorFor(sessionId: SessionId | undefined): Cursor {
+    if (sessionId === undefined || sessionId === this.seed.sessionId) return this.currentCursor;
+    const created = this.createdSessions.get(String(sessionId));
+    return sessionCursor(this.seed, created?.seq ?? 0, this.epoch);
+  }
+  private journalFor(sessionId: SessionId): JournalFrame[] {
+    return sessionId === this.seed.sessionId
+      ? this.journal
+      : (this.createdSessions.get(String(sessionId))?.journal ?? []);
+  }
+  private entriesFor(sessionId: SessionId): DurableEntry[] {
+    return sessionId === this.seed.sessionId
+      ? this.durableEntries
+      : (this.createdSessions.get(String(sessionId))?.durableEntries ?? []);
+  }
+  private currentSessionIndexCursor(): Cursor {
+    return sessionCursor(this.seed, this.sessionIndexSeq, this.epoch);
+  }
   private emit(state: ClientState, frame: ServerFrame): void {
     decodeServerFrame(frame);
     if (state.closed) return;
@@ -505,54 +429,60 @@ export class FixtureEngine {
     this.emit(state, {
       v: V,
       type: "sessions",
-      cursor: sessionCursor(this.seed, this.seq, this.epoch),
-      sessions: [sessionRef(this.seed)],
+      cursor: this.currentSessionIndexCursor(),
+      sessions: this.currentSessionRefs(),
     });
     if (saved === undefined) this.emitSnapshot(state);
     else state.cursor = { epoch: saved.cursor.epoch, seq: saved.cursor.seq };
   }
-  private emitSnapshot(state: ClientState): void {
+  private emitSnapshot(
+    state: ClientState,
+    sessionId = branded<SessionId>(this.seed.sessionId),
+  ): void {
     this.emit(state, {
       v: V,
       type: "snapshot",
-      cursor: sessionCursor(this.seed, this.seq, this.epoch),
-      revision: this.revision,
+      cursor: this.cursorFor(sessionId),
+      revision: this.revisionFor(sessionId),
       hostId: branded<HostId>(this.seed.hostId),
-      sessionId: branded<SessionId>(this.seed.sessionId),
-      entries: this.durableEntries.slice(-MAX_HISTORY_SNAPSHOT),
+      sessionId,
+      entries: this.entriesFor(sessionId).slice(-MAX_HISTORY_SNAPSHOT),
     });
-    state.cursor = this.currentCursor;
+    state.cursor = this.cursorFor(sessionId);
   }
-  private emitGap(state: ClientState, reason: string): void {
+  private emitGap(state: ClientState, reason: string, sessionId: SessionId): void {
     this.emit(state, {
       v: V,
       type: "gap",
       hostId: branded<HostId>(this.seed.hostId),
-      sessionId: branded<SessionId>(this.seed.sessionId),
+      sessionId,
       from: sessionCursor(this.seed, 0, this.epoch),
-      to: this.currentCursor,
+      to: this.cursorFor(sessionId),
       reason,
     });
   }
-  private attachState(state: ClientState, saved?: Cursor): void {
+  private attachState(state: ClientState, saved?: Cursor, requestedSessionId?: SessionId): void {
+    const sessionId = requestedSessionId ?? branded<SessionId>(this.seed.sessionId);
     state.attached = true;
     if (saved === undefined) {
-      this.emitSnapshot(state);
+      this.emitSnapshot(state, sessionId);
       return;
     }
     if (saved.epoch !== this.epoch) {
-      this.emitGap(state, "epoch_changed");
-      this.emitSnapshot(state);
+      this.emitGap(state, "epoch_changed", sessionId);
+      this.emitSnapshot(state, sessionId);
       return;
     }
-    const oldest = this.journal[0]?.cursor.seq ?? this.seq + 1;
-    if (saved.seq > this.seq || saved.seq < oldest - 1) {
-      this.emitGap(state, "journal_gap");
-      this.emitSnapshot(state);
+    const journal = this.journalFor(sessionId);
+    const current = this.cursorFor(sessionId);
+    const oldest = journal[0]?.cursor.seq ?? current.seq + 1;
+    if (saved.seq > current.seq || saved.seq < oldest - 1) {
+      this.emitGap(state, "journal_gap", sessionId);
+      this.emitSnapshot(state, sessionId);
       return;
     }
-    for (const frame of this.journal) if (frame.cursor.seq > saved.seq) this.emit(state, frame);
-    state.cursor = this.currentCursor;
+    for (const frame of journal) if (frame.cursor.seq > saved.seq) this.emit(state, frame);
+    state.cursor = current;
   }
   private onCommand(state: ClientState, frame: CommandFrame): void {
     const descriptor = COMMAND_DESCRIPTORS[frame.command];
@@ -576,7 +506,7 @@ export class FixtureEngine {
     };
     if (
       frame.hostId !== this.seed.hostId ||
-      (descriptor.scope === "session" && frame.sessionId !== this.seed.sessionId)
+      (descriptor.scope === "session" && !this.isKnownSession(frame.sessionId))
     ) {
       this.emit(state, {
         ...base,
@@ -640,11 +570,11 @@ export class FixtureEngine {
     const response = this.makeCommandResponse(frame, base);
     state.commands.set(key, { payloadHash, response });
     this.emit(state, response);
-    this.emitCommandSideFrames(state, frame);
-    if (frame.command === "session.attach") {
+    if (response.ok) this.emitCommandSideFrames(state, frame, response);
+    if (response.ok && frame.command === "session.attach") {
       const args = frame.args;
-      const savedCursor = "cursor" in args ? this.decodeCursor(args.cursor) : undefined;
-      this.attachState(state, savedCursor);
+      const savedCursor = "cursor" in args ? decodeCursor(args.cursor) : undefined;
+      this.attachState(state, savedCursor, frame.sessionId);
     }
   }
   private onConfirm(state: ClientState, frame: Extract<ClientFrame, { type: "confirm" }>): void {
@@ -699,7 +629,8 @@ export class FixtureEngine {
     });
     state.commands.set(String(command.commandId), { payloadHash, response });
     this.emit(state, response);
-    if (frame.decision === "approve") this.emitCommandSideFrames(state, command);
+    if (frame.decision === "approve" && response.ok)
+      this.emitCommandSideFrames(state, command, response);
   }
   private emitTerminalOutput(
     state: ClientState,
@@ -731,70 +662,128 @@ export class FixtureEngine {
       exitCode: 0,
     } as unknown as ServerFrame);
   }
-  private emitCommandSideFrames(state: ClientState, frame: CommandFrame): void {
+  private emitCommandSideFrames(
+    state: ClientState,
+    frame: CommandFrame,
+    response: Extract<ServerFrame, { type: "response" }>,
+  ): void {
+    if (frame.command === "session.create") {
+      const result = response.result as { session?: SessionRef } | undefined;
+      if (result?.session !== undefined)
+        this.publishSessionIndexDelta(result.session.sessionId, false);
+      return;
+    }
+    if (frame.command === "session.rename" || isSessionLifecycleCommand(frame.command)) {
+      this.applySessionManagementMutation(frame);
+      this.publishSessionIndexDelta(
+        frame.sessionId ?? branded<SessionId>(this.seed.sessionId),
+        frame.command === "session.delete",
+      );
+      return;
+    }
+    if (frame.command === "session.model.set") {
+      this.applyModelMutation(frame);
+      this.publishSessionIndexDelta(
+        frame.sessionId ?? branded<SessionId>(this.seed.sessionId),
+        false,
+      );
+      return;
+    }
+    const targetSessionId = frame.sessionId ?? branded<SessionId>(this.seed.sessionId);
     const ids = {
       v: V,
       hostId: branded<HostId>(this.seed.hostId),
-      sessionId: branded<SessionId>(this.seed.sessionId),
-      cursor: this.currentCursor,
-      revision: this.revision,
+      sessionId: targetSessionId,
+      cursor: this.cursorFor(targetSessionId),
+      revision: this.revisionFor(targetSessionId),
     };
-    let additive: unknown;
-    if (frame.command === "host.watch")
-      additive = { ...ids, type: "host.watch", watchId: "watch-fixture", state: "started" };
-    else if (frame.command === "controller.lease.acquire" || frame.command === "controller.lease.renew" || frame.command === "controller.lease.release")
-      additive = { ...ids, type: "lease", leaseId: "lease-fixture", kind: "controller", state: frame.command.endsWith("release") ? "released" : frame.command.endsWith("renew") ? "renewed" : "acquired", owner: "fixture-device", expiresAt: new Date(Date.parse(this.seed.baseTime) + 60_000).toISOString() };
-    else if (frame.command === "prompt.lease.acquire" || frame.command === "prompt.lease.renew" || frame.command === "prompt.lease.release")
-      additive = { ...ids, type: "prompt.lease", leaseId: "lease-fixture", kind: "prompt", state: frame.command.endsWith("release") ? "released" : frame.command.endsWith("renew") ? "renewed" : "acquired", owner: "fixture-device", expiresAt: new Date(Date.parse(this.seed.baseTime) + 60_000).toISOString() };
-    else if (frame.command === "session.watch")
-      additive = [
-        { ...ids, type: "session.watch", watchId: "watch-fixture", state: "started" },
-        { ...ids, type: "session.state", state: "ready" },
-        { ...ids, type: "session.delta", upsert: sessionRef(this.seed) },
-        { ...ids, type: "session.delta", remove: branded<SessionId>("session-removed") },
-      ];
-    else if (frame.command === "agent.cancel")
-      additive = [
-        { ...ids, type: "agent.lifecycle", agentId: "agent-fixture", lifecycle: "cancelled" },
-        { ...ids, type: "agent.progress", agentId: "agent-fixture", progress: 1 },
-        { ...ids, type: "agent.transcript", agentId: "agent-fixture", entries: [] },
-      ];
-    else if (frame.command === "files.list")
-      additive = { ...ids, type: "files.list", path: "src", entries: [] };
-    else if (frame.command === "files.diff")
-      additive = { ...ids, type: "files.diff", path: "src/file.ts", diff: "" };
-    else if (frame.command === "audit.tail")
-      additive = [
-        { v: V, type: "audit.tail", hostId: ids.hostId, cursor: ids.cursor, events: [] },
-        { v: V, type: "audit.event", hostId: ids.hostId, cursor: ids.cursor, event: { eventId: "operation-fixture", hostId: ids.hostId, action: "fixture.read", actor: "fixture", timestamp: this.seed.baseTime } },
-      ];
-    else if (frame.command === "settings.read")
-      additive = {
+    if (frame.command === "session.list") {
+      this.emit(state, {
         v: V,
-        type: "settings",
-        hostId: ids.hostId,
-        revision: ids.revision,
-        settings: fixtureSettings(),
-      };
-    else if (frame.command === "preview.launch")
-      additive = { ...ids, type: "preview.launch", previewId: "preview-fixture", url: "http://127.0.0.1/fixture", revision: ids.revision };
-    else if (frame.command === "preview.state")
-      additive = { ...ids, type: "preview.state", previewId: "preview-fixture", state: "ready" };
-    else if (frame.command === "preview.navigate")
-      additive = { ...ids, type: "preview.navigation", previewId: "preview-fixture", url: "http://127.0.0.1/fixture" };
-    else if (frame.command === "preview.capture")
-      additive = { ...ids, type: "preview.capture", previewId: "preview-fixture", content: "", encoding: "base64", mimeType: "text/plain" };
-    if (Array.isArray(additive)) for (const frame of additive) this.emit(state, frame as ServerFrame);
-    else if (additive !== undefined) this.emit(state, additive as ServerFrame);
+        type: "sessions",
+        cursor: this.currentSessionIndexCursor(),
+        sessions: this.currentSessionRefs(),
+      });
+      return;
+    }
+    for (const additive of buildCommandSideFrames(
+      frame,
+      ids,
+      this.sessionRefFor(targetSessionId),
+      this.seed,
+    ))
+      this.emit(state, additive);
+  }
+  private applySessionManagementMutation(frame: CommandFrame): void {
+    const targetSessionId = frame.sessionId ?? branded<SessionId>(this.seed.sessionId);
+    const created = this.createdSessions.get(String(targetSessionId));
+    if (created !== undefined) {
+      applyCreatedSessionManagementMutation(this.seed, created, frame, this.scheduler.now);
+      return;
+    }
+    this.managementRevision += 1;
+    this.revision = branded<Revision>(
+      `${this.seed.revision}-management-${this.managementRevision}`,
+    );
+    if (frame.command === "session.rename") {
+      this.sessionTitle = String(frame.args.name);
+      return;
+    }
+    if (frame.command === "session.archive") {
+      this.archivedAt = new Date(Date.parse(this.seed.baseTime) + this.scheduler.now).toISOString();
+      return;
+    }
+    if (frame.command === "session.restore") {
+      this.archivedAt = undefined;
+      return;
+    }
+    if (frame.command === "session.delete") this.sessionDeleted = true;
+  }
+  private applyModelMutation(frame: CommandFrame): void {
+    const targetSessionId = frame.sessionId ?? branded<SessionId>(this.seed.sessionId);
+    const created = this.createdSessions.get(String(targetSessionId));
+    if (created !== undefined) {
+      applyCreatedSessionModelMutation(this.seed, created, frame, this.scheduler.now);
+      return;
+    }
+    this.controlRevision += 1;
+    this.revision = branded<Revision>(`${this.seed.revision}-control-${this.controlRevision}`);
+    if (typeof frame.args.selector === "string") {
+      this.sessionModel = frame.args.selector;
+      return;
+    }
+    const role = String(frame.args.role);
+    const index = role === "default" ? 1 : Number.parseInt(role.replace(/^cycle-/u, ""), 10);
+    if (Number.isInteger(index) && index >= 1 && index <= 12) {
+      this.sessionModel = `fixture/model-${String(index).padStart(3, "0")}`;
+    }
+  }
+  private publishSessionIndexDelta(sessionId: SessionId, remove: boolean): void {
+    this.sessionIndexSeq += 1;
+    const frame = {
+      v: V,
+      type: "session.delta" as const,
+      hostId: branded<HostId>(this.seed.hostId),
+      sessionId,
+      cursor: this.currentSessionIndexCursor(),
+      revision: this.revisionFor(sessionId),
+      ...(remove ? { remove: sessionId } : { upsert: this.sessionRefFor(sessionId) }),
+    } as ServerFrame;
+    for (const state of this.clients.values()) {
+      if (state.hello && !state.closed) this.emit(state, frame);
+    }
   }
   private makeCommandResponse(
     frame: CommandFrame,
     base: Omit<Extract<ServerFrame, { type: "response" }>, "ok" | "result" | "error">,
   ): Extract<ServerFrame, { type: "response" }> {
+    const actualRevision = this.revisionFor(frame.sessionId);
     if (
       frame.expectedRevision !== undefined &&
-      frame.expectedRevision !== this.revision &&
-      frame.command === "session.prompt"
+      frame.expectedRevision !== actualRevision &&
+      (frame.command === "session.prompt" ||
+        frame.command === "session.rename" ||
+        isSessionLifecycleCommand(frame.command))
     )
       return {
         ...base,
@@ -802,28 +791,55 @@ export class FixtureEngine {
         error: {
           code: "stale_revision",
           message: "expected revision does not match fixture revision",
-          details: { expectedRevision: frame.expectedRevision, actualRevision: this.revision },
+          details: { expectedRevision: frame.expectedRevision, actualRevision },
         },
       };
     if (frame.command === "session.attach")
-      return { ...base, ok: true, result: { attached: true, cursor: this.currentCursor } };
+      return {
+        ...base,
+        ok: true,
+        result: { attached: true, cursor: this.cursorFor(frame.sessionId) },
+      };
     if (frame.command === "session.prompt") {
-      this.schedulePrompt();
+      this.schedulePrompt(frame.sessionId ?? branded<SessionId>(this.seed.sessionId));
       return { ...base, ok: true, result: { accepted: true } };
     }
-    if (frame.command === "session.create")
-      return { ...base, ok: true, result: { session: sessionRef(this.seed) } };
-    if (frame.command === "session.list" || frame.command === "host.list")
-      return { ...base, ok: true, result: { cursor: this.currentCursor, sessions: [sessionRef(this.seed)] } };
+    if (frame.command === "session.create") {
+      const session = this.createSession(frame);
+      return { ...base, ok: true, result: { session: this.createdSessionRef(session) } };
+    }
+    if (frame.command === "session.list")
+      return {
+        ...base,
+        ok: true,
+        result: { cursor: this.currentSessionIndexCursor(), sessions: this.currentSessionRefs() },
+      };
+    if (frame.command === "host.list")
+      return {
+        ...base,
+        ok: true,
+        result: { cursor: this.currentCursor, sessions: this.currentSessionRefs() },
+      };
     if (frame.command === "session.cancel" || frame.command === "agent.cancel")
       return { ...base, ok: true, result: { cancelled: true } };
     if (frame.command === "session.close") return { ...base, ok: true, result: { closed: true } };
+    if (frame.command === "session.rename") return { ...base, ok: true, result: { renamed: true } };
+    if (frame.command === "session.archive")
+      return { ...base, ok: true, result: { archived: true } };
+    if (frame.command === "session.restore")
+      return { ...base, ok: true, result: { restored: true } };
+    if (frame.command === "session.delete") return { ...base, ok: true, result: { deleted: true } };
     if (frame.command === "files.read") return { ...base, ok: true, result: { content: "" } };
-    if (frame.command === "files.write" || frame.command === "files.patch" || frame.command.startsWith("review."))
+    if (
+      frame.command === "files.write" ||
+      frame.command === "files.patch" ||
+      frame.command.startsWith("review.")
+    )
       return { ...base, ok: true, result: {} };
     if (frame.command === "files.list") return { ...base, ok: true, result: { entries: [] } };
     if (frame.command === "files.diff") return { ...base, ok: true, result: { diff: "" } };
-    if (frame.command === "term.open") return { ...base, ok: true, result: { terminalId: "terminal-fixture" } };
+    if (frame.command === "term.open")
+      return { ...base, ok: true, result: { terminalId: "terminal-fixture" } };
     if (frame.command === "audit.read" || frame.command === "audit.tail")
       return { ...base, ok: true, result: { events: [] } };
     if (frame.command === "catalog.get")
@@ -842,112 +858,108 @@ export class FixtureEngine {
         result: { revision: this.revision, settings: fixtureSettings() },
       };
     if (frame.command.startsWith("host.watch") || frame.command.startsWith("session.watch"))
-      return { ...base, ok: true, result: { watchId: "watch-fixture", cursor: this.currentCursor } };
+      return {
+        ...base,
+        ok: true,
+        result: { watchId: "watch-fixture", cursor: this.currentCursor },
+      };
     if (frame.command.includes(".lease."))
-      return { ...base, ok: true, result: { leaseId: "lease-fixture", cursor: this.currentCursor } };
-    if (frame.command === "preview.capture")
-      return { ...base, ok: true, result: { content: "" } };
+      return {
+        ...base,
+        ok: true,
+        result: { leaseId: "lease-fixture", cursor: this.currentCursor },
+      };
+    if (frame.command === "preview.capture") return { ...base, ok: true, result: { content: "" } };
     return { ...base, ok: true, result: { accepted: true } };
   }
-  private decodeCursor(value: unknown): Cursor | undefined {
-    if (value === undefined) return undefined;
-    if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
-    const cursor = value as { epoch?: unknown; seq?: unknown };
-    if (
-      typeof cursor.epoch !== "string" ||
-      !Number.isSafeInteger(cursor.seq) ||
-      (cursor.seq as number) < 0
-    )
-      return undefined;
-    return { epoch: cursor.epoch, seq: cursor.seq as number };
+  private createSession(frame: CommandFrame): CreatedFixtureSession {
+    const ordinal = this.nextCreatedSession++;
+    const session = createCreatedFixtureSession(this.seed, frame, ordinal, this.scheduler.now);
+    this.createdSessions.set(String(session.sessionId), session);
+    return session;
   }
-  private schedulePrompt(): void {
-    let parent: string | null = null;
-    let liveEntryId: string | null = null;
-    let accumulatedText = "";
-    const publishEvent = (event: Record<string, unknown>) => {
-      const nextSeq = this.seq + 1;
-      const frame: LiveEventFrame = {
-        v: V,
-        type: "event",
-        cursor: sessionCursor(this.seed, nextSeq, this.epoch),
+  private schedulePrompt(sessionId: SessionId): void {
+    const created = this.createdSessions.get(String(sessionId));
+    if (created !== undefined) {
+      scheduleFixturePrompt({
+        seed: this.seed,
+        scheduler: this.scheduler,
         hostId: branded<HostId>(this.seed.hostId),
-        sessionId: branded<SessionId>(this.seed.sessionId),
-        event: {
-          ...event,
-          at: new Date(Date.parse(this.seed.baseTime) + this.scheduler.now).toISOString(),
-        } as unknown as LiveEventFrame["event"],
-      };
-      this.publish(frame);
-    };
-
-    // Mirror the observable production lifecycle. Scheduling at zero keeps the
-    // command response first while allowing tests to hold the turn active.
-    this.scheduler.schedule(0, () => {
-      if (this.closed) return;
-      publishEvent({ type: "agent.start" });
-      publishEvent({ type: "turn.start" });
-    });
-
-    for (const step of this.seed.scripts.prompt) {
-      this.scheduler.schedule(step.atMs, () => {
-        if (this.closed) return;
-        if (step.kind === "event") {
-          liveEntryId ??= `entry-${this.seed.id}-live-${this.nextLiveEntry++}`;
-          accumulatedText += step.text ?? "";
-          publishEvent({
-            type: "message.update",
-            entryId: liveEntryId,
-            role: "assistant",
-            text: accumulatedText,
-          });
-        } else {
-          this.durableCount += 1;
-          const suffix = `-${this.durableCount}`;
-          this.revision = branded<Revision>(
-            `${this.seed.revision.slice(0, Math.max(1, 128 - suffix.length))}${suffix}`,
-          );
-          const durableEntryId = `entry-${this.seed.id}-durable-${this.durableCount}`;
-          const entry = buildEntry(
+        sessionId: created.sessionId,
+        epoch: this.epoch,
+        isUnavailable: () => this.closed || created.deleted,
+        currentSeq: () => created.seq,
+        nextLiveEntryId: () =>
+          `entry-${this.seed.id}-created-${created.ordinal}-live-${created.nextLiveEntry++}`,
+        commitDurable: (text, parentId) => {
+          created.durableCount += 1;
+          created.revision = derivedRevision(
             this.seed,
-            this.seq + 1,
-            step.text ?? `entry-${this.seq + 1}`,
-            parent,
-            durableEntryId,
+            `created-${created.ordinal}-durable-${created.durableCount}`,
           );
-          if (liveEntryId !== null) {
-            publishEvent({
-              type: "message.settled",
-              transientEntryId: liveEntryId,
-              entryId: durableEntryId,
-            });
-          }
-          parent = entry.id;
-          liveEntryId = null;
-          accumulatedText = "";
-          const nextSeq = this.seq + 1;
-          this.publish({
-            v: V,
-            type: "entry",
-            cursor: sessionCursor(this.seed, nextSeq, this.epoch),
-            revision: this.revision,
-            hostId: branded<HostId>(this.seed.hostId),
-            sessionId: branded<SessionId>(this.seed.sessionId),
-            entry,
-          });
-        }
+          created.updatedAt = new Date(
+            Date.parse(this.seed.baseTime) + this.scheduler.now + created.ordinal,
+          ).toISOString();
+          const entryId = `entry-${this.seed.id}-created-${created.ordinal}-durable-${created.durableCount}`;
+          return {
+            revision: created.revision,
+            entry: {
+              id: branded<EntryId>(entryId),
+              parentId: parentId === null ? null : branded<EntryId>(parentId),
+              hostId: branded<HostId>(this.seed.hostId),
+              sessionId: created.sessionId,
+              kind: "message",
+              timestamp: new Date(
+                Date.parse(this.seed.baseTime) + this.scheduler.now,
+              ).toISOString(),
+              data: { role: "assistant", text: text ?? `entry-${created.seq + 1}` },
+            },
+          };
+        },
+        publish: (frame) => this.publishCreated(created, frame),
+        onDurablePublished: () => this.publishSessionIndexDelta(created.sessionId, false),
       });
+      return;
     }
-
-    const finalAtMs = this.seed.scripts.prompt.reduce(
-      (latest, step) => Math.max(latest, step.atMs),
-      0,
-    );
-    this.scheduler.schedule(finalAtMs, () => {
-      if (this.closed) return;
-      publishEvent({ type: "turn.end" });
-      publishEvent({ type: "agent.end", status: "completed", messageCount: 1 });
+    scheduleFixturePrompt({
+      seed: this.seed,
+      scheduler: this.scheduler,
+      hostId: branded<HostId>(this.seed.hostId),
+      sessionId: branded<SessionId>(this.seed.sessionId),
+      epoch: this.epoch,
+      isUnavailable: () => this.closed,
+      currentSeq: () => this.seq,
+      nextLiveEntryId: () => `entry-${this.seed.id}-live-${this.nextLiveEntry++}`,
+      commitDurable: (text, parentId) => {
+        this.durableCount += 1;
+        const suffix = `-${this.durableCount}`;
+        this.revision = branded<Revision>(
+          `${this.seed.revision.slice(0, Math.max(1, 128 - suffix.length))}${suffix}`,
+        );
+        const durableEntryId = `entry-${this.seed.id}-durable-${this.durableCount}`;
+        const entry = buildEntry(
+          this.seed,
+          this.seq + 1,
+          text ?? `entry-${this.seq + 1}`,
+          parentId,
+          durableEntryId,
+        );
+        return { entry, revision: this.revision };
+      },
+      publish: (frame) => this.publish(frame),
     });
+  }
+  private publishCreated(session: CreatedFixtureSession, frame: JournalFrame): void {
+    session.seq = frame.cursor.seq;
+    if (frame.type === "entry") {
+      const existing = session.durableEntries.findIndex((entry) => entry.id === frame.entry.id);
+      if (existing === -1) session.durableEntries.push(frame.entry);
+      else session.durableEntries[existing] = frame.entry;
+    }
+    session.journal.push(frame);
+    if (session.journal.length > MAX_JOURNAL)
+      session.journal.splice(0, session.journal.length - MAX_JOURNAL);
+    this.broadcast(frame);
   }
   private publish(frame: JournalFrame): void {
     this.seq = frame.cursor.seq;

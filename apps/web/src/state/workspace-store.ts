@@ -8,6 +8,7 @@
 import { clampWidth } from "@t4-code/ui";
 import { createStore, type StoreApi } from "zustand/vanilla";
 
+import type { SessionListView } from "../lib/workspace-data.ts";
 import type { WorkspacePersistence } from "./persistence.ts";
 
 export const WORKSPACE_STATE_VERSION = 1;
@@ -48,6 +49,7 @@ interface PersistedWorkspaceState {
   readonly theme: ThemePreference;
   readonly railWidth: number;
   readonly railCollapsed: boolean;
+  readonly sessionListView?: SessionListView;
   readonly activeSessionId: string | null;
   readonly projectExpandedById: Record<string, boolean>;
   readonly lastVisitedAtBySessionId: Record<string, string>;
@@ -58,6 +60,7 @@ export interface WorkspaceState {
   readonly theme: ThemePreference;
   readonly railWidth: number;
   readonly railCollapsed: boolean;
+  readonly sessionListView: SessionListView;
   /** Narrow-width overlay rail; ephemeral, never persisted. */
   readonly railOverlayOpen: boolean;
   /** Command palette visibility; ephemeral, never persisted. */
@@ -72,6 +75,7 @@ export interface WorkspaceActions {
   setTheme(theme: ThemePreference): void;
   setRailWidth(width: number): void;
   setRailCollapsed(collapsed: boolean): void;
+  setSessionListView(view: SessionListView): void;
   setRailOverlayOpen(open: boolean): void;
   setPaletteOpen(open: boolean): void;
   /** Make a session active and stamp it visited. */
@@ -95,6 +99,7 @@ const INITIAL_STATE: WorkspaceState = {
   theme: "system",
   railWidth: RAIL_WIDTH.defaultWidth,
   railCollapsed: false,
+  sessionListView: "current",
   railOverlayOpen: false,
   paletteOpen: false,
   activeSessionId: null,
@@ -166,6 +171,7 @@ export function parsePersistedWorkspace(raw: unknown): WorkspaceState | null {
         ? clampWidth(parsed.railWidth, RAIL_WIDTH)
         : RAIL_WIDTH.defaultWidth,
     railCollapsed: parsed.railCollapsed === true,
+    sessionListView: parsed.sessionListView === "archived" ? "archived" : "current",
     activeSessionId: typeof parsed.activeSessionId === "string" ? parsed.activeSessionId : null,
     projectExpandedById: sanitizeBooleanRecord(parsed.projectExpandedById),
     lastVisitedAtBySessionId: sanitizeTimestampRecord(parsed.lastVisitedAtBySessionId),
@@ -179,6 +185,7 @@ export function toPersistedWorkspace(state: WorkspaceState): PersistedWorkspaceS
     theme: state.theme,
     railWidth: state.railWidth,
     railCollapsed: state.railCollapsed,
+    sessionListView: state.sessionListView,
     activeSessionId: state.activeSessionId,
     projectExpandedById: state.projectExpandedById,
     lastVisitedAtBySessionId: state.lastVisitedAtBySessionId,
@@ -252,6 +259,7 @@ export function createWorkspaceStore(options: CreateWorkspaceStoreOptions): Work
     setTheme: (theme) => set({ theme }),
     setRailWidth: (width) => set({ railWidth: clampWidth(width, RAIL_WIDTH) }),
     setRailCollapsed: (collapsed) => set({ railCollapsed: collapsed }),
+    setSessionListView: (view) => set({ sessionListView: view }),
     setRailOverlayOpen: (open) => set({ railOverlayOpen: open }),
     setPaletteOpen: (open) => set({ paletteOpen: open }),
     activateSession: (sessionId, visitedAt) =>

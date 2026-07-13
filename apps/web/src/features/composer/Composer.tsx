@@ -51,6 +51,8 @@ export interface ComposerProps {
   readonly link: "live" | "cached" | "offline";
   readonly turnActive: boolean;
   readonly canPrompt: boolean;
+  /** Explicit host/view policy that keeps an otherwise live composer read-only. */
+  readonly readOnlyReason?: string | null;
   /** Whether the running turn can be stopped right now. */
   readonly canCancel: boolean;
   /** Why stopping is unavailable; rendered on the disabled affordance. */
@@ -78,6 +80,7 @@ export function Composer({
   link,
   turnActive,
   canPrompt,
+  readOnlyReason = null,
   canCancel,
   cancelDisabledReason,
   slashCommands,
@@ -105,13 +108,14 @@ export function Composer({
   const [notice, setNotice] = useState<SubmissionNotice>(null);
   const [sending, setSending] = useState(false);
 
-  const disabled = !canPrompt;
+  const disabled = !canPrompt || readOnlyReason !== null;
   const disabledReason =
-    link === "cached"
+    readOnlyReason ??
+    (link === "cached"
       ? "This is the last synced copy. Writing resumes when the connection returns."
       : link === "offline"
         ? "The host is unreachable. Your transcript stays readable; input returns with the host."
-        : null;
+        : null);
 
   // Slash menu state derives from the draft + caret.
   const slashQuery = disabled ? null : activeSlashQuery(draft, caret);

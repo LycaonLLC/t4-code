@@ -383,7 +383,13 @@ export function decodeDesktopInvokeRequest(input: unknown): DesktopInvokeRequest
       {
         const intent = object(payload.intent, "intent");
         exact(intent, ["hostId", "sessionId", "command", "expectedRevision", "confirmationId", "args"]);
-        const command = decodeCommand({ v: PROTOCOL_VERSION, type: "command", requestId: "desktop-request", commandId: "desktop-command", ...intent });
+        const command = decodeCommand({
+          v: PROTOCOL_VERSION,
+          type: "command",
+          requestId: "desktop-request",
+          commandId: "desktop-command",
+          ...intent,
+        });
         const { v, type, requestId, commandId, ...clean } = command;
         void v;
         void type;

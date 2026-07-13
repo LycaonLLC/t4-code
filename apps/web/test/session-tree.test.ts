@@ -45,6 +45,24 @@ describe("fixture invariants", () => {
 });
 
 describe("buildProjectGroups", () => {
+  it("keeps known project headers in Current when they have no current sessions", () => {
+    const project = SHELL_FIXTURE.projects[0];
+    expect(project).toBeDefined();
+    if (project === undefined) return;
+    const data = {
+      ...SHELL_FIXTURE,
+      projects: [project],
+      sessions: [],
+    };
+
+    const current = buildProjectGroups(data, {}, {}, "current");
+    expect(current).toHaveLength(1);
+    expect(current[0]?.project.id).toBe(project.id);
+    expect(current[0]?.sessions).toEqual([]);
+    expect(current[0]?.groupStatus).toBeNull();
+    expect(buildProjectGroups(data, {}, {}, "archived")).toEqual([]);
+  });
+
   it("aggregates the highest-priority child status per project", () => {
     const groups = buildProjectGroups(SHELL_FIXTURE, {}, {});
     const omp = groups.find((group) => group.project.id === "proj-omp");

@@ -4,6 +4,8 @@ import type {
   DesktopControllerLeaseAcquireResult,
 } from "./desktop-runtime-contracts.ts";
 
+export const DEFAULT_MAX_RUNTIME_ERRORS = 32;
+
 export interface DesktopControllerLeaseEntry {
   readonly key: string;
   readonly lease?: DesktopControllerLease;
