@@ -5,7 +5,7 @@
 // stale revisions surface as conflicts with the host's fresh catalog, and a
 // dropped connection reports an unknown outcome — drafts always survive
 // anything short of a confirmed apply.
-import type { DesktopRuntimeSnapshot } from "@t4-code/client";
+import { redactedMessage, type DesktopRuntimeSnapshot } from "@t4-code/client";
 import {
   hostId as brandHostId,
   revision as brandRevision,
@@ -74,11 +74,7 @@ export interface SettingsWriteEdit {
 }
 
 function sanitized(message: string): string {
-  return message
-    .replace(/(?:^|[\s"'`])(?:~|\/)[^\s"'`]*/gu, " [path]")
-    .replace(/\p{Cc}/gu, " ")
-    .slice(0, 300)
-    .trim();
+  return redactedMessage(message).slice(0, 300).trim();
 }
 
 export function createLiveSettingsController(options: LiveSettingsControllerOptions): SettingsController {

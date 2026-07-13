@@ -25,6 +25,7 @@ import type {
   TerminalResult,
 } from "@t4-code/protocol/desktop-ipc";
 import { createDesktopRuntimeController, type DesktopRuntimeController, type DesktopShellPort } from "../src/desktop-runtime.ts";
+import { redactedMessage } from "../src/desktop-runtime-contracts.ts";
 
 const target = (targetId: string, state: DesktopTarget["state"] = "disconnected"): DesktopTarget => ({ targetId, label: targetId, kind: targetId === "local" ? "local" : "remote", state, paired: true });
 const welcome = (host: string, capabilities: readonly string[], features: readonly string[], epoch = "epoch-1"): WelcomeFrame => ({
@@ -123,6 +124,21 @@ async function leaseRuntime(
   return { shell, runtime };
 }
 describe("desktop runtime projection", () => {
+  it("redacts auth secrets and Linux/macOS home paths at the renderer boundary", () => {
+    const safe = redactedMessage(
+      "Authorization: Bearer BEARER_SECRET authorization=Basic BASIC_SECRET token=TOKEN_SECRET \"/Users/alice/My Secret/file\" '/home/alice/My Secret/file' /usr/local/private ~/Library/Application Support/Secret",
+    );
+    for (const leaked of [
+      "BEARER_SECRET",
+      "BASIC_SECRET",
+      "TOKEN_SECRET",
+      "/Users/alice",
+      "/home/alice",
+      "/usr/local",
+      "~/Library",
+      "Application Support/Secret",
+    ]) expect(safe).not.toContain(leaked);
+  });
   it("subscribes before bootstrap, connects local once, and bootstraps negotiated capabilities", async () => {
     const shell = new FakeShell();
     shell.emitWelcomeOnBootstrap = { targetId: "local", frame: welcome("host-a", ["sessions.read", "catalog.read", "config.read"], ["host.watch", "catalog.metadata", "settings.metadata"]) };

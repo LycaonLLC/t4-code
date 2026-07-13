@@ -260,7 +260,7 @@ async function openSession(page: Page, mobile: boolean): Promise<void> {
 
 test.describe.configure({ mode: "serial" });
 
-test("settles a rejected desktop service inspection and recovers without a stale retry", async ({
+test("settles a typed incompatible desktop inspection and recovers without a stale retry", async ({
   page,
 }) => {
   await page.clock.install();
@@ -268,9 +268,9 @@ test("settles a rejected desktop service inspection and recovers without a stale
     const inspection = { definition: "current", service: "running", diagnostics: "" } as const;
     const control: {
       inspectCalls: number;
-      mode: "reject" | "pending" | "resolve";
+      mode: "issue" | "pending" | "resolve";
       resolvePending?: (value: typeof inspection) => void;
-    } = { inspectCalls: 0, mode: "reject" };
+    } = { inspectCalls: 0, mode: "issue" };
     Object.assign(globalThis, { __t4ServiceInspectControl: control });
     Object.assign(window, {
       ompShell: {
@@ -291,11 +291,12 @@ test("settles a rejected desktop service inspection and recovers without a stale
         connectTarget: async () => ({ targetId: "local", state: "error" }),
         serviceInspect: async () => {
           control.inspectCalls += 1;
-          if (control.mode === "reject") {
-            throw new Error(
-              "Installed OMP is incompatible with this T4 Code build. T4 Code requires `omp appserver status --json`. Update OMP, then choose Check again.",
-            );
-          }
+          if (control.mode === "issue") return {
+            definition: "missing",
+            service: "unknown",
+            diagnostics: "",
+            issue: { code: "omp_incompatible", message: "Update OMP, then choose Check again." },
+          };
           if (control.mode === "pending") {
             return new Promise<typeof inspection>((resolveInspection) => {
               control.resolvePending = resolveInspection;
@@ -323,12 +324,12 @@ test("settles a rejected desktop service inspection and recovers without a stale
   await expect(page.getByText("Checking", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Check again", exact: true })).toBeVisible();
   await expect.poll(inspectCalls).toBe(1);
-  await page.clock.fastForward(1_000);
+  await page.clock.fastForward(60_000);
   expect(await inspectCalls()).toBe(1);
 
   await page.evaluate(() => {
     (globalThis as typeof globalThis & {
-      __t4ServiceInspectControl: { mode: "reject" | "pending" | "resolve" };
+      __t4ServiceInspectControl: { mode: "issue" | "pending" | "resolve" };
     }).__t4ServiceInspectControl.mode = "pending";
   });
   await page.getByRole("button", { name: "Check again", exact: true }).click();
@@ -353,6 +354,110 @@ test("settles a rejected desktop service inspection and recovers without a stale
   await expect(page.getByText("Running", { exact: true })).toBeVisible();
   await page.clock.fastForward(60_000);
   expect(await inspectCalls()).toBe(2);
+});
+
+test("caps generic desktop inspection retries and clears timers on manual work and service-state exit", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await page.addInitScript(() => {
+    const control: {
+      inspectCalls: number;
+      mode: "reject" | "pending";
+      rejectPending?: (error: Error) => void;
+      stateListener?: (event: { targetId: string; state: "connected" }) => void;
+    } = { inspectCalls: 0, mode: "reject" };
+    Object.assign(globalThis, { __t4GenericInspectControl: control });
+    Object.assign(window, {
+      ompShell: {
+        kind: "desktop",
+        platform: "darwin",
+        bootstrap: async () => ({ platform: "darwin", version: "omp-app/1", connected: false }),
+        listTargets: async () => ({
+          targets: [
+            {
+              targetId: "local",
+              label: "This machine",
+              kind: "local",
+              state: "disconnected",
+              paired: true,
+            },
+          ],
+        }),
+        connectTarget: async () => ({ targetId: "local", state: "error" }),
+        serviceInspect: async () => {
+          control.inspectCalls += 1;
+          if (control.mode === "pending") {
+            return new Promise<never>((_resolve, reject) => {
+              control.rejectPending = reject;
+            });
+          }
+          throw new Error("temporary IPC failure");
+        },
+        onServerFrame: () => () => undefined,
+        onConnectionState: (listener: (event: { targetId: string; state: "connected" }) => void) => {
+          control.stateListener = listener;
+          return () => {
+            if (control.stateListener === listener) control.stateListener = undefined;
+          };
+        },
+        onRuntimeError: () => () => undefined,
+      },
+    });
+  });
+
+  const inspectCalls = () => page.evaluate(
+    () => (globalThis as typeof globalThis & {
+      __t4GenericInspectControl: { inspectCalls: number };
+    }).__t4GenericInspectControl.inspectCalls,
+  );
+  await page.goto(web.url, { waitUntil: "domcontentloaded" });
+  await expect(page.getByText("Check failed", { exact: true })).toBeVisible();
+  await expect.poll(inspectCalls).toBe(1);
+
+  await page.evaluate(() => {
+    (globalThis as typeof globalThis & {
+      __t4GenericInspectControl: { mode: "reject" | "pending" };
+    }).__t4GenericInspectControl.mode = "pending";
+  });
+  await page.getByRole("button", { name: "Check again", exact: true }).click();
+  await expect.poll(inspectCalls).toBe(2);
+  await page.clock.fastForward(5_000);
+  expect(await inspectCalls()).toBe(2);
+  await page.evaluate(() => {
+    const control = (globalThis as typeof globalThis & {
+      __t4GenericInspectControl: {
+        mode: "reject" | "pending";
+        rejectPending?: (error: Error) => void;
+      };
+    }).__t4GenericInspectControl;
+    control.mode = "reject";
+    control.rejectPending?.(new Error("temporary IPC failure"));
+  });
+  await expect(page.getByText("Check failed", { exact: true })).toBeVisible();
+
+  for (const [delay, count] of [[5_000, 3], [15_000, 4], [30_000, 5], [60_000, 6]] as const) {
+    await page.clock.fastForward(delay);
+    await expect.poll(inspectCalls).toBe(count);
+  }
+  await page.clock.fastForward(120_000);
+  expect(await inspectCalls()).toBe(6);
+
+  // A manual check after the cap starts a fresh finite budget. Leaving the
+  // service state unmounts its card/effect and must cancel that new timer.
+  await page.getByRole("button", { name: "Check again", exact: true }).click();
+  await expect.poll(inspectCalls).toBe(7);
+  await page.evaluate(() => {
+    const control = (globalThis as typeof globalThis & {
+      __t4GenericInspectControl: {
+        stateListener?: (event: { targetId: string; state: "connected" }) => void;
+      };
+    }).__t4GenericInspectControl;
+    control.stateListener?.({ targetId: "local", state: "connected" });
+  });
+  await expect(page.getByText("No sessions yet", { exact: true })).toBeVisible();
+  await page.clock.fastForward(60_000);
+  expect(await inspectCalls()).toBe(7);
 });
 
 test("uses an injected backend, streams once, settles durably, and reloads history", async ({

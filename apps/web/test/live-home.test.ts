@@ -15,6 +15,7 @@ import {
   deriveHomeServiceView,
   homeServiceRetryDelay,
   shouldInspectHomeService,
+  shouldRetryHomeService,
 } from "../src/platform/home-state.ts";
 import { deferred, FakeShell, makeTarget, makeWelcome } from "./fake-shell.ts";
 
@@ -126,21 +127,50 @@ describe("service card view model", () => {
         { inspect: true, install: false, start: false },
       ),
     ).toMatchObject({ label: "Not installed", primary: null, primaryLabel: null });
+    expect(
+      deriveHomeServiceView(
+        {
+          definition: "missing",
+          service: "unknown",
+          diagnostics: "",
+          issue: { code: "omp_incompatible", message: "Update the installed runtime." },
+        },
+        FULL_SUPPORT,
+      ),
+    ).toMatchObject({ label: "OMP update required", detail: "Update the installed runtime." });
+    expect(
+      deriveHomeServiceView(
+        {
+          definition: "missing",
+          service: "unknown",
+          diagnostics: "",
+          issue: { code: "omp_not_found", message: "Install OMP first." },
+        },
+        FULL_SUPPORT,
+      ),
+    ).toMatchObject({ label: "OMP not found", detail: "Install OMP first." });
+    expect(deriveHomeServiceView(null, FULL_SUPPORT, "incompatible maybe")).toMatchObject({
+      label: "Check failed",
+    });
   });
 });
 
 describe("service actions", () => {
-  it("settles an incompatible inspect once, backs off, and recovers on a later read", async () => {
+  it("settles a typed incompatible inspect without a timer and recovers on a manual read", async () => {
     let available = false;
     let inspectCalls = 0;
     const actions = createHomeActions({
       serviceInspect: async () => {
         inspectCalls += 1;
-        if (!available) {
-          throw new Error(
-            "Installed OMP is incompatible with this T4 Code build. T4 Code requires `omp appserver status --json`. Update OMP, then choose Check again.",
-          );
-        }
+        if (!available) return {
+          definition: "missing",
+          service: "unknown",
+          diagnostics: "",
+          issue: {
+            code: "omp_incompatible",
+            message: "Installed OMP must be updated. Choose Check again after updating.",
+          },
+        };
         return { definition: "current", service: "running", diagnostics: "" };
       },
       connectLocal: async () => undefined,
@@ -152,10 +182,11 @@ describe("service actions", () => {
     const failed = actions.getState();
     expect(inspectCalls).toBe(1);
     expect(failed.pending).toBeNull();
-    expect(failed.consecutiveInspectionFailures).toBe(1);
-    expect(failed.failure).toContain("Installed OMP is incompatible");
+    expect(failed.consecutiveInspectionFailures).toBe(0);
+    expect(failed.failure).toBeNull();
     expect(shouldInspectHomeService(true, true, failed)).toBe(false);
-    expect(deriveHomeServiceView(null, FULL_SUPPORT, failed.failure)).toMatchObject({
+    expect(shouldRetryHomeService(true, true, failed)).toBe(false);
+    expect(deriveHomeServiceView(failed.inspection, FULL_SUPPORT, failed.failure)).toMatchObject({
       label: "OMP update required",
       tone: "error",
       live: false,
@@ -175,6 +206,52 @@ describe("service actions", () => {
     expect(recovered.failure).toBeNull();
     expect(recovered.consecutiveInspectionFailures).toBe(0);
     expect(recovered.inspection?.service).toBe("running");
+  });
+
+  it("caps generic automatic inspection retries and lets a manual retry start a fresh budget", async () => {
+    let inspectCalls = 0;
+    const actions = createHomeActions({
+      serviceInspect: async () => {
+        inspectCalls += 1;
+        throw new Error("temporary IPC failure");
+      },
+      connectLocal: async () => undefined,
+    });
+    await actions.run("inspect", "automatic");
+    for (let expected = 1; expected <= 4; expected += 1) {
+      expect(shouldRetryHomeService(true, true, actions.getState())).toBe(true);
+      await actions.run("inspect", "automatic");
+      expect(actions.getState().consecutiveInspectionFailures).toBe(expected + 1);
+    }
+    expect(inspectCalls).toBe(5);
+    expect(shouldRetryHomeService(true, true, actions.getState())).toBe(false);
+
+    await actions.run("inspect");
+    expect(inspectCalls).toBe(6);
+    expect(actions.getState().consecutiveInspectionFailures).toBe(1);
+    expect(shouldRetryHomeService(true, true, actions.getState())).toBe(true);
+  });
+
+  it("keeps a typed missing-OMP result stable until a manual check", async () => {
+    let inspectCalls = 0;
+    const actions = createHomeActions({
+      serviceInspect: async () => {
+        inspectCalls += 1;
+        return {
+          definition: "missing",
+          service: "unknown",
+          diagnostics: "",
+          issue: { code: "omp_not_found", message: "Install OMP, then check again." },
+        };
+      },
+      connectLocal: async () => undefined,
+    });
+    await actions.run("inspect", "automatic");
+    expect(inspectCalls).toBe(1);
+    expect(actions.getState().failure).toBeNull();
+    expect(shouldRetryHomeService(true, true, actions.getState())).toBe(false);
+    await actions.run("inspect");
+    expect(inspectCalls).toBe(2);
   });
 
   it("starts a stopped service, serializes concurrent actions, and re-inspects after completion", async () => {
@@ -222,7 +299,9 @@ describe("service actions", () => {
   it("reports a bounded failure when an action does not complete and still re-inspects", async () => {
     const shell = new FakeShell();
     shell.inspection = { definition: "current", service: "failed", diagnostics: "exit code 1" };
-    shell.serviceStartError = new Error("systemctl exploded at /usr/lib/systemd");
+    shell.serviceStartError = new Error(
+      "systemctl exploded Authorization: Bearer BEARER_SECRET authorization=Basic BASIC_SECRET at \"/Users/alice/My Secret/file\" '/home/alice/My Secret/file' /usr/lib/systemd ~/Library/Application Support/Secret",
+    );
     const controller = createDesktopRuntimeController({ shell });
     await controller.start();
 
@@ -237,6 +316,11 @@ describe("service actions", () => {
     expect(state.pending).toBeNull();
     expect(state.failure).not.toBeNull();
     expect(state.failure?.includes("/usr/")).toBe(false);
+    expect(state.failure).not.toContain("BEARER_SECRET");
+    expect(state.failure).not.toContain("BASIC_SECRET");
+    expect(state.failure).not.toContain("/Users/alice");
+    expect(state.failure).not.toContain("/home/alice");
+    expect(state.failure).not.toContain("~/Library");
     expect(state.inspection?.service).toBe("failed");
     expect(shell.inspectCalls).toBe(1);
   });

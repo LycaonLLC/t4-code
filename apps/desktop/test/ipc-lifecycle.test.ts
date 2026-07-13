@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ServiceAvailabilityIssue } from "@t4-code/protocol/desktop-ipc";
 import type { ServiceManager } from "@t4-code/service-manager";
 import { DesktopIpcRegistry, runtimeError, type IpcMainLike, type IpcRuntime } from "../src/ipc.ts";
 
@@ -14,10 +15,10 @@ function fakeWindow() {
   const window = { webContents, isDestroyed: () => false };
   return { window, sent };
 }
-function makeRuntime(serviceManager?: ServiceManager, serviceUnavailableReason?: string) {
+function makeRuntime(serviceManager?: ServiceManager, serviceAvailabilityIssue?: ServiceAvailabilityIssue) {
   const view = fakeWindow();
   const manager = { isConnected: () => true, connect: async () => "connected", disconnect: async () => {}, command: async () => ({ targetId: "local", requestId: "1", commandId: "1", accepted: true }), pairStart: async () => ({ targetId: "remote", paired: true }), listTargets: async () => [], addRemoteTarget: async (target: unknown) => target, removeTarget: async () => {} };
-  return { view, runtime: { manager, window: view.window, trustedRenderer: { origin: "file://", url: "file:///trusted/index.html" }, ...(serviceManager === undefined ? {} : { serviceManager }), ...(serviceUnavailableReason === undefined ? {} : { serviceUnavailableReason }) } as unknown as IpcRuntime };
+  return { view, runtime: { manager, window: view.window, trustedRenderer: { origin: "file://", url: "file:///trusted/index.html" }, ...(serviceManager === undefined ? {} : { serviceManager }), ...(serviceAvailabilityIssue === undefined ? {} : { getServiceAvailabilityIssue: () => serviceAvailabilityIssue }) } as unknown as IpcRuntime };
 }
 const request = (channel: string, payload: unknown = {}): unknown => ({ channel, payload });
 
@@ -43,6 +44,7 @@ describe("desktop IPC lifecycle proof", () => {
     const start = ipc.handlers.get("omp:service:start")!(event, request("omp:service:start"));
     const stop = ipc.handlers.get("omp:service:stop")!(event, request("omp:service:stop"));
     await Promise.resolve();
+    await Promise.resolve();
     expect(order).toEqual(["start"]);
     release();
     await Promise.all([start, stop]);
@@ -50,7 +52,7 @@ describe("desktop IPC lifecycle proof", () => {
   });
   it("bounds service inspection and redacts diagnostic details", async () => {
     const ipc = new FakeIpc();
-    const serviceManager = { inspect: async () => ({ definition: "drifted", service: "failed", diagnostics: `token=SECRET https://private.example/x /home/private/file ${"x".repeat(1000)}` }) } as never as ServiceManager;
+    const serviceManager = { inspect: async () => ({ definition: "drifted", service: "failed", diagnostics: `Authorization: Bearer BEARER_SECRET authorization=Basic BASIC_SECRET token=SECRET https://private.example/x "/Users/alice/My Secret/file" '/home/alice/My Secret/file' /usr/local/private ~/Library/Application Support/Secret ${"x".repeat(1000)}` }) } as never as ServiceManager;
     const { runtime } = makeRuntime(serviceManager);
     new DesktopIpcRegistry(runtime, ipc).install();
     const event = { sender: runtime.window.webContents, senderFrame: runtime.window.webContents.mainFrame };
@@ -58,21 +60,62 @@ describe("desktop IPC lifecycle proof", () => {
     const inspection = result as { diagnostics: string };
     expect(inspection.diagnostics.length).toBeLessThanOrEqual(512);
     expect(inspection.diagnostics).not.toContain("SECRET");
-    expect(inspection.diagnostics).not.toContain("/home/private");
-    const error = runtimeError(new Error("failed token=SECRET /tmp/private https://private.example/x"));
+    expect(inspection.diagnostics).not.toContain("/Users/alice");
+    expect(inspection.diagnostics).not.toContain("/home/alice");
+    expect(inspection.diagnostics).not.toContain("/usr/local");
+    expect(inspection.diagnostics).not.toContain("~/Library");
+    const error = runtimeError(new Error("failed Authorization: Bearer BEARER_SECRET authorization=Basic BASIC_SECRET token=SECRET '/tmp/private path' /usr/private ~/Library/private https://private.example/x"));
     expect(error.message).not.toContain("SECRET");
     expect(error.message).not.toContain("/tmp/private");
+    expect(error.message).not.toContain("/usr/private");
+    expect(error.message).not.toContain("~/Library");
     expect(error.message).not.toContain("https://private.example");
   });
-  it("preserves a safe service-unavailable reason at the inspect boundary", async () => {
+  it("preserves a typed service-unavailable reason at the inspect boundary", async () => {
     const ipc = new FakeIpc();
     const reason = "Installed OMP is incompatible; `omp appserver status --json` is required.";
-    const { runtime } = makeRuntime(undefined, reason);
+    const { runtime } = makeRuntime(undefined, { code: "omp_incompatible", message: reason });
     new DesktopIpcRegistry(runtime, ipc).install();
     const event = { sender: runtime.window.webContents, senderFrame: runtime.window.webContents.mainFrame };
-    await expect(
-      ipc.handlers.get("omp:service:inspect")!(event, request("omp:service:inspect")),
-    ).rejects.toThrow(reason);
+    const inspection = await ipc.handlers.get("omp:service:inspect")!(event, request("omp:service:inspect"));
+    expect(inspection).toEqual({
+      definition: "missing",
+      service: "unknown",
+      diagnostics: "",
+      issue: { code: "omp_incompatible", message: reason },
+    });
+  });
+  it("keeps bootstrap read-only and shares one dynamic acquisition across concurrent inspection", async () => {
+    const ipc = new FakeIpc();
+    let acquisitions = 0;
+    let inspections = 0;
+    const serviceManager = {
+      inspect: async () => {
+        inspections += 1;
+        return { definition: "current", service: "running", diagnostics: "" };
+      },
+    } as never as ServiceManager;
+    const { runtime: baseRuntime } = makeRuntime();
+    const runtime: IpcRuntime = {
+      ...baseRuntime,
+      getServiceManager: () => undefined,
+      acquireServiceManager: async () => {
+        acquisitions += 1;
+        return serviceManager;
+      },
+    };
+    new DesktopIpcRegistry(runtime, ipc).install();
+    const event = { sender: runtime.window.webContents, senderFrame: runtime.window.webContents.mainFrame };
+    const bootstrap = await ipc.handlers.get("omp:bootstrap")!(event, request("omp:bootstrap"));
+    expect(acquisitions).toBe(0);
+    expect((bootstrap as { service: { issue: { code: string } } }).service.issue.code).toBe("service_unavailable");
+    const inspect = ipc.handlers.get("omp:service:inspect")!;
+    await Promise.all([
+      inspect(event, request("omp:service:inspect")),
+      inspect(event, request("omp:service:inspect")),
+    ]);
+    expect(acquisitions).toBe(1);
+    expect(inspections).toBe(1);
   });
   it("does not send events to destroyed windows", () => {
     const ipc = new FakeIpc();

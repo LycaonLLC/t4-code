@@ -65,6 +65,7 @@ export {
   DesktopRuntimeController,
   createDesktopRuntimeController,
 } from "./desktop-runtime.ts";
+export { redactedMessage } from "./desktop-runtime-contracts.ts";
 export type {
   DesktopShellPort,
   DesktopRuntimeStartState,

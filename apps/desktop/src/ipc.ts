@@ -19,6 +19,7 @@ import {
   type PairLinksDrainResult,
   type RuntimeErrorEvent,
   type ServiceActionResult,
+  type ServiceAvailabilityIssue,
   type ServiceInspection,
   type TargetAddRequest,
   type TargetListResult,
@@ -37,9 +38,12 @@ export interface IpcRuntime {
   readonly manager: LocalTargetManager;
   readonly window: BrowserWindow;
   readonly trustedRenderer: TrustedRenderer;
+  /** Static manager support is retained for narrow unit runtimes. */
   readonly serviceManager?: ServiceManager;
-  /** Safe, user-facing reason service management could not be created. */
-  readonly serviceUnavailableReason?: string;
+  /** Dynamic lifecycle access keeps IPC valid after rediscovery or window reopen. */
+  readonly getServiceManager?: () => ServiceManager | undefined;
+  readonly acquireServiceManager?: () => Promise<ServiceManager | undefined>;
+  readonly getServiceAvailabilityIssue?: () => ServiceAvailabilityIssue | undefined;
   readonly drainPairLinks?: () => readonly PairLinkEvent[];
 }
 export class RemotePairingUnavailableError extends Error {
@@ -58,10 +62,13 @@ function boundedError(error: unknown): { readonly code: RuntimeErrorEvent["code"
   const message = error instanceof Error ? error.message : "Desktop operation failed";
   const safe = message
     .replace(/https?:\/\/[^\s]+/giu, "[redacted]")
-    .replace(/\b(?:token|secret|password|credential|authorization)\s*[:=]\s*[^\s,;]+/giu, "$1=[redacted]")
-    .replace(/(?:^|\s)(?:\/(?:home|tmp|var|etc|opt|srv|mnt|run)\/[^\s,;]*)/gu, " [redacted]")
+    .replace(/\b(authorization\s*[:=]\s*)(?:["']?)(?:bearer|basic)\s+[^\s,;"']+(?:["']?)/giu, "$1[redacted]")
+    .replace(/\b(token|secret|password|credential|authorization)\s*[:=]\s*[^\s,;]+/giu, "$1=[redacted]")
+    .replace(/(["'])(?:~\/|\/(?:Users|home|tmp|var|etc|opt|srv|mnt|run|usr)\/)[^"'\r\n]*\1/gu, "$1[redacted]$1")
+    .replace(/(?:^|\s)~\/[^\r\n,;]*/gu, " [redacted]")
+    .replace(/(?:^|\s)(?:~\/|\/(?:Users|home|tmp|var|etc|opt|srv|mnt|run|usr)\/)[^\s,;)"']*/gu, " [redacted]")
     // Control-code sanitization intentionally covers C0/C1 controls.
-    .replace(new RegExp("[\\u0000-\\u001f\\u007f]", "gu"), " "); // oxlint-disable-line no-control-regex -- security redaction boundary
+    .replace(new RegExp("[\\u0000-\\u001f\\u007f-\\u009f]", "gu"), " "); // oxlint-disable-line no-control-regex -- security redaction boundary
   return { code: "internal", message: safe.slice(0, 2048) };
 }
 function decodeRequest(channel: DesktopInvokeChannel, value: unknown): DesktopInvokeRequest {
@@ -77,6 +84,7 @@ export class DesktopIpcRegistry {
   private installed = false;
   private readonly runtime: IpcRuntime;
   private readonly serviceQueue = { tail: Promise.resolve() };
+  private serviceInspectionPromise: Promise<ServiceInspection> | undefined;
   private readonly ipc: IpcMainLike;
   constructor(runtime: IpcRuntime, ipc: IpcMainLike = ipcMain) {
     this.runtime = runtime;
@@ -89,7 +97,9 @@ export class DesktopIpcRegistry {
     this.ipc.handle("omp:bootstrap", async (event, payload: unknown): Promise<BootstrapResult> => {
       this.assertSender(event);
       decodeRequest("omp:bootstrap", payload);
-      const service = this.runtime.serviceManager === undefined ? undefined : await this.inspectService();
+      // Bootstrap reports current truth only. It must not join or suppress a
+      // user-initiated recovery attempt that starts in the same turn.
+      const service = await this.inspectServiceOnce(false);
       return { platform: process.platform === "darwin" ? "darwin" : "linux", version: "omp-app/1", connected: this.runtime.manager.isConnected(), ...(service === undefined ? {} : { service }) };
     });
     this.ipc.handle("omp:connect", async (event, payload: unknown): Promise<ConnectResult> => {
@@ -195,19 +205,52 @@ export class DesktopIpcRegistry {
   private assertSender(event: IpcMainInvokeEvent): void {
     if (!validEvent(event, this.runtime)) throw new Error("untrusted desktop sender");
   }
-  private inspectService(): Promise<ServiceInspection> {
-    const manager = this.runtime.serviceManager;
-    if (manager === undefined) throw new Error(this.runtime.serviceUnavailableReason ?? "appserver service is unavailable");
-    const result = manager.inspect();
-    return result.then((inspection) => {
+  private inspectService(recover = true): Promise<ServiceInspection> {
+    if (this.serviceInspectionPromise !== undefined) return this.serviceInspectionPromise;
+    const inspection = this.inspectServiceOnce(recover);
+    this.serviceInspectionPromise = inspection;
+    const clearInspection = (): void => {
+      if (this.serviceInspectionPromise === inspection) this.serviceInspectionPromise = undefined;
+    };
+    void inspection.then(clearInspection, clearInspection);
+    return inspection;
+  }
+  private async inspectServiceOnce(recover: boolean): Promise<ServiceInspection> {
+    const manager = recover ? await this.acquireServiceManager() : this.currentServiceManager();
+    if (manager === undefined) return this.unavailableInspection();
+    const inspection = await manager.inspect();
       if (!["missing", "current", "drifted"].includes(inspection.definition) || !["stopped", "starting", "running", "failed", "unknown"].includes(inspection.service) || typeof inspection.diagnostics !== "string") throw new Error("invalid service inspection");
       return { definition: inspection.definition, service: inspection.service, diagnostics: boundedError(new Error(inspection.diagnostics)).message.slice(0, 512) };
-    });
+  }
+  private currentServiceManager(): ServiceManager | undefined {
+    return this.runtime.getServiceManager?.() ?? this.runtime.serviceManager;
+  }
+  private acquireServiceManager(): Promise<ServiceManager | undefined> {
+    const current = this.currentServiceManager();
+    if (current !== undefined) return Promise.resolve(current);
+    return this.runtime.acquireServiceManager?.() ?? Promise.resolve(undefined);
+  }
+  private unavailableInspection(): ServiceInspection {
+    const raw = this.runtime.getServiceAvailabilityIssue?.() ?? {
+      code: "service_unavailable" as const,
+      message: "The local OMP service is unavailable. Choose Check again to retry.",
+    };
+    const code = ["omp_incompatible", "omp_not_found", "service_unavailable"].includes(raw.code)
+      ? raw.code
+      : "service_unavailable";
+    return {
+      definition: "missing",
+      service: "unknown",
+      diagnostics: "",
+      issue: { code, message: boundedError(new Error(raw.message)).message.slice(0, 512) },
+    };
   }
   private runServiceAction(action: "install" | "start" | "stop" | "restart" | "uninstall"): Promise<void> {
-    const manager = this.runtime.serviceManager;
-    if (manager === undefined) return Promise.reject(new Error(this.runtime.serviceUnavailableReason ?? "appserver service is unavailable"));
-    const operation = () => manager[action]();
+    const operation = async (): Promise<void> => {
+      const manager = await this.acquireServiceManager();
+      if (manager === undefined) throw new Error(this.unavailableInspection().issue?.message ?? "appserver service is unavailable");
+      await manager[action]();
+    };
     const result = this.serviceQueue.tail.then(operation, operation);
     this.serviceQueue.tail = result.then(() => undefined, () => undefined);
     return result;

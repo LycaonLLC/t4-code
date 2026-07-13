@@ -51,10 +51,16 @@ export type DesktopPlatform = "linux" | "darwin";
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "pairing-required" | "error";
 export type RuntimeErrorCode = "transport" | "protocol" | "internal";
 export interface BootstrapRequest {}
+export type ServiceAvailabilityIssue =
+  | { readonly code: "omp_incompatible"; readonly message: string }
+  | { readonly code: "omp_not_found"; readonly message: string }
+  | { readonly code: "service_unavailable"; readonly message: string };
 export interface ServiceInspection {
   definition: "missing" | "current" | "drifted";
   service: "stopped" | "starting" | "running" | "failed" | "unknown";
   diagnostics: string;
+  /** Structured desktop discovery/preparation state; absent for a real inspection. */
+  issue?: ServiceAvailabilityIssue;
 }
 export type ServiceAction = "install" | "start" | "stop" | "restart" | "uninstall";
 export interface ServiceActionRequest {}

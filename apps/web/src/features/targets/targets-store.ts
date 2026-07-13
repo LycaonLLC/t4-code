@@ -6,6 +6,7 @@
 // service actions. Nothing here reports success it did not see.
 import { useStore } from "zustand";
 import { createStore, type StoreApi } from "zustand/vanilla";
+import { redactedMessage } from "@t4-code/client";
 
 import type {
   ConnectResult,
@@ -96,11 +97,7 @@ export type TargetsStoreApi = StoreApi<TargetsState & TargetsActions>;
 function sanitizedError(error: unknown, fallback: string): string {
   const message = error instanceof Error ? error.message : "";
   if (message.length === 0) return fallback;
-  return message
-    .replace(/(?:^|[\s"'`])(?:~|\/)[^\s"'`]*/gu, " [path]")
-    .replace(/\p{Cc}/gu, " ")
-    .slice(0, 300)
-    .trim();
+  return redactedMessage(message).slice(0, 300).trim();
 }
 
 export function createTargetsStore(port: TargetActionsPort, service: ServicePort): TargetsStoreApi {

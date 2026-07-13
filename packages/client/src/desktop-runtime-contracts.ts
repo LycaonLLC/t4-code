@@ -179,8 +179,13 @@ export function frameId(frame: RendererServerFrame, name: "hostId" | "sessionId"
 export function redactedMessage(message: string): string {
   const redacted = message
     .replace(/https?:\/\/[^\s]+/giu, "[redacted]")
-    .replace(/\b(?:token|secret|password|credential|authorization)\s*[:=]\s*[^\s,;]+/giu, "$1=[redacted]")
-    .replace(/(?:^|\s)(?:\/(?:home|tmp|var|etc|opt|srv|mnt|run)\/[^\s,;]*)/gu, " [redacted]");
+    .replace(/\b(authorization\s*[:=]\s*)(?:["']?)(?:bearer|basic)\s+[^\s,;"']+(?:["']?)/giu, "$1[redacted]")
+    .replace(/\b(token|secret|password|credential|authorization)\s*[:=]\s*[^\s,;]+/giu, "$1=[redacted]")
+    .replace(/(["'])(?:~\/|\/(?:Users|home|tmp|var|etc|opt|srv|mnt|run|usr)\/)[^"'\r\n]*\1/gu, "$1[redacted]$1")
+    // A tilde path is user-home data; redact the full remaining tail so
+    // unquoted macOS paths containing spaces cannot leak suffixes.
+    .replace(/(?:^|\s)~\/[^\r\n,;]*/gu, " [redacted]")
+    .replace(/(?:^|\s)\/(?:Users|home|tmp|var|etc|opt|srv|mnt|run|usr)\/[^\s,;)"']*/gu, " [redacted]");
   let firstControl = -1;
   for (let index = 0; index < redacted.length; index += 1) {
     const code = redacted.charCodeAt(index);

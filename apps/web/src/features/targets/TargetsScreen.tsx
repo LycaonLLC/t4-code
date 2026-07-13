@@ -55,10 +55,18 @@ function ServiceCard({ api }: { readonly api: TargetsStoreApi }) {
   const service = useTargets(api, (state) => state.service);
   const inspection = service.inspection;
   const busy = service.pending !== null;
-  const status: ServiceStatusCopy | null = inspection === null ? null : SERVICE_STATUS_COPY[inspection.service];
+  const status: ServiceStatusCopy | null = inspection === null
+    ? null
+    : inspection.issue?.code === "omp_incompatible"
+      ? { label: "OMP update required", tone: "error" }
+      : inspection.issue?.code === "omp_not_found"
+        ? { label: "OMP not found", tone: "error" }
+        : inspection.issue?.code === "service_unavailable"
+          ? { label: "Service unavailable", tone: "error" }
+          : SERVICE_STATUS_COPY[inspection.service];
 
   const actions: readonly { readonly id: ServiceActionId; readonly label: string; readonly show: boolean }[] =
-    inspection === null
+    inspection === null || inspection.issue !== undefined
       ? []
       : [
           { id: "install", label: inspection.definition === "drifted" ? "Repair the service" : "Install the service", show: inspection.definition !== "current" },
@@ -83,7 +91,9 @@ function ServiceCard({ api }: { readonly api: TargetsStoreApi }) {
       </div>
       {inspection !== null && (
         <p className="text-muted-foreground text-xs">
-          {inspection.definition === "missing"
+          {inspection.issue !== undefined
+            ? inspection.issue.message
+            : inspection.definition === "missing"
             ? "No service is installed for the local runtime yet."
             : inspection.definition === "drifted"
               ? "The installed service definition is out of date."

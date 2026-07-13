@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { chmod, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { appserverLogsDirectory, DesktopLifecycle } from "../src/lifecycle.ts";
 import { DesktopIpcRegistry, type IpcMainLike } from "../src/ipc.ts";
+import { discoverOmpExecutable } from "../src/service.ts";
 import type { TargetManagerOptions } from "../src/target-manager.ts";
 import type { ServiceManager } from "@t4-code/service-manager";
+import type { ProcessRunner } from "@t4-code/remote";
 
 describe("appserver log authority", () => {
   it("stays independent from Electron user-data overrides", () => {
@@ -62,6 +67,10 @@ class FakeIpc implements IpcMainLike {
 function setup(
   serviceManager?: ServiceManager,
   probeAppserver: (executable: string) => Promise<boolean> = async () => true,
+  overrides: {
+    readonly discoverExecutable?: () => Promise<string | undefined>;
+    readonly createServiceManager?: () => ServiceManager;
+  } = {},
 ) {
   const app = new FakeApp();
   const windows: FakeWindow[] = [];
@@ -83,8 +92,12 @@ function setup(
     loadIdentity: () => ({ deviceId: "device-test", deviceName: "Desktop Test" }),
     createCursorStore: () => ({ load: () => [], save: () => {} }),
     createCredentials: () => undefined,
-    discoverExecutable: serviceManager === undefined ? async () => undefined : async () => "/opt/omp/bin/omp",
-    ...(serviceManager === undefined ? {} : { createServiceManager: () => serviceManager, probeAppserver }),
+    discoverExecutable: overrides.discoverExecutable ?? (serviceManager === undefined ? async () => undefined : async () => "/opt/omp/bin/omp"),
+    ...(
+      overrides.createServiceManager === undefined && serviceManager === undefined
+        ? {}
+        : { createServiceManager: overrides.createServiceManager ?? (() => serviceManager!), probeAppserver }
+    ),
     createTargetManager: (options) => { managerOptions = options; return manager as never; },
   });
   return { app, windows, ipc, registries, runtimes, lifecycle, manager, get managerOptions() { return managerOptions; }, get closeCount() { return closeCount; } };
@@ -187,8 +200,120 @@ describe("desktop Electron lifecycle", () => {
 
     expect(probes).toBe(1);
     expect(calls).toEqual([]);
-    expect(fixture.runtimes[0]).toMatchObject({ serviceManager: service });
+    expect((fixture.runtimes[0] as { getServiceManager: () => ServiceManager | undefined }).getServiceManager()).toBe(service);
     expect(fixture.windows).toHaveLength(1);
+    await fixture.lifecycle.stop();
+  });
+  it("recovers an updated OMP once across concurrent IPC retries and keeps the reason across reopen", async () => {
+    const root = await mkdtemp(join(tmpdir(), "t4-recovery-"));
+    const executable = join(root, "omp");
+    await writeFile(executable, "");
+    await chmod(executable, 0o755);
+    let compatible = false;
+    let discoveryCalls = 0;
+    const probeArgs: string[][] = [];
+    const runner: ProcessRunner = {
+      spawn: async (spec) => {
+        probeArgs.push([...(spec.args ?? [])]);
+        return {
+          kill: () => {},
+          result: Promise.resolve(
+            compatible
+              ? {
+                  exitCode: 0,
+                  signal: null,
+                  stdout: JSON.stringify({ state: "stopped", reason: "unreachable" }),
+                  stderr: "",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                }
+              : {
+                  exitCode: 2,
+                  signal: null,
+                  stdout: "",
+                  stderr: "Error: unknown flag: --json\n",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                },
+          ),
+        };
+      },
+    };
+    const serviceCalls: string[] = [];
+    const recovered: ServiceManager = {
+      inspect: async () => {
+        serviceCalls.push("inspect");
+        return { definition: "current", service: "running", diagnostics: "ready" };
+      },
+      install: async () => { serviceCalls.push("install"); },
+      start: async () => { serviceCalls.push("start"); },
+      stop: async () => { serviceCalls.push("stop"); },
+      restart: async () => { serviceCalls.push("restart"); },
+      uninstall: async () => { serviceCalls.push("uninstall"); },
+    };
+    let factories = 0;
+    const fixture = setup(undefined, async () => true, {
+      discoverExecutable: () => {
+        discoveryCalls += 1;
+        return discoverOmpExecutable({
+          environment: { OMP_EXECUTABLE: executable, PATH: "" },
+          homeDirectory: root,
+          runner,
+        });
+      },
+      createServiceManager: () => {
+        factories += 1;
+        return recovered;
+      },
+    });
+
+    await fixture.lifecycle.start();
+    expect(discoveryCalls).toBe(1);
+    expect(probeArgs.length >= 1).toBe(true);
+    const probesAfterInitialDiscovery = probeArgs.length;
+    fixture.windows[0]!.finishLoad();
+    fixture.windows[0]!.close();
+    fixture.app.listeners.get("activate")?.();
+
+    const runtime = fixture.runtimes[1] as {
+      window: FakeWindow;
+      getServiceAvailabilityIssue: () => { code: string } | undefined;
+    };
+    expect(runtime.getServiceAvailabilityIssue()?.code).toBe("omp_incompatible");
+    const event = {
+      sender: runtime.window.webContents,
+      senderFrame: runtime.window.webContents.mainFrame,
+    };
+    const bootstrap = fixture.ipc.handlers.get("omp:bootstrap") as (
+      event: unknown,
+      request: unknown,
+    ) => Promise<{ service?: { issue?: { code: string } } }>;
+    const bootstrapResult = await bootstrap(event, { channel: "omp:bootstrap", payload: {} });
+    expect(bootstrapResult.service?.issue?.code).toBe("omp_incompatible");
+    expect(discoveryCalls).toBe(1);
+    expect(probeArgs).toHaveLength(probesAfterInitialDiscovery);
+
+    compatible = true;
+    const inspect = fixture.ipc.handlers.get("omp:service:inspect") as (
+      event: unknown,
+      request: unknown,
+    ) => Promise<unknown>;
+    const payload = { channel: "omp:service:inspect", payload: {} };
+    const [first, second] = await Promise.all([inspect(event, payload), inspect(event, payload)]);
+    expect(first).toEqual({ definition: "current", service: "running", diagnostics: "ready" });
+    expect(second).toEqual(first);
+    expect(factories).toBe(1);
+    expect(discoveryCalls).toBe(2);
+    expect(serviceCalls).toEqual(["inspect"]);
+    expect(probeArgs).toHaveLength(probesAfterInitialDiscovery + 1);
+
+    const start = fixture.ipc.handlers.get("omp:service:start") as (
+      event: unknown,
+      request: unknown,
+    ) => Promise<unknown>;
+    await start(event, { channel: "omp:service:start", payload: {} });
+    expect(serviceCalls).toEqual(["inspect", "start"]);
+    expect(probeArgs.every((args) => args.join(" ") === "appserver status --json")).toBe(true);
     await fixture.lifecycle.stop();
   });
 });

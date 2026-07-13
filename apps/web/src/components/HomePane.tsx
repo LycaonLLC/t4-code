@@ -27,6 +27,7 @@ import {
   deriveHomeServiceView,
   homeServiceRetryDelay,
   shouldInspectHomeService,
+  shouldRetryHomeService,
   type HomeActions,
 } from "../platform/home-state.ts";
 import { rendererPlatform, workspaceStore } from "../state/store-instance.ts";
@@ -85,20 +86,13 @@ function DesktopHomePane({
     }
   }, [needsInspection, shell, actions, actionsState]);
 
-  // Recovery is paced independently of renders: 5s, 15s, 30s, then at
-  // most once a minute. The action controller still deduplicates in-flight
-  // work, and a successful read resets the backoff.
+  // Recovery is paced independently of renders: 5s, 15s, 30s, then one
+  // final retry at 60s. The action controller still deduplicates in-flight
+  // work, and a successful read resets the finite budget.
   useEffect(() => {
-    if (
-      !needsInspection ||
-      shell.serviceInspect === undefined ||
-      actionsState.pending !== null ||
-      actionsState.failure === null ||
-      actionsState.consecutiveInspectionFailures < 1
-    )
-      return;
+    if (!shouldRetryHomeService(needsInspection, shell.serviceInspect !== undefined, actionsState)) return;
     const retry = setTimeout(() => {
-      void actions.run("inspect");
+      void actions.run("inspect", "automatic");
     }, homeServiceRetryDelay(actionsState.consecutiveInspectionFailures));
     return () => clearTimeout(retry);
   }, [needsInspection, shell, actions, actionsState]);

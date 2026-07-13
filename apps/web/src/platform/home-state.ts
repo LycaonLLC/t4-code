@@ -4,7 +4,7 @@
 // service that needs attention, a genuinely empty connected host, or a
 // bounded startup error. No fixture reads, no invented progress, and no
 // path or log content beyond the backend's safe display text.
-import type { DesktopRuntimeSnapshot } from "@t4-code/client";
+import { redactedMessage, type DesktopRuntimeSnapshot } from "@t4-code/client";
 import type { ServiceInspection } from "@t4-code/protocol/desktop-ipc";
 
 export type DesktopHomeState =
@@ -98,9 +98,35 @@ export function deriveHomeServiceView(
       primaryLabel: "Retry connection",
     };
   }
+  if (inspection?.issue !== undefined) {
+    const copy = {
+      omp_incompatible: {
+        label: "OMP update required",
+        detail: inspection.issue.message,
+      },
+      omp_not_found: {
+        label: "OMP not found",
+        detail: inspection.issue.message,
+      },
+      service_unavailable: {
+        label: "Service unavailable",
+        detail: inspection.issue.message,
+      },
+    } as const;
+    const selected = copy[inspection.issue.code];
+    return {
+      label: selected.label,
+      tone: "error",
+      live: false,
+      detail: selected.detail,
+      diagnostics: null,
+      primary: null,
+      primaryLabel: null,
+    };
+  }
   if (inspection === null && failure !== null) {
     return {
-      label: failure.includes("incompatible") ? "OMP update required" : "Check failed",
+      label: "Check failed",
       tone: "error",
       live: false,
       detail: failure,
@@ -220,7 +246,7 @@ export interface HomeActions {
    * always renders what the backend reported after the work, never an
    * optimistic guess.
    */
-  readonly run: (action: HomeServiceActionId) => Promise<void>;
+  readonly run: (action: HomeServiceActionId, source?: "manual" | "automatic") => Promise<void>;
 }
 
 const ACTION_FAILURE: Readonly<Record<HomeServiceActionId, string>> = {
@@ -251,16 +277,26 @@ export function shouldInspectHomeService(
   );
 }
 
+export function shouldRetryHomeService(
+  needsInspection: boolean,
+  inspectAvailable: boolean,
+  state: HomeActionsState,
+): boolean {
+  return (
+    needsInspection &&
+    inspectAvailable &&
+    state.inspection === null &&
+    state.pending === null &&
+    state.failure !== null &&
+    state.consecutiveInspectionFailures >= 1 &&
+    state.consecutiveInspectionFailures <= SERVICE_RETRY_DELAYS_MS.length
+  );
+}
+
 function boundedActionFailure(error: unknown, fallback: string): string {
   const message = error instanceof Error ? error.message : "";
   if (message.length === 0) return fallback;
-  return message
-    .replace(/https?:\/\/[^\s]+/giu, "[redacted]")
-    .replace(/\b(?:token|secret|password|credential|authorization)\s*[:=]\s*[^\s,;]+/giu, "$1=[redacted]")
-    .replace(/(?:^|\s)(?:~|\/(?:home|tmp|var|etc|opt|srv|mnt|run|usr)\/[^\s,;]*)/gu, " [redacted]")
-    .replace(/\p{Cc}/gu, " ")
-    .slice(0, 512)
-    .trim();
+  return redactedMessage(message).trim();
 }
 
 export function createHomeActions(deps: HomeActionsDeps): HomeActions {
@@ -282,9 +318,15 @@ export function createHomeActions(deps: HomeActionsDeps): HomeActions {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    async run(action) {
+    async run(action, source = "manual") {
       if (state.pending !== null) return;
-      replace({ ...state, pending: action, failure: null });
+      const previousInspectionFailures = source === "manual" ? 0 : state.consecutiveInspectionFailures;
+      replace({
+        ...state,
+        pending: action,
+        failure: null,
+        consecutiveInspectionFailures: previousInspectionFailures,
+      });
       let failure: string | null = null;
       try {
         if (action === "install") await deps.serviceInstall?.();
@@ -294,13 +336,17 @@ export function createHomeActions(deps: HomeActionsDeps): HomeActions {
         failure = boundedActionFailure(error, ACTION_FAILURE[action]);
       }
       let inspection = state.inspection;
-      let consecutiveInspectionFailures = state.consecutiveInspectionFailures;
+      let consecutiveInspectionFailures = previousInspectionFailures;
       if (deps.serviceInspect !== undefined) {
         try {
           inspection = await deps.serviceInspect();
           consecutiveInspectionFailures = 0;
         } catch (error) {
           failure = failure ?? boundedActionFailure(error, ACTION_FAILURE.inspect);
+          // Availability issues are retryable snapshots, not a real service
+          // inspection. Do not let a stale issue suppress generic recovery
+          // after OMP has changed underneath the app.
+          if (inspection?.issue !== undefined) inspection = null;
           consecutiveInspectionFailures += 1;
         }
       }
