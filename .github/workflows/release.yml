@@ -151,8 +151,10 @@ jobs:
       - name: Build unsigned macOS packages
         run: pnpm package:mac:unsigned
 
-      - name: Inspect macOS zip
-        run: pnpm inspect:package -- release/*.zip
+      - name: Inspect macOS packages
+        run: |
+          pnpm inspect:package -- release/*.zip
+          pnpm inspect:dmg -- release/*.dmg
 
       - name: Stage macOS artifacts
         shell: bash
