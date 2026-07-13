@@ -115,6 +115,15 @@ Resources:
           TargetOriginId: SiteOrigin
           ViewerProtocolPolicy: redirect-to-https
         DefaultRootObject: index.html
+        CustomErrorResponses:
+          - ErrorCachingMinTTL: 60
+            ErrorCode: 403
+            ResponseCode: 404
+            ResponsePagePath: /404.html
+          - ErrorCachingMinTTL: 60
+            ErrorCode: 404
+            ResponseCode: 404
+            ResponsePagePath: /404.html
         Enabled: true
         HttpVersion: http2and3
         IPV6Enabled: true

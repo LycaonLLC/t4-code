@@ -58,13 +58,21 @@ export function locateAppRoot(root) {
   return asars[0].slice(0, -suffix.length - 1);
 }
 
+function resolveChildDirectory(root, name) {
+  const entry = readdirSync(root, { withFileTypes: true }).find(
+    (candidate) => candidate.isDirectory() && candidate.name.toLowerCase() === name.toLowerCase(),
+  );
+  return join(root, entry?.name ?? name);
+}
+
 function assertResourceTree(root) {
-  const webIndex = join(root, "resources", "web", "index.html");
-  const license = join(root, "resources", "LICENSE");
+  const resources = resolveChildDirectory(root, "resources");
+  const webIndex = join(resolveChildDirectory(resources, "web"), "index.html");
+  const license = join(resources, "LICENSE");
   if (!statFile(webIndex)) fail("resources/web/index.html is missing");
   if (!statFile(license)) fail("resources/LICENSE is missing");
   if (readFileSync(webIndex).length === 0 || readFileSync(license).length === 0) fail("web index or license is empty");
-  const asarPath = join(root, "resources", "app.asar");
+  const asarPath = join(resources, "app.asar");
   if (!statFile(asarPath)) fail("resources/app.asar is missing");
   return assertAsar(asarPath);
 }

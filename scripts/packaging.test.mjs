@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { test } from "node:test";
 import { join, resolve } from "node:path";
 import config from "../electron-builder.config.mjs";
+import { createPackage } from "@electron/asar";
 import { runPreflight, validatePreloadArtifact, validateWebIndex } from "./package-preflight.mjs";
 import { inspectPackage, locateAppRoot } from "./inspect-package.mjs";
 import { LINUX_ICON_SIZES, verifyDesktopIcon } from "./desktop-icon-checks.mjs";
@@ -99,14 +100,23 @@ test("artifact inspector reads unpacked package metadata", () => {
   assert.ok(result.asarEntries > 0);
 });
 
-test("artifact inspector locates macOS Contents with capitalized Resources", () => {
+test("artifact inspector reads macOS bundles with capitalized Resources", async () => {
   const scratch = mkdtempSync(join(tmpdir(), "t4-code-mac-root-"));
   try {
     const contents = join(scratch, "t4-code.app", "Contents");
     const resources = join(contents, "Resources");
-    mkdirSync(resources, { recursive: true });
-    writeFileSync(join(resources, "app.asar"), "fixture");
+    const asarSource = join(scratch, "asar-source");
+    mkdirSync(join(resources, "web"), { recursive: true });
+    mkdirSync(join(asarSource, "dist-electron"), { recursive: true });
+    writeFileSync(join(resources, "web", "index.html"), "<!doctype html>");
+    writeFileSync(join(resources, "LICENSE"), "MIT");
+    writeFileSync(join(asarSource, "dist-electron", "main.cjs"), "");
+    writeFileSync(join(asarSource, "dist-electron", "preload.cjs"), "");
+    writeFileSync(join(asarSource, "package.json"), JSON.stringify({ productName: config.productName }));
+    await createPackage(asarSource, join(resources, "app.asar"));
     assert.equal(locateAppRoot(scratch), contents);
+    const result = inspectPackage(contents);
+    assert.equal(result.manifest.productName, config.productName);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
