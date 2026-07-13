@@ -506,6 +506,43 @@ describe("session lifecycle", () => {
 });
 
 describe("workspace projection safety", () => {
+  it("keeps the advertised project name when the newest session omits it", async () => {
+    const { shell, controller } = await startedRuntime();
+    const project = "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"];
+    const sessions: SessionsFrame = {
+      v: V,
+      type: "sessions",
+      cursor: { epoch: "epoch-1", seq: 1 },
+      sessions: [
+        {
+          hostId: hostId(HOST),
+          sessionId: sessionId("session-new"),
+          project: { projectId: project },
+          revision: revision("rev-new"),
+          title: "Session",
+          status: "idle",
+          updatedAt: "2026-07-11T11:00:00Z",
+        },
+        {
+          hostId: hostId(HOST),
+          sessionId: sessionId("session-old"),
+          project: { projectId: project, name: "lycaon" },
+          revision: revision("rev-old"),
+          title: "Existing session",
+          status: "idle",
+          updatedAt: "2026-07-11T10:00:00Z",
+        },
+      ],
+    };
+    shell.emitFrame({ targetId: "local", frame: sessions });
+
+    const data = deriveWorkspaceData(controller.getSnapshot());
+    expect(data.sessions).toHaveLength(2);
+    expect(data.projects).toEqual([
+      expect.objectContaining({ name: "lycaon", path: "lycaon" }),
+    ]);
+  });
+
   it("renders live titles and never a remote absolute path", async () => {
     const { shell, controller } = await startedRuntime();
     const sessions: SessionsFrame = {

@@ -123,6 +123,7 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
   }
 
   const projects = new Map<string, WorkspaceProject>();
+  const projectsWithAdvertisedNames = new Set<string>();
   const sessions: WorkspaceSession[] = [];
   const refs = [...snapshot.projection.sessionIndex.values()].sort((left, right) =>
     right.updatedAt.localeCompare(left.updatedAt),
@@ -131,9 +132,27 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
     const hostId = String(ref.hostId);
     const sessionId = String(ref.sessionId);
     const projectId = `${encodeURIComponent(hostId)}/${encodeURIComponent(String(ref.project.projectId))}`;
+    const advertisedProjectName =
+      ref.project.name !== undefined && ref.project.name !== "" ? ref.project.name : null;
     if (!projects.has(projectId)) {
       const name = projectDisplayName(ref.project);
       projects.set(projectId, { id: projectId, name, path: name, hostId });
+      if (advertisedProjectName !== null) projectsWithAdvertisedNames.add(projectId);
+    } else if (
+      advertisedProjectName !== null &&
+      !projectsWithAdvertisedNames.has(projectId)
+    ) {
+      // A just-created session may omit the optional project name while
+      // older refs for the same project still advertise it. Refs are sorted
+      // newest-first, so upgrade the id fallback with the first real name and
+      // keep that newest advertised value stable for the rest of the fold.
+      projects.set(projectId, {
+        id: projectId,
+        name: advertisedProjectName,
+        path: advertisedProjectName,
+        hostId,
+      });
+      projectsWithAdvertisedNames.add(projectId);
     }
     const connection = hostConnection(snapshot, hostId);
     const warm = warmSessionProjection(snapshot, hostId, sessionId);
