@@ -4,6 +4,9 @@
 
 import {
   OMP_URL,
+  OMP_RUNTIME_FIX_COMMIT,
+  OMP_RUNTIME_FIX_URL,
+  OMP_RUNTIME_VERSION,
   RELEASE_ASSETS,
   RELEASE_TAG,
   RELEASE_VERSION,
@@ -91,7 +94,15 @@ const install: DocTopic = {
     { kind: "h2", id: "install-requirements", text: "Requirements" },
     {
       kind: "p",
-      text: `T4 Code is a desktop front end for [Oh My Pi](${OMP_URL}). You need an \`omp\` build with desktop appserver support installed on the machine that runs your sessions, either this one or a remote host you pair with. T4 Code v${RELEASE_VERSION} was tested against OMP 16.4.8 and vendors app-wire 0.5.1.`,
+      text: `T4 Code is a desktop front end for [Oh My Pi](${OMP_URL}). You need an \`omp\` build with desktop appserver support installed on the machine that runs your sessions, either this one or a remote host you pair with.`,
+    },
+    {
+      kind: "p",
+      text: `T4 Code v${RELEASE_VERSION} was verified with OMP ${OMP_RUNTIME_VERSION} built from [\`${OMP_RUNTIME_FIX_COMMIT.slice(0, 8)}\`](${OMP_RUNTIME_FIX_URL}). That build bounds snapshots and replay payloads for large, growing sessions. T4 Code vendors app-wire 0.5.1.`,
+    },
+    {
+      kind: "note",
+      text: `The stock upstream OMP v${OMP_RUNTIME_VERSION} tag does not contain this appserver fix. It remains protocol-compatible, but a very large active session can disconnect while attaching.`,
     },
   ],
 };
@@ -405,6 +416,11 @@ const troubleshooting: DocTopic = {
     {
       kind: "p",
       text: "The link to the app server (or the network) dropped. You can reconnect right away or keep working offline with what already streamed in. Remote hosts reconnect on their own; local ones restart with the service manager.",
+    },
+    { kind: "h2", id: "troubleshooting-large-session", text: "Session appears but never loads" },
+    {
+      kind: "p",
+      text: `A large, actively growing transcript can exceed the stock OMP v${OMP_RUNTIME_VERSION} appserver's replay limit during attach. T4 Code v${RELEASE_VERSION} stops the resulting reconnect loop, but the client cannot repair a snapshot the host never delivered. Use the [verified OMP fix](${OMP_RUNTIME_FIX_URL}) or a later upstream build that contains the same bounded replay behavior.`,
     },
     { kind: "h2", id: "troubleshooting-declined", text: "\u201cThe host declined…\u201d" },
     {

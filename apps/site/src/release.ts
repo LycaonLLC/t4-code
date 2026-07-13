@@ -5,8 +5,11 @@ export const SITE_URL = "https://t4code.net";
 export const DOCS_URL = `${SITE_URL}/docs`;
 export const REPO_URL = "https://github.com/LycaonLLC/t4-code";
 export const OMP_URL = "https://github.com/can1357/oh-my-pi";
-export const RELEASE_TAG = "v0.1.4";
-export const RELEASE_VERSION = "0.1.4";
+export const OMP_RUNTIME_VERSION = "16.4.8";
+export const OMP_RUNTIME_FIX_COMMIT = "f65bb37970d2186f04ec4b650eb0b53ec3b1337b";
+export const OMP_RUNTIME_FIX_URL = `https://github.com/lyc-aon/oh-my-pi/commit/${OMP_RUNTIME_FIX_COMMIT}`;
+export const RELEASE_TAG = "v0.1.5";
+export const RELEASE_VERSION = "0.1.5";
 export const RELEASES_URL = `${REPO_URL}/releases/tag/${RELEASE_TAG}`;
 
 export type Platform = "linux" | "mac";
@@ -39,10 +42,10 @@ function asset(
 }
 
 export const RELEASE_ASSETS: readonly ReleaseAsset[] = [
-  asset("linux", "deb", "x86_64", "T4-Code-0.1.4-linux-amd64.deb", "Linux .deb"),
-  asset("linux", "appimage", "x86_64", "T4-Code-0.1.4-linux-x86_64.AppImage", "Linux AppImage"),
-  asset("mac", "dmg", "arm64", "T4-Code-0.1.4-mac-arm64.dmg", "macOS .dmg"),
-  asset("mac", "zip", "arm64", "T4-Code-0.1.4-mac-arm64.zip", "macOS .zip"),
+  asset("linux", "deb", "x86_64", "T4-Code-0.1.5-linux-amd64.deb", "Linux .deb"),
+  asset("linux", "appimage", "x86_64", "T4-Code-0.1.5-linux-x86_64.AppImage", "Linux AppImage"),
+  asset("mac", "dmg", "arm64", "T4-Code-0.1.5-mac-arm64.dmg", "macOS .dmg"),
+  asset("mac", "zip", "arm64", "T4-Code-0.1.5-mac-arm64.zip", "macOS .zip"),
 ];
 
 export function assetsFor(platform: Platform): readonly ReleaseAsset[] {

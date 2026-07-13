@@ -32,7 +32,7 @@ export function handleResponseFrame(
   callbacks: {
     readonly protocolFailure: (message: string) => void;
     readonly publish: (frame: ResultFrame) => void;
-    readonly attached: (hostId: string, sessionId: string) => void;
+    readonly attached: (hostId: string, sessionId: string, frame: ResultFrame) => void;
   },
 ): void {
   const requestKey = String(frame.requestId);
@@ -78,7 +78,7 @@ export function handleResponseFrame(
     }
   }
   if (pending.kind === "attach" && frame.ok && pending.intent?.sessionId !== undefined) {
-    callbacks.attached(pending.intent.hostId, pending.intent.sessionId);
+    callbacks.attached(pending.intent.hostId, pending.intent.sessionId, frame);
   }
   callbacks.publish(frame);
 }

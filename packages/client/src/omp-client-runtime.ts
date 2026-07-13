@@ -43,6 +43,7 @@ import {
   type TerminalResizeIntent,
   type TimerScheduler,
   type Unsubscribe,
+  sessionKey,
 } from "./omp-client-contracts.ts";
 import { CursorJournal } from "./omp-client-cursor.ts";
 import { InboundFrameQueue } from "./omp-client-inbound.ts";
@@ -52,7 +53,9 @@ import { ClientTimerRegistry } from "./omp-client-timers.ts";
 import { OmpClientEvents } from "./omp-client-events.ts";
 import { OmpClientConnection } from "./omp-client-connection.ts";
 import { OmpClientFrameDispatcher, safeFrameDecodeFailure, sendClientHello } from "./omp-client-frames.ts";
+import { OmpClientReconnectHealth } from "./omp-client-reconnect-health.ts";
 import { handleResponseFrame } from "./omp-client-response.ts";
+import { isLegalClientTransition } from "./omp-client-state.ts";
 export * from "./omp-client-contracts.ts";
 export * from "./projection.ts";
 export * from "./projection-cache.ts";
@@ -64,7 +67,6 @@ interface ConnectWaiter {
   resolve: () => void;
   reject: (error: OmpClientError) => void;
 }
-
 export class OmpClient {
   private readonly options: OmpClientOptions;
   private readonly projection: ProjectionStore | undefined;
@@ -79,6 +81,7 @@ export class OmpClient {
   private readonly inboundQueue: InboundFrameQueue;
   private readonly pendingRequests: PendingRequests;
   private readonly connection: OmpClientConnection;
+  private readonly reconnectHealth: OmpClientReconnectHealth;
   private readonly frames: OmpClientFrameDispatcher;
   private readonly events = new OmpClientEvents();
   private readonly attached = new Map<string, { hostId: HostId; sessionId: SessionId }>();
@@ -87,7 +90,7 @@ export class OmpClient {
   private stateValue: OmpClientState = "idle";
   private epochValue: string | undefined;
   private cursorValue: Cursor | undefined;
-  private desyncedValue = false;
+  private readonly desyncedSessions = new Set<string>();
   private authenticationValue: "local" | "pairing-required" | "paired" | undefined;
   private granted = new Set<string>();
   private closedByUser = false;
@@ -140,14 +143,15 @@ export class OmpClient {
         heartbeatFailure: () => this.handleDisconnect(undefined, "heartbeat timeout"),
       },
     );
+    this.reconnectHealth = new OmpClientReconnectHealth(() => this.connection.resetAttempts());
     this.frames = new OmpClientFrameDispatcher({
       welcome: (frame) => this.handleWelcome(frame),
-      pong: (nonce) => { if (nonce === this.heartbeatNonce) { this.heartbeatNonce = undefined; this.connection.clearHeartbeatTimeout(); } },
+      pong: (nonce) => this.handlePong(nonce),
       bye: (frame) => { if (frame.retryable) this.handleDisconnect(undefined, frame.reason); else this.fatal(this.error(frame.code.toLowerCase().includes("auth") ? "auth" : "protocol", "server closed the protocol session")); },
       response: (frame) => this.handleResponse(frame),
       pairOk: (frame, generation) => this.handlePairOk(frame, generation),
       pairError: (frame) => { if (frame.requestId !== undefined) this.settlePairError(frame); this.publish(frame); },
-      gap: (frame) => { this.markDesynced("cursor gap requires a snapshot"); this.publish(frame); },
+      gap: (frame) => { this.markDesynced(sessionKey(String(frame.hostId), String(frame.sessionId)), "cursor gap requires a snapshot"); this.publish(frame); },
       snapshot: (frame) => this.acceptSnapshot(frame),
       durable: (frame) => { if (this.acceptDurable(frame)) this.publish(frame); },
       other: (frame) => this.publish(frame),
@@ -174,7 +178,7 @@ export class OmpClient {
       ...(this.epochValue === undefined ? {} : { epoch: this.epochValue }),
       ...(this.cursorValue === undefined ? {} : { cursor: freeze({ ...this.cursorValue }) }),
       ...(this.authenticationValue === undefined ? {} : { authentication: this.authenticationValue }),
-      desynced: this.desyncedValue,
+      desynced: this.desyncedSessions.size > 0,
     });
   }
 
@@ -208,6 +212,8 @@ export class OmpClient {
     if (this.stateValue === "closed") return;
     this.closedByUser = true;
     this.clearInbound();
+    this.heartbeatNonce = undefined;
+    this.reconnectHealth.clear();
     this.transition("closing");
     const closeError = this.error("closed", "client closed");
     for (const waiter of this.connectWaiters.splice(0)) waiter.reject(closeError);
@@ -219,11 +225,11 @@ export class OmpClient {
     this.events.clear();
   }
   command(intent: CommandIntent, options: CommandOptions = {}): Promise<ResultFrame> {
-    return this.sendCommand(intent, options, "command");
+    return this.sendCommand(intent, options);
   }
 
   attach(host: string, session: string, options: CommandOptions = {}): Promise<ResultFrame> {
-    return this.sendCommand({ hostId: host, sessionId: session, command: "session.attach", args: {} }, options, "attach");
+    return this.sendCommand({ hostId: host, sessionId: session, command: "session.attach", args: {} }, options);
   }
 
   confirm(intent: ConfirmIntent, options: CommandOptions = {}): Promise<ResultFrame> {
@@ -275,7 +281,7 @@ export class OmpClient {
     });
   }
 
-  private sendCommand(intent: CommandIntent, options: CommandOptions, kind: "command" | "attach"): Promise<ResultFrame> {
+  private sendCommand(intent: CommandIntent, options: CommandOptions): Promise<ResultFrame> {
     if (this.stateValue !== "ready") return Promise.reject(this.error("invalid_state", "client is not ready"));
     const descriptor = COMMAND_DESCRIPTORS[intent.command];
     if (descriptor === undefined) return Promise.reject(this.error("protocol", "unknown command"));
@@ -306,6 +312,7 @@ export class OmpClient {
         : intent.args ?? {},
     });
     if (frame === undefined || frame.type !== "command") return Promise.reject(this.error("protocol", "invalid command intent"));
+    const kind = intent.command === "session.attach" ? "attach" : "command";
     return this.sendPending(frame, request, options, kind, intent).then((result) => {
       if (result.type !== "response") throw this.error("protocol", "unexpected pairing response");
       return result;
@@ -355,6 +362,7 @@ export class OmpClient {
   }
 
   private handleConnected(_generation: number): void {
+    this.reconnectHealth.clear();
     this.transition("connecting");
     this.transition("handshaking");
     this.sendHello();
@@ -372,9 +380,7 @@ export class OmpClient {
       () => this.protocolFailure("hello could not be sent"),
     );
   }
-  private clearInbound(): void {
-    this.inboundQueue.clear();
-  }
+  private clearInbound(): void { this.inboundQueue.clear(); }
 
   private handleRaw(raw: string | Uint8Array, generation: number): void | Promise<void> {
     if (generation !== this.generation || this.closedByUser) return;
@@ -385,8 +391,6 @@ export class OmpClient {
     }
   }
 
-
-
   private handleWelcome(frame: WelcomeFrame): void {
     this.clearTimer("handshakeTimer");
     if (this.expectedHost !== undefined && frame.hostId !== this.expectedHost) {
@@ -395,15 +399,16 @@ export class OmpClient {
     }
     this.authenticationValue = frame.authentication;
     this.epochValue = frame.epoch;
-    this.connection.resetAttempts();
     this.granted = new Set(frame.grantedCapabilities);
     if (frame.authentication === "pairing-required") {
+      this.reconnectHealth.beginWelcome(this.generation, []);
       this.transition("pairing");
       this.startHeartbeat();
       this.publish(frame);
       for (const waiter of this.connectWaiters.splice(0)) waiter.resolve();
       return;
     }
+    this.reconnectHealth.beginWelcome(this.generation, this.attached.keys());
     for (const feature of this.options.requiredFeatures ?? []) {
       if (!frame.grantedFeatures.includes(feature)) {
         this.fatal(this.error("capability", "required feature was not granted", false, { feature }));
@@ -418,10 +423,17 @@ export class OmpClient {
   }
 
   private acceptSnapshot(frame: Extract<ServerFrame, { type: "snapshot" }>): void {
-    this.desyncedValue = false;
+    const currentKey = sessionKey(String(frame.hostId), String(frame.sessionId));
+    this.desyncedSessions.delete(currentKey);
     this.epochValue = frame.cursor.epoch;
     this.cursorValue = frame.cursor;
     this.cursorJournal.remember({ hostId: String(frame.hostId), sessionId: String(frame.sessionId), cursor: frame.cursor });
+    this.reconnectHealth.acceptReplayProgress(
+      this.generation,
+      currentKey,
+      frame.cursor,
+      true,
+    );
     this.publish(frame);
   }
 
@@ -429,24 +441,26 @@ export class OmpClient {
     const currentKey = `${String(frame.hostId)}\u0000${String(frame.sessionId)}`;
     const previous = this.cursorJournal.bySession.get(currentKey);
     if (previous === undefined) {
-      if (this.desyncedValue) return false;
+      if (this.desyncedSessions.has(currentKey)) return false;
       this.cursorValue = frame.cursor;
       this.epochValue = frame.cursor.epoch;
       this.cursorJournal.remember({ hostId: String(frame.hostId), sessionId: String(frame.sessionId), cursor: frame.cursor });
+      this.reconnectHealth.acceptReplayProgress(this.generation, currentKey, frame.cursor, false);
       return true;
     }
     if (frame.cursor.epoch !== previous.epoch) {
-      this.markDesynced("cursor epoch changed without a snapshot");
+      this.markDesynced(currentKey, "cursor epoch changed without a snapshot");
       return false;
     }
     if (frame.cursor.seq <= previous.seq) return false;
-    if (frame.cursor.seq !== previous.seq + 1 || this.desyncedValue) {
-      this.markDesynced("durable cursor is not contiguous", { expectedSeq: previous.seq + 1, receivedSeq: frame.cursor.seq });
+    if (frame.cursor.seq !== previous.seq + 1 || this.desyncedSessions.has(currentKey)) {
+      this.markDesynced(currentKey, "durable cursor is not contiguous", { expectedSeq: previous.seq + 1, receivedSeq: frame.cursor.seq });
       return false;
     }
     this.cursorValue = frame.cursor;
     this.epochValue = frame.cursor.epoch;
     this.cursorJournal.remember({ hostId: String(frame.hostId), sessionId: String(frame.sessionId), cursor: frame.cursor });
+    this.reconnectHealth.acceptReplayProgress(this.generation, currentKey, frame.cursor, false);
     return true;
   }
 
@@ -454,13 +468,20 @@ export class OmpClient {
     handleResponseFrame(this.pendingRequests, frame, {
       protocolFailure: (message) => this.protocolFailure(message),
       publish: (response) => this.publish(response),
-      attached: (host, session) => {
+      attached: (host, session, response) => {
         const attachedHost = hostId(host);
         const attachedSession = sessionId(session);
-        this.attached.set(`${String(attachedHost)}\u0000${String(attachedSession)}`, {
+        const key = sessionKey(String(attachedHost), String(attachedSession));
+        this.attached.set(key, {
           hostId: attachedHost,
           sessionId: attachedSession,
         });
+        this.reconnectHealth.acceptAttachResponse(
+          this.generation,
+          key,
+          response,
+          this.cursorJournal.bySession.get(key),
+        );
       },
     });
   }
@@ -489,6 +510,9 @@ export class OmpClient {
     this.authenticationValue = "paired";
     this.clearInbound();
     this.heartbeatNonce = undefined;
+    // Pair completion rotates credentials by intentionally reconnecting. It is
+    // not another failure in the preceding transport retry streak.
+    this.connection.resetAttempts();
     this.connection.disconnect();
     this.scheduleReconnect();
   }
@@ -502,6 +526,7 @@ export class OmpClient {
     if (this.closedByUser || isTerminalState(this.stateValue)) return;
     this.clearTimer("handshakeTimer");
     this.heartbeatNonce = undefined;
+    this.reconnectHealth.clear();
     this.connection.disconnect();
     for (const [id, pending] of this.pendingRequests.entries) {
       if (pending.handedToTransport) {
@@ -528,7 +553,6 @@ export class OmpClient {
       this.sendCommand(
         { hostId: String(record.hostId), sessionId: String(record.sessionId), command: "session.attach", args: cursor === undefined ? {} : { cursor } },
         { timeoutMs: this.options.commandTimeoutMs ?? 30_000 },
-        "attach",
       ).catch(() => undefined);
     }
   }
@@ -554,10 +578,17 @@ export class OmpClient {
     );
   }
 
+  private handlePong(nonce: string): void {
+    if (nonce !== this.heartbeatNonce) return;
+    this.heartbeatNonce = undefined;
+    this.connection.clearHeartbeatTimeout();
+    this.reconnectHealth.acceptPong(this.generation);
+  }
 
-  private markDesynced(message: string, metadata?: Record<string, string | number | boolean>): void {
-    if (!this.desyncedValue) this.emitError(this.error("desync", message, true, metadata));
-    this.desyncedValue = true;
+
+  private markDesynced(key: string, message: string, metadata?: Record<string, string | number | boolean>): void {
+    if (!this.desyncedSessions.has(key)) this.emitError(this.error("desync", message, true, metadata));
+    this.desyncedSessions.add(key);
   }
 
   private protocolFailure(message: string): void {
@@ -568,6 +599,8 @@ export class OmpClient {
     this.emitError(error);
     this.closedByUser = true;
     this.clearInbound();
+    this.heartbeatNonce = undefined;
+    this.reconnectHealth.clear();
     this.clearAllTimers();
     this.pendingRequests.rejectAll(error);
     for (const waiter of this.connectWaiters.splice(0)) waiter.reject(error);
@@ -582,27 +615,11 @@ export class OmpClient {
     this.events.publish(frame, this.projection);
   }
 
-  private emitError(error: OmpClientError): void {
-    this.events.emitError(error);
-  }
-
-  private emitState(): void {
-    this.events.emitState(this.snapshot());
-  }
+  private emitError(error: OmpClientError): void { this.events.emitError(error); }
+  private emitState(): void { this.events.emitState(this.snapshot()); }
 
   private transition(next: OmpClientState): void {
-    const legal: Record<OmpClientState, readonly OmpClientState[]> = {
-      idle: ["connecting", "closing", "closed"],
-      connecting: ["handshaking", "reconnect-wait", "fatal", "closing"],
-      handshaking: ["ready", "pairing", "reconnect-wait", "fatal", "closing"],
-      pairing: ["ready", "reconnect-wait", "fatal", "closing"],
-      ready: ["pairing", "reconnect-wait", "fatal", "closing"],
-      "reconnect-wait": ["connecting", "fatal", "closing"],
-      closing: ["closed"],
-      closed: [],
-      fatal: ["closing", "closed"],
-    };
-    if (next === this.stateValue || !legal[this.stateValue].includes(next)) return;
+    if (!isLegalClientTransition(this.stateValue, next)) return;
     this.stateValue = next;
     this.emitState();
   }

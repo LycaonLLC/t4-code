@@ -190,6 +190,10 @@ jobs:
 
             Linux packages are built for x86_64. macOS packages are built for Apple Silicon.
 
+            ## Runtime compatibility
+
+            This release vendors app-wire 0.5.1 and was verified with OMP 16.4.8 built from [f65bb379](https://github.com/lyc-aon/oh-my-pi/commit/f65bb37970d2186f04ec4b650eb0b53ec3b1337b). Stock upstream OMP v16.4.8 does not include that bounded large-session snapshot and replay fix. It remains protocol-compatible, but a very large active session can disconnect while attaching.
+
             The macOS build is unsigned and unnotarized. Gatekeeper will block the first launch. After copying T4 Code to Applications, run:
 
             ```sh

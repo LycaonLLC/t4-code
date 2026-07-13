@@ -17,23 +17,24 @@ function changed(path, replace) {
 }
 
 test("current source tree has one consistent release version", () => {
-  assert.deepEqual(collectReleaseConsistencyErrors(files, "v0.1.4"), []);
+  assert.deepEqual(collectReleaseConsistencyErrors(files, "v0.1.5"), []);
 });
 
 test("rejects a tag that differs from the package version", () => {
   assert.ok(
     collectReleaseConsistencyErrors(files, "v9.9.9").some((error) =>
-      error.includes("release tag v9.9.9 does not match v0.1.4"),
+      error.includes("release tag v9.9.9 does not match v0.1.5"),
     ),
   );
 });
 
 test("rejects workspace, site, README, and runtime version drift", () => {
   const cases = [
-    ["apps/web/package.json", (text) => text.replace('"version": "0.1.4"', '"version": "0.1.3"')],
-    ["apps/site/src/release.ts", (text) => text.replace('RELEASE_TAG = "v0.1.4"', 'RELEASE_TAG = "v0.1.3"')],
-    ["README.md", (text) => text.replace("Download v0.1.4", "Download v0.1.3")],
-    ["apps/desktop/src/target-manager.ts", (text) => text.replace('version: "0.1.4"', 'version: "0.1.3"')],
+    ["apps/web/package.json", (text) => text.replace('"version": "0.1.5"', '"version": "0.1.3"')],
+    ["apps/site/src/release.ts", (text) => text.replace('RELEASE_TAG = "v0.1.5"', 'RELEASE_TAG = "v0.1.3"')],
+    ["README.md", (text) => text.replace("Download v0.1.5", "Download v0.1.3")],
+    ["apps/desktop/src/target-manager.ts", (text) => text.replace('version: "0.1.5"', 'version: "0.1.3"')],
+    ["apps/site/src/docs/content.ts", (text) => text.replace('id: "troubleshooting-large-session"', 'id: "missing-large-session"')],
   ];
   for (const [path, replace] of cases) {
     assert.ok(
@@ -65,6 +66,22 @@ test("rejects an app-wire compatibility bump hidden inside a desktop release", (
   );
 });
 
+test("rejects drift in verified OMP runtime provenance", () => {
+  const cases = [
+    (text) => text.replace(
+      "f65bb37970d2186f04ec4b650eb0b53ec3b1337b",
+      "0000000000000000000000000000000000000000",
+    ),
+    (text) => text.replace('"upstreamTagContainsLargeSessionFix": false', '"upstreamTagContainsLargeSessionFix": true'),
+  ];
+  for (const replace of cases) {
+    const drifted = changed("compat/omp-app-matrix.json", replace);
+    assert.ok(
+      collectReleaseConsistencyErrors(drifted).some((error) => error.includes("verified runtime") || error.includes("stock upstream")),
+    );
+  }
+});
+
 test("rejects stale README release URLs while allowing historical prose", () => {
   const oldTag = ["v0", "1", "3"].join(".");
   const oldReleaseUrl = `https://github.com/LycaonLLC/t4-code/releases/tag/${oldTag}`;
@@ -73,7 +90,7 @@ test("rejects stale README release URLs while allowing historical prose", () => 
   );
   assert.ok(
     collectReleaseConsistencyErrors(staleLink).some((error) =>
-      error.includes("release URL for v0.1.3; expected v0.1.4"),
+      error.includes("release URL for v0.1.3; expected v0.1.5"),
     ),
   );
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);

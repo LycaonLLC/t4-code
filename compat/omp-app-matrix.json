@@ -10,8 +10,17 @@
     "tarballSha256": "e347b33de1faffa701bcef668d6d64b211d5c73c585c95cd490f08189d5c924a",
     "goldenCorpusSha256": "d183c8d99721920a3aee66f29c50183c232315b1c2c9d07dcc8f079d5e92ab6c"
   },
+  "verifiedRuntime": {
+    "package": "omp",
+    "version": "16.4.8",
+    "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
+    "sourceCommit": "f65bb37970d2186f04ec4b650eb0b53ec3b1337b",
+    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/f65bb37970d2186f04ec4b650eb0b53ec3b1337b",
+    "largeSessionFix": "bounded-growing-session-replay",
+    "upstreamTagContainsLargeSessionFix": false
+  },
   "desktop": {
     "package": "@t4-code/protocol",
-    "version": "0.1.4"
+    "version": "0.1.5"
   }
 }

@@ -4,37 +4,35 @@ T4 Code is a free, open-source (MIT) desktop app for [Oh My Pi](https://github.c
 
 ![T4 Code main window](docs/assets/t4-code-main.png)
 
-[**Download v0.1.4**](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.4) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
+[**Download v0.1.5**](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.5) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
 
 ## Requirements
 
 T4 Code needs an OMP build with desktop appserver support. Install OMP first: <https://github.com/can1357/oh-my-pi>.
 
-T4 Code v0.1.4 was tested against OMP 16.4.8. Its protocol package is the vendored `@oh-my-pi/app-wire` 0.5.1.
+T4 Code v0.1.5 was verified with OMP 16.4.8 built from [`f65bb379`](https://github.com/lyc-aon/oh-my-pi/commit/f65bb37970d2186f04ec4b650eb0b53ec3b1337b). That build bounds snapshots and replay payloads for large, growing sessions. The stock upstream v16.4.8 tag does not contain this appserver fix; it remains protocol-compatible, but a very large active session can disconnect while attaching. T4 Code's vendored protocol package remains `@oh-my-pi/app-wire` 0.5.1.
 
 | Platform | Arch | Package |
 | --- | --- | --- |
 | Linux | x86_64 | `.deb`, AppImage |
 | macOS | Apple Silicon (arm64) | `.dmg`, `.zip` (**unsigned, see below**) |
 
-No Windows build and no Intel Mac build in v0.1.4.
+No Windows build and no Intel Mac build in v0.1.5.
 
-## What changed in v0.1.4
+## What changed in v0.1.5
 
-- v0.1.4 supersedes v0.1.3 so the tagged source archive, package versions, release links, and public docs all name the same release. The runtime and mobile fixes below are unchanged from the verified v0.1.3 binaries.
-- The model picker scrolls with a finger on narrow screens and follows the connected OMP profile's `Ctrl+P` cycle in the same order. The profile used in the mobile test exposed six choices: Luna 5.6, Opus 4.6, Fable 5, GPT 5.6 Sol, Kimi K2.7, and Grok 4.5.
-- The mobile projects drawer gives Close and New session separate 44-pixel controls. Neither control covers the other.
-- New session references keep the project name supplied by OMP. A model change now finishes before an immediately submitted prompt reads the next host revision, which removes the model-switch/send rejection race.
-- The mobile acceptance run went through the Tailnet `.ts.net` HTTPS URL in a 320 × 568 touch browser. It created a session, selected a model, sent a prompt, received the reply, and preserved the same two durable transcript rows through five reloads.
-- The Tailnet gateway pings each browser WebSocket every 30 seconds. A half-open tunnel that does not pong is terminated and removed from the active-session count within 60 seconds; responsive sessions stay connected.
+- Reconnect history now resets only after the host answers a matching heartbeat. If a server repeatedly drops during post-welcome session replay, T4 Code reaches its retry limit instead of reconnecting forever.
+- The verified OMP build bounds both growing-session snapshots and accumulated replay frames. Large active sessions attach with a compacted recent transcript instead of overflowing the appserver WebSocket backpressure limit. Stock upstream OMP v16.4.8 does not include this fix.
+- The v0.1.4 mobile work remains in this build. The model picker scrolls by touch and follows the connected profile's `Ctrl+P` cycle. Close and New session have separate 44-pixel controls, and model changes finish before the next prompt is sent.
+- The Tailnet gateway still removes half-open browser sockets within 60 seconds. The verified 320 × 568 mobile path can create a session, choose a model, send a prompt, receive the reply, and retain the same durable transcript after reloads.
 
 ## Install
 
 ### Linux (Debian/Ubuntu)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.4/T4-Code-0.1.4-linux-amd64.deb
-sudo apt install ./T4-Code-0.1.4-linux-amd64.deb
+wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.5/T4-Code-0.1.5-linux-amd64.deb
+sudo apt install ./T4-Code-0.1.5-linux-amd64.deb
 ```
 
 Use `apt install` rather than `dpkg -i` so system dependencies resolve automatically.
@@ -42,17 +40,17 @@ Use `apt install` rather than `dpkg -i` so system dependencies resolve automatic
 ### Linux (AppImage)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.4/T4-Code-0.1.4-linux-x86_64.AppImage
-chmod +x T4-Code-0.1.4-linux-x86_64.AppImage
-./T4-Code-0.1.4-linux-x86_64.AppImage
+wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.5/T4-Code-0.1.5-linux-x86_64.AppImage
+chmod +x T4-Code-0.1.5-linux-x86_64.AppImage
+./T4-Code-0.1.5-linux-x86_64.AppImage
 ```
 
 ### macOS (Apple Silicon)
 
 > [!WARNING]
-> **The macOS v0.1.4 build is unsigned and unnotarized.** Apple has not signed or notarized it, so Gatekeeper can report a "damaged" app or an unidentified developer. Only continue if you trust the release from this repository. You can always build from source instead.
+> **The macOS v0.1.5 build is unsigned and unnotarized.** Apple has not signed or notarized it, so Gatekeeper can report a "damaged" app or an unidentified developer. Only continue if you trust the release from this repository. You can always build from source instead.
 
-1. Download [`T4-Code-0.1.4-mac-arm64.dmg`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.4/T4-Code-0.1.4-mac-arm64.dmg) (or [`T4-Code-0.1.4-mac-arm64.zip`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.4/T4-Code-0.1.4-mac-arm64.zip)).
+1. Download [`T4-Code-0.1.5-mac-arm64.dmg`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.5/T4-Code-0.1.5-mac-arm64.dmg) (or [`T4-Code-0.1.5-mac-arm64.zip`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.5/T4-Code-0.1.5-mac-arm64.zip)).
 2. Drag `T4 Code.app` into `/Applications`.
 3. If Gatekeeper blocks the app and you choose to proceed, remove the quarantine attributes from the copied app bundle:
 

@@ -9,6 +9,7 @@ export const RELEASE_CONTRACT_PATHS = [
   "README.md",
   "SECURITY.md",
   "apps/desktop/src/target-manager.ts",
+  "apps/site/src/docs/content.ts",
   "apps/site/src/release.ts",
   "apps/web/src/platform/browser-shell-port.ts",
   "compat/omp-app-matrix.json",
@@ -16,6 +17,10 @@ export const RELEASE_CONTRACT_PATHS = [
 ];
 
 const REPOSITORY_URL = "https://github.com/LycaonLLC/t4-code";
+const OMP_RUNTIME_VERSION = "16.4.8";
+const OMP_RUNTIME_FIX_COMMIT = "f65bb37970d2186f04ec4b650eb0b53ec3b1337b";
+const OMP_RUNTIME_REPOSITORY = "https://github.com/lyc-aon/oh-my-pi";
+const OMP_RUNTIME_FIX_URL = `${OMP_RUNTIME_REPOSITORY}/commit/${OMP_RUNTIME_FIX_COMMIT}`;
 const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 
 export function expectedReleaseAssetNames(version) {
@@ -92,10 +97,34 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   if (matrix?.appWire?.version !== "0.5.1") {
     errors.push("compat/omp-app-matrix.json app-wire version must remain 0.5.1 for this release");
   }
+  const verifiedRuntime = matrix?.verifiedRuntime;
+  if (verifiedRuntime?.package !== "omp") {
+    errors.push("compat/omp-app-matrix.json verified runtime package must be omp");
+  }
+  if (verifiedRuntime?.version !== OMP_RUNTIME_VERSION) {
+    errors.push(`compat/omp-app-matrix.json verified runtime version must be ${OMP_RUNTIME_VERSION}`);
+  }
+  if (verifiedRuntime?.sourceRepository !== OMP_RUNTIME_REPOSITORY) {
+    errors.push(`compat/omp-app-matrix.json verified runtime repository must be ${OMP_RUNTIME_REPOSITORY}`);
+  }
+  if (verifiedRuntime?.sourceCommit !== OMP_RUNTIME_FIX_COMMIT) {
+    errors.push(`compat/omp-app-matrix.json verified runtime commit must be ${OMP_RUNTIME_FIX_COMMIT}`);
+  }
+  if (verifiedRuntime?.sourceUrl !== OMP_RUNTIME_FIX_URL) {
+    errors.push(`compat/omp-app-matrix.json verified runtime URL must be ${OMP_RUNTIME_FIX_URL}`);
+  }
+  if (verifiedRuntime?.largeSessionFix !== "bounded-growing-session-replay") {
+    errors.push("compat/omp-app-matrix.json must identify the bounded growing-session replay fix");
+  }
+  if (verifiedRuntime?.upstreamTagContainsLargeSessionFix !== false) {
+    errors.push("compat/omp-app-matrix.json must record that stock upstream v16.4.8 lacks the large-session fix");
+  }
 
   const site = files.get("apps/site/src/release.ts") ?? "";
   requireText(site, `export const RELEASE_TAG = "${expectedTag}";`, "apps/site/src/release.ts", errors);
   requireText(site, `export const RELEASE_VERSION = "${version}";`, "apps/site/src/release.ts", errors);
+  requireText(site, `export const OMP_RUNTIME_VERSION = "${OMP_RUNTIME_VERSION}";`, "apps/site/src/release.ts", errors);
+  requireText(site, `export const OMP_RUNTIME_FIX_COMMIT = "${OMP_RUNTIME_FIX_COMMIT}";`, "apps/site/src/release.ts", errors);
   for (const filename of expectedReleaseAssetNames(version)) {
     requireText(site, `"${filename}"`, "apps/site/src/release.ts", errors);
   }
@@ -110,7 +139,14 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
 
   const readme = files.get("README.md") ?? "";
   requireText(readme, `[**Download ${expectedTag}**](${REPOSITORY_URL}/releases/tag/${expectedTag})`, "README.md", errors);
-  requireText(readme, `T4 Code ${expectedTag} was tested against OMP 16.4.8. Its protocol package is the vendored \`@oh-my-pi/app-wire\` 0.5.1.`, "README.md", errors);
+  requireText(
+    readme,
+    `T4 Code ${expectedTag} was verified with OMP ${OMP_RUNTIME_VERSION} built from [\`f65bb379\`](${OMP_RUNTIME_FIX_URL}).`,
+    "README.md",
+    errors,
+  );
+  requireText(readme, "The stock upstream v16.4.8 tag does not contain this appserver fix", "README.md", errors);
+  requireText(readme, "T4 Code's vendored protocol package remains `@oh-my-pi/app-wire` 0.5.1.", "README.md", errors);
   requireText(readme, `## What changed in ${expectedTag}`, "README.md", errors);
   for (const filename of expectedReleaseAssetNames(version)) {
     requireText(readme, `${REPOSITORY_URL}/releases/download/${expectedTag}/${filename}`, "README.md", errors);
@@ -147,9 +183,26 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     requireText(files.get(path) ?? "", expected, path, errors);
   }
 
+  const siteDocs = files.get("apps/site/src/docs/content.ts") ?? "";
+  requireText(siteDocs, "OMP_RUNTIME_FIX_URL", "apps/site/src/docs/content.ts", errors);
+  requireText(
+    siteDocs,
+    "The stock upstream OMP v${OMP_RUNTIME_VERSION} tag does not contain this appserver fix.",
+    "apps/site/src/docs/content.ts",
+    errors,
+  );
+  requireText(siteDocs, 'id: "troubleshooting-large-session"', "apps/site/src/docs/content.ts", errors);
+
   requireText(
     files.get(".github/workflows/release.yml") ?? "",
     'node scripts/check-release-consistency.mjs --tag "$RELEASE_TAG"',
+    ".github/workflows/release.yml",
+    errors,
+  );
+  requireText(files.get(".github/workflows/release.yml") ?? "", OMP_RUNTIME_FIX_URL, ".github/workflows/release.yml", errors);
+  requireText(
+    files.get(".github/workflows/release.yml") ?? "",
+    "Stock upstream OMP v16.4.8 does not include that bounded large-session snapshot and replay fix.",
     ".github/workflows/release.yml",
     errors,
   );

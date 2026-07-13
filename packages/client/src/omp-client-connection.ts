@@ -130,11 +130,15 @@ export class OmpClientConnection {
     const timeout = this.heartbeat?.timeoutMs ?? 5_000;
     const heartbeatTick = (): void => {
       if (!active() || this.transport === undefined) return;
+      // Install the timeout before send. A transport may synchronously deliver
+      // the matching pong from inside send(), and that pong must be able to
+      // cancel the timeout it acknowledges.
+      this.heartbeatTimeout = this.timers.schedule(() => this.callbacks.heartbeatFailure(), timeout);
       if (!tick()) {
+        this.clearHeartbeatTimeout();
         this.callbacks.heartbeatFailure();
         return;
       }
-      this.heartbeatTimeout = this.timers.schedule(() => this.callbacks.heartbeatFailure(), timeout);
       this.heartbeatTimer = this.timers.schedule(heartbeatTick, interval);
     };
     this.heartbeatTimer = this.timers.schedule(heartbeatTick, interval);
