@@ -394,6 +394,11 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       ".github/workflows/deploy-site.yml must deploy the published release tag, not a same-version main SHA",
     );
   }
+  if ((files.get(".github/workflows/deploy-site.yml") ?? "").includes("cache: pnpm")) {
+    errors.push(
+      ".github/workflows/deploy-site.yml must not save a pnpm cache on the no-install release-defer path",
+    );
+  }
   return errors;
 }
 

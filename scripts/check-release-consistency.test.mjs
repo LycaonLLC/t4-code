@@ -166,6 +166,7 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(deployWorkflow.includes('git merge-base --is-ancestor "$source_sha" "$MAIN_SHA"'));
   assert.ok(deployWorkflow.includes("ref: ${{ steps.immutable_source.outputs.source_sha }}"));
   assert.ok(!deployWorkflow.includes('source_sha="$MAIN_SHA"'));
+  assert.ok(!deployWorkflow.includes("cache: pnpm"));
   assert.ok(
     deployWorkflow.indexOf("Resolve immutable deployment source") >
       deployWorkflow.indexOf("Check whether an ordinary main push references an existing release"),
