@@ -13,6 +13,7 @@ import WebSocket, { WebSocketServer } from "ws";
 const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_BYTES = 512 * 1024;
 const DEFAULT_PORT = 4_194;
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1"]);
 const OMP_SOCKET_NAME = /^\.appserver-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.sock$/u;
 
@@ -244,7 +245,7 @@ function boundedReason(value, fallback) {
 }
 
 function bridgeBrowser(browser, options, activeBrowsers) {
-  activeBrowsers.add(browser);
+  activeBrowsers.set(browser, true);
   const pending = [];
   let pendingBytes = 0;
   let finished = false;
@@ -284,6 +285,9 @@ function bridgeBrowser(browser, options, activeBrowsers) {
     pending.push({ payload, isBinary });
     pendingBytes += bytes;
   });
+  browser.on("pong", () => {
+    if (!finished) activeBrowsers.set(browser, true);
+  });
   browser.on("close", () => finish(1000, "browser closed"));
   browser.on("error", () => finish());
 
@@ -308,13 +312,17 @@ export async function startTailnetGateway(input) {
     listenPort: input.listenPort ?? DEFAULT_PORT,
     allowedOrigin: normalizeAllowedOrigin(input.allowedOrigin),
     label: input.label ?? "OMP on this Tailnet host",
+    heartbeatIntervalMs: input.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
   };
   if (!LOOPBACK_HOSTS.has(options.listenHost)) throw new Error("Tailnet gateway must listen on loopback");
   if (!Number.isSafeInteger(options.listenPort) || options.listenPort < 0 || options.listenPort > 65_535) {
     throw new Error("Tailnet gateway port is invalid");
   }
+  if (!Number.isSafeInteger(options.heartbeatIntervalMs) || options.heartbeatIntervalMs < 10) {
+    throw new Error("Tailnet gateway heartbeat interval is invalid");
+  }
 
-  const activeBrowsers = new Set();
+  const activeBrowsers = new Map();
   const webSockets = new WebSocketServer({
     clientTracking: false,
     maxPayload: MAX_FRAME_BYTES,
@@ -392,12 +400,28 @@ export async function startTailnetGateway(input) {
   });
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("gateway did not bind a TCP socket");
+  const heartbeat = setInterval(() => {
+    for (const [browser, responsive] of activeBrowsers) {
+      if (!responsive) {
+        browser.terminate();
+        continue;
+      }
+      activeBrowsers.set(browser, false);
+      try {
+        browser.ping();
+      } catch {
+        browser.terminate();
+      }
+    }
+  }, options.heartbeatIntervalMs);
+  heartbeat.unref();
 
   return {
     host: options.listenHost,
     port: address.port,
     close: async () => {
-      for (const browser of activeBrowsers) browser.close(1001, "gateway stopping");
+      clearInterval(heartbeat);
+      for (const browser of activeBrowsers.keys()) browser.terminate();
       await new Promise((resolvePromise) => server.close(() => resolvePromise()));
       webSockets.close();
     },

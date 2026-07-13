@@ -32,7 +32,7 @@ function websocketOpen(socket) {
   });
 }
 
-async function fixture(socketTopology = "symlink") {
+async function fixture(socketTopology = "symlink", gatewayOptions = {}) {
   const directory = await mkdtemp(join(tmpdir(), "t4-gateway-"));
   const webRoot = join(directory, "web");
   const socketPath = join(directory, "appserver.sock");
@@ -62,6 +62,7 @@ async function fixture(socketTopology = "symlink") {
     allowedOrigin: ALLOWED_ORIGIN,
     listenPort: 0,
     label: "Test host </script>",
+    ...gatewayOptions,
   });
   return {
     gateway,
@@ -181,6 +182,47 @@ test("gateway rejects cross-origin sockets and bridges the allowed browser to Un
     allowed.send("hello");
     assert.equal(await websocketMessage(allowed), "upstream:hello");
     allowed.close();
+  } finally {
+    await running.close();
+  }
+});
+
+test("gateway heartbeat removes a half-open browser whose proxy never forwards close", async () => {
+  const running = await fixture("symlink", { heartbeatIntervalMs: 20 });
+  try {
+    const abandoned = new WebSocket(`${running.url.replace("http", "ws")}/v1/ws`, {
+      autoPong: false,
+      headers: { Origin: ALLOWED_ORIGIN },
+    });
+    await websocketOpen(abandoned);
+
+    assert.equal((await (await fetch(`${running.url}/healthz`)).json()).activeSessions, 1);
+    await new Promise((resolvePromise, reject) => {
+      const timeout = setTimeout(() => reject(new Error("gateway did not terminate stale browser")), 500);
+      abandoned.once("close", () => {
+        clearTimeout(timeout);
+        resolvePromise();
+      });
+    });
+    assert.equal((await (await fetch(`${running.url}/healthz`)).json()).activeSessions, 0);
+  } finally {
+    await running.close();
+  }
+});
+
+test("gateway heartbeat preserves responsive browsers", async () => {
+  const running = await fixture("symlink", { heartbeatIntervalMs: 20 });
+  try {
+    const responsive = new WebSocket(`${running.url.replace("http", "ws")}/v1/ws`, {
+      headers: { Origin: ALLOWED_ORIGIN },
+    });
+    await websocketOpen(responsive);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+
+    assert.equal((await (await fetch(`${running.url}/healthz`)).json()).activeSessions, 1);
+    responsive.send("still here");
+    assert.equal(await websocketMessage(responsive), "upstream:still here");
+    responsive.close();
   } finally {
     await running.close();
   }
