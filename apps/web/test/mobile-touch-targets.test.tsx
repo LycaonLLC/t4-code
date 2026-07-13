@@ -109,6 +109,8 @@ describe("phone touch targets", () => {
     const css = readFileSync(join(import.meta.dirname, "../src/app.css"), "utf8");
 
     expect(controls).toContain("flex min-h-11 w-full cursor-pointer items-center");
+    expect(controls).toContain("flex max-h-[min(24rem,var(--available-height))]");
+    expect(controls).toContain("min-h-0 overflow-y-auto overscroll-contain");
     expect(titlebar.match(/className="size-11 sm:size-7"/g)).toHaveLength(4);
     expect(session).toContain('aria-label="Session panels"');
     expect(session).toContain("flex size-11 shrink-0 cursor-pointer");

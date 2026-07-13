@@ -56,7 +56,11 @@ function settingsFrame(rev: string, settings: Record<string, unknown>): Settings
 /** The real default-profile shapes: renamed default role, auto thinking. */
 const PROFILE_SETTINGS: Record<string, unknown> = {
   modelRoles: {
-    effective: { default: "anthropic/luna-5.6", smol: "google/gemini-3.5-flash:high" },
+    effective: {
+      default: "anthropic/luna-5.6",
+      smol: "google/gemini-3.5-flash:high",
+      "Opus 4.6": "anthropic/claude-opus-4-6",
+    },
     effectiveSource: "global",
     configured: true,
   },
@@ -153,29 +157,83 @@ describe("defaults from live host settings", () => {
     expect(controls.fastSupported).toBe(true);
   });
 
-  it("exposes configured cycle roles (including custom names) and catalog models", async () => {
+  it("limits the primary picker to configured Ctrl-P roles in exact cycle order", async () => {
     const { runtime } = await startedRuntime({
-      items: [...CONTROL_COMMANDS, modelItem("gpt-6", "openai", "gpt-6")],
+      items: [
+        ...CONTROL_COMMANDS,
+        modelItem("Luna 5.6", "anthropic", "luna-5.6"),
+        modelItem("Gemini 3.5 Flash", "google", "gemini-3.5-flash"),
+        modelItem("Claude Opus 4.6", "anthropic", "claude-opus-4-6"),
+        ...Array.from({ length: 184 }, (_, index) =>
+          modelItem(`catalog-${index}`, "catalog", `model-${index}`),
+        ),
+      ],
     });
     const choices = runtime.getSnapshot().controls.modelChoices;
     expect(choices.map((choice) => choice.id)).toEqual([
       "role:smol",
       "role:default",
       "role:Opus 4.6",
-      "model:openai/gpt-6",
     ]);
     const smol = choices[0];
     expect(smol?.kind).toBe("role");
     expect(smol?.label).toBe("Fast");
     expect(smol?.selector).toBe("google/gemini-3.5-flash:high");
-    // A custom role with no configured selector stays honest: inherited.
+    // Custom cycle-role names keep their exact configured selector.
     const custom = choices[2];
     expect(custom?.label).toBe("Opus 4.6");
-    expect(custom?.selector).toBeNull();
-    expect(custom?.detail).toBe("Inherited");
-    const model = choices[3];
-    expect(model?.kind).toBe("model");
-    expect(model?.selector).toBe("openai/gpt-6");
+    expect(custom?.selector).toBe("anthropic/claude-opus-4-6");
+    expect(custom?.detail).toBe("anthropic/claude-opus-4-6");
+  });
+
+  it("skips cycle roles that are unconfigured or unavailable to this host", async () => {
+    const { runtime } = await startedRuntime({
+      items: [
+        ...CONTROL_COMMANDS,
+        modelItem("Luna 5.6", "anthropic", "luna-5.6"),
+        modelItem("Gemini 3.5 Flash", "google", "gemini-3.5-flash"),
+      ],
+      settings: {
+        ...PROFILE_SETTINGS,
+        modelRoles: {
+          effective: {
+            default: "anthropic/luna-5.6",
+            smol: "google/gemini-3.5-flash:high",
+            "Opus 4.6": "anthropic/not-installed",
+          },
+        },
+        cycleOrder: { effective: ["missing", "Opus 4.6", "smol", "default"] },
+      },
+    });
+    expect(runtime.getSnapshot().controls.modelChoices.map((choice) => choice.id)).toEqual([
+      "role:smol",
+      "role:default",
+    ]);
+  });
+
+  it("honors an explicitly empty Ctrl-P cycle instead of exposing the catalog", async () => {
+    const { runtime } = await startedRuntime({
+      items: [...CONTROL_COMMANDS, modelItem("Luna 5.6", "anthropic", "luna-5.6")],
+      settings: { ...PROFILE_SETTINGS, cycleOrder: { effective: [] } },
+    });
+    expect(runtime.getSnapshot().controls.modelChoices).toEqual([]);
+  });
+
+  it("falls back to available catalog models when an older host publishes no cycle settings", async () => {
+    const { runtime } = await startedRuntime({
+      items: [...CONTROL_COMMANDS, modelItem("gpt-6", "openai", "gpt-6")],
+      settings: {},
+    });
+    expect(runtime.getSnapshot().controls.modelChoices).toEqual([
+      {
+        id: "model:openai/gpt-6",
+        kind: "model",
+        label: "gpt-6",
+        detail: "openai/gpt-6",
+        selector: "openai/gpt-6",
+        role: null,
+      },
+    ]);
   });
 
   it("offers the full thinking ladder", async () => {

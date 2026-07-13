@@ -225,24 +225,52 @@ function modelChoicesFrom(
   catalog: CatalogFrame | undefined,
   settings: SettingsFrame | undefined,
 ): readonly ModelChoice[] {
-  const roles = stringRecord(settingCurrentValue(settings, "modelRoles")) ?? {};
+  const roleSettings = stringRecord(settingCurrentValue(settings, "modelRoles"));
+  const roles = roleSettings ?? {};
   const modelTags = settingCurrentValue(settings, "modelTags");
-  const cycle = stringArray(settingCurrentValue(settings, "cycleOrder")) ?? Object.keys(roles);
+  const configuredCycle = stringArray(settingCurrentValue(settings, "cycleOrder"));
+  const cycle = configuredCycle ?? Object.keys(roles);
+  const hasCycleAuthority = configuredCycle !== null || roleSettings !== null;
+  const catalogHasModelAuthority = catalog?.items.some((item) => item.kind === "model") ?? false;
+  const availableSelectors = new Set<string>();
+  if (catalogHasModelAuthority && catalog !== undefined) {
+    for (const item of catalog.items) {
+      if (item.kind !== "model" || item.supported === false) continue;
+      const selector = modelItemSelector(item);
+      if (selector !== null) availableSelectors.add(baseSelector(selector));
+    }
+  }
   const choices: ModelChoice[] = [];
   const seenRoles = new Set<string>();
   for (const role of cycle) {
     if (seenRoles.has(role)) continue;
     seenRoles.add(role);
     const selector = roles[role] ?? null;
+    // Ctrl-P skips roles with no assignment and assignments that do not
+    // resolve to an available model. Sending either role through
+    // session.model.set would be rejected by OMP, so never advertise it.
+    if (selector === null) continue;
+    if (catalogHasModelAuthority && !availableSelectors.has(baseSelector(selector))) continue;
     choices.push({
       id: `role:${role}`,
       kind: "role",
       label: roleTagName(modelTags, role) ?? ROLE_LABEL[role] ?? role,
-      detail: selector ?? "Inherited",
+      detail: selector,
       selector,
       role,
     });
   }
+
+  // OMP's configured cycle is the authority for the primary model picker.
+  // It is the same ordered role list the TUI walks for Ctrl+P. The catalog is
+  // intentionally much broader (often hundreds of models) and belongs in the
+  // advanced model settings surface, not this high-frequency session control.
+  // An explicitly empty cycle is still authoritative. Catalog fallback is
+  // only for legacy hosts that publish no cycle or role settings at all.
+  if (hasCycleAuthority) return choices;
+
+  // Older hosts may publish a model catalog without settings metadata. Keep a
+  // bounded compatibility fallback so those hosts can still switch models.
   if (catalog !== undefined) {
     const seenSelectors = new Set<string>();
     for (const item of catalog.items) {
