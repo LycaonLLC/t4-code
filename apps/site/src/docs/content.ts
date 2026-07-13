@@ -1,5 +1,5 @@
 // Docs content as plain data. Every fact here traces to shipped code or the
-// v0.1.0 release contract; the renderer, search index, and navigation all
+// v0.1.2 release contract; the renderer, search index, and navigation all
 // derive from this one structure.
 
 import {
@@ -43,7 +43,7 @@ const install: DocTopic = {
   blocks: [
     {
       kind: "p",
-      text: `All downloads live on the [v0.1.0 release page](${RELEASES_URL}).`,
+      text: `All downloads live on the [v0.1.2 release page](${RELEASES_URL}).`,
     },
     { kind: "h2", id: "install-linux", text: "Linux (x86_64)" },
     { kind: "p", text: "The `.deb` package is the smoothest path on Debian and Ubuntu:" },
@@ -67,7 +67,7 @@ const install: DocTopic = {
     },
     {
       kind: "note",
-      text: "The v0.1.0 macOS build is unsigned and not notarized. macOS blocks it on first launch. This is expected; the next section shows the two ways past it.",
+      text: "The v0.1.2 macOS build is unsigned and not notarized. macOS blocks it on first launch. This is expected; the next section shows the two ways past it.",
     },
     { kind: "h3", id: "install-gatekeeper", text: "First launch on macOS" },
     { kind: "p", text: "Pick either route:" },
@@ -405,7 +405,7 @@ const security: DocTopic = {
     { kind: "h2", id: "security-unsigned", text: "The unsigned macOS build" },
     {
       kind: "p",
-      text: `The v0.1.0 macOS build is unsigned and not notarized, so macOS warns before first launch. If you would rather not trust a downloaded binary, [build from source](#build-from-source). The repository is public at [LycaonLLC/t4-code](${REPO_URL}).`,
+      text: `The v0.1.2 macOS build is unsigned and not notarized, so macOS warns before first launch. If you would rather not trust a downloaded binary, [build from source](#build-from-source). The repository is public at [LycaonLLC/t4-code](${REPO_URL}).`,
     },
     { kind: "h2", id: "security-credentials", text: "Credentials" },
     {

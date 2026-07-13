@@ -4,7 +4,7 @@ T4 Code is a free, open-source (MIT) desktop app for [Oh My Pi](https://github.c
 
 ![T4 Code main window](docs/assets/t4-code-main.png)
 
-[**Download v0.1.0**](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.0) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
+[**Download v0.1.2**](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.2) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
 
 ## Requirements
 
@@ -15,15 +15,15 @@ T4 Code needs an OMP build with desktop appserver support. Install OMP first: <h
 | Linux | x86_64 | `.deb`, AppImage |
 | macOS | Apple Silicon (arm64) | `.dmg`, `.zip` (**unsigned, see below**) |
 
-No Windows build and no Intel Mac build in v0.1.0.
+No Windows build and no Intel Mac build in v0.1.2.
 
 ## Install
 
 ### Linux (Debian/Ubuntu)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.0/T4-Code-0.1.0-linux-amd64.deb
-sudo apt install ./T4-Code-0.1.0-linux-amd64.deb
+wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.2/T4-Code-0.1.2-linux-amd64.deb
+sudo apt install ./T4-Code-0.1.2-linux-amd64.deb
 ```
 
 Use `apt install` rather than `dpkg -i` so system dependencies resolve automatically.
@@ -31,17 +31,17 @@ Use `apt install` rather than `dpkg -i` so system dependencies resolve automatic
 ### Linux (AppImage)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.0/T4-Code-0.1.0-linux-x86_64.AppImage
-chmod +x T4-Code-0.1.0-linux-x86_64.AppImage
-./T4-Code-0.1.0-linux-x86_64.AppImage
+wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.2/T4-Code-0.1.2-linux-x86_64.AppImage
+chmod +x T4-Code-0.1.2-linux-x86_64.AppImage
+./T4-Code-0.1.2-linux-x86_64.AppImage
 ```
 
 ### macOS (Apple Silicon)
 
 > [!WARNING]
-> **The macOS v0.1.0 build is unsigned and unnotarized.** Apple has not checked it, and Gatekeeper will block it with a "damaged" or "unidentified developer" message. Only continue if you trust this repository. You can always build from source instead.
+> **The macOS v0.1.2 build is unsigned and unnotarized.** Apple has not checked it, and Gatekeeper will block it with a "damaged" or "unidentified developer" message. Only continue if you trust this repository. You can always build from source instead.
 
-1. Download [`T4-Code-0.1.0-mac-arm64.dmg`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.0/T4-Code-0.1.0-mac-arm64.dmg) (or [`T4-Code-0.1.0-mac-arm64.zip`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.0/T4-Code-0.1.0-mac-arm64.zip)).
+1. Download [`T4-Code-0.1.2-mac-arm64.dmg`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.2/T4-Code-0.1.2-mac-arm64.dmg) (or [`T4-Code-0.1.2-mac-arm64.zip`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.2/T4-Code-0.1.2-mac-arm64.zip)).
 2. Drag `T4 Code.app` into `/Applications`.
 3. Remove the quarantine flag:
 
