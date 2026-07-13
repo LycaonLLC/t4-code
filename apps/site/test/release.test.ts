@@ -1,4 +1,4 @@
-// Release contract guard: exact v0.1.3 asset names and URLs, and the
+// Release contract guard: exact v0.1.4 asset names and URLs, and the
 // platform-detection rule the hero download button relies on.
 import { describe, expect, it } from "vite-plus/test";
 import {
@@ -12,12 +12,12 @@ import {
 } from "../src/release.ts";
 
 describe("release assets", () => {
-  it("carries the four contracted v0.1.3 filenames", () => {
+  it("carries the four contracted v0.1.4 filenames", () => {
     expect(RELEASE_ASSETS.map((a) => a.filename)).toEqual([
-      "T4-Code-0.1.3-linux-amd64.deb",
-      "T4-Code-0.1.3-linux-x86_64.AppImage",
-      "T4-Code-0.1.3-mac-arm64.dmg",
-      "T4-Code-0.1.3-mac-arm64.zip",
+      "T4-Code-0.1.4-linux-amd64.deb",
+      "T4-Code-0.1.4-linux-x86_64.AppImage",
+      "T4-Code-0.1.4-mac-arm64.dmg",
+      "T4-Code-0.1.4-mac-arm64.zip",
     ]);
   });
 
@@ -31,8 +31,8 @@ describe("release assets", () => {
 
   it("targets the public LycaonLLC repo", () => {
     expect(REPO_URL).toBe("https://github.com/LycaonLLC/t4-code");
-    expect(RELEASE_TAG).toBe("v0.1.3");
-    expect(RELEASE_VERSION).toBe("0.1.3");
+    expect(RELEASE_TAG).toBe("v0.1.4");
+    expect(RELEASE_VERSION).toBe("0.1.4");
   });
 
   it("splits assets by platform with correct architectures", () => {
