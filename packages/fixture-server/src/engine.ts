@@ -105,6 +105,70 @@ function sessionRef(seed: ScenarioSeed) {
     model: "fixture-model",
   };
 }
+
+const FIXTURE_CYCLE_ROLES = Array.from({ length: 12 }, (_, index) =>
+  index === 0 ? "default" : `cycle-${String(index + 1).padStart(2, "0")}`,
+);
+
+/** A production-shaped profile large enough to exercise phone popup scrolling. */
+function fixtureSettings(): Record<string, unknown> {
+  const modelRoles = Object.fromEntries(
+    FIXTURE_CYCLE_ROLES.map((role, index) => [
+      role,
+      `fixture/model-${String(index + 1).padStart(3, "0")}`,
+    ]),
+  );
+  const modelTags = Object.fromEntries(
+    FIXTURE_CYCLE_ROLES.map((role, index) => [
+      role,
+      { name: `Fixture ${String(index + 1).padStart(2, "0")}` },
+    ]),
+  );
+  return {
+    cycleOrder: { effective: FIXTURE_CYCLE_ROLES, configured: true },
+    modelRoles: { effective: modelRoles, configured: true },
+    modelTags: { effective: modelTags, configured: true },
+    defaultThinkingLevel: { effective: "medium", configured: true },
+  };
+}
+
+/** Mirrors tonight's live ratio: a short Ctrl-P cycle over a much larger catalog. */
+function fixtureCatalogItems(): Record<string, unknown>[] {
+  const commands = ["session.cancel", "session.model.set", "session.thinking.set", "session.fast.set"].map(
+    (name) => ({
+      id: `cmd-${name.replaceAll(".", "-")}`,
+      kind: "command",
+      name,
+      description: `${name} fixture command`,
+      capabilities: [name === "session.cancel" ? "sessions.control" : "sessions.prompt"],
+      supported: true,
+    }),
+  );
+  const models = Array.from({ length: 184 }, (_, index) => {
+    const ordinal = String(index + 1).padStart(3, "0");
+    return {
+      id: `model-fixture-${ordinal}`,
+      kind: "model",
+      name: `Fixture model ${ordinal}`,
+      metadata: { provider: "fixture", modelId: `model-${ordinal}` },
+      supported: true,
+    };
+  });
+  const modes = FIXTURE_CYCLE_ROLES.map((role, index) => ({
+    id: `mode-role-${role}`,
+    kind: "mode",
+    name: role,
+    description: `Fixture ${String(index + 1).padStart(2, "0")}`,
+    metadata: {
+      role,
+      modelId: `fixture/model-${String(index + 1).padStart(3, "0")}`,
+      cycle: true,
+      cycleIndex: index,
+    },
+  }));
+  return [...commands, ...models, ...modes];
+}
+
 export function buildHistory(seed: ScenarioSeed): DurableEntry[] {
   const count = seed.historyMessages ?? 1;
   const entries: DurableEntry[] = [];
@@ -427,12 +491,13 @@ export class FixtureEngine {
       epoch: this.epoch,
       grantedCapabilities: [
         "catalog.read",
+        "config.read",
         "sessions.read",
         "sessions.prompt",
         "sessions.control",
         "sessions.manage",
       ],
-      grantedFeatures: ["catalog.metadata", "resume"],
+      grantedFeatures: ["catalog.metadata", "resume", "settings.metadata"],
       negotiatedLimits: { maxInputBytes: 1_048_576 },
       authentication: "local",
       resumed,
@@ -704,7 +769,13 @@ export class FixtureEngine {
         { v: V, type: "audit.event", hostId: ids.hostId, cursor: ids.cursor, event: { eventId: "operation-fixture", hostId: ids.hostId, action: "fixture.read", actor: "fixture", timestamp: this.seed.baseTime } },
       ];
     else if (frame.command === "settings.read")
-      additive = { v: V, type: "settings", hostId: ids.hostId, revision: ids.revision, settings: {} };
+      additive = {
+        v: V,
+        type: "settings",
+        hostId: ids.hostId,
+        revision: ids.revision,
+        settings: fixtureSettings(),
+      };
     else if (frame.command === "preview.launch")
       additive = { ...ids, type: "preview.launch", previewId: "preview-fixture", url: "http://127.0.0.1/fixture", revision: ids.revision };
     else if (frame.command === "preview.state")
@@ -761,23 +832,14 @@ export class FixtureEngine {
         ok: true,
         result: {
           revision: this.revision,
-          items: [
-            {
-              id: "cmd-session-cancel",
-              kind: "command",
-              name: "session.cancel",
-              description: "Stop the running session turn",
-              capabilities: ["sessions.control"],
-              supported: true,
-            },
-          ],
+          items: fixtureCatalogItems(),
         },
       };
     if (frame.command === "settings.read")
       return {
         ...base,
         ok: true,
-        result: { revision: this.revision, settings: {} },
+        result: { revision: this.revision, settings: fixtureSettings() },
       };
     if (frame.command.startsWith("host.watch") || frame.command.startsWith("session.watch"))
       return { ...base, ok: true, result: { watchId: "watch-fixture", cursor: this.currentCursor } };

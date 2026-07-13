@@ -42,6 +42,22 @@ jobs:
           node-version: 24.13.1
           cache: pnpm
 
+      - name: Verify release tag matches desktop version
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+
+          const { version } = JSON.parse(readFileSync("apps/desktop/package.json", "utf8"));
+          const expectedTag = `v${version}`;
+          const releaseTag = process.env.RELEASE_TAG;
+          if (releaseTag !== expectedTag) {
+            console.error(`Release tag ${releaseTag} does not match desktop version ${expectedTag}`);
+            process.exit(1);
+          }
+          console.log(`Release tag ${releaseTag} matches the desktop package version`);
+          NODE
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -90,6 +106,9 @@ jobs:
       - name: Build Linux packages
         run: pnpm package:linux
 
+      - name: Inspect Linux packages
+        run: pnpm inspect:package -- release/*.deb release/*.AppImage
+
       - name: Stage Linux artifacts
         shell: bash
         run: |
@@ -131,6 +150,9 @@ jobs:
 
       - name: Build unsigned macOS packages
         run: pnpm package:mac:unsigned
+
+      - name: Inspect macOS zip
+        run: pnpm inspect:package -- release/*.zip
 
       - name: Stage macOS artifacts
         shell: bash

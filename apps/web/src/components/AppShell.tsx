@@ -2,8 +2,9 @@
 // strip, or narrow-width overlay), the routed center, and the command
 // palette. Keyboard: Cmd/Ctrl+K palette, Cmd/Ctrl+B rail, Cmd/Ctrl+1..9
 // visible sessions, Escape peels the topmost open surface.
-import { Sheet, SheetPopup } from "@t4-code/ui";
+import { Button, Sheet, SheetClose, SheetPopup, SheetTitle } from "@t4-code/ui";
 import { Outlet, useNavigate } from "@tanstack/react-router";
+import { X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { startDesktopRuntime } from "../platform/desktop-runtime.ts";
@@ -155,8 +156,25 @@ export function AppShell() {
           onOpenChange={(open) => workspaceStore.getState().setRailOverlayOpen(open)}
           open={railOverlayOpen}
         >
-          <SheetPopup aria-label="Projects and sessions" className="w-72 p-0" side="left">
-            <Rail groups={groups} nowMs={nowMs} />
+          <SheetPopup
+            aria-label="Projects and sessions"
+            className="w-72 p-0"
+            showCloseButton={false}
+            side="left"
+          >
+            <div className="flex h-14 shrink-0 items-center border-border border-b px-3">
+              <SheetTitle className="text-sm">Projects and sessions</SheetTitle>
+              <SheetClose
+                aria-label="Close"
+                className="ml-auto size-11"
+                render={<Button size="icon" variant="ghost" />}
+              >
+                <X aria-hidden="true" className="size-4" />
+              </SheetClose>
+            </div>
+            <div className="min-h-0 flex-1">
+              <Rail groups={groups} nowMs={nowMs} />
+            </div>
           </SheetPopup>
         </Sheet>
       )}

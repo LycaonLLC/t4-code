@@ -25,10 +25,24 @@ function run(command, args, cwd) {
   }
 }
 
-export function deploySite(config, repoRoot = resolve(import.meta.dirname, "..")) {
+export function deploySite(config, repoRoot = resolve(import.meta.dirname, ".."), runCommand = run) {
   const destination = `s3://${config.bucket}`;
-  run("pnpm", ["--filter", "@t4-code/site", "build"], repoRoot);
-  run(
+  runCommand("pnpm", ["--filter", "@t4-code/site", "build"], repoRoot);
+  // Publish new content hashes first and retain old hashes for already-cached entry documents.
+  runCommand(
+    "aws",
+    [
+      "s3",
+      "sync",
+      "apps/site/dist/assets",
+      `${destination}/assets`,
+      "--cache-control",
+      "public,max-age=31536000,immutable",
+      "--only-show-errors",
+    ],
+    repoRoot,
+  );
+  runCommand(
     "aws",
     [
       "s3",
@@ -44,21 +58,7 @@ export function deploySite(config, repoRoot = resolve(import.meta.dirname, "..")
     ],
     repoRoot,
   );
-  run(
-    "aws",
-    [
-      "s3",
-      "sync",
-      "apps/site/dist/assets",
-      `${destination}/assets`,
-      "--delete",
-      "--cache-control",
-      "public,max-age=31536000,immutable",
-      "--only-show-errors",
-    ],
-    repoRoot,
-  );
-  run(
+  runCommand(
     "aws",
     [
       "cloudfront",

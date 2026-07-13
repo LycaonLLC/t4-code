@@ -516,6 +516,95 @@ test("uses an injected backend, streams once, settles durably, and reloads histo
   expect(consoleErrors).toEqual([]);
 });
 
+test("keeps the mobile rail controls separate and the configured model cycle scrollable", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 568 });
+  await openConnectedRoot(page);
+
+  await page.getByRole("button", { name: "Show session list", exact: true }).click();
+  const rail = page.getByRole("dialog", { name: "Projects and sessions" });
+  await expect(rail).toBeVisible();
+  const close = rail.getByRole("button", { name: "Close", exact: true });
+  const create = rail.getByRole("button", { name: /^New session in /u });
+  await expect(close).toBeVisible();
+  await expect(create).toBeVisible();
+  const [closeBox, createBox] = await Promise.all([close.boundingBox(), create.boundingBox()]);
+  expect(closeBox).not.toBeNull();
+  expect(createBox).not.toBeNull();
+  const overlapWidth = Math.max(
+    0,
+    Math.min(closeBox!.x + closeBox!.width, createBox!.x + createBox!.width) -
+      Math.max(closeBox!.x, createBox!.x),
+  );
+  const overlapHeight = Math.max(
+    0,
+    Math.min(closeBox!.y + closeBox!.height, createBox!.y + createBox!.height) -
+      Math.max(closeBox!.y, createBox!.y),
+  );
+  expect(overlapWidth * overlapHeight).toBe(0);
+  await close.click({ trial: true });
+  await create.click({ trial: true });
+
+  const session = page.locator(`[data-session-row="${SESSION_VIEW_ID}"]`);
+  await session.click();
+  await expect(page.getByRole("textbox", { name: "Message the session" })).toBeEnabled();
+
+  await page.getByRole("button", { name: "Run options", exact: true }).click();
+  const modelTrigger = page.getByRole("button", { name: /^Model — this session:/u });
+  await expect(modelTrigger).toBeEnabled();
+  await modelTrigger.click();
+  const modelList = page.getByRole("listbox", { name: "Model — this session" });
+  const modelPopup = page.getByRole("dialog").filter({ has: modelList });
+  await expect(modelList).toBeVisible();
+  await expect(modelPopup).toHaveCount(1);
+  const options = modelList.getByRole("option");
+  await expect(options).toHaveCount(12);
+
+  const before = await modelList.evaluate((element) => ({
+    scrollTop: element.scrollTop,
+    scrollHeight: element.scrollHeight,
+    clientHeight: element.clientHeight,
+  }));
+  expect(before.scrollHeight).toBeGreaterThan(before.clientHeight);
+  const listBox = await modelList.boundingBox();
+  const popupBox = await modelPopup.boundingBox();
+  const viewport = page.viewportSize();
+  expect(listBox).not.toBeNull();
+  expect(popupBox).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  expect(popupBox!.x).toBeGreaterThanOrEqual(-0.5);
+  expect(popupBox!.y).toBeGreaterThanOrEqual(-0.5);
+  expect(popupBox!.x + popupBox!.width).toBeLessThanOrEqual(viewport!.width + 0.5);
+  expect(popupBox!.y + popupBox!.height).toBeLessThanOrEqual(viewport!.height + 0.5);
+
+  const x = listBox!.x + listBox!.width / 2;
+  const startY = listBox!.y + listBox!.height - 24;
+  const endY = listBox!.y + 24;
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x, y: startY, id: 0, radiusX: 1, radiusY: 1, force: 1 }],
+    });
+    for (let step = 1; step <= 8; step += 1) {
+      const y = startY + ((endY - startY) * step) / 8;
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [{ x, y, id: 0, radiusX: 1, radiusY: 1, force: 1 }],
+      });
+    }
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  } finally {
+    await cdp.detach();
+  }
+  await expect.poll(() => modelList.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  const last = options.last();
+  await expect(last).toBeVisible();
+  await last.click();
+  await expect(modelList).toBeHidden();
+});
+
 for (const viewport of [
   { width: 390, height: 844 },
   { width: 390, height: 500 },

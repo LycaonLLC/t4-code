@@ -65,10 +65,16 @@ export function ControlMenu({
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Positioner align="start" side="top" sideOffset={8}>
-          <Popover.Popup className="min-w-52 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-(--overlay-shadow) outline-none transition-[scale,opacity] duration-(--motion-duration-fast) data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0">
+          <Popover.Popup
+            className="flex max-h-[min(24rem,var(--available-height))] min-w-52 flex-col rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-(--overlay-shadow) outline-none transition-[scale,opacity] duration-(--motion-duration-fast) data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0"
+          >
             <p className="px-2 pt-1 pb-1.5 font-medium text-muted-foreground text-xs">{label}</p>
             {note !== null && <p className="px-2 pb-1.5 text-muted-foreground text-xs">{note}</p>}
-            <ul role="listbox" aria-label={label}>
+            <ul
+              aria-label={label}
+              className="min-h-0 overflow-y-auto overscroll-contain scroll-py-1 [touch-action:pan-y]"
+              role="listbox"
+            >
               {choices.map((choice) => {
                 const choiceDisabled = (choice.disabledReason ?? null) !== null;
                 return (
