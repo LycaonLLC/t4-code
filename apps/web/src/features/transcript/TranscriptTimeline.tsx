@@ -295,7 +295,7 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
           style={{ bottom: bottomInset + 12 }}
         >
           <Button
-            className="pointer-events-auto shadow-(--composer-shadow)"
+            className="pointer-events-auto min-h-11 shadow-(--composer-shadow) sm:min-h-0"
             onClick={jumpToLatest}
             size="xs"
             variant="outline"

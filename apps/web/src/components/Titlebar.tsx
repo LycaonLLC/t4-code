@@ -1,19 +1,13 @@
 // 52px window titlebar. Inert zones drag the frameless window; every control
 // opts out. macOS traffic-light inset is reserved via [data-platform];
 // Linux window controls are injected by the desktop shell later.
-import {
-  Badge,
-  BrandLockup,
-  IconButton,
-  Tooltip,
-  TooltipPopup,
-  TooltipTrigger,
-} from "@t4-code/ui";
+import { Badge, BrandLockup, IconButton, Tooltip, TooltipPopup, TooltipTrigger } from "@t4-code/ui";
 import { useNavigate } from "@tanstack/react-router";
 import { Command, Moon, PanelLeft, Settings, Sun } from "lucide-react";
 
 import { rendererPlatform, useWorkspace, workspaceStore } from "../state/store-instance.ts";
 import { resolveTheme } from "../theme/theme.ts";
+import type { RailTogglePresentation } from "./rail-toggle.ts";
 
 function ThemeToggle() {
   const theme = useWorkspace((state) => state.theme);
@@ -25,6 +19,7 @@ function ThemeToggle() {
         render={
           <IconButton
             aria-label={nextLabel}
+            className="size-11 sm:size-7"
             onClick={() =>
               workspaceStore.getState().setTheme(resolved === "dark" ? "light" : "dark")
             }
@@ -51,6 +46,7 @@ function SettingsButton() {
         render={
           <IconButton
             aria-label="Open settings"
+            className="size-11 sm:size-7"
             onClick={() => void navigate({ to: "/settings" })}
             size="icon-sm"
           >
@@ -63,16 +59,22 @@ function SettingsButton() {
   );
 }
 
-export function Titlebar({ onToggleRail }: { onToggleRail: () => void }) {
-  const railCollapsed = useWorkspace((state) => state.railCollapsed);
+export function Titlebar({
+  onToggleRail,
+  railToggle,
+}: {
+  onToggleRail: () => void;
+  railToggle: RailTogglePresentation;
+}) {
   return (
-    <header className="drag-region workspace-topbar titlebar-traffic-light-inset titlebar-window-controls-reserve shrink-0 gap-2 border-border border-b bg-background px-3">
+    <header className="drag-region workspace-topbar titlebar-traffic-light-inset titlebar-window-controls-reserve shrink-0 gap-1 border-border border-b bg-background px-1 sm:gap-2 sm:px-3">
       <Tooltip>
         <TooltipTrigger
           render={
             <IconButton
-              aria-expanded={!railCollapsed}
-              aria-label={railCollapsed ? "Show session list" : "Hide session list"}
+              aria-expanded={railToggle.expanded}
+              aria-label={railToggle.label}
+              className="size-11 sm:size-7"
               onClick={onToggleRail}
               size="icon-sm"
             >
@@ -80,9 +82,7 @@ export function Titlebar({ onToggleRail }: { onToggleRail: () => void }) {
             </IconButton>
           }
         />
-        <TooltipPopup side="bottom">
-          {railCollapsed ? "Show session list" : "Hide session list"} (Ctrl+B)
-        </TooltipPopup>
+        <TooltipPopup side="bottom">{railToggle.label} (Ctrl+B)</TooltipPopup>
       </Tooltip>
       <BrandLockup className="min-w-0" />
       <div className="flex-1" />
@@ -90,7 +90,7 @@ export function Titlebar({ onToggleRail }: { onToggleRail: () => void }) {
         <Tooltip>
           <TooltipTrigger
             render={
-              <Badge className="no-drag cursor-default" variant="outline">
+              <Badge className="no-drag hidden cursor-default sm:inline-flex" variant="outline">
                 Sample data
               </Badge>
             }
@@ -103,6 +103,7 @@ export function Titlebar({ onToggleRail }: { onToggleRail: () => void }) {
           render={
             <IconButton
               aria-label="Search sessions and commands"
+              className="size-11 sm:size-7"
               onClick={() => workspaceStore.getState().setPaletteOpen(true)}
               size="icon-sm"
             >

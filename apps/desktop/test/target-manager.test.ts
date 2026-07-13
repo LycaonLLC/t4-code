@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DESKTOP_IPC_CHANNELS, decodeDesktopInvokeRequest } from "@t4-code/protocol/desktop-ipc";
 import type { CursorStore, OmpTransport } from "@t4-code/client";
-import { DEVICE_CAPABILITIES, hostId, type WelcomeFrame } from "@t4-code/protocol";
+import { commandId, confirmationId, DEVICE_CAPABILITIES, hostId, sessionId, type WelcomeFrame } from "@t4-code/protocol";
 import { validEvent } from "../src/ipc.ts";
 import { DesktopTargetManager } from "../src/target-manager.ts";
 import type { RemoteTargetRecord, RemoteTargetRegistry } from "../src/remote-runtime/registry.ts";
@@ -228,6 +228,66 @@ describe("desktop target manager boundaries", () => {
       error: { code: "outcome_unknown", message: "command failed" },
     });
     expect((await rejected).accepted).toBe(false);
+    await runtime.close();
+  });
+  it("treats a host-acknowledged denial as a consumed confirmation decision", async () => {
+    const transports: Transport[] = [];
+    const runtime = new DesktopTargetManager({
+      cursorStore: new Store(),
+      transportFactory: () => {
+        const next = new Transport();
+        transports.push(next);
+        return next as never;
+      },
+      events: { onFrame: () => {}, onState: () => {}, onError: () => {} },
+    });
+    await runtime.connect();
+    const transport = transports[0];
+    if (transport === undefined) throw new Error("transport was not created");
+
+    const heldCommand = runtime.command({
+      hostId: "host-fixture",
+      sessionId: "session-a",
+      command: "session.cancel",
+      args: {},
+    });
+    const command = await transport.waitForSent(1);
+    transport.receive({
+      v: V,
+      type: "confirmation",
+      confirmationId: "confirm-deny",
+      commandId: command.commandId,
+      hostId: "host-fixture",
+      sessionId: "session-a",
+      commandHash: "sha256:fixture",
+      revision: "revision-a",
+      expiresAt: "2999-01-01T00:00:00.000Z",
+      summary: "session.cancel",
+    });
+    const confirmed = runtime.confirm({
+      targetId: "local",
+      confirmationId: confirmationId("confirm-deny"),
+      commandId: commandId(String(command.commandId)),
+      hostId: hostId("host-fixture"),
+      sessionId: sessionId("session-a"),
+      decision: "deny",
+    });
+    await transport.waitForSent(2);
+    transport.receive({
+      v: V,
+      type: "response",
+      requestId: command.requestId,
+      commandId: command.commandId,
+      hostId: "host-fixture",
+      sessionId: "session-a",
+      command: "session.cancel",
+      ok: false,
+      error: { code: "confirmation_denied", message: "command was denied" },
+    });
+    const [commandResult, confirmationResult] = await Promise.all([heldCommand, confirmed]);
+    expect(commandResult.accepted).toBe(false);
+    expect(confirmationResult.accepted).toBe(true);
+    expect(confirmationResult.requestId).toBe(command.requestId);
     await runtime.close();
   });
   it("reads remote auth on each Hello without retaining credential material", async () => {

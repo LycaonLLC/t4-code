@@ -3,26 +3,11 @@
 // Pure functions — the store applies them, tests drive them directly.
 import { isSessionEvent, type SessionEvent } from "@t4-code/protocol";
 
+import { sessionEventSpec } from "../session-runtime/session-event-vocabulary.ts";
 import type { ActivityEntry, ActivityFilter, ActivityKind } from "./model.ts";
 
 /** Hard cap on retained entries; the stream is a window, not an archive. */
 export const ACTIVITY_RETENTION_LIMIT = 2_000;
-
-const KIND_BY_EVENT_TYPE: Readonly<Record<string, ActivityKind>> = {
-  "tool.start": "tool",
-  "tool.end": "tool",
-  "agent.spawn": "agent",
-  "agent.progress": "agent",
-  "agent.end": "agent",
-  "job.start": "job",
-  "job.end": "job",
-  "session.system": "system",
-  "session.compaction": "system",
-  "session.retry": "system",
-  "session.error": "error",
-  "tool.error": "error",
-  "shell.output": "shell",
-};
 
 const FILTER_KINDS: Readonly<Record<ActivityFilter, readonly ActivityKind[] | null>> = {
   all: null,
@@ -62,7 +47,11 @@ export function classifySessionEvent(
       shellOutput: null,
     };
   }
-  const kind = KIND_BY_EVENT_TYPE[event.type];
+  const configuredKind = sessionEventSpec(event.type)?.activityKind;
+  // Runtime notices carry their severity in the payload. Keep warnings/info
+  // in System, but make an error notice discoverable under the Errors filter.
+  const kind =
+    event.type === "notice" && event.level === "error" ? "error" : configuredKind;
   const at = readString(event, "at") ?? fallbackAt;
   const agentId = readString(event, "agentId");
   const terminalId = readString(event, "terminalId");

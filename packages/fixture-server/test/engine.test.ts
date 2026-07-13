@@ -103,14 +103,70 @@ describe("deterministic fixture engine", () => {
     engine.advanceBy(30);
     const aFrames = engine.drain(a.id);
     const bFrames = engine.drain(b.id);
-    expect(aFrames.map((frame) => frame.type)).toEqual(["event", "event", "entry"]);
+    expect(aFrames.map((frame) => frame.type)).toEqual([
+      "event",
+      "event",
+      "event",
+      "event",
+      "event",
+      "entry",
+      "event",
+      "event",
+    ]);
     expect(bFrames).toHaveLength(0);
     expect(
       aFrames.map((frame) =>
         frame.type === "event" || frame.type === "entry" ? frame.cursor.seq : -1,
       ),
-    ).toEqual([1, 2, 3]);
+    ).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(
+      aFrames.map((frame) => (frame.type === "event" ? frame.event.type : frame.type)),
+    ).toEqual([
+      "agent.start",
+      "turn.start",
+      "message.update",
+      "message.update",
+      "message.settled",
+      "entry",
+      "turn.end",
+      "agent.end",
+    ]);
+    const first = aFrames[2];
+    const second = aFrames[3];
+    const settlement = aFrames[4];
+    const settled = aFrames[5];
+    expect(first).toMatchObject({
+      type: "event",
+      event: { type: "message.update", text: "Hello" },
+    });
+    expect(second).toMatchObject({
+      type: "event",
+      event: { type: "message.update", text: "Hello world" },
+    });
+    if (
+      first?.type !== "event" ||
+      second?.type !== "event" ||
+      settlement?.type !== "event" ||
+      settled?.type !== "entry"
+    ) {
+      throw new Error("stream fixture emitted an unexpected frame family");
+    }
+    expect(second.event.entryId).toBe(first.event.entryId);
+    expect(settlement.event).toMatchObject({
+      type: "message.settled",
+      transientEntryId: first.event.entryId,
+      entryId: settled.entry.id,
+    });
+    expect(settled.entry.id).not.toBe(first.event.entryId);
     expect(engine.currentRevision).not.toBe(engine.seed.revision);
+
+    const reloaded = engine.connect("reloaded");
+    const reloadFrames = engine.receive(reloaded.id, hello());
+    const reloadSnapshot = reloadFrames.find((frame) => frame.type === "snapshot");
+    if (reloadSnapshot?.type !== "snapshot") throw new Error("reload did not receive a snapshot");
+    expect(reloadSnapshot.entries.filter((entry) => entry.id === settled.entry.id)).toEqual([
+      settled.entry,
+    ]);
   });
   it("replays exact retained frames and uses gap plus snapshot after epoch change", () => {
     const engine = new FixtureEngine(loadScenario("stream-v1"));
@@ -164,6 +220,84 @@ describe("deterministic fixture engine", () => {
         command(engine.seed, "session.prompt", "same", "third", { message: "two" }),
       )[0],
     ).toMatchObject({ type: "response", ok: false, error: { code: "idempotency_conflict" } });
+  });
+  it("mirrors OMP confirmation correlation for approve, deny, and invalid decisions", () => {
+    const engine = new FixtureEngine(loadScenario("basic-v1"));
+    const client = engine.connect("a");
+    ready(engine, client.id);
+
+    const cancel = command(
+      engine.seed,
+      "session.cancel",
+      "cancel-command",
+      "cancel-request",
+    );
+    const challenge = engine.receive(client.id, cancel)[0];
+    expect(challenge).toMatchObject({
+      type: "confirmation",
+      commandId: "cancel-command",
+      summary: "session.cancel",
+    });
+    if (challenge?.type !== "confirmation") throw new Error("fixture did not challenge cancel");
+    const approved = engine.receive(client.id, {
+      v: "omp-app/1",
+      type: "confirm",
+      requestId: "confirm-request",
+      confirmationId: challenge.confirmationId,
+      commandId: challenge.commandId,
+      hostId: challenge.hostId,
+      sessionId: challenge.sessionId,
+      decision: "approve",
+    })[0];
+    expect(approved).toMatchObject({
+      type: "response",
+      requestId: "cancel-request",
+      commandId: "cancel-command",
+      command: "session.cancel",
+      ok: true,
+    });
+
+    const deniedCommand = command(
+      engine.seed,
+      "session.cancel",
+      "deny-command",
+      "deny-request",
+    );
+    const deniedChallenge = engine.receive(client.id, deniedCommand)[0];
+    if (deniedChallenge?.type !== "confirmation") throw new Error("fixture did not challenge deny");
+    const denied = engine.receive(client.id, {
+      v: "omp-app/1",
+      type: "confirm",
+      requestId: "deny-confirm-request",
+      confirmationId: deniedChallenge.confirmationId,
+      commandId: deniedChallenge.commandId,
+      hostId: deniedChallenge.hostId,
+      sessionId: deniedChallenge.sessionId,
+      decision: "deny",
+    })[0];
+    expect(denied).toMatchObject({
+      type: "response",
+      requestId: "deny-request",
+      ok: false,
+      error: { code: "confirmation_denied" },
+    });
+
+    const invalid = engine.receive(client.id, {
+      v: "omp-app/1",
+      type: "confirm",
+      requestId: "replayed-confirm-request",
+      confirmationId: deniedChallenge.confirmationId,
+      commandId: deniedChallenge.commandId,
+      hostId: deniedChallenge.hostId,
+      sessionId: deniedChallenge.sessionId,
+      decision: "approve",
+    })[0];
+    expect(invalid).toMatchObject({
+      type: "response",
+      requestId: "replayed-confirm-request",
+      ok: false,
+      error: { code: "confirmation_invalid" },
+    });
   });
   it("closes a client at the bounded queue and deletes disconnected clients", () => {
     const base = loadScenario("basic-v1");

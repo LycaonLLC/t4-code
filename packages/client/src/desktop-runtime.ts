@@ -21,8 +21,7 @@ import {
   type TerminalResizeRequest,
   type TerminalResult,
 } from "@t4-code/protocol/desktop-ipc";
-import { decodeCatalog, decodeSessions, hostId, sessionId, type CatalogFrame, type SettingsFrame, type WelcomeFrame } from "@t4-code/protocol";
-import { revision } from "@t4-code/protocol";
+import { decodeCatalog, decodeSessions, hostId, revision, sessionId, type CatalogFrame, type SettingsFrame, type WelcomeFrame } from "@t4-code/protocol";
 import type { Unsubscribe } from "./index.ts";
 import { ProjectionStore, type ProjectionFrame } from "./projection.ts";
 import {
@@ -322,10 +321,11 @@ export class DesktopRuntimeController {
     }
     return undefined;
   }
-  async commandWithControllerLease(targetId: string, intent: CommandRequest["intent"]): Promise<CommandResult> {
+  async commandWithControllerLease(targetId: string, intent: CommandRequest["intent"], leaseRevision?: string): Promise<CommandResult> {
     if (this.stopped) throw new DesktopRuntimeError("stopped", "desktop runtime is stopped");
-    if (intent.sessionId === undefined || intent.expectedRevision === undefined || !this.hasControllerLeaseFeature(targetId, String(intent.hostId))) return this.command(targetId, intent);
-    const acquired = await this.acquireControllerLease(targetId, String(intent.hostId), String(intent.sessionId), String(intent.expectedRevision));
+    const revisionValue = intent.expectedRevision ?? leaseRevision;
+    if (intent.sessionId === undefined || revisionValue === undefined || !this.hasControllerLeaseFeature(targetId, String(intent.hostId))) return this.command(targetId, intent);
+    const acquired = await this.acquireControllerLease(targetId, String(intent.hostId), String(intent.sessionId), String(revisionValue));
     if (!acquired.required) return this.command(targetId, intent);
     const args = intent.args === undefined ? { leaseId: acquired.leaseId } : { ...intent.args, leaseId: acquired.leaseId };
     return this.command(targetId, { ...intent, args });

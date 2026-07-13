@@ -1,4 +1,4 @@
-import { createOmpClient, OmpClientError, type CommandIntent, type CursorStore, type OmpClient, type PublicServerFrame } from "@t4-code/client";
+import { createOmpClient, isConfirmationDecisionConsumed, OmpClientError, type CommandIntent, type CursorStore, type OmpClient, type PublicServerFrame } from "@t4-code/client";
 import type { CommandResult, ConnectionStateEvent, RuntimeErrorEvent } from "@t4-code/protocol/desktop-ipc";
 import type { ConfirmRequest, ConfirmResult, TerminalCloseRequest, TerminalInputRequest, TerminalResizeRequest, TerminalResult } from "@t4-code/protocol/desktop-ipc";
 import { ADDITIVE_FEATURES, DEVICE_CAPABILITIES, type DeviceCapability } from "@t4-code/protocol";
@@ -210,7 +210,7 @@ export class DesktopTargetManager {
         requestId: String(result.requestId),
         confirmationId: request.confirmationId,
         commandId: request.commandId,
-        accepted: result.ok,
+        accepted: isConfirmationDecisionConsumed(result),
       };
     } catch (error) {
       if (this.generations.get(targetId) !== generation && error instanceof OmpClientError && error.code === "closed")

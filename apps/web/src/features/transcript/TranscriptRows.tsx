@@ -69,7 +69,7 @@ function ReasoningDisclosure({ reasoning }: { readonly reasoning: string }) {
       <button
         aria-expanded={open}
         className={cn(
-          "flex min-h-6 cursor-pointer items-center gap-1 rounded-md py-0.5 pr-1.5 text-muted-foreground text-xs outline-none transition-colors duration-(--motion-duration-fast) hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+          "flex min-h-11 cursor-pointer items-center gap-1 rounded-md py-0.5 pr-1.5 text-muted-foreground text-xs outline-none transition-colors duration-(--motion-duration-fast) hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:min-h-6",
           open && "text-foreground",
         )}
         onClick={(event) =>
@@ -103,7 +103,7 @@ function MessageRow({ row }: { readonly row: Extract<TranscriptRow, { kind: "mes
       <div className="group/message flex justify-end py-2">
         <div className="relative max-w-[85%] rounded-lg bg-secondary px-3 py-2">
           <Markdown text={row.text} />
-          <span className="-left-8 absolute top-1.5 opacity-0 transition-opacity duration-(--motion-duration-fast) focus-within:opacity-100 group-hover/message:opacity-100">
+          <span className="mt-1 flex justify-end opacity-100 transition-opacity duration-(--motion-duration-fast) sm:absolute sm:-left-8 sm:top-1.5 sm:mt-0 sm:block sm:opacity-0 sm:focus-within:opacity-100 sm:group-hover/message:opacity-100">
             <CopyButton label="Copy message" text={row.text} />
           </span>
         </div>
@@ -116,7 +116,7 @@ function MessageRow({ row }: { readonly row: Extract<TranscriptRow, { kind: "mes
       <Markdown text={row.text} />
       <div
         className={cn(
-          "mt-1 flex h-6 items-center gap-1 opacity-0 transition-opacity duration-(--motion-duration-fast) focus-within:opacity-100 group-hover/message:opacity-100",
+          "mt-1 flex h-11 items-center gap-1 opacity-100 transition-opacity duration-(--motion-duration-fast) sm:h-6 sm:opacity-0 sm:focus-within:opacity-100 sm:group-hover/message:opacity-100",
           row.live && "invisible",
         )}
       >
@@ -263,7 +263,7 @@ const ToolCallRow = memo(function ToolCallRow({
       <button
         aria-expanded={open}
         className={cn(
-          "flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
+          "flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-0",
           open && "bg-accent/50",
         )}
         onClick={(event) =>
@@ -414,7 +414,7 @@ function UnknownEntryRow({
     <div className="py-1">
       <button
         aria-expanded={open}
-        className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-muted-foreground text-xs outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-muted-foreground text-xs outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-0"
         onClick={(event) =>
           anchoredToggle(event.currentTarget, () => setOpen((value) => !value))
         }

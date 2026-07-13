@@ -17,6 +17,7 @@ import { CommandPalette } from "./CommandPalette.tsx";
 import { CollapsedRail, Rail } from "./Rail.tsx";
 import { ResizeHandle } from "./ResizeHandle.tsx";
 import { Titlebar } from "./Titlebar.tsx";
+import { resolveRailTogglePresentation } from "./rail-toggle.ts";
 
 export function AppShell() {
   const navigate = useNavigate();
@@ -92,15 +93,21 @@ export function AppShell() {
   // Rail collapse/expand animates width via .rail-dock; the center column
   // reflows with it and keeps its own focus and scroll.
   const effectiveRailWidth = railPreviewWidth ?? railWidth;
+  const railToggle = resolveRailTogglePresentation({
+    overlaid: railOverlaid,
+    overlayOpen: railOverlayOpen,
+    collapsed: railCollapsed,
+  });
 
   return (
-    <div className="flex h-full flex-col bg-background text-foreground">
+    <div className="flex h-full min-h-0 min-w-0 max-w-full flex-col overflow-x-hidden bg-background text-foreground">
       <Titlebar
         onToggleRail={() => {
           const state = workspaceStore.getState();
           if (railOverlaid) state.setRailOverlayOpen(!state.railOverlayOpen);
           else state.setRailCollapsed(!state.railCollapsed);
         }}
+        railToggle={railToggle}
       />
       <div className="flex min-h-0 flex-1">
         {!railOverlaid && (

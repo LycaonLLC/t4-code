@@ -38,7 +38,7 @@
       "sourceBlobSha": "9d0436b661da31b0b4944441f9c6971d23af5008",
       "targetPath": "packages/ui/src/primitives/sheet.tsx",
       "classification": "adapted",
-      "checksum": "sha256:417882e6a084a56c3ac829b9d3c8ee0711428d77059711ccebfb00b8c077ba08"
+    "checksum": "sha256:a5979b997256c1d5012888dbe168883af88b8aaa9483e711a096e6bba4324d0a"
     },
     {
       "sourcePath": "apps/web/src/components/ui/scroll-area.tsx",

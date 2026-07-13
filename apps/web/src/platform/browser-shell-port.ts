@@ -12,6 +12,7 @@
 // implicit backend endpoint.
 import {
   createOmpClient,
+  isConfirmationDecisionConsumed,
   type OmpClient,
   type OmpClientOptions,
   type OmpTransport,
@@ -328,7 +329,7 @@ export function createBrowserShellPort(options: BrowserShellPortOptions = {}): D
         requestId: String(result.requestId),
         confirmationId: request.confirmationId,
         commandId: request.commandId,
-        accepted: result.ok,
+        accepted: isConfirmationDecisionConsumed(result),
       };
     },
 

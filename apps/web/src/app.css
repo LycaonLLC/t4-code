@@ -19,6 +19,8 @@
   html,
   body {
     height: 100%;
+    height: 100dvh;
+    max-width: 100%;
     margin: 0;
     padding: 0;
     overscroll-behavior: none;
@@ -31,6 +33,8 @@
 
   #root {
     height: 100%;
+    height: 100dvh;
+    max-width: 100%;
     width: 100%;
     overflow: hidden;
   }
@@ -58,14 +62,38 @@
 
   .workspace-topbar {
     display: flex;
-    height: var(--workspace-topbar-height);
-    min-height: var(--workspace-topbar-height);
+    height: calc(var(--workspace-topbar-height) + env(safe-area-inset-top));
+    min-height: calc(var(--workspace-topbar-height) + env(safe-area-inset-top));
+    padding-top: env(safe-area-inset-top);
     flex-shrink: 0;
     align-items: center;
   }
 
   .surface-subheader {
-    @apply flex h-10 min-h-10 shrink-0 items-center border-border/60 border-b bg-background;
+    @apply flex h-13 min-h-13 shrink-0 items-center border-border/60 border-b bg-background;
+  }
+
+  @media (min-width: 40rem) {
+    .surface-subheader {
+      @apply h-10 min-h-10;
+    }
+  }
+
+  /* Right-pane and rail sheets can contain dense desktop-native controls.
+     On phones their visible chassis stays compact, but the actual interactive
+     box must remain thumb-safe rather than relying on a pseudo hit target. */
+  @media (max-width: 39.999rem) {
+    [data-slot="sheet-popup"]
+      :where(
+        button,
+        [role="button"],
+        input:not([type="checkbox"]):not([type="radio"]),
+        select,
+        textarea
+      ) {
+      min-width: 2.75rem;
+      min-height: 2.75rem;
+    }
   }
 
   /* macOS traffic lights live at the top-left of the frameless window.

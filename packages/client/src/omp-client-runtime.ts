@@ -52,6 +52,7 @@ import { ClientTimerRegistry } from "./omp-client-timers.ts";
 import { OmpClientEvents } from "./omp-client-events.ts";
 import { OmpClientConnection } from "./omp-client-connection.ts";
 import { OmpClientFrameDispatcher, safeFrameDecodeFailure, sendClientHello } from "./omp-client-frames.ts";
+import { handleResponseFrame } from "./omp-client-response.ts";
 export * from "./omp-client-contracts.ts";
 export * from "./projection.ts";
 export * from "./projection-cache.ts";
@@ -63,6 +64,7 @@ interface ConnectWaiter {
   resolve: () => void;
   reject: (error: OmpClientError) => void;
 }
+
 export class OmpClient {
   private readonly options: OmpClientOptions;
   private readonly projection: ProjectionStore | undefined;
@@ -449,35 +451,18 @@ export class OmpClient {
   }
 
   private handleResponse(frame: ResultFrame): void {
-    const pending = this.pendingRequests.entries.get(String(frame.requestId));
-    if (pending === undefined) {
-      this.publish(frame);
-      return;
-    }
-    if (!("hostId" in pending.frame) || frame.hostId !== pending.frame.hostId) {
-      this.protocolFailure("response host correlation mismatch");
-      return;
-    }
-    const expectedSession = "sessionId" in pending.frame ? pending.frame.sessionId : undefined;
-    if (frame.sessionId !== expectedSession) {
-      this.protocolFailure("response session correlation mismatch");
-      return;
-    }
-    if (pending.intent !== undefined && frame.command !== undefined && frame.command !== pending.intent.command) {
-      this.protocolFailure("response command name correlation mismatch");
-      return;
-    }
-    if (pending.commandId !== undefined && String(frame.commandId) !== pending.commandId) {
-      this.protocolFailure("response command correlation mismatch");
-      return;
-    }
-    this.pendingRequests.settle(String(frame.requestId), frame);
-    if (pending.kind === "attach" && frame.ok && pending.intent?.sessionId !== undefined) {
-      const attachedHost = hostId(pending.intent.hostId);
-      const attachedSession = sessionId(pending.intent.sessionId);
-      this.attached.set(`${String(attachedHost)}\u0000${String(attachedSession)}`, { hostId: attachedHost, sessionId: attachedSession });
-    }
-    this.publish(frame);
+    handleResponseFrame(this.pendingRequests, frame, {
+      protocolFailure: (message) => this.protocolFailure(message),
+      publish: (response) => this.publish(response),
+      attached: (host, session) => {
+        const attachedHost = hostId(host);
+        const attachedSession = sessionId(session);
+        this.attached.set(`${String(attachedHost)}\u0000${String(attachedSession)}`, {
+          hostId: attachedHost,
+          sessionId: attachedSession,
+        });
+      },
+    });
   }
 
   private async handlePairOk(frame: PairOkFrame, generation: number): Promise<void> {

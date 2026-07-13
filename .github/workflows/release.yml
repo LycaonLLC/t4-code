@@ -22,7 +22,49 @@ env:
   RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.10.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.13.1
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install browser for end-to-end tests
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Check source and types
+        run: pnpm check
+
+      - name: Run workspace tests
+        run: pnpm test
+
+      - name: Run built-app end-to-end tests
+        run: pnpm test:e2e
+
+      - name: Build all workspaces
+        run: pnpm build
+
+      - name: Check packaging contract
+        run: pnpm test:packaging
+
   build-linux:
+    needs: verify
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
@@ -64,6 +106,7 @@ jobs:
           retention-days: 7
 
   build-macos:
+    needs: verify
     runs-on: macos-15
     timeout-minutes: 40
     steps:

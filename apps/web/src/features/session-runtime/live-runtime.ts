@@ -188,6 +188,31 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     }
   };
 
+  // session.cancel is deliberately revision-optional: the controller lease is
+  // acquired against current session truth, while the challenged command must
+  // remain executable if lifecycle events advance the projection before the
+  // user approves it. Keeping the lease revision off the command prevents a
+  // valid Stop confirmation from replaying as stale.
+  const sendCancelCommand = async (): Promise<PromptOutcome> => {
+    const leaseRevision = expectedRevision();
+    if (leaseRevision === undefined) return { kind: "unknown", reason: UNKNOWN_REASON };
+    try {
+      const result = await controller.commandWithControllerLease(
+        targetId,
+        {
+          hostId: wireHostId,
+          sessionId: wireSessionId,
+          command: "session.cancel",
+          args: {},
+        },
+        String(leaseRevision),
+      );
+      return result.accepted ? { kind: "accepted" } : { kind: "rejected", reason: REJECTED_REASON };
+    } catch {
+      return { kind: "unknown", reason: UNKNOWN_REASON };
+    }
+  };
+
   const grantedFor = (runtime: DesktopRuntimeSnapshot): readonly string[] => {
     const host = runtime.hosts.get(options.hostId);
     return host === undefined ? [] : [...host.grantedCapabilities, ...host.grantedFeatures];
@@ -316,6 +341,8 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
         challenge,
         approval: {
           approvalId: confirmationId,
+          title: "Approval needed",
+          message: challenge.summary,
           command: challenge.summary,
           args: challenge.preview === undefined ? {} : { preview: challenge.preview },
           requestedAt: challenge.expiresAt,
@@ -429,7 +456,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
       if (catalog === undefined || findCancelCommand(catalog.items) === undefined) {
         return { kind: "rejected", reason: "This host does not offer a stop command." };
       }
-      return sendCommand("session.cancel", {}, true, false);
+      return sendCancelCommand();
     }
     // approval
     const runtime = controller.getSnapshot();

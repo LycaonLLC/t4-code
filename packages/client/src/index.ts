@@ -1,4 +1,5 @@
 export { OmpClient, createOmpClient } from "./omp-client-runtime.ts";
+export { isConfirmationDecisionConsumed } from "./omp-client-response.ts";
 export {
   OmpClientError,
   DefaultClock,

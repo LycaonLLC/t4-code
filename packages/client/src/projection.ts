@@ -126,6 +126,26 @@ function mapWithout<K, V>(map: ReadonlyMap<K, V>, itemKey: K): ReadonlyMap<K, V>
   next.delete(itemKey);
   return immutableMap(next);
 }
+function confirmationsAfterResponse(
+  confirmations: ReadonlyMap<string, ConfirmationChallenge>,
+  frame: ResultFrame,
+): ReadonlyMap<string, ConfirmationChallenge> {
+  const invalid = frame.error?.code === "confirmation_invalid";
+  let changed = false;
+  const next = new Map<string, ConfirmationChallenge>();
+  for (const [confirmationKey, challenge] of confirmations) {
+    if (String(challenge.commandId) !== String(frame.commandId)) {
+      next.set(confirmationKey, challenge);
+      continue;
+    }
+    if (invalid) {
+      next.set(confirmationKey, challenge);
+      continue;
+    }
+    changed = true;
+  }
+  return changed ? immutableMap(next) : confirmations;
+}
 function initialSession(hostId: string, sessionId: string, freshness: ProjectionFreshness = "fresh"): SessionProjection {
   return Object.freeze({
     hostId,
@@ -440,9 +460,22 @@ export function applyPublicFrame(
             gap: undefined,
           });
         }
+        const transientEntryId =
+          frame.event.type === "message.settled" &&
+          typeof frame.event.transientEntryId === "string"
+            ? frame.event.transientEntryId
+            : undefined;
+        const retiredEvents =
+          transientEntryId === undefined
+            ? session.events
+            : freezeArray(
+                session.events.filter(
+                  (event) => String(event.event.entryId ?? "") !== transientEntryId,
+                ),
+              );
         return Object.freeze({
           ...session,
-          events: appendBounded(session.events, Object.freeze({ ...frame, event: Object.freeze(safeValue(frame.event) as SessionEvent) }), config.maxEvents),
+          events: appendBounded(retiredEvents, Object.freeze({ ...frame, event: Object.freeze(safeValue(frame.event) as SessionEvent) }), config.maxEvents),
           cursor: frame.cursor,
           epoch: frame.cursor.epoch,
           freshness: "fresh",
@@ -490,7 +523,11 @@ export function applyPublicFrame(
     case "response": {
       if (frame.sessionId === undefined) return snapshot;
       const sessionKey = key(String(frame.hostId), String(frame.sessionId));
-      return withSession(snapshot, sessionKey, (session) => Object.freeze({ ...session, results: mapWith(session.results, String(frame.requestId), resultProjection(frame)) }), config);
+      return withSession(snapshot, sessionKey, (session) => Object.freeze({
+        ...session,
+        confirmations: confirmationsAfterResponse(session.confirmations, frame),
+        results: mapWith(session.results, String(frame.requestId), resultProjection(frame)),
+      }), config);
     }
     case "welcome": {
       if (snapshot.epoch === undefined || snapshot.epoch === frame.epoch) return updateRoot(snapshot, { epoch: frame.epoch, freshness: "fresh" });
@@ -598,4 +635,3 @@ export class ProjectionStore {
 export function createProjectionStore(options: ProjectionOptions & { readonly cacheStore?: ProjectionCacheStore } = {}): ProjectionStore {
   return new ProjectionStore(options);
 }
-

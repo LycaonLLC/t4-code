@@ -8,24 +8,11 @@
 // outcome — the draft clears only on acceptance; the rest exits via
 // `onIntent`.
 import { Button, cn, IconButton, Tooltip, TooltipPopup, TooltipTrigger } from "@t4-code/ui";
-import {
-  ArrowUp,
-  Brain,
-  Hammer,
-  ListTodo,
-  Paperclip,
-  Square,
-  Zap,
-} from "lucide-react";
+import { ArrowUp, ListTodo, Paperclip, Square } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { PromptOutcome } from "../session-runtime/controller.ts";
-import {
-  isSessionMode,
-  isThinkingLevel,
-  type PromptAttachment,
-  type SessionIntent,
-} from "../session-runtime/intents.ts";
+import type { PromptAttachment, SessionIntent } from "../session-runtime/intents.ts";
 import {
   thinkingLabel,
   type ComposerControlsSnapshot,
@@ -35,7 +22,9 @@ import { selectSessionView } from "../../state/workspace-store.ts";
 import { admitAttachments, type AttachmentCandidate } from "./attachments.ts";
 import { composerStore, useComposer } from "./composer-store.ts";
 import { ContextMeter } from "./ContextMeter.tsx";
-import { AttachmentChips, ControlMenu } from "./ComposerControls.tsx";
+import { AttachmentChips, RunOptionsMenu } from "./ComposerControls.tsx";
+import { RuntimeOptions } from "./ComposerRuntimeOptions.tsx";
+import { MobileComposerActions } from "./MobileComposerActions.tsx";
 import { resolveComposerKey, resolveMenuKey } from "./keys.ts";
 import {
   activeSlashQuery,
@@ -52,19 +41,6 @@ import {
 
 const MAX_TEXTAREA_HEIGHT = 220;
 const EMPTY_ATTACHMENTS: readonly PromptAttachment[] = [];
-
-const MODE_LABEL: Record<string, string> = {
-  build: "Build",
-  plan: "Plan first",
-  readOnly: "Read only",
-};
-
-const MODE_DETAIL: Record<string, string | null> = {
-  build: "Make changes directly",
-  plan: "Propose a plan before touching anything",
-  readOnly: "Inspect only; no writes, no commands",
-};
-
 
 // ---------------------------------------------------------------------------
 // Composer
@@ -325,9 +301,10 @@ export function Composer({
 
   const primaryLabel = revisingPlanId !== null ? "Send revision" : turnActive ? "Steer" : "Send";
   const canSubmit = !disabled && (draft.trim() !== "" || attachments.length > 0);
+  const runOptionsSummary = `${controls.modelLabel ?? "Host model"} · ${thinkingLabel(controls.thinking)}`;
 
   return (
-    <div className="pointer-events-auto">
+    <div className="pointer-events-auto min-w-0 max-w-full">
       {queuedFollowUps.length > 0 && (
         <ul aria-label="Queued follow-ups" className="mb-2 flex flex-wrap gap-1.5">
           {queuedFollowUps.map((text, index) => (
@@ -353,7 +330,7 @@ export function Composer({
                     aria-disabled={isDisabled || undefined}
                     aria-selected={index === menuIndex}
                     className={cn(
-                      "flex cursor-pointer items-baseline gap-2 rounded-md px-2 py-1.5",
+                      "flex min-h-11 cursor-pointer items-baseline gap-2 rounded-md px-2 py-1.5 sm:min-h-0",
                       index === menuIndex && "bg-secondary",
                       isDisabled && "cursor-default opacity-64",
                     )}
@@ -364,7 +341,9 @@ export function Composer({
                   >
                     <span className="font-mono text-sm">{item.name}</span>
                     {item.argsHint !== "" && (
-                      <span className="font-mono text-muted-foreground text-xs">{item.argsHint}</span>
+                      <span className="font-mono text-muted-foreground text-xs">
+                        {item.argsHint}
+                      </span>
                     )}
                     {item.aliases.length > 0 && (
                       <span className="font-mono text-muted-foreground text-xs">
@@ -381,9 +360,13 @@ export function Composer({
           </div>
         )}
         <div
-          className="rounded-xl border border-input bg-(--composer-background) shadow-(--composer-shadow) backdrop-blur-(--composer-blur)"
+          className="min-w-0 max-w-full rounded-xl border border-input bg-(--composer-background) shadow-(--composer-shadow) backdrop-blur-(--composer-blur)"
           onDragOver={(event) => {
-            if (!disabled && controls.attachmentsSupported && event.dataTransfer.types.includes("Files")) {
+            if (
+              !disabled &&
+              controls.attachmentsSupported &&
+              event.dataTransfer.types.includes("Files")
+            ) {
               event.preventDefault();
             }
           }}
@@ -399,7 +382,7 @@ export function Composer({
                 Revising the plan
               </span>
               <button
-                className="cursor-pointer text-muted-foreground text-xs underline-offset-2 transition-colors duration-(--motion-duration-fast) hover:text-foreground hover:underline"
+                className="min-h-11 cursor-pointer px-2 text-muted-foreground text-xs underline-offset-2 transition-colors duration-(--motion-duration-fast) hover:text-foreground hover:underline sm:min-h-0 sm:px-0"
                 onClick={onCancelRevise}
                 type="button"
               >
@@ -413,9 +396,11 @@ export function Composer({
           />
           <textarea
             aria-label={
-              revisingPlanId !== null ? "Describe how the plan should change" : "Message the session"
+              revisingPlanId !== null
+                ? "Describe how the plan should change"
+                : "Message the session"
             }
-            className="max-h-55 w-full resize-none bg-transparent px-3 pt-2.5 pb-1 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-64"
+            className="max-h-55 min-h-11 w-full resize-none bg-transparent px-3 pt-2.5 pb-1 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-64"
             disabled={disabled}
             onChange={(event) => {
               setDraft(event.target.value);
@@ -442,131 +427,43 @@ export function Composer({
             rows={1}
             value={draft}
           />
-          <div className="flex items-center gap-0.5 px-2 pb-2">
-            <ControlMenu
-              busy={controls.pendingControl === "model"}
-              choices={controls.modelChoices.map((choice) => ({
-                id: choice.id,
-                label: choice.label,
-                detail:
-                  choice.kind === "role"
-                    ? `Role · ${choice.detail ?? "Inherited"}`
-                    : choice.detail,
-                disabledReason: controls.modelSupported ? null : controls.modelUnsupportedReason,
-              }))}
-              disabled={disabled || controls.modelLabel === null}
-              icon={null}
-              label="Model — this session"
-              note={controls.modelSupported ? null : controls.modelUnsupportedReason}
-              onSelect={(id) => {
-                const choice = controls.modelChoices.find((entry) => entry.id === id);
-                if (choice === undefined || (choice.selector === null && choice.role === null)) return;
-                onIntent({ kind: "setModel", selector: choice.selector, role: choice.role });
+          {controls.attachmentsSupported && (
+            <input
+              accept="image/png,image/jpeg,image/webp,image/gif,text/*,application/json"
+              className="hidden"
+              multiple
+              onChange={(event) => {
+                if (event.target.files !== null) intake(filesToCandidates(event.target.files));
+                event.target.value = "";
               }}
-              value={controls.modelSelectedId ?? ""}
-              valueLabel={controls.modelLabel ?? "Model —"}
+              ref={fileInputRef}
+              type="file"
             />
-            <ControlMenu
-              busy={controls.pendingControl === "thinking"}
-              choices={controls.thinkingLevels.map((level) => ({
-                id: level,
-                label: thinkingLabel(level),
-                detail: null,
-                disabledReason: controls.thinkingSupported ? null : controls.thinkingUnsupportedReason,
-              }))}
+          )}
+          <div className="hidden min-w-0 items-center gap-0.5 px-2 pb-2 sm:flex">
+            <RuntimeOptions
+              compact={false}
+              controls={controls}
               disabled={disabled}
-              icon={<Brain aria-hidden="true" className="size-3.5 shrink-0" />}
-              label="Thinking — this session"
-              note={controls.thinkingSupported ? null : controls.thinkingUnsupportedReason}
-              onSelect={(id) => {
-                if (isThinkingLevel(id)) onIntent({ kind: "setThinking", level: id });
-              }}
-              value={controls.thinking ?? ""}
-              valueLabel={thinkingLabel(controls.thinking)}
+              onIntent={onIntent}
             />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    aria-busy={controls.pendingControl === "fast" || undefined}
-                    aria-disabled={!controls.fastSupported || undefined}
-                    aria-label={controls.fast ? "Fast mode on" : "Fast mode off"}
-                    aria-pressed={controls.fast}
-                    className={cn(
-                      "flex h-7 cursor-pointer items-center gap-1 rounded-md px-1.5 text-muted-foreground text-xs outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64",
-                      controls.fast && "text-accent-text hover:text-accent-text",
-                      !controls.fastSupported &&
-                        "cursor-default opacity-64 hover:bg-transparent hover:text-muted-foreground",
-                      controls.pendingControl === "fast" && "animate-pulse motion-reduce:animate-none",
-                    )}
-                    disabled={disabled || controls.pendingControl === "fast"}
-                    onClick={() => {
-                      // An unsupported toggle never sends session.fast.set —
-                      // the reason renders instead of a dead command.
-                      if (controls.fastSupported) onIntent({ kind: "setFast", enabled: !controls.fast });
-                    }}
-                    type="button"
-                  >
-                    <Zap aria-hidden="true" className="size-3.5" />
-                    Fast
-                  </button>
-                }
-              />
-              <TooltipPopup side="top">
-                {!controls.fastSupported
-                  ? (controls.fastUnsupportedReason ?? "Not offered by this host")
-                  : controls.fast
-                    ? "Fast mode: shorter, quicker turns"
-                    : "Turn on fast mode"}
-              </TooltipPopup>
-            </Tooltip>
-            {controls.modeSupported && controls.mode !== null && (
-              <ControlMenu
-                choices={(["build", "plan", "readOnly"] as const).map((mode) => ({
-                  id: mode,
-                  label: MODE_LABEL[mode] ?? mode,
-                  detail: MODE_DETAIL[mode] ?? null,
-                }))}
-                disabled={disabled}
-                icon={<Hammer aria-hidden="true" className="size-3.5 shrink-0" />}
-                label="Mode"
-                onSelect={(id) => {
-                  if (isSessionMode(id)) onIntent({ kind: "setMode", mode: id });
-                }}
-                value={controls.mode}
-                valueLabel={MODE_LABEL[controls.mode] ?? controls.mode}
-              />
-            )}
             <span className="min-w-0 flex-1" />
             {controls.attachmentsSupported && (
-              <>
-                <input
-                  accept="image/png,image/jpeg,image/webp,image/gif,text/*,application/json"
-                  className="hidden"
-                  multiple
-                  onChange={(event) => {
-                    if (event.target.files !== null) intake(filesToCandidates(event.target.files));
-                    event.target.value = "";
-                  }}
-                  ref={fileInputRef}
-                  type="file"
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <IconButton
+                      aria-label="Attach files"
+                      disabled={disabled}
+                      onClick={() => fileInputRef.current?.click()}
+                      size="icon-sm"
+                    >
+                      <Paperclip />
+                    </IconButton>
+                  }
                 />
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <IconButton
-                        aria-label="Attach files"
-                        disabled={disabled}
-                        onClick={() => fileInputRef.current?.click()}
-                        size="icon-sm"
-                      >
-                        <Paperclip />
-                      </IconButton>
-                    }
-                  />
-                  <TooltipPopup side="top">Attach images or text files</TooltipPopup>
-                </Tooltip>
-              </>
+                <TooltipPopup side="top">Attach images or text files</TooltipPopup>
+              </Tooltip>
             )}
             <ContextMeter usedTokens={contextUsedTokens} windowTokens={contextWindowTokens} />
             {turnActive && (
@@ -614,6 +511,42 @@ export function Composer({
               <ArrowUp aria-hidden="true" />
               {primaryLabel}
             </Button>
+          </div>
+          <div className="flex min-w-0 flex-col gap-1.5 px-2 pb-2 sm:hidden">
+            <div className="flex min-w-0 items-center gap-1">
+              <RunOptionsMenu summary={runOptionsSummary}>
+                <RuntimeOptions
+                  compact
+                  controls={controls}
+                  disabled={disabled}
+                  onIntent={onIntent}
+                />
+              </RunOptionsMenu>
+              <span className="min-w-0 flex-1" />
+              {controls.attachmentsSupported && (
+                <IconButton
+                  aria-label="Attach files"
+                  disabled={disabled}
+                  onClick={() => fileInputRef.current?.click()}
+                  size="icon-xl"
+                >
+                  <Paperclip />
+                </IconButton>
+              )}
+              <ContextMeter usedTokens={contextUsedTokens} windowTokens={contextWindowTokens} />
+            </div>
+            <MobileComposerActions
+              canCancel={canCancel}
+              cancelDisabledReason={cancelDisabledReason}
+              onCancel={() => onIntent({ kind: "cancel" })}
+              onQueue={queueFollowUp}
+              onSubmit={submit}
+              primaryBusy={sending}
+              primaryDisabled={!canSubmit || sending}
+              primaryLabel={primaryLabel}
+              queueDisabled={disabled || sending || draft.trim() === ""}
+              turnActive={turnActive}
+            />
           </div>
         </div>
       </div>

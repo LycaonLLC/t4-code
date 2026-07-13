@@ -41,14 +41,18 @@ function HomeRoute() {
   const activeSessionId = useWorkspace((state) => state.activeSessionId);
   const shellData = useShellData();
   const runtimeSnapshot = useDesktopRuntimeSnapshot();
+  const browserDirect = rendererPlatform.shell !== null && rendererPlatform.shell.serviceInspect === undefined;
   const resumable =
+    !browserDirect &&
     activeSessionId !== null &&
     shellData.sessions.some((session) => session.id === activeSessionId);
   if (resumable) {
     return <Navigate params={{ sessionId: activeSessionId }} to="/sessions/$sessionId" />;
   }
   // Desktop mode: the first real sessions frame selects the latest session.
-  if (runtimeSnapshot !== null) {
+  // A browser-direct Tailnet bridge intentionally stays on the live landing
+  // page so opening the URL never implicitly attaches a session.
+  if (runtimeSnapshot !== null && !browserDirect) {
     const latest = latestSessionViewId(runtimeSnapshot);
     if (latest !== null) {
       return <Navigate params={{ sessionId: latest }} to="/sessions/$sessionId" />;

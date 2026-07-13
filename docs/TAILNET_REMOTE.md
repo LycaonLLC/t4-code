@@ -1,0 +1,161 @@
+# Tailnet remote access
+
+T4 Code can be used from a phone or another computer on the same Tailscale
+network. The remote path is intentionally small:
+
+```text
+phone browser
+  -> Tailscale Serve HTTPS (tailnet only)
+  -> T4 gateway on 127.0.0.1:4194
+  -> OMP appserver Unix socket
+```
+
+There is no T4 password in this mode. Tailscale membership and your tailnet
+ACLs or grants are the access boundary. The gateway never listens on a LAN
+interface, accepts WebSocket connections only from the exact configured
+`.ts.net` HTTPS origin, and passes no token or password through the browser.
+
+> This is a source-hosted feature in the current release. The downloadable
+> desktop packages do not install or manage the Tailnet gateway. Keep the
+> checkout used to install the service in place, or reinstall the service from
+> its new path after moving it.
+
+## Prerequisites
+
+- Linux with a systemd user session, or macOS with a logged-in launchd GUI
+  session.
+- Node.js 24 and pnpm 11 (the versions declared by this repository).
+- Tailscale installed, signed in, and using MagicDNS/HTTPS.
+- A running local OMP appserver. Opening the T4 desktop app normally installs
+  and starts it; `omp appserver status --json` is a direct check.
+- A T4 Code source checkout with dependencies installed.
+
+Do not use Tailscale Funnel for this. Funnel is the public-internet product;
+this setup is meant to remain tailnet-only. Tailscale documents the distinction
+and current Serve syntax in its [Serve reference](https://tailscale.com/docs/reference/tailscale-cli/serve).
+
+## Install
+
+Choose the HTTPS port you will open on your tailnet. The examples use `8445`.
+Find this machine's full MagicDNS name with `tailscale status`; it looks like
+`host-name.your-tailnet.ts.net`.
+
+From the checkout:
+
+```bash
+corepack pnpm install --frozen-lockfile
+pnpm build:web
+
+node scripts/tailnet-service.mjs install \
+  --origin https://host-name.your-tailnet.ts.net:8445 \
+  --port 4194
+
+tailscale serve --bg --https=8445 http://127.0.0.1:4194
+```
+
+Use the exact URL you will open, including a non-default port, as `--origin`.
+The gateway rejects a browser WebSocket whose `Origin` does not match it.
+
+The service installer is idempotent. On Linux it writes and enables
+`com.lycaonsolutions.t4code.tailnet-gateway.service` as a systemd **user**
+unit. On macOS it installs the matching per-user LaunchAgent. It stores no
+Tailscale key, OMP token, or app password.
+
+If OMP uses a non-default appserver socket, add an absolute path:
+
+```bash
+node scripts/tailnet-service.mjs install \
+  --origin https://host-name.your-tailnet.ts.net:8445 \
+  --port 4194 \
+  --app-socket /absolute/path/to/appserver.sock
+```
+
+## Verify before relying on it
+
+Run all three host checks:
+
+```bash
+node scripts/tailnet-service.mjs status
+curl --fail --silent --show-error http://127.0.0.1:4194/healthz
+tailscale serve status
+```
+
+`status` exits nonzero if the installed definition drifted, the supervisor is
+not running, the web build is missing, or the gateway cannot reach the OMP
+socket. A healthy response reports `"web":true` and `"upstream":true`.
+
+Then, from a different device on the tailnet, open:
+
+```text
+https://host-name.your-tailnet.ts.net:8445/
+```
+
+The page should show a connected host, list the same sessions as the desktop,
+open durable transcript history, and allow a message to be sent. Loading the
+page alone is not an end-to-end check; connected state plus a real session
+round-trip is.
+
+## Operate and update
+
+The lifecycle commands are the same on Linux and macOS:
+
+```bash
+node scripts/tailnet-service.mjs status
+node scripts/tailnet-service.mjs stop
+node scripts/tailnet-service.mjs start
+node scripts/tailnet-service.mjs restart
+```
+
+After pulling a new T4 Code revision in the same checkout:
+
+```bash
+corepack pnpm install --frozen-lockfile
+pnpm build:web
+node scripts/tailnet-service.mjs restart
+```
+
+If the checkout or Node executable moved, rerun the full `install` command from
+the new checkout. The generated service deliberately pins absolute paths so a
+different executable cannot be selected through `PATH` after installation.
+
+Linux logs:
+
+```bash
+journalctl --user \
+  -u com.lycaonsolutions.t4code.tailnet-gateway.service \
+  -n 100 --no-pager
+```
+
+macOS logs are under:
+
+```text
+~/Library/Logs/T4 Code/tailnet-gateway/
+```
+
+## Uninstall
+
+Remove the T4 service first, then remove only its Tailscale Serve listener:
+
+```bash
+node scripts/tailnet-service.mjs uninstall
+tailscale serve --https=8445 off
+```
+
+The service helper intentionally does not edit Tailscale Serve configuration.
+That keeps uninstall from disrupting other sites the node may serve. Avoid
+`tailscale serve reset` on a machine with other Serve routes, because reset
+removes all of them.
+
+## Security boundary
+
+- The local HTTP gateway is fixed to `127.0.0.1` (or `::1` when explicitly
+  configured by code); it cannot be configured to listen on a LAN address.
+- The browser endpoint is an exact HTTPS `.ts.net` origin. Plain HTTP, public
+  domains, URL paths, embedded credentials, and wildcard origins are rejected.
+- Tailscale Serve terminates HTTPS and keeps the route tailnet-only. Do not
+  substitute Funnel.
+- Every tailnet identity permitted to reach this node and port can operate the
+  connected OMP appserver. Restrict the node/port with Tailscale ACLs or grants
+  if the tailnet has anyone you do not fully trust.
+- The gateway is an operator surface, not a read-only viewer. Treat access as
+  equivalent to local access to your OMP sessions.

@@ -8,6 +8,7 @@
     "dev:web": "vp run --filter @t4-code/web dev",
     "dev:desktop": "vp run --filter @t4-code/desktop dev",
     "dev:site": "vp run --filter @t4-code/site dev",
+    "serve:tailnet": "node scripts/tailnet-gateway.mjs",
     "build": "vp run -r build",
     "build:web": "pnpm --filter @t4-code/web build",
     "build:desktop": "pnpm --filter @t4-code/desktop build",
@@ -19,20 +20,26 @@
     "package:dir": "pnpm prepackage && node scripts/run-electron-builder.mjs --linux --x64 --dir",
     "inspect:package": "node scripts/inspect-package.mjs",
     "test:packaging": "node --test scripts/packaging.test.mjs",
-    "test:tooling": "node --test scripts/check-structure.test.mjs scripts/check-provenance.test.mjs scripts/deploy-site.test.mjs",
+    "test:tooling": "node --test scripts/check-structure.test.mjs scripts/check-provenance.test.mjs scripts/deploy-site.test.mjs scripts/tailnet-gateway.test.mjs scripts/tailnet-service.test.mjs",
     "check:structure": "node scripts/check-structure.mjs",
     "check:provenance": "node scripts/check-provenance.mjs",
     "lint": "vp lint --deny-warnings",
     "check": "pnpm check:structure && pnpm check:provenance && pnpm lint && pnpm typecheck",
     "typecheck": "vp run -r typecheck",
     "test": "vp run -r test",
+    "test:e2e": "pnpm build:web && playwright test",
     "test:protocol": "vp run --filter @t4-code/protocol --filter @t4-code/fixture-server test"
   },
   "devDependencies": {
     "@electron/asar": "3.4.1",
+    "@playwright/test": "1.61.1",
     "@types/node": "catalog:",
     "@typescript/native-preview": "catalog:",
+    "jiti": "2.7.0",
     "vite-plus": "catalog:"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
   },
   "engines": {
     "node": "^24.13.1"

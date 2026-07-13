@@ -14,6 +14,7 @@ import { FixtureWebSocketServer } from "@t4-code/fixture-server";
 import WebSocket from "ws";
 import {
   DefaultIds,
+  isConfirmationDecisionConsumed,
   OmpClient,
   type Clock,
   type CursorRecord,
@@ -146,6 +147,20 @@ class DeferredStore implements CursorStore {
 function responseFor(command: CommandFrame, result: unknown = {}): ServerFrame {
   return { v: V, type: "response", requestId: command.requestId, commandId: command.commandId, hostId: command.hostId, ...(command.sessionId === undefined ? {} : { sessionId: command.sessionId }), ok: true, result };
 }
+function confirmationFor(command: CommandFrame): ServerFrame {
+  return {
+    v: V,
+    type: "confirmation",
+    confirmationId: "confirmation-fixture" as never,
+    commandId: command.commandId,
+    hostId: command.hostId,
+    ...(command.sessionId === undefined ? {} : { sessionId: command.sessionId }),
+    commandHash: "sha256:fixture",
+    revision: revision("rev-a"),
+    expiresAt: "2999-01-01T00:00:00.000Z",
+    summary: command.command,
+  };
+}
 async function readyClient(transport: FakeTransport, options: Partial<ConstructorParameters<typeof OmpClient>[0]> = {}): Promise<OmpClient> {
   const client = new OmpClient({ transport: () => transport, hostId: HOST, reconnect: { baseMs: 5, maxMs: 20, attemptCap: 2 }, ...options });
   await client.connect();
@@ -189,6 +204,136 @@ describe("OmpClient protocol state machine", () => {
     transport.emit(responseFor(commands[0]!, { n: 1 }));
     expect((await first).result).toEqual({ n: 1 });
     expect((await second).result).toEqual({ n: 2 });
+    await client.close();
+  });
+  it.each(["approve", "deny"] as const)(
+    "correlates a valid %s confirmation response to both the original command and confirm request",
+    async (decision) => {
+      const transport = new FakeTransport({ welcome: welcome() });
+      const client = await readyClient(transport);
+      const commandResult = client.command({
+        hostId: HOST,
+        sessionId: SESSION,
+        command: "session.cancel",
+        args: {},
+      });
+      const command = transport.lastClientFrame();
+      if (command.type !== "command") throw new Error("expected command");
+
+      // OMP issues the challenge without settling the original command.
+      transport.emit(confirmationFor(command));
+      const confirmResult = client.confirm({
+        confirmationId: "confirmation-fixture",
+        commandId: String(command.commandId),
+        hostId: HOST,
+        sessionId: SESSION,
+        decision,
+      });
+      const confirm = transport.lastClientFrame();
+      if (confirm.type !== "confirm") throw new Error("expected confirm");
+      expect(confirm.requestId).not.toBe(command.requestId);
+      expect(client.resources().pending).toBe(2);
+
+      const response: ServerFrame = decision === "approve"
+        ? responseFor(command, { cancelled: true })
+        : {
+            v: V,
+            type: "response",
+            requestId: command.requestId,
+            commandId: command.commandId,
+            hostId: command.hostId,
+            ...(command.sessionId === undefined ? {} : { sessionId: command.sessionId }),
+            command: command.command,
+            ok: false,
+            error: { code: "confirmation_denied", message: "command was denied" },
+          };
+      // Valid approve and deny responses both carry the ORIGINAL requestId.
+      transport.emit(response);
+      const [settledCommand, settledConfirm] = await Promise.all([commandResult, confirmResult]);
+      expect(settledCommand.requestId).toBe(command.requestId);
+      expect(settledConfirm.requestId).toBe(command.requestId);
+      expect(settledConfirm.ok).toBe(decision === "approve");
+      expect(isConfirmationDecisionConsumed(settledConfirm)).toBe(true);
+      expect(client.resources().pending).toBe(0);
+      await client.close();
+    },
+  );
+  it("settles an invalid confirmation by its own requestId without consuming the original command", async () => {
+    const transport = new FakeTransport({ welcome: welcome() });
+    const client = await readyClient(transport);
+    const commandResult = client.command({
+      hostId: HOST,
+      sessionId: SESSION,
+      command: "session.cancel",
+      args: {},
+    });
+    const commandOutcome = commandResult.then(
+      () => ({ code: "resolved" }),
+      (error: { code?: string }) => ({ code: error.code }),
+    );
+    const command = transport.lastClientFrame();
+    if (command.type !== "command") throw new Error("expected command");
+    transport.emit(confirmationFor(command));
+
+    const confirmResult = client.confirm({
+      confirmationId: "confirmation-fixture",
+      commandId: String(command.commandId),
+      hostId: HOST,
+      sessionId: SESSION,
+      decision: "approve",
+    });
+    const confirm = transport.lastClientFrame();
+    if (confirm.type !== "confirm") throw new Error("expected confirm");
+    transport.emit({
+      v: V,
+      type: "response",
+      requestId: confirm.requestId,
+      commandId: confirm.commandId,
+      hostId: confirm.hostId,
+      sessionId: confirm.sessionId,
+      ok: false,
+      error: { code: "confirmation_invalid", message: "confirmation is invalid or expired" },
+    });
+    const invalid = await confirmResult;
+    expect(invalid.requestId).toBe(confirm.requestId);
+    expect(isConfirmationDecisionConsumed(invalid)).toBe(false);
+    expect(client.resources().pending).toBe(1);
+
+    await client.close();
+    expect(await commandOutcome).toEqual({ code: "closed" });
+  });
+  it("settles the confirm alias when the original command timed out before the host response", async () => {
+    const clock = new FakeClock();
+    const transport = new FakeTransport({ welcome: welcome() });
+    const client = await readyClient(transport, { clock, timers: clock });
+    const commandResult = client.command(
+      { hostId: HOST, sessionId: SESSION, command: "session.cancel", args: {} },
+      { timeoutMs: 5 },
+    );
+    const commandOutcome = commandResult.then(
+      () => ({ code: "resolved" }),
+      (error: { code?: string }) => ({ code: error.code }),
+    );
+    const command = transport.lastClientFrame();
+    if (command.type !== "command") throw new Error("expected command");
+    transport.emit(confirmationFor(command));
+    const confirmResult = client.confirm(
+      {
+        confirmationId: "confirmation-fixture",
+        commandId: String(command.commandId),
+        hostId: HOST,
+        sessionId: SESSION,
+        decision: "approve",
+      },
+      { timeoutMs: 20 },
+    );
+
+    clock.advanceBy(5);
+    expect(await commandOutcome).toEqual({ code: "timeout" });
+    expect(client.resources().pending).toBe(1);
+    transport.emit(responseFor(command, { cancelled: true }));
+    expect((await confirmResult).requestId).toBe(command.requestId);
+    expect(client.resources().pending).toBe(0);
     await client.close();
   });
   it("namespaces command and request IDs across client lifetimes", async () => {

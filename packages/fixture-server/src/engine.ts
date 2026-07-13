@@ -5,6 +5,7 @@ import {
   decodeServerFrame,
   type ClientFrame,
   type CommandFrame,
+  type ConfirmationId,
   type DurableEntry,
   type EntryId,
   type HostId,
@@ -24,6 +25,7 @@ const MAX_HISTORY_SNAPSHOT = 900;
 type Cursor = { epoch: string; seq: number };
 type JournalFrame = Extract<ServerFrame, { type: "entry" | "event" }>;
 type SavedCommand = { payloadHash: string; response: Extract<ServerFrame, { type: "response" }> };
+type SavedChallenge = { command: CommandFrame };
 
 export interface ScheduledTask {
   readonly atMs: number;
@@ -72,6 +74,7 @@ interface ClientState {
   hello: boolean;
   cursor: Cursor;
   commands: Map<string, SavedCommand>;
+  challenges: Map<string, SavedChallenge>;
 }
 export interface FixtureClient {
   readonly id: string;
@@ -135,9 +138,10 @@ function buildEntry(
   ordinal: number,
   text: string,
   parentId: string | null = null,
+  entryId = `entry-${seed.id}-${ordinal}`,
 ): DurableEntry {
   return {
-    id: branded(`entry-${seed.id}-${ordinal}`),
+    id: branded(entryId),
     parentId: parentId === null ? null : branded<EntryId>(parentId),
     hostId: branded(seed.hostId),
     sessionId: branded(seed.sessionId),
@@ -170,12 +174,15 @@ export class FixtureEngine {
   private epoch: string;
   private revision: Revision;
   private journal: JournalFrame[] = [];
+  private durableEntries: DurableEntry[];
   private closed = false;
+  private nextLiveEntry = 1;
   constructor(seed: ScenarioSeed, scheduler = new VirtualScheduler()) {
     this.seed = seed;
     this.scheduler = scheduler;
     this.epoch = seed.epoch;
     this.revision = branded<Revision>(seed.revision);
+    this.durableEntries = snapshotEntries(seed);
   }
   get virtualTime(): number {
     return this.scheduler.now;
@@ -199,6 +206,7 @@ export class FixtureEngine {
       seq: this.seq,
       revision: this.revision,
       journal: this.journal.map((frame) => frame.cursor),
+      durableEntries: this.durableEntries.map((entry) => entry.id),
       clients: [...this.clients].map(([id, state]) => ({
         id,
         closed: state.closed,
@@ -219,6 +227,7 @@ export class FixtureEngine {
       hello: false,
       cursor: sessionCursor(this.seed, 0, this.epoch),
       commands: new Map(),
+      challenges: new Map(),
     });
     return this.clientInfo(id);
   }
@@ -279,16 +288,7 @@ export class FixtureEngine {
         } as unknown as ServerFrame);
         break;
       case "confirm":
-        this.emit(state, {
-          v: V,
-          type: "response",
-          requestId: frame.requestId,
-          commandId: frame.commandId,
-          hostId: branded<HostId>(this.seed.hostId),
-          ...(frame.sessionId === undefined ? {} : { sessionId: frame.sessionId }),
-          ok: true,
-          result: { approved: frame.decision === "approve" },
-        });
+        this.onConfirm(state, frame);
         break;
       case "terminal.input":
         this.emitTerminalOutput(state, frame);
@@ -320,6 +320,7 @@ export class FixtureEngine {
       state.attached = false;
       state.cursor = sessionCursor(this.seed, 0, this.epoch);
       state.commands.clear();
+      state.challenges.clear();
     }
   }
   attach(id: string, saved?: Cursor): readonly ServerFrame[] {
@@ -425,12 +426,13 @@ export class FixtureEngine {
       appserverBuild: "deterministic",
       epoch: this.epoch,
       grantedCapabilities: [
+        "catalog.read",
         "sessions.read",
         "sessions.prompt",
         "sessions.control",
         "sessions.manage",
       ],
-      grantedFeatures: ["resume"],
+      grantedFeatures: ["catalog.metadata", "resume"],
       negotiatedLimits: { maxInputBytes: 1_048_576 },
       authentication: "local",
       resumed,
@@ -452,7 +454,7 @@ export class FixtureEngine {
       revision: this.revision,
       hostId: branded<HostId>(this.seed.hostId),
       sessionId: branded<SessionId>(this.seed.sessionId),
-      entries: snapshotEntries(this.seed),
+      entries: this.durableEntries.slice(-MAX_HISTORY_SNAPSHOT),
     });
     state.cursor = this.currentCursor;
   }
@@ -503,6 +505,7 @@ export class FixtureEngine {
       type: "response" as const,
       requestId: frame.requestId,
       commandId: frame.commandId,
+      command: frame.command,
       hostId: branded<HostId>(this.seed.hostId),
       ...(frame.sessionId === undefined ? {} : { sessionId: frame.sessionId }),
     };
@@ -526,6 +529,34 @@ export class FixtureEngine {
       ...(frame.confirmationId === undefined ? {} : { confirmationId: frame.confirmationId }),
       args: frame.args,
     });
+    if (descriptor.confirmation === "challenge") {
+      if (frame.confirmationId !== undefined) {
+        this.emit(state, {
+          ...base,
+          ok: false,
+          error: {
+            code: "confirmation_invalid",
+            message: "command confirmation must be approved through a confirm frame",
+          },
+        });
+        return;
+      }
+      const confirmationId = branded<ConfirmationId>(`confirmation-${String(frame.commandId)}`);
+      state.challenges.set(String(confirmationId), { command: frame });
+      this.emit(state, {
+        v: V,
+        type: "confirmation",
+        confirmationId,
+        commandId: frame.commandId,
+        hostId: branded<HostId>(this.seed.hostId),
+        ...(frame.sessionId === undefined ? {} : { sessionId: frame.sessionId }),
+        commandHash: payloadHash,
+        revision: this.revision,
+        expiresAt: "2999-01-01T00:00:00.000Z",
+        summary: frame.command,
+      });
+      return;
+    }
     const saved = state.commands.get(key);
     if (saved !== undefined) {
       if (saved.payloadHash === payloadHash) this.emit(state, saved.response);
@@ -550,6 +581,60 @@ export class FixtureEngine {
       const savedCursor = "cursor" in args ? this.decodeCursor(args.cursor) : undefined;
       this.attachState(state, savedCursor);
     }
+  }
+  private onConfirm(state: ClientState, frame: Extract<ClientFrame, { type: "confirm" }>): void {
+    const saved = state.challenges.get(String(frame.confirmationId));
+    const valid =
+      saved !== undefined &&
+      saved.command.commandId === frame.commandId &&
+      saved.command.hostId === frame.hostId &&
+      saved.command.sessionId === frame.sessionId;
+    if (!valid || saved === undefined) {
+      this.emit(state, {
+        v: V,
+        type: "response",
+        requestId: frame.requestId,
+        commandId: frame.commandId,
+        hostId: branded<HostId>(this.seed.hostId),
+        ...(frame.sessionId === undefined ? {} : { sessionId: frame.sessionId }),
+        ok: false,
+        error: { code: "confirmation_invalid", message: "confirmation is invalid or expired" },
+      });
+      return;
+    }
+
+    state.challenges.delete(String(frame.confirmationId));
+    const command = saved.command;
+    const base = {
+      v: V,
+      type: "response" as const,
+      requestId: command.requestId,
+      commandId: command.commandId,
+      command: command.command,
+      hostId: branded<HostId>(this.seed.hostId),
+      ...(command.sessionId === undefined ? {} : { sessionId: command.sessionId }),
+    };
+    const response =
+      frame.decision === "deny"
+        ? {
+            ...base,
+            ok: false as const,
+            error: { code: "confirmation_denied", message: "command was denied" },
+          }
+        : this.makeCommandResponse(command, base);
+    const payloadHash = canonicalSha256({
+      command: command.command,
+      hostId: command.hostId,
+      ...(command.sessionId === undefined ? {} : { sessionId: command.sessionId }),
+      ...(command.expectedRevision === undefined
+        ? {}
+        : { expectedRevision: command.expectedRevision }),
+      confirmationId: frame.confirmationId,
+      args: command.args,
+    });
+    state.commands.set(String(command.commandId), { payloadHash, response });
+    this.emit(state, response);
+    if (frame.decision === "approve") this.emitCommandSideFrames(state, command);
   }
   private emitTerminalOutput(
     state: ClientState,
@@ -670,12 +755,36 @@ export class FixtureEngine {
     if (frame.command === "term.open") return { ...base, ok: true, result: { terminalId: "terminal-fixture" } };
     if (frame.command === "audit.read" || frame.command === "audit.tail")
       return { ...base, ok: true, result: { events: [] } };
-    if (frame.command === "catalog.get") return { ...base, ok: true, result: { items: [] } };
-    if (frame.command === "settings.read") return { ...base, ok: true, result: {} };
+    if (frame.command === "catalog.get")
+      return {
+        ...base,
+        ok: true,
+        result: {
+          revision: this.revision,
+          items: [
+            {
+              id: "cmd-session-cancel",
+              kind: "command",
+              name: "session.cancel",
+              description: "Stop the running session turn",
+              capabilities: ["sessions.control"],
+              supported: true,
+            },
+          ],
+        },
+      };
+    if (frame.command === "settings.read")
+      return {
+        ...base,
+        ok: true,
+        result: { revision: this.revision, settings: {} },
+      };
     if (frame.command.startsWith("host.watch") || frame.command.startsWith("session.watch"))
       return { ...base, ok: true, result: { watchId: "watch-fixture", cursor: this.currentCursor } };
     if (frame.command.includes(".lease."))
       return { ...base, ok: true, result: { leaseId: "lease-fixture", cursor: this.currentCursor } };
+    if (frame.command === "preview.capture")
+      return { ...base, ok: true, result: { content: "" } };
     return { ...base, ok: true, result: { accepted: true } };
   }
   private decodeCursor(value: unknown): Cursor | undefined {
@@ -692,32 +801,69 @@ export class FixtureEngine {
   }
   private schedulePrompt(): void {
     let parent: string | null = null;
+    let liveEntryId: string | null = null;
+    let accumulatedText = "";
+    const publishEvent = (event: Record<string, unknown>) => {
+      const nextSeq = this.seq + 1;
+      const frame: LiveEventFrame = {
+        v: V,
+        type: "event",
+        cursor: sessionCursor(this.seed, nextSeq, this.epoch),
+        hostId: branded<HostId>(this.seed.hostId),
+        sessionId: branded<SessionId>(this.seed.sessionId),
+        event: {
+          ...event,
+          at: new Date(Date.parse(this.seed.baseTime) + this.scheduler.now).toISOString(),
+        } as unknown as LiveEventFrame["event"],
+      };
+      this.publish(frame);
+    };
+
+    // Mirror the observable production lifecycle. Scheduling at zero keeps the
+    // command response first while allowing tests to hold the turn active.
+    this.scheduler.schedule(0, () => {
+      if (this.closed) return;
+      publishEvent({ type: "agent.start" });
+      publishEvent({ type: "turn.start" });
+    });
+
     for (const step of this.seed.scripts.prompt) {
       this.scheduler.schedule(step.atMs, () => {
         if (this.closed) return;
-        const nextSeq = this.seq + 1;
         if (step.kind === "event") {
-          const event: LiveEventFrame = {
-            v: V,
-            type: "event",
-            cursor: sessionCursor(this.seed, nextSeq, this.epoch),
-            hostId: branded<HostId>(this.seed.hostId),
-            sessionId: branded<SessionId>(this.seed.sessionId),
-            event: {
-              type: "message.delta",
-              entryId: `entry-${this.seed.id}-${nextSeq}`,
-              text: step.text ?? "",
-            },
-          };
-          this.publish(event);
+          liveEntryId ??= `entry-${this.seed.id}-live-${this.nextLiveEntry++}`;
+          accumulatedText += step.text ?? "";
+          publishEvent({
+            type: "message.update",
+            entryId: liveEntryId,
+            role: "assistant",
+            text: accumulatedText,
+          });
         } else {
           this.durableCount += 1;
           const suffix = `-${this.durableCount}`;
           this.revision = branded<Revision>(
             `${this.seed.revision.slice(0, Math.max(1, 128 - suffix.length))}${suffix}`,
           );
-          const entry = buildEntry(this.seed, nextSeq, step.text ?? `entry-${nextSeq}`, parent);
+          const durableEntryId = `entry-${this.seed.id}-durable-${this.durableCount}`;
+          const entry = buildEntry(
+            this.seed,
+            this.seq + 1,
+            step.text ?? `entry-${this.seq + 1}`,
+            parent,
+            durableEntryId,
+          );
+          if (liveEntryId !== null) {
+            publishEvent({
+              type: "message.settled",
+              transientEntryId: liveEntryId,
+              entryId: durableEntryId,
+            });
+          }
           parent = entry.id;
+          liveEntryId = null;
+          accumulatedText = "";
+          const nextSeq = this.seq + 1;
           this.publish({
             v: V,
             type: "entry",
@@ -730,9 +876,24 @@ export class FixtureEngine {
         }
       });
     }
+
+    const finalAtMs = this.seed.scripts.prompt.reduce(
+      (latest, step) => Math.max(latest, step.atMs),
+      0,
+    );
+    this.scheduler.schedule(finalAtMs, () => {
+      if (this.closed) return;
+      publishEvent({ type: "turn.end" });
+      publishEvent({ type: "agent.end", status: "completed", messageCount: 1 });
+    });
   }
   private publish(frame: JournalFrame): void {
     this.seq = frame.cursor.seq;
+    if (frame.type === "entry") {
+      const existing = this.durableEntries.findIndex((entry) => entry.id === frame.entry.id);
+      if (existing === -1) this.durableEntries.push(frame.entry);
+      else this.durableEntries[existing] = frame.entry;
+    }
     this.journal.push(frame);
     if (this.journal.length > MAX_JOURNAL)
       this.journal.splice(0, this.journal.length - MAX_JOURNAL);

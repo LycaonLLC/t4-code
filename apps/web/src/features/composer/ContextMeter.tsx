@@ -27,7 +27,7 @@ export function ContextMeter({ usedTokens, windowTokens }: ContextMeterProps) {
     <Popover.Root>
       <Popover.Trigger
         aria-label={`Context ${percent}% full`}
-        className="flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-muted-foreground text-xs outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex h-11 cursor-pointer items-center gap-1.5 rounded-md px-2 text-muted-foreground text-xs outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:h-7 sm:px-1.5"
       >
         <svg aria-hidden="true" className="size-4 shrink-0" viewBox="0 0 16 16">
           <circle

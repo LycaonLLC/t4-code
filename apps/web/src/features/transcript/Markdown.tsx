@@ -31,6 +31,7 @@ export function CopyButton({ text, label }: { readonly text: string; readonly la
         render={
           <IconButton
             aria-label={label}
+            className="size-11 sm:size-6"
             onClick={() => {
               void navigator.clipboard.writeText(text);
               setCopied(true);
@@ -53,9 +54,9 @@ function CodeBlock({ className, children }: { className?: string; children?: Rea
   const text = extractText(children).replace(/\n$/, "");
   return (
     <div className="group/code my-2 overflow-hidden rounded-lg border border-border bg-(--markdown-codeblock-background)">
-      <div className="flex h-7 items-center justify-between border-border/60 border-b pr-1 pl-3">
+      <div className="flex h-11 items-center justify-between border-border/60 border-b pr-1 pl-3 sm:h-7">
         <span className="font-mono text-[0.6875rem] text-muted-foreground">{language || "code"}</span>
-        <span className="opacity-0 transition-opacity duration-(--motion-duration-fast) focus-within:opacity-100 group-hover/code:opacity-100">
+        <span className="opacity-100 transition-opacity duration-(--motion-duration-fast) sm:opacity-0 sm:focus-within:opacity-100 sm:group-hover/code:opacity-100">
           <CopyButton label="Copy code" text={text} />
         </span>
       </div>

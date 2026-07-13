@@ -12,6 +12,10 @@ import {
 } from "../src/features/panes/activity-log.ts";
 import { createInspectorStore } from "../src/features/panes/inspector-store.ts";
 import type { ActivityEntry } from "../src/features/panes/model.ts";
+import {
+  OMP_APPSERVER_SESSION_EVENT_TYPES,
+  TRANSCRIPT_SESSION_EVENT_TYPES,
+} from "../src/features/session-runtime/session-event-vocabulary.ts";
 
 const AT = "2026-07-11T10:00:00.000Z";
 
@@ -36,6 +40,46 @@ describe("event classification", () => {
     expect(classifySessionEvent({ type: "tool.start", title: "grep" }, 1, AT).kind).toBe("tool");
     expect(classifySessionEvent({ type: "job.end" }, 1, AT).kind).toBe("job");
     expect(classifySessionEvent({ type: "session.error" }, 1, AT).kind).toBe("error");
+  });
+
+  it("recognizes every transcript event from the shared vocabulary", () => {
+    expect(TRANSCRIPT_SESSION_EVENT_TYPES).toEqual([
+      "turn.start",
+      "turn.end",
+      "message.delta",
+      "message.update",
+      "message.settled",
+      "tool.start",
+      "tool.progress",
+      "tool.result",
+      "approval.request",
+      "approval.resolved",
+      "ask.request",
+      "ask.resolved",
+      "plan.ready",
+      "plan.resolved",
+      "turn.error",
+      "turn.retry",
+      "compaction",
+      "agent.end",
+      "tool.end",
+      "tool.error",
+      "session.compaction",
+      "session.retry",
+      "session.error",
+    ]);
+    for (const type of TRANSCRIPT_SESSION_EVENT_TYPES) {
+      expect(classifySessionEvent({ type }, 1, AT).unknown, type).toBe(false);
+    }
+  });
+
+  it("recognizes the complete current OMP appserver event vocabulary", () => {
+    for (const type of OMP_APPSERVER_SESSION_EVENT_TYPES) {
+      expect(classifySessionEvent({ type }, 1, AT).unknown, type).toBe(false);
+    }
+    expect(
+      classifySessionEvent({ type: "notice", level: "error", message: "failed" }, 1, AT).kind,
+    ).toBe("error");
   });
 
   it("keeps unknown event types in the stream, flagged, with raw payload", () => {

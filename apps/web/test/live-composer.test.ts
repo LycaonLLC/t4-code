@@ -611,6 +611,7 @@ describe("authoritative live runtime protocol", () => {
     expect(controllerLeaseCalled).toBe(true);
     const cmd4 = shell.commands.find(c => c.intent.command === "session.cancel");
     expect(cmd4).toBeDefined();
+    expect(cmd4?.intent.expectedRevision).toBeUndefined();
   });
 
   it("projects queuedFollowUps from host liveState and performs no local queue mutation", async () => {

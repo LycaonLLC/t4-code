@@ -81,12 +81,13 @@ describe("browser platform boundary", () => {
     let connectCalls = 0;
     let closed = false;
     let fakeState: "pairing" | "ready" = "pairing";
+    let confirmResponse = { requestId: "confirm", ok: true, type: "response", v: "omp-app/1" };
     const fakeClient = {
       get state() { return fakeState; },
       connect: async () => { connectCalls += 1; },
       close: async () => { closed = true; },
       command: async () => ({ requestId: "req", commandId: "cmd", ok: true, result: { value: 1 }, type: "response", v: "0.1" }),
-      confirm: async () => ({ requestId: "confirm", ok: true, type: "response", v: "0.1" }),
+      confirm: async () => confirmResponse,
       pairStart: async () => {
         const callback = capturedOptions?.privilegedPairResult;
         if (callback === undefined) throw new Error("pair callback missing");
@@ -114,14 +115,32 @@ describe("browser platform boundary", () => {
     expect(capturedOptions?.authentication?.()).toEqual({ deviceId: "browser-1", deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" });
     const command = await shell.command({ targetId: "remote", intent: { hostId: hostId("host"), command: "session.list", args: {} } });
     expect(command).toMatchObject({ requestId: "req", commandId: "cmd", accepted: true, result: { value: 1 } });
-    const confirmation = await shell.confirm({
+    const confirmationRequest = {
       targetId: "remote",
       confirmationId: confirmationId("confirm"),
       commandId: commandId("cmd"),
       hostId: hostId("host"),
       decision: "approve",
-    });
+    } as const;
+    const confirmation = await shell.confirm(confirmationRequest);
     expect(confirmation.accepted).toBe(true);
+
+    confirmResponse = {
+      requestId: "original-command-request",
+      ok: false,
+      type: "response",
+      v: "omp-app/1",
+      error: { code: "confirmation_denied", message: "command was denied" },
+    } as never;
+    expect((await shell.confirm({ ...confirmationRequest, decision: "deny" })).accepted).toBe(true);
+    confirmResponse = {
+      requestId: "confirm-invalid",
+      ok: false,
+      type: "response",
+      v: "omp-app/1",
+      error: { code: "confirmation_invalid", message: "confirmation is invalid or expired" },
+    } as never;
+    expect((await shell.confirm(confirmationRequest)).accepted).toBe(false);
     await shell.disconnect({ targetId: "remote" });
     expect(closed).toBe(true);
   });

@@ -128,6 +128,47 @@ describe("client projections", () => {
     expect(streamed.sessions.get(sessionKey("session-a"))?.freshness).toBe("fresh");
     expect(applyPublicFrame(streamed, delta(String(HOST), "session-a", 2, changed))).toBe(streamed);
   });
+
+  it("retires transient message frames through an authoritative settlement id", () => {
+    let state = applyPublicFrame(createProjectionSnapshot(), frame("snapshot"));
+    state = applyPublicFrame(state, {
+      ...frame("event"),
+      event: { type: "message.update", entryId: "assistant:stream-1", text: "hello" },
+    });
+    state = applyPublicFrame(state, {
+      ...frame("event"),
+      cursor: { epoch: "e1", seq: 3 },
+      event: {
+        type: "message.settled",
+        transientEntryId: "assistant:stream-1",
+        entryId: "durable-1",
+      },
+    });
+    const afterSettlement = state.sessions.get(sessionKey("session-a"))!;
+    expect(afterSettlement.events.map((event) => event.event.type)).toEqual([
+      "message.settled",
+    ]);
+    state = applyPublicFrame(state, {
+      v: V,
+      type: "entry",
+      cursor: { epoch: "e1", seq: 4 },
+      revision: revision("r2"),
+      hostId: HOST,
+      sessionId: sessionId("session-a"),
+      entry: {
+        id: "durable-1" as never,
+        parentId: null,
+        hostId: HOST,
+        sessionId: sessionId("session-a"),
+        kind: "message",
+        timestamp: "2026-07-11T00:00:00Z",
+        data: { role: "assistant", text: "hello" },
+      },
+    });
+    const settled = state.sessions.get(sessionKey("session-a"))!;
+    expect(settled.events).toHaveLength(0);
+    expect(settled.entries.map((entry) => entry.id)).toEqual(["durable-1"]);
+  });
   it("uses the emitting owner cursor for remove-other deltas and keeps warm transcripts aligned", () => {
     let state = applyPublicFrame(createProjectionSnapshot(), frame("snapshot"));
     state = applyPublicFrame(state, { v: V, type: "sessions", cursor: { epoch: "e1", seq: 1 }, sessions: [ref(String(HOST), "session-a"), ref(String(HOST), "session-b")] });
@@ -319,9 +360,38 @@ describe("client projections", () => {
     expect(session.terminals.get("term-a")).toMatchObject({ stdout: "hello", exitCode: 0, closed: true });
     expect(session.files.get("src/main.ts")?.content).toBe("ok");
     expect(session.reviews.get("review-a")?.status).toBe("open");
-    expect(session.confirmations.size).toBe(1);
+    expect(session.confirmations.size).toBe(0);
     expect(session.audit).toHaveLength(1);
     expect(session.results.get("request-a")?.result).toEqual({ answer: 42 });
+  });
+
+  it("keeps the challenge after confirmation_invalid", () => {
+    let state = applyPublicFrame(createProjectionSnapshot(), frame("snapshot"));
+    state = applyPublicFrame(state, {
+      v: V,
+      type: "confirmation",
+      confirmationId: "confirm-live" as never,
+      commandId: "command-live" as never,
+      hostId: HOST,
+      sessionId: sessionId("session-a"),
+      commandHash: "hash-live",
+      revision: revision("r1"),
+      expiresAt: "2999-01-01T00:00:00.000Z",
+      summary: "live challenge",
+    });
+    const invalidResponse = (request: string, command: string) => ({
+      v: V,
+      type: "response" as const,
+      requestId: request as never,
+      commandId: command as never,
+      hostId: HOST,
+      sessionId: sessionId("session-a"),
+      ok: false,
+      error: { code: "confirmation_invalid", message: "confirmation is invalid or expired" },
+    });
+    state = applyPublicFrame(state, invalidResponse("request-live", "command-live"));
+    const confirmations = state.sessions.get(sessionKey("session-a"))!.confirmations;
+    expect([...confirmations.keys()]).toEqual(["confirm-live"]);
   });
 
   it("retains a 10k snapshot and bounds 100k event throughput with structural sharing", () => {

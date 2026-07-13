@@ -287,6 +287,31 @@ describe("desktop runtime projection", () => {
     await expect(runtime.acquireControllerLease("remote", "host-remote", "session-a", "revision-z")).rejects.toMatchObject({ code: "outcome_unknown" });
     expect(shell.commands.filter((command) => command.intent.command === "controller.lease.acquire")).toHaveLength(2);
   });
+  it("can bind a controller lease without adding a revision to a revision-optional command", async () => {
+    const { shell, runtime } = await leaseRuntime(["controller.lease"]);
+    const intent = {
+      hostId: hostId("host-remote"),
+      sessionId: sessionId("session-a"),
+      command: "session.cancel",
+      args: {},
+    };
+    await runtime.commandWithControllerLease("remote", intent, "revision-a");
+    expect(shell.commands.map((command) => command.intent)).toEqual([
+      {
+        hostId: hostId("host-remote"),
+        sessionId: sessionId("session-a"),
+        command: "controller.lease.acquire",
+        expectedRevision: revision("revision-a"),
+        args: { ownerId: "t4-code-client" },
+      },
+      {
+        hostId: hostId("host-remote"),
+        sessionId: sessionId("session-a"),
+        command: "session.cancel",
+        args: { leaseId: "lease-fixture" },
+      },
+    ]);
+  });
   it("passes prompt commands through unchanged when prompt leases are absent", async () => {
     const { shell, runtime } = await leaseRuntime([]);
     const intent = leaseIntent({ message: "hello" });

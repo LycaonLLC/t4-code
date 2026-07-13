@@ -71,6 +71,7 @@ function DesktopHomePane({
   const targetsApi = useMemo(() => createTargetsStore(controller, {}), [controller]);
   const actionsState = useSyncExternalStore(actions.subscribe, actions.getState);
   const state = snapshot === null ? null : deriveDesktopHomeState(snapshot);
+  const browserDirect = shell.serviceInspect === undefined;
   const needsInspection = state !== null && state.kind === "service";
 
   // Entering the service state reads the real service once; every action
@@ -118,10 +119,11 @@ function DesktopHomePane({
             <EmptyMedia variant="default">
               <BrandLockup byline size="lg" />
             </EmptyMedia>
-            <EmptyTitle>No sessions yet</EmptyTitle>
+            <EmptyTitle>{browserDirect ? "Choose a live session" : "No sessions yet"}</EmptyTitle>
             <EmptyDescription>
-              This machine is connected. Sessions you start here or from a paired device appear in
-              the list on the left the moment they exist.
+              {browserDirect
+                ? "This Tailnet connection is live. Choose a session from the list on the left to inspect it."
+                : "This machine is connected. Sessions you start here or from a paired device appear in the list on the left the moment they exist."}
             </EmptyDescription>
           </EmptyHeader>
         </Empty>

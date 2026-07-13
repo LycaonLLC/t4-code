@@ -133,7 +133,7 @@ function ProjectHeaderRow({ group }: { group: ProjectGroup }) {
       <div className="flex items-center gap-0.5">
         <button
           aria-expanded={group.expanded}
-          className="flex min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 py-1 text-left outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+          className="flex min-h-11 min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 py-1 text-left outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background sm:min-h-0"
           onClick={() =>
             workspaceStore.getState().setProjectExpanded(group.project.id, !group.expanded)
           }
@@ -171,7 +171,7 @@ function ProjectHeaderRow({ group }: { group: ProjectGroup }) {
               render={
                 <IconButton
                   aria-label={`New session in ${group.project.name}`}
-                  className="size-6 shrink-0"
+                  className="size-11 shrink-0 sm:size-6"
                   disabled={pending}
                   onClick={handleCreate}
                   size="icon-xs"

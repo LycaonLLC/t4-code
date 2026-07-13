@@ -18,7 +18,13 @@ import {
 } from "../composer/panels.tsx";
 import type { SessionIntent } from "../session-runtime/intents.ts";
 import { useSessionRuntime } from "../session-runtime/useSessionRuntime.ts";
-import { computeStableRows, deriveAttention, deriveTranscriptRows, initialStableRowsState, type StableRowsState } from "./rows.ts";
+import {
+  computeStableRows,
+  deriveAttention,
+  deriveTranscriptRows,
+  initialStableRowsState,
+  type StableRowsState,
+} from "./rows.ts";
 import { TranscriptTimeline } from "./TranscriptTimeline.tsx";
 
 export interface SessionMainProps {
@@ -70,10 +76,7 @@ export function SessionMain({ session }: SessionMainProps) {
   const attention = useMemo(() => deriveAttention(projection), [projection]);
 
   const [revisingPlanId, setRevisingPlanId] = useState<string | null>(null);
-  const onIntent = useCallback(
-    (intent: SessionIntent) => runtime.dispatch(intent),
-    [runtime],
-  );
+  const onIntent = useCallback((intent: SessionIntent) => runtime.dispatch(intent), [runtime]);
   const submitPrompt = useCallback(
     (intent: SessionIntent) => runtime.submitPrompt(intent),
     [runtime],
@@ -138,7 +141,7 @@ export function SessionMain({ session }: SessionMainProps) {
         )}
         <div
           className={cn(
-            "pointer-events-none absolute inset-x-0 bottom-0 mx-auto w-full max-w-(--transcript-measure) px-4 pb-4 sm:px-6",
+            "pointer-events-none absolute inset-x-0 bottom-0 mx-auto w-full max-w-(--transcript-measure) overflow-x-hidden pr-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] sm:px-6",
           )}
           ref={dockRef}
         >

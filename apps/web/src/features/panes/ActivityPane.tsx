@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { memo, useMemo, useRef, useState, type ComponentType } from "react";
 
+import { useMediaQuery } from "../../hooks/useMediaQuery.ts";
 import { exportActivity, redactPayload, selectVisibleActivity } from "./activity-log.ts";
 import { FamilyEmpty } from "./FamilyEmpty.tsx";
 import { PaneHeading } from "./PaneHeading.tsx";
@@ -27,7 +28,8 @@ import { useVirtualWindow } from "./hooks.ts";
 import { useInspector, type InspectorStoreApi } from "./inspector-store.ts";
 import type { ActivityEntry, ActivityFilter, ActivityKind } from "./model.ts";
 
-const ROW_HEIGHT = 28;
+const DENSE_ROW_HEIGHT = 28;
+const PHONE_ROW_HEIGHT = 44;
 
 const FILTERS: readonly { id: ActivityFilter; label: string }[] = [
   { id: "all", label: "All" },
@@ -61,10 +63,12 @@ const ActivityRow = memo(function ActivityRow({
   entry,
   expanded,
   onToggle,
+  rowHeight,
 }: {
   readonly entry: ActivityEntry;
   readonly expanded: boolean;
   readonly onToggle: (seq: number) => void;
+  readonly rowHeight: number;
 }) {
   const Icon = KIND_ICONS[entry.kind];
   return (
@@ -75,7 +79,7 @@ const ActivityRow = memo(function ActivityRow({
         expanded ? "bg-secondary" : "hover:bg-secondary/60",
       )}
       onClick={() => onToggle(entry.seq)}
-      style={{ height: ROW_HEIGHT }}
+      style={{ height: rowHeight }}
       type="button"
     >
       <Icon
@@ -186,6 +190,8 @@ export function ActivityPane({ api }: { readonly api: InspectorStoreApi }) {
   const pausedAtSeq = useInspector(api, (state) => state.activityPausedAtSeq);
   const expandedSeq = useInspector(api, (state) => state.expandedActivitySeq);
   const sampleMode = useInspector(api, (state) => state.sampleMode);
+  const phoneLayout = useMediaQuery("(max-width: 639px)");
+  const rowHeight = phoneLayout ? PHONE_ROW_HEIGHT : DENSE_ROW_HEIGHT;
   const listRef = useRef<HTMLDivElement | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -195,7 +201,7 @@ export function ActivityPane({ api }: { readonly api: InspectorStoreApi }) {
   );
   const heldBack =
     pausedAtSeq === null ? 0 : entries.filter((entry) => entry.seq > pausedAtSeq).length;
-  const win = useVirtualWindow(listRef, visible.length, ROW_HEIGHT);
+  const win = useVirtualWindow(listRef, visible.length, rowHeight);
   const expandedEntry =
     expandedSeq === null ? undefined : entries.find((entry) => entry.seq === expandedSeq);
 
@@ -225,7 +231,11 @@ export function ActivityPane({ api }: { readonly api: InspectorStoreApi }) {
         summary={`${entries.length} recorded${pausedAtSeq !== null ? " · paused" : ""}`}
       />
       <div className="flex shrink-0 flex-wrap items-center gap-1 border-border border-b px-2 py-1.5">
-        <div aria-label="Filter events" className="flex items-center gap-0.5" role="group">
+        <div
+          aria-label="Filter events"
+          className="flex w-full flex-wrap items-center gap-0.5 sm:w-auto sm:flex-nowrap"
+          role="group"
+        >
           {FILTERS.map((chip) => (
             <button
               aria-pressed={filter === chip.id}
@@ -243,22 +253,24 @@ export function ActivityPane({ api }: { readonly api: InspectorStoreApi }) {
             </button>
           ))}
         </div>
-        <span className="flex-1" />
-        <IconButton
-          aria-label={pausedAtSeq === null ? "Pause the stream" : "Resume the stream"}
-          aria-pressed={pausedAtSeq !== null}
-          className={cn(pausedAtSeq !== null && "bg-secondary")}
-          onClick={() => api.getState().setActivityPaused(pausedAtSeq === null)}
-          size="icon-xs"
-        >
-          {pausedAtSeq === null ? <Pause /> : <Play />}
-        </IconButton>
-        <IconButton aria-label="Copy visible events" onClick={copyAll} size="icon-xs">
-          <Copy />
-        </IconButton>
-        <IconButton aria-label="Download visible events" onClick={download} size="icon-xs">
-          <Download />
-        </IconButton>
+        <span className="hidden flex-1 sm:block" />
+        <div className="ml-auto flex items-center gap-1 sm:gap-0.5">
+          <IconButton
+            aria-label={pausedAtSeq === null ? "Pause the stream" : "Resume the stream"}
+            aria-pressed={pausedAtSeq !== null}
+            className={cn(pausedAtSeq !== null && "bg-secondary")}
+            onClick={() => api.getState().setActivityPaused(pausedAtSeq === null)}
+            size="icon-xs"
+          >
+            {pausedAtSeq === null ? <Pause /> : <Play />}
+          </IconButton>
+          <IconButton aria-label="Copy visible events" onClick={copyAll} size="icon-xs">
+            <Copy />
+          </IconButton>
+          <IconButton aria-label="Download visible events" onClick={download} size="icon-xs">
+            <Download />
+          </IconButton>
+        </div>
       </div>
       <div className="shrink-0 border-border border-b px-2 py-1.5">
         <input
@@ -307,6 +319,7 @@ export function ActivityPane({ api }: { readonly api: InspectorStoreApi }) {
                 onToggle={(seq) =>
                   api.getState().setExpandedActivity(seq === expandedSeq ? null : seq)
                 }
+                rowHeight={rowHeight}
               />
             ))}
             <div aria-hidden="true" style={{ height: win.bottomPad }} />

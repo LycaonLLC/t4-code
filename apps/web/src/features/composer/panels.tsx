@@ -90,15 +90,15 @@ export function ApprovalPanel({
           </pre>
         )}
         <div className="flex items-center gap-2 pt-0.5">
-          <Button onClick={() => respond("approve")} size="sm">
+          <Button className="min-h-11 sm:min-h-0" onClick={() => respond("approve")} size="sm">
             <Check aria-hidden="true" />
             Approve
           </Button>
-          <Button onClick={() => respond("deny")} size="sm" variant="destructive-outline">
+          <Button className="min-h-11 sm:min-h-0" onClick={() => respond("deny")} size="sm" variant="destructive-outline">
             <X aria-hidden="true" />
             Deny
           </Button>
-          <span className="text-muted-foreground text-xs">y approves · n denies</span>
+          <span className="hidden text-muted-foreground text-xs sm:inline">y approves · n denies</span>
         </div>
       </div>
     </PanelChrome>
@@ -171,7 +171,7 @@ export function AskPanel({
                 <button
                   aria-pressed={ask.multiple ? active : undefined}
                   className={cn(
-                    "flex w-full cursor-pointer items-baseline gap-2 rounded-md border border-transparent px-2 py-1.5 text-left outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
+                    "flex min-h-11 w-full cursor-pointer items-baseline gap-2 rounded-md border border-transparent px-2 py-1.5 text-left outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-0",
                     active && "border-input bg-secondary",
                   )}
                   onClick={() => toggle(option.id)}
@@ -194,7 +194,7 @@ export function AskPanel({
         {ask.allowText && (
           <input
             aria-label="Answer in your own words"
-            className="h-8 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-11 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring sm:h-8"
             onChange={(event) => setFreeText(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.nativeEvent.isComposing) {
@@ -210,6 +210,7 @@ export function AskPanel({
         {(ask.multiple || ask.allowText) && (
           <div className="flex items-center gap-2">
             <Button
+              className="min-h-11 sm:min-h-0"
               disabled={selected.length === 0 && freeText.trim() === ""}
               onClick={submitSelection}
               size="sm"
@@ -250,16 +251,18 @@ export function PlanPanel({
         </div>
         <div className="flex flex-wrap items-center gap-2 pt-0.5">
           <Button
+            className="min-h-11 sm:min-h-0"
             onClick={() => onIntent({ kind: "plan", planId: plan.planId, action: "approve", note: "" })}
             size="sm"
           >
             <Check aria-hidden="true" />
             Approve and start
           </Button>
-          <Button onClick={onRevise} size="sm" variant="outline">
+          <Button className="min-h-11 sm:min-h-0" onClick={onRevise} size="sm" variant="outline">
             Revise
           </Button>
           <Button
+            className="min-h-11 sm:min-h-0"
             onClick={() => onIntent({ kind: "plan", planId: plan.planId, action: "reject", note: "" })}
             size="sm"
             variant="ghost"
@@ -292,7 +295,7 @@ export function TurnErrorBanner({
       <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-destructive-foreground" />
       <p className="min-w-0 flex-1 text-destructive-foreground text-sm">{error.message}</p>
       {onRetry !== null && error.retryable && (
-        <Button onClick={onRetry} size="xs" variant="outline">
+        <Button className="min-h-11 sm:min-h-0" onClick={onRetry} size="xs" variant="outline">
           <RotateCcw aria-hidden="true" />
           Retry
         </Button>

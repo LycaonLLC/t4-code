@@ -89,7 +89,7 @@ describe("sequenced frames", () => {
     projection = reduceTranscript(projection, event);
     expect(projection).toBe(afterFirst);
   });
- 
+
   it("advances across a session delta without changing transcript state", () => {
     const factory = makeFactory();
     let projection = withSnapshot(factory);
@@ -150,6 +150,42 @@ describe("sequenced frames", () => {
 });
 
 describe("live/durable exclusion", () => {
+  it("appends canonical fixture message.delta chunks and keeps update replacement compatibility", () => {
+    const factory = makeFactory();
+    let projection = withSnapshot(factory, 0);
+    const fixtureEntryId = "entry-stream-v1-live-1";
+    projection = reduceTranscript(
+      projection,
+      factory.event({ type: "message.delta", entryId: fixtureEntryId, text: "Hello" }),
+    );
+    projection = reduceTranscript(
+      projection,
+      factory.event({ type: "message.delta", entryId: fixtureEntryId, text: " world" }),
+    );
+    expect(projection.liveMessages.get(fixtureEntryId)?.text).toBe("Hello world");
+
+    projection = reduceTranscript(
+      projection,
+      factory.event({
+        type: "message.update",
+        entryId: fixtureEntryId,
+        role: "assistant",
+        text: "Hello world!",
+      }),
+    );
+    expect(projection.liveMessages.get(fixtureEntryId)?.text).toBe("Hello world!");
+
+    const settled = factory.entryRecord({
+      id: fixtureEntryId,
+      kind: "message",
+      timestamp: "2026-07-11T09:00:03Z",
+      data: { role: "assistant", text: "Hello world!" },
+    });
+    projection = reduceTranscript(projection, factory.entry(settled));
+    expect(projection.liveMessages.has(fixtureEntryId)).toBe(false);
+    expect(projection.entries.at(-1)?.id).toBe(fixtureEntryId);
+  });
+
   it("full accumulating message events replace live text", () => {
     const factory = makeFactory();
     let projection = withSnapshot(factory);
@@ -195,6 +231,51 @@ describe("live/durable exclusion", () => {
     );
     expect(stale.liveMessages.has("m")).toBe(false);
   });
+
+  it("uses message.settled to reconcile different transient and durable ids", () => {
+    const factory = makeFactory();
+    let projection = withSnapshot(factory, 0);
+    projection = reduceTranscript(
+      projection,
+      factory.event({
+        type: "message.update",
+        entryId: "assistant:stream-7",
+        role: "assistant",
+        text: "same text can occur more than once",
+      }),
+    );
+    projection = reduceTranscript(
+      projection,
+      factory.event({
+        type: "message.settled",
+        transientEntryId: "assistant:stream-7",
+        entryId: "durable-random-id",
+      }),
+    );
+    expect(projection.liveMessages.has("assistant:stream-7")).toBe(false);
+    expect(projection.liveMessages.get("durable-random-id")).toMatchObject({
+      entryId: "durable-random-id",
+      text: "same text can occur more than once",
+    });
+
+    projection = reduceTranscript(
+      projection,
+      factory.entry(
+        factory.entryRecord({
+          id: "durable-random-id",
+          kind: "message",
+          timestamp: "t",
+          data: { role: "assistant", text: "same text can occur more than once" },
+        }),
+      ),
+    );
+    expect(projection.liveMessages.size).toBe(0);
+    const rows = deriveTranscriptRows(projection).filter(
+      (row) => row.kind === "message" && row.id === "durable-random-id",
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.kind === "message" && rows[0].live).toBe(false);
+  });
 });
 
 describe("attention and notice states", () => {
@@ -238,7 +319,45 @@ describe("attention and notice states", () => {
     expect(attention.plan).toBeNull();
   });
 
-  it("surfaces error/retry/compaction notices and resyncs on unknown events", () => {
+  it("projects the real RPC approval shape without a blank card", () => {
+    const factory = makeFactory();
+    let projection = withSnapshot(factory);
+    projection = reduceTranscript(
+      projection,
+      factory.event({
+        type: "approval.request",
+        approvalId: "rpc-confirm-1",
+        title: "Apply migration?",
+        message: "This rewrites settings.db and creates a backup.",
+        responseKind: "confirmed",
+        source: "rpc-ui",
+      }),
+    );
+    expect(projection.approval).toMatchObject({
+      approvalId: "rpc-confirm-1",
+      title: "Apply migration?",
+      message: "This rewrites settings.db and creates a backup.",
+      command: "",
+    });
+  });
+
+  it("ends active composer state when agent.end arrives without turn.end", () => {
+    const factory = makeFactory();
+    let projection = withSnapshot(factory);
+    projection = reduceTranscript(projection, factory.event({ type: "turn.start" }));
+    projection = reduceTranscript(
+      projection,
+      factory.event({ type: "message.update", entryId: "live", text: "partial" }),
+    );
+    projection = reduceTranscript(
+      projection,
+      factory.event({ type: "agent.end", status: "completed", messageCount: 1 }),
+    );
+    expect(projection.turnActive).toBe(false);
+    expect(projection.liveMessages.size).toBe(0);
+  });
+
+  it("surfaces error/retry/compaction notices and advances past additive unknown events", () => {
     const factory = makeFactory();
     let projection = withSnapshot(factory);
     projection = reduceTranscript(
@@ -264,7 +383,20 @@ describe("attention and notice states", () => {
       projection,
       factory.event({ type: "wormhole.open", detail: "??" }),
     );
-    expect(projection.phase).toBe("resyncing");
+    const unknownCursor = projection.cursor;
+    expect(projection.phase).toBe("active");
+    expect(projection.notices.map((notice) => notice.kind)).toEqual([
+      "retry",
+      "compaction",
+      "error",
+    ]);
+
+    projection = reduceTranscript(
+      projection,
+      factory.event({ type: "turn.start", at: "2026-07-11T09:00:00Z" }),
+    );
+    expect(projection.cursor?.seq).toBe((unknownCursor?.seq ?? 0) + 1);
+    expect(projection.turnActive).toBe(true);
   });
 });
 

@@ -13,9 +13,10 @@
 //   are ignored. A skipped sequence or epoch change pauses this stream until
 //   a fresh snapshot arrives; nothing is applied out of order.
 // - Durable entries additionally dedupe by stable entry id, never by seq.
-// - `message.update` events carry the full accumulating text, so applying one
-//   replaces the live buffer. Once the durable entry with the same id lands,
-//   the live buffer is dropped — a settled message never renders twice.
+// - `message.delta` events append chunks while `message.update` carries the
+//   full accumulating text and replaces the live buffer. Once the durable
+//   entry with the same id lands, the live buffer is dropped — a settled
+//   message never renders twice.
 import type {
   Cursor,
   DurableEntry,
@@ -26,9 +27,13 @@ import type {
   SessionEvent,
   SessionSnapshotFrame,
 } from "@t4-code/protocol";
- 
-export type { Cursor, DurableEntry } from "@t4-code/protocol";
 
+import {
+  sessionEventSpec,
+  type SessionEventProjectionKind,
+} from "../session-runtime/session-event-vocabulary.ts";
+
+export type { Cursor, DurableEntry } from "@t4-code/protocol";
 
 /** Health of the sequenced session stream feeding this projection. */
 export type StreamPhase =
@@ -37,11 +42,11 @@ export type StreamPhase =
   | "paused" // a sequence gap or epoch change stopped applies; snapshot needed
   | "resyncing"; // server announced a gap; snapshot is on the way
 
-/** Live (not yet durable) message being streamed, keyed by its future entry id. */
+/** Live (not yet durable) message being streamed, keyed by a transient id. */
 export interface LiveMessage {
   readonly entryId: string;
   readonly role: "assistant" | "user";
-  /** Full accumulated text so far (message.update replaces, never appends). */
+  /** Full accumulated text so far (delta appends; update replaces). */
   readonly text: string;
   /** Full accumulated reasoning text, when the model is thinking aloud. */
   readonly reasoning: string;
@@ -66,6 +71,8 @@ export interface ToolCall {
 
 export interface ApprovalRequest {
   readonly approvalId: string;
+  readonly title: string;
+  readonly message: string;
   readonly command: string;
   readonly args: Record<string, unknown>;
   readonly requestedAt: string;
@@ -260,8 +267,9 @@ function applyEntry(
 // ---------------------------------------------------------------------------
 // Event interpretation. SessionEvent is an open record on the wire; these
 // helpers read the negotiated event vocabulary defensively — a malformed
-// field degrades to a safe default, never a crash. Unknown event *types* are
-// a protocol violation and flip the stream into resync (per plan §16).
+// field degrades to a safe default, never a crash. Event types are additive
+// by app-wire contract: unknown leaves advance the cursor and stay available
+// in the raw Activity inspector without blocking later known events.
 // ---------------------------------------------------------------------------
 
 function str(value: unknown, fallback = ""): string {
@@ -283,35 +291,73 @@ function eventTimestamp(event: SessionEvent): string {
   return str(event.at, new Date(0).toISOString());
 }
 
-function applyMessageUpdate(
+function applyMessageEvent(
   projection: TranscriptProjection,
   event: SessionEvent,
+  mode: "delta" | "update",
 ): TranscriptProjection {
   const entryId = str(event.entryId);
   if (entryId === "") return projection;
   // A durable entry with this id already settled: the live event is stale.
   if (projection.entries.some((entry) => entry.id === entryId)) return projection;
   const previous = projection.liveMessages.get(entryId);
+  const incomingText = str(event.text);
+  const incomingReasoning = str(event.reasoning);
   const next = new Map(projection.liveMessages);
   next.set(entryId, {
     entryId,
-    role: event.role === "user" ? "user" : "assistant",
-    text: str(event.text, previous?.text ?? ""),
-    reasoning: str(event.reasoning, previous?.reasoning ?? ""),
+    role:
+      event.role === "user"
+        ? "user"
+        : event.role === "assistant"
+          ? "assistant"
+          : (previous?.role ?? "assistant"),
+    text:
+      mode === "delta"
+        ? `${previous?.text ?? ""}${incomingText}`
+        : str(event.text, previous?.text ?? ""),
+    reasoning:
+      mode === "delta"
+        ? `${previous?.reasoning ?? ""}${incomingReasoning}`
+        : str(event.reasoning, previous?.reasoning ?? ""),
     startedAt: previous?.startedAt ?? eventTimestamp(event),
   });
+  return { ...projection, liveMessages: next };
+}
+
+/**
+ * Re-key a completed live message using the appserver's authoritative
+ * transient-to-durable mapping. OMP mints the durable transcript id only when
+ * it persists the message, so matching on text or timestamps is ambiguous.
+ */
+function applyMessageSettled(
+  projection: TranscriptProjection,
+  event: SessionEvent,
+): TranscriptProjection {
+  const transientEntryId = str(event.transientEntryId);
+  const entryId = str(event.entryId);
+  if (transientEntryId === "" || entryId === "") return projection;
+
+  const live = projection.liveMessages.get(transientEntryId);
+  if (live === undefined) return projection;
+  const next = new Map(projection.liveMessages);
+  next.delete(transientEntryId);
+  if (!projection.entries.some((entry) => entry.id === entryId)) {
+    next.set(entryId, { ...live, entryId });
+  }
   return { ...projection, liveMessages: next };
 }
 
 function applyToolEvent(
   projection: TranscriptProjection,
   event: SessionEvent,
+  kind: "start" | "progress" | "result" | "error",
 ): TranscriptProjection {
   const callId = str(event.callId);
   if (callId === "") return projection;
   const calls = new Map(projection.toolCalls);
   const existing = calls.get(callId);
-  if (event.type === "tool.start") {
+  if (kind === "start") {
     calls.set(callId, {
       callId,
       tool: str(event.tool, "tool"),
@@ -323,7 +369,7 @@ function applyToolEvent(
       result: null,
       endedAt: null,
     });
-  } else if (event.type === "tool.progress") {
+  } else if (kind === "progress") {
     if (existing === undefined) return projection;
     const line = str(event.note, str(event.chunk));
     const progress =
@@ -336,7 +382,7 @@ function applyToolEvent(
     if (existing === undefined) return projection;
     calls.set(callId, {
       ...existing,
-      state: event.ok === false ? "error" : "ok",
+      state: kind === "error" || event.ok === false ? "error" : "ok",
       result: plainRecord(event.result),
       endedAt: eventTimestamp(event),
     });
@@ -353,8 +399,11 @@ function noticeId(prefix: string): string {
 function applyEvent(projection: TranscriptProjection, frame: LiveEventFrame): TranscriptProjection {
   const event = frame.event;
   const base: TranscriptProjection = { ...projection, cursor: frame.cursor };
-  switch (event.type) {
-    case "turn.start":
+  const projectionKind: SessionEventProjectionKind | undefined = sessionEventSpec(
+    event.type,
+  )?.projection;
+  switch (projectionKind) {
+    case "turn-start":
       return {
         ...base,
         turnActive: true,
@@ -364,7 +413,8 @@ function applyEvent(projection: TranscriptProjection, frame: LiveEventFrame): Tr
         ask: null,
         plan: null,
       };
-    case "turn.end":
+    case "turn-end":
+    case "agent-end":
       return {
         ...base,
         turnActive: false,
@@ -372,28 +422,38 @@ function applyEvent(projection: TranscriptProjection, frame: LiveEventFrame): Tr
         ask: null,
         liveMessages: new Map(),
       };
-    case "message.update":
-      return applyMessageUpdate(base, event);
-    case "tool.start":
-    case "tool.progress":
-    case "tool.result":
-      return applyToolEvent(base, event);
-    case "approval.request":
+    case "message-delta":
+      return applyMessageEvent(base, event, "delta");
+    case "message-update":
+      return applyMessageEvent(base, event, "update");
+    case "message-settled":
+      return applyMessageSettled(base, event);
+    case "tool-start":
+      return applyToolEvent(base, event, "start");
+    case "tool-progress":
+      return applyToolEvent(base, event, "progress");
+    case "tool-result":
+      return applyToolEvent(base, event, "result");
+    case "tool-error":
+      return applyToolEvent(base, event, "error");
+    case "approval-request":
       return {
         ...base,
         approval: {
           approvalId: str(event.approvalId),
+          title: str(event.title, "Approval needed"),
+          message: str(event.message),
           command: str(event.command),
           args: plainRecord(event.args),
           requestedAt: eventTimestamp(event),
           expiresAt: typeof event.expiresAt === "string" ? event.expiresAt : null,
         },
       };
-    case "approval.resolved":
+    case "approval-resolved":
       return projection.approval !== null && projection.approval.approvalId === str(event.approvalId)
         ? { ...base, approval: null }
         : base;
-    case "ask.request": {
+    case "ask-request": {
       const rawOptions = Array.isArray(event.options) ? event.options : [];
       const options: AskOption[] = rawOptions.map((raw, index) => {
         const option = plainRecord(raw);
@@ -415,11 +475,11 @@ function applyEvent(projection: TranscriptProjection, frame: LiveEventFrame): Tr
         },
       };
     }
-    case "ask.resolved":
+    case "ask-resolved":
       return projection.ask !== null && projection.ask.askId === str(event.askId)
         ? { ...base, ask: null }
         : base;
-    case "plan.ready":
+    case "plan-ready":
       return {
         ...base,
         plan: {
@@ -429,11 +489,11 @@ function applyEvent(projection: TranscriptProjection, frame: LiveEventFrame): Tr
           proposedAt: eventTimestamp(event),
         },
       };
-    case "plan.resolved":
+    case "plan-resolved":
       return projection.plan !== null && projection.plan.planId === str(event.planId)
         ? { ...base, plan: null }
         : base;
-    case "turn.error":
+    case "turn-error":
       return {
         ...base,
         turnActive: false,
@@ -441,19 +501,22 @@ function applyEvent(projection: TranscriptProjection, frame: LiveEventFrame): Tr
         notices: pushNotice(base.notices, {
           kind: "error",
           id: noticeId("error"),
-          message: str(event.message, "The turn stopped with an error."),
+          message: str(
+            event.message,
+            str(event.detail, str(event.title, "The turn stopped with an error.")),
+          ),
           retryable: event.retryable === true,
           at: eventTimestamp(event),
         }),
       };
-    case "turn.retry":
+    case "turn-retry":
       return {
         ...base,
         notices: pushNotice(base.notices, {
           kind: "retry",
           id: noticeId("retry"),
           attempt: typeof event.attempt === "number" ? event.attempt : 1,
-          reason: str(event.reason, "Transient failure"),
+          reason: str(event.reason, str(event.detail, "Transient failure")),
           at: eventTimestamp(event),
         }),
       };
@@ -463,24 +526,16 @@ function applyEvent(projection: TranscriptProjection, frame: LiveEventFrame): Tr
         notices: pushNotice(base.notices, {
           kind: "compaction",
           id: noticeId("compaction"),
-          summary: str(event.summary, "Older context was compacted."),
+          summary: str(event.summary, str(event.detail, "Older context was compacted.")),
           droppedEntries: typeof event.droppedEntries === "number" ? event.droppedEntries : 0,
           at: eventTimestamp(event),
         }),
       };
-    default:
-      // Unknown event type on a negotiated stream is a protocol violation:
-      // record it and request resync rather than silently dropping state.
-      return {
-        ...base,
-        phase: "resyncing",
-        notices: pushNotice(base.notices, {
-          kind: "protocol",
-          id: noticeId("protocol"),
-          message: `Unrecognized event "${event.type}". Refreshing from a snapshot.`,
-          at: eventTimestamp(event),
-        }),
-      };
+    case "inspect-only":
+    case undefined:
+      // SessionEvent leaf types are additive. Activity retains the raw event;
+      // the transcript only needs to keep sequence continuity here.
+      return base;
   }
 }
 
