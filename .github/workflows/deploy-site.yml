@@ -6,6 +6,8 @@ on:
     paths:
       - "apps/site/**"
       - "scripts/deploy-site.mjs"
+      - "scripts/wait-for-release-assets.mjs"
+      - "package.json"
       - "pnpm-lock.yaml"
       - ".github/workflows/deploy-site.yml"
   workflow_dispatch:
@@ -21,7 +23,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 50
     environment:
       name: production
       url: https://t4code.net
@@ -39,6 +41,9 @@ jobs:
         with:
           node-version: 24.13.1
           cache: pnpm
+
+      - name: Wait for the complete public release
+        run: node scripts/wait-for-release-assets.mjs --timeout-ms 2400000 --interval-ms 15000
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

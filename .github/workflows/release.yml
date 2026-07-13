@@ -42,21 +42,8 @@ jobs:
           node-version: 24.13.1
           cache: pnpm
 
-      - name: Verify release tag matches desktop version
-        shell: bash
-        run: |
-          node --input-type=module <<'NODE'
-          import { readFileSync } from "node:fs";
-
-          const { version } = JSON.parse(readFileSync("apps/desktop/package.json", "utf8"));
-          const expectedTag = `v${version}`;
-          const releaseTag = process.env.RELEASE_TAG;
-          if (releaseTag !== expectedTag) {
-            console.error(`Release tag ${releaseTag} does not match desktop version ${expectedTag}`);
-            process.exit(1);
-          }
-          console.log(`Release tag ${releaseTag} matches the desktop package version`);
-          NODE
+      - name: Verify tag, packages, clients, docs, and downloads agree
+        run: node scripts/check-release-consistency.mjs --tag "$RELEASE_TAG"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -66,6 +53,9 @@ jobs:
 
       - name: Check source and types
         run: pnpm check
+
+      - name: Run tooling regression tests
+        run: pnpm test:tooling
 
       - name: Run workspace tests
         run: pnpm test

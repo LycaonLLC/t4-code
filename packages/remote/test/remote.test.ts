@@ -93,9 +93,11 @@ it("discovers platform-specific CLI candidates without spawning", async () => {
 });
 
 it("keeps Tailscale command diagnostics bounded and secret-free", async () => {
-  const error = await readTailscaleStatus({ runner: fakeRunner(result({ exitCode: 7, stderr: "tskey-auth-secret-token-value" })), executable: "tailscale", timeoutMs: 20 }).catch((cause) => cause);
+  const syntheticToken = `${["ts", "key"].join("")}-${["auth", "secret", "token", "value"].join("-")}`;
+  const error = await readTailscaleStatus({ runner: fakeRunner(result({ exitCode: 7, stderr: syntheticToken })), executable: "tailscale", timeoutMs: 20 }).catch((cause) => cause);
   expect(error).toBeInstanceOf(TailscaleCommandError);
   expect((error as TailscaleCommandError).message).toBe("tailscale status exited with code 7.");
+  expect((error as TailscaleCommandError).message).not.toContain(syntheticToken);
   expect((error as TailscaleCommandError).message).not.toContain("tskey");
 });
 it("aborts stalled status processes on timeout and cancellation", async () => {

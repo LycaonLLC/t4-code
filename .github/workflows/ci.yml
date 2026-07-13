@@ -40,6 +40,9 @@ jobs:
       - name: Check source and types
         run: pnpm check
 
+      - name: Run tooling regression tests
+        run: pnpm test:tooling
+
       - name: Run tests
         run: pnpm test
 
