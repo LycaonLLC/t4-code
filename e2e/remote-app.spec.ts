@@ -8,7 +8,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const WEB_DIST = resolve(REPO_ROOT, "apps/web/dist");
-const JITI = resolve(REPO_ROOT, "packages/fixture-server/node_modules/.bin/jiti");
+const JITI = resolve(REPO_ROOT, "node_modules/.bin", process.platform === "win32" ? "jiti.cmd" : "jiti");
 const FIXTURE_PROCESS = resolve(REPO_ROOT, "e2e/fixture-process.ts");
 const SESSION_VIEW_ID = "host-stream/session-stream";
 const SESSION_TITLE = "stream-v1 fixture";
