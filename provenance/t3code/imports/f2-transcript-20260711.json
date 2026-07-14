@@ -44,7 +44,7 @@
       "sourceBlobSha": "fdb8bfe7b183480b7b71f2213d907cc211be0e64",
       "targetPath": "apps/web/src/features/composer/composer-store.ts",
       "classification": "adapted",
-      "checksum": "sha256:35fdbcbe350ae97a7f4cf105ed413fb17bea6615c8988a3f375210fdd860798a"
+      "checksum": "sha256:10797b73bb749811230ad227c0c1d3414edfe150207690e94220db93046ad2fc"
     }
   ]
 }

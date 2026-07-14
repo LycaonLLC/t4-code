@@ -29,17 +29,73 @@ const expectedTarEntries = [
   "package/LICENSE",
   "package/README.md",
   ...[
-    "agent-progress", "agent", "audit-event", "audit-host", "audit", "bye", "catalog", "command",
-    "confirmation-challenge", "confirmation", "entry-frame", "entry", "error", "event", "files-diff",
-    "files", "gap", "hello-auth-bad.invalid", "hello-auth-partial.invalid", "hello-auth", "hello", "host-list", "host-watch", "pair-start", "pairing", "ping", "pong",
-    "preview-capture", "prompt-lease", "response", "restart", "review", "session-delta", "session-secret.invalid", "sessions",
-    "snapshot", "terminal-output", "terminal", "welcome",
-  ].map(name => `package/fixtures/v1/${name}.json`),
+    "agent-progress",
+    "agent",
+    "audit-event",
+    "audit-host",
+    "audit",
+    "bye",
+    "catalog",
+    "command",
+    "confirmation-challenge",
+    "confirmation",
+    "entry-frame",
+    "entry",
+    "error",
+    "event",
+    "files-diff",
+    "files",
+    "gap",
+    "hello-auth-bad.invalid",
+    "hello-auth-partial.invalid",
+    "hello-auth",
+    "hello",
+    "host-list",
+    "host-watch",
+    "pair-start",
+    "pairing",
+    "ping",
+    "pong",
+    "preview-capture",
+    "prompt-lease",
+    "response",
+    "restart",
+    "review",
+    "session-delta",
+    "session-secret.invalid",
+    "sessions",
+    "snapshot",
+    "terminal-output",
+    "terminal",
+    "welcome",
+  ].map((name) => `package/fixtures/v1/${name}.json`),
   ...[
-    "additive", "agents", "audit", "capabilities", "command", "cursor", "entry", "envelope", "errors",
-    "event", "files-review", "gap", "guards", "heartbeat", "hello", "ids", "index", "limits",
-    "pairing-confirm", "result", "session-index", "session-state", "snapshot", "terminal", "user-terminals",
-  ].map(name => `package/src/${name}.ts`),
+    "additive",
+    "agents",
+    "audit",
+    "capabilities",
+    "command",
+    "cursor",
+    "entry",
+    "envelope",
+    "errors",
+    "event",
+    "files-review",
+    "gap",
+    "guards",
+    "heartbeat",
+    "hello",
+    "ids",
+    "index",
+    "limits",
+    "pairing-confirm",
+    "result",
+    "session-index",
+    "session-state",
+    "snapshot",
+    "terminal",
+    "user-terminals",
+  ].map((name) => `package/src/${name}.ts`),
 ].sort();
 
 function sha256(path: string): string {
@@ -72,33 +128,45 @@ describe("vendored app-wire distribution", () => {
   it("pins the frozen source, protocol, corpus, and tarball checksums", () => {
     expect(manifest).toMatchObject({
       package: "@oh-my-pi/app-wire",
-      version: "0.5.3",
+      version: "0.5.4",
       sourceRepository: "https://github.com/lyc-aon/oh-my-pi",
-      sourceCommit: "15527d1f00bac22705f63f80b29c0c30e67fc5da",
-      sourceTreeHash: "4961ea9c522a3bbf9a9900424dd475a48148c729",
-      tarball: "oh-my-pi-app-wire-0.5.3.tgz",
+      sourceCommit: "0688257b283dab19894911cda8c1e6d2b2319f20",
+      sourceTreeHash: "87cfd36bcefe71a036dd547119e1e6129bb9be9c",
+      tarball: "oh-my-pi-app-wire-0.5.4.tgz",
       appProtocol: "omp-app/1",
       goldenCorpusSha256: "36811f39241c6c491c967a8f969f14c43431366289750538a40893d0dc267324",
     });
     expect(manifest.createdAt).toMatch(/^2026-07-14T\d{2}:\d{2}:\d{2}Z$/u);
     expect(sha256(tarballPath)).toBe(manifest.tarballSha256);
-    expect(goldenCorpusSha256(join(installedRoot, "fixtures", "v1"))).toBe(manifest.goldenCorpusSha256);
-    const installedPackage = JSON.parse(readFileSync(join(installedRoot, "package.json"), "utf8")) as Record<string, unknown>;
+    expect(goldenCorpusSha256(join(installedRoot, "fixtures", "v1"))).toBe(
+      manifest.goldenCorpusSha256,
+    );
+    const installedPackage = JSON.parse(
+      readFileSync(join(installedRoot, "package.json"), "utf8"),
+    ) as Record<string, unknown>;
     expect(installedPackage.name).toBe(manifest.package);
     expect(installedPackage.version).toBe(manifest.version);
     expect(installedPackage.dependencies ?? {}).toEqual({});
   });
 
   it("keeps the packed surface exact and dependency paths portable", () => {
-    const entries = execFileSync("tar", ["-tzf", tarballPath], { encoding: "utf8" }).trim().split("\n").sort();
+    const entries = execFileSync("tar", ["-tzf", tarballPath], { encoding: "utf8" })
+      .trim()
+      .split("\n")
+      .sort();
     expect(entries).toEqual(expectedTarEntries);
     expect(entries).toHaveLength(67);
 
-    const protocolPackage = readFileSync(join(repoRoot, "packages", "protocol", "package.json"), "utf8");
+    const protocolPackage = readFileSync(
+      join(repoRoot, "packages", "protocol", "package.json"),
+      "utf8",
+    );
     const lockfile = readFileSync(join(repoRoot, "pnpm-lock.yaml"), "utf8");
     expect(`${protocolPackage}\n${lockfile}`).not.toContain("/home/");
-    expect(protocolPackage).toMatch(/"@oh-my-pi\/app-wire": "file:\.\.\/\.\.\/vendor\/app-wire\/oh-my-pi-app-wire-0\.5\.3\.tgz"/u);
-    expect(lockfile).toMatch(/version: file:vendor\/app-wire\/oh-my-pi-app-wire-0\.5\.3\.tgz/u);
+    expect(protocolPackage).toMatch(
+      /"@oh-my-pi\/app-wire": "file:\.\.\/\.\.\/vendor\/app-wire\/oh-my-pi-app-wire-0\.5\.4\.tgz"/u,
+    );
+    expect(lockfile).toMatch(/version: file:vendor\/app-wire\/oh-my-pi-app-wire-0\.5\.4\.tgz/u);
     expect(`${protocolPackage}\n${lockfile}`).not.toMatch(/file:\/\//u);
   });
 });

@@ -36,7 +36,8 @@ import type {
   SessionRuntime,
   SessionRuntimeSnapshot,
 } from "./controller.ts";
-import type { SessionIntent } from "./intents.ts";
+import { IMAGE_PROMPTS_UNSUPPORTED_REASON, type SessionIntent } from "./intents.ts";
+import { runImagePromptUpload } from "./image-upload.ts";
 import { promptRejectionReason } from "./command-errors.ts";
 import {
   commandSupport,
@@ -327,7 +328,14 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     args: Record<string, unknown>,
   ): Promise<PromptOutcome> => {
     await waitForControlCommands();
-    return sendCommand(command, args, true);
+    const leaseRevision = expectedRevision();
+    if (leaseRevision === undefined) return { kind: "unknown", reason: UNKNOWN_REASON };
+    // Ordinary prompts are revision-optional on the wire for the same reason
+    // as steer/follow-up: live output or a just-reconciled control can advance
+    // the projection between composition and host receipt. The prompt lease
+    // still binds against the captured authoritative revision; only the
+    // volatile compare-and-swap field stays off the command itself.
+    return sendCommand(command, args, false, true, undefined, leaseRevision);
   };
 
   // Active turns advance the session revision while output streams. Steer and
@@ -479,6 +487,30 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
 
   const submitPrompt = async (intent: SessionIntent): Promise<PromptOutcome> => {
     if (intent.kind === "prompt") {
+      if (intent.attachments.length > 0) {
+        const granted = grantedFor(controller.getSnapshot());
+        if (!granted.includes("sessions.prompt") || !granted.includes("prompt.images")) {
+          return { kind: "rejected", reason: IMAGE_PROMPTS_UNSUPPORTED_REASON };
+        }
+        await waitForControlCommands();
+        return runImagePromptUpload({
+          targetId,
+          attachments: intent.attachments,
+          command: (command, args) =>
+            controller.command(targetId, {
+              hostId: wireHostId,
+              sessionId: wireSessionId,
+              command,
+              args: { ...args },
+            }),
+          sendPrompt: (images) =>
+            sendAfterControlCommands("session.prompt", {
+              message: intent.text,
+              images: images.map((image) => ({ ...image })),
+            }),
+          rejectionReason: promptRejectionReason,
+        });
+      }
       return sendAfterControlCommands("session.prompt", { message: intent.text });
     }
     if (intent.kind === "steer") {

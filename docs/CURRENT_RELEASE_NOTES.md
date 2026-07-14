@@ -8,7 +8,7 @@ The merged RPC shutdown path rejects pending extension UI, host tool, and host U
 
 ## Runtime compatibility
 
-T4 Code v0.1.11 uses app-wire 0.5.3 from integration commit [15527d1f](https://github.com/lyc-aon/oh-my-pi/commit/15527d1f00bac22705f63f80b29c0c30e67fc5da), source tree `4961ea9c522a3bbf9a9900424dd475a48148c729`. The app-wire source tree and packaged artifact are unchanged from v0.1.10; provenance now points at the OMP 16.5.1 integration.
+T4 Code v0.1.11 vendors app-wire 0.5.4 from integration commit [0688257b](https://github.com/lyc-aon/oh-my-pi/commit/0688257b283dab19894911cda8c1e6d2b2319f20), source tree `87cfd36bcefe71a036dd547119e1e6129bb9be9c`. The client remains backwards compatible with the verified OMP 16.5.1 runtime at [15527d1f](https://github.com/lyc-aon/oh-my-pi/commit/15527d1f00bac22705f63f80b29c0c30e67fc5da); image prompts activate only when a host advertises the additive 0.5.4 capability.
 
 The matching OMP 16.5.1 runtime is tagged [t4code-16.5.1-appserver-1](https://github.com/lyc-aon/oh-my-pi/tree/t4code-16.5.1-appserver-1). It carries forward bounded replay and terminal events, complete session projection, catalog-backed lifecycle controls, ordered remote delivery, failed-worker reaping, recoverable crash state, settled close state, cross-client convergence, and restart-safe RPC teardown.
 

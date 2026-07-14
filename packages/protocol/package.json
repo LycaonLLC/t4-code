@@ -7,13 +7,13 @@
     ".": "./src/index.ts",
     "./desktop-ipc": "./src/desktop-ipc.ts"
   },
-  "dependencies": {
-    "@oh-my-pi/app-wire": "file:../../vendor/app-wire/oh-my-pi-app-wire-0.5.3.tgz"
-  },
   "scripts": {
     "build": "tsgo --noEmit",
     "typecheck": "tsgo --noEmit",
     "test": "vp test run --passWithNoTests"
+  },
+  "dependencies": {
+    "@oh-my-pi/app-wire": "file:../../vendor/app-wire/oh-my-pi-app-wire-0.5.4.tgz"
   },
   "devDependencies": {
     "@types/node": "catalog:",

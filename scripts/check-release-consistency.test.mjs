@@ -68,7 +68,7 @@ test("rejects version drift in a newly added workspace package", () => {
 
 test("rejects app-wire matrix changes until the release surfaces agree", () => {
   const drifted = changed("compat/omp-app-matrix.json", (text) =>
-    text.replace('"version": "0.5.3"', '"version": "0.5.1"'),
+    text.replace('"version": "0.5.4"', '"version": "0.5.1"'),
   );
   assert.ok(collectReleaseConsistencyErrors(drifted).length > 0);
 });
@@ -76,7 +76,7 @@ test("rejects app-wire matrix changes until the release surfaces agree", () => {
 test("rejects app-wire provenance changes until the release surfaces agree", () => {
   const drifted = changed("compat/omp-app-matrix.json", (text) =>
     text.replace(
-      '"sourceCommit": "15527d1f00bac22705f63f80b29c0c30e67fc5da"',
+      '"sourceCommit": "0688257b283dab19894911cda8c1e6d2b2319f20"',
       '"sourceCommit": "0000000000000000000000000000000000000000"',
     ),
   );
@@ -90,7 +90,7 @@ test("rejects app-wire provenance changes until the release surfaces agree", () 
 test("rejects drift between the compatibility matrix and vendored app-wire manifest", () => {
   const drifted = changed("vendor/app-wire/manifest.json", (text) =>
     text.replace(
-      '"sourceTreeHash": "4961ea9c522a3bbf9a9900424dd475a48148c729"',
+      '"sourceTreeHash": "87cfd36bcefe71a036dd547119e1e6129bb9be9c"',
       '"sourceTreeHash": "0000000000000000000000000000000000000000"',
     ),
   );
@@ -133,31 +133,31 @@ test("accepts a coordinated app-wire provenance update without editing the workf
     "compat/omp-app-matrix.json",
     coordinated
       .get("compat/omp-app-matrix.json")
-      .replace('"version": "0.5.3"', '"version": "0.5.4"')
-      .replace("oh-my-pi-app-wire-0.5.3.tgz", "oh-my-pi-app-wire-0.5.4.tgz"),
+      .replace('"version": "0.5.4"', '"version": "0.5.5"')
+      .replace("oh-my-pi-app-wire-0.5.4.tgz", "oh-my-pi-app-wire-0.5.5.tgz"),
   );
   coordinated.set(
     "apps/site/src/release.ts",
     coordinated
       .get("apps/site/src/release.ts")
-      .replace('APP_WIRE_VERSION = "0.5.3"', 'APP_WIRE_VERSION = "0.5.4"'),
+      .replace('APP_WIRE_VERSION = "0.5.4"', 'APP_WIRE_VERSION = "0.5.5"'),
   );
   coordinated.set(
     "README.md",
     coordinated
       .get("README.md")
-      .replace("`@oh-my-pi/app-wire` 0.5.3", "`@oh-my-pi/app-wire` 0.5.4"),
+      .replace("`@oh-my-pi/app-wire` 0.5.4", "`@oh-my-pi/app-wire` 0.5.5"),
   );
   coordinated.set(
     "docs/CURRENT_RELEASE_NOTES.md",
-    coordinated.get("docs/CURRENT_RELEASE_NOTES.md").replace("app-wire 0.5.3", "app-wire 0.5.4"),
+    coordinated.get("docs/CURRENT_RELEASE_NOTES.md").replace("app-wire 0.5.4", "app-wire 0.5.5"),
   );
   coordinated.set(
     "vendor/app-wire/manifest.json",
     coordinated
       .get("vendor/app-wire/manifest.json")
-      .replace('"version": "0.5.3"', '"version": "0.5.4"')
-      .replace("oh-my-pi-app-wire-0.5.3.tgz", "oh-my-pi-app-wire-0.5.4.tgz"),
+      .replace('"version": "0.5.4"', '"version": "0.5.5"')
+      .replace("oh-my-pi-app-wire-0.5.4.tgz", "oh-my-pi-app-wire-0.5.5.tgz"),
   );
 
   assert.deepEqual(collectReleaseConsistencyErrors(coordinated), []);

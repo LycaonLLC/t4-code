@@ -10,13 +10,13 @@ T4 Code is a free, open-source (MIT) desktop app for [Oh My Pi](https://github.c
 
 T4 Code needs an OMP build with desktop appserver support. For v0.1.11, use the public integration build below.
 
-T4 Code v0.1.11 was verified with OMP 16.5.1 built from [`15527d1f`](https://github.com/lyc-aon/oh-my-pi/commit/15527d1f00bac22705f63f80b29c0c30e67fc5da), tagged [`t4code-16.5.1-appserver-1`](https://github.com/lyc-aon/oh-my-pi/tree/t4code-16.5.1-appserver-1). That public integration is based on the official upstream [`v16.5.1`](https://github.com/can1357/oh-my-pi/tree/v16.5.1) tag at [`14b5da76`](https://github.com/can1357/oh-my-pi/commit/14b5da76a9aece9a469288718d22c3d624daf033). It carries forward bounded replay and terminal events, complete desktop runtime projection, catalog-backed session management, deterministic failed-worker reaping, recoverable crash state, settled close state, ordered remote delivery, cross-client control convergence, and restart-safe session teardown. It also reconciles OMP 16.5.1's RPC disconnect cleanup with T4's persistent session-lock release. The official upstream v16.5.1 tag has no `appserver` command, so it cannot host T4 Code. The verified runtime is a normal build from the public `lyc-aon/oh-my-pi` source; T4 Code does not depend on private home-directory files, an auth broker, or a custom Codex CLI fork. T4 Code vendors `@oh-my-pi/app-wire` 0.5.3 from integration commit [`15527d1f`](https://github.com/lyc-aon/oh-my-pi/commit/15527d1f00bac22705f63f80b29c0c30e67fc5da), source tree `4961ea9c522a3bbf9a9900424dd475a48148c729`.
+T4 Code v0.1.11 was verified with OMP 16.5.1 built from [`15527d1f`](https://github.com/lyc-aon/oh-my-pi/commit/15527d1f00bac22705f63f80b29c0c30e67fc5da), tagged [`t4code-16.5.1-appserver-1`](https://github.com/lyc-aon/oh-my-pi/tree/t4code-16.5.1-appserver-1). That public integration is based on the official upstream [`v16.5.1`](https://github.com/can1357/oh-my-pi/tree/v16.5.1) tag at [`14b5da76`](https://github.com/can1357/oh-my-pi/commit/14b5da76a9aece9a469288718d22c3d624daf033). It carries forward bounded replay and terminal events, complete desktop runtime projection, catalog-backed session management, deterministic failed-worker reaping, recoverable crash state, settled close state, ordered remote delivery, cross-client control convergence, and restart-safe session teardown. It also reconciles OMP 16.5.1's RPC disconnect cleanup with T4's persistent session-lock release. The official upstream v16.5.1 tag has no `appserver` command, so it cannot host T4 Code. The verified runtime is a normal build from the public `lyc-aon/oh-my-pi` source; T4 Code does not depend on private home-directory files, an auth broker, or a custom Codex CLI fork. T4 Code vendors `@oh-my-pi/app-wire` 0.5.4 from integration commit [`0688257b`](https://github.com/lyc-aon/oh-my-pi/commit/0688257b283dab19894911cda8c1e6d2b2319f20), source tree `87cfd36bcefe71a036dd547119e1e6129bb9be9c`.
 
-| Platform | Arch | Package |
-| --- | --- | --- |
-| Android | arm64, armv7, x86_64 | `.apk` (**signed**) |
-| Linux | x86_64 | `.deb`, AppImage |
-| macOS | Apple Silicon (arm64) | `.dmg`, `.zip` (**unsigned, see below**) |
+| Platform | Arch                  | Package                                  |
+| -------- | --------------------- | ---------------------------------------- |
+| Android  | arm64, armv7, x86_64  | `.apk` (**signed**)                      |
+| Linux    | x86_64                | `.deb`, AppImage                         |
+| macOS    | Apple Silicon (arm64) | `.dmg`, `.zip` (**unsigned, see below**) |
 
 No Windows build and no Intel Mac build in v0.1.11. The iOS TestFlight build is coming soon.
 
