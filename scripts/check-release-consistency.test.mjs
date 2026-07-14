@@ -76,7 +76,7 @@ test("rejects app-wire matrix changes until the release surfaces agree", () => {
 test("rejects app-wire provenance changes until the release surfaces agree", () => {
   const drifted = changed("compat/omp-app-matrix.json", (text) =>
     text.replace(
-      '"sourceCommit": "ea6bef2fc0bbcbc050cebcdc6bc1a13b644705f0"',
+      '"sourceCommit": "6a87fa6407ebff20417b4d52885a6bb3091003ea"',
       '"sourceCommit": "0000000000000000000000000000000000000000"',
     ),
   );
@@ -90,7 +90,7 @@ test("rejects app-wire provenance changes until the release surfaces agree", () 
 test("rejects drift between the compatibility matrix and vendored app-wire manifest", () => {
   const drifted = changed("vendor/app-wire/manifest.json", (text) =>
     text.replace(
-      '"sourceTreeHash": "d67e3d7aca981a70e5c17a892d3fafb299cdb774"',
+      '"sourceTreeHash": "a2495fe8781c979184fe7fb9a6d37d8f33bad30f"',
       '"sourceTreeHash": "0000000000000000000000000000000000000000"',
     ),
   );
@@ -105,10 +105,10 @@ test("rejects drift in verified OMP runtime provenance", () => {
   const cases = [
     (text) =>
       text.replace(
-        "ea6bef2fc0bbcbc050cebcdc6bc1a13b644705f0",
+        "6a87fa6407ebff20417b4d52885a6bb3091003ea",
         "0000000000000000000000000000000000000000",
       ),
-    (text) => text.replace('"sourceTag": "t4code-16.5.1-appserver-2"', '"sourceTag": "wrong-tag"'),
+    (text) => text.replace('"sourceTag": "t4code-16.5.1-appserver-4"', '"sourceTag": "wrong-tag"'),
     (text) =>
       text.replace(
         '"upstreamCommit": "14b5da76a9aece9a469288718d22c3d624daf033"',

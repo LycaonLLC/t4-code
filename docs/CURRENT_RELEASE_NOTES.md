@@ -10,9 +10,9 @@ Desktop, browser, and Android transports now stop waiting and reconnect when a h
 
 ## Runtime compatibility
 
-T4 Code v0.1.12 vendors app-wire 0.5.5 from integration commit [ea6bef2f](https://github.com/lyc-aon/oh-my-pi/commit/ea6bef2fc0bbcbc050cebcdc6bc1a13b644705f0), source tree `d67e3d7aca981a70e5c17a892d3fafb299cdb774`. Image prompts activate only when the host advertises the additive image capability; the compatibility handshake keeps older appservers available.
+T4 Code v0.1.12 vendors app-wire 0.5.5 from integration commit [6a87fa64](https://github.com/lyc-aon/oh-my-pi/commit/6a87fa6407ebff20417b4d52885a6bb3091003ea), source tree `a2495fe8781c979184fe7fb9a6d37d8f33bad30f`. Image prompts activate only when the host advertises the additive image capability; the compatibility handshake keeps older appservers available.
 
-The matching OMP 16.5.1 runtime is built from [ea6bef2f](https://github.com/lyc-aon/oh-my-pi/commit/ea6bef2fc0bbcbc050cebcdc6bc1a13b644705f0) and tagged [t4code-16.5.1-appserver-2](https://github.com/lyc-aon/oh-my-pi/tree/t4code-16.5.1-appserver-2). It carries forward T4's appserver and lifecycle integration, adds bounded prompt-image uploads and transcript-image reads, and tightens public wire decoding and RPC event limits.
+The matching OMP 16.5.1 runtime is built from [6a87fa64](https://github.com/lyc-aon/oh-my-pi/commit/6a87fa6407ebff20417b4d52885a6bb3091003ea) and tagged [t4code-16.5.1-appserver-4](https://github.com/lyc-aon/oh-my-pi/tree/t4code-16.5.1-appserver-4). It carries forward T4's appserver and lifecycle integration, adds bounded prompt-image uploads and transcript-image reads, and tightens public wire decoding, typed command results, canonical response boundaries, and RPC event limits.
 
 The integration is based on the official upstream [v16.5.1 tag](https://github.com/can1357/oh-my-pi/tree/v16.5.1), commit [14b5da76](https://github.com/can1357/oh-my-pi/commit/14b5da76a9aece9a469288718d22c3d624daf033). Official upstream OMP v16.5.1 has no `appserver` command and cannot host T4 Code.
 

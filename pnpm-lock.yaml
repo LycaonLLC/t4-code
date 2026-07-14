@@ -639,7 +639,7 @@ packages:
     engines: {node: '>= 20.19.0'}
 
   '@oh-my-pi/app-wire@file:vendor/app-wire/oh-my-pi-app-wire-0.5.5.tgz':
-    resolution: {integrity: sha512-VV7sNMN+Z8CksLzYVbK+0MBfvFCdLIgBBEX7oGCzLyPzg86Z5CDMXsCwSncbEC9p2Lhw2QWN4TafQw7yC3ibUg==, tarball: file:vendor/app-wire/oh-my-pi-app-wire-0.5.5.tgz}
+    resolution: {integrity: sha512-1fNE37IRSz3Mp583YlF4Su0mT8xUE8UzAHUTRZB85ahvrmMdPnO8ZBQsaocOQN3A9Yk+bqEKTvP7ow56IvlisA==, tarball: file:vendor/app-wire/oh-my-pi-app-wire-0.5.5.tgz}
     version: 0.5.5
     engines: {bun: '>=1.3.14'}
 
