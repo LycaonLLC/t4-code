@@ -72,15 +72,15 @@ describe("vendored app-wire distribution", () => {
   it("pins the frozen source, protocol, corpus, and tarball checksums", () => {
     expect(manifest).toMatchObject({
       package: "@oh-my-pi/app-wire",
-      version: "0.5.2",
+      version: "0.5.3",
       sourceRepository: "https://github.com/lyc-aon/oh-my-pi",
-      sourceCommit: "5d4315eea317260fec030e2b4726f10fed0cd5f6",
-      sourceTreeHash: "713688e8099d4553a0a30b1bf415a7cffb5963f4",
-      tarball: "oh-my-pi-app-wire-0.5.2.tgz",
+      sourceCommit: "1ada5fc2f0d6f9026d373cd25e004b974437651e",
+      sourceTreeHash: "4961ea9c522a3bbf9a9900424dd475a48148c729",
+      tarball: "oh-my-pi-app-wire-0.5.3.tgz",
       appProtocol: "omp-app/1",
       goldenCorpusSha256: "36811f39241c6c491c967a8f969f14c43431366289750538a40893d0dc267324",
     });
-    expect(manifest.createdAt).toMatch(/^2026-07-13T\d{2}:\d{2}:\d{2}Z$/u);
+    expect(manifest.createdAt).toMatch(/^2026-07-14T\d{2}:\d{2}:\d{2}Z$/u);
     expect(sha256(tarballPath)).toBe(manifest.tarballSha256);
     expect(goldenCorpusSha256(join(installedRoot, "fixtures", "v1"))).toBe(manifest.goldenCorpusSha256);
     const installedPackage = JSON.parse(readFileSync(join(installedRoot, "package.json"), "utf8")) as Record<string, unknown>;
@@ -97,8 +97,8 @@ describe("vendored app-wire distribution", () => {
     const protocolPackage = readFileSync(join(repoRoot, "packages", "protocol", "package.json"), "utf8");
     const lockfile = readFileSync(join(repoRoot, "pnpm-lock.yaml"), "utf8");
     expect(`${protocolPackage}\n${lockfile}`).not.toContain("/home/");
-    expect(protocolPackage).toMatch(/"@oh-my-pi\/app-wire": "file:\.\.\/\.\.\/vendor\/app-wire\/oh-my-pi-app-wire-0\.5\.2\.tgz"/u);
-    expect(lockfile).toMatch(/version: file:vendor\/app-wire\/oh-my-pi-app-wire-0\.5\.2\.tgz/u);
+    expect(protocolPackage).toMatch(/"@oh-my-pi\/app-wire": "file:\.\.\/\.\.\/vendor\/app-wire\/oh-my-pi-app-wire-0\.5\.3\.tgz"/u);
+    expect(lockfile).toMatch(/version: file:vendor\/app-wire\/oh-my-pi-app-wire-0\.5\.3\.tgz/u);
     expect(`${protocolPackage}\n${lockfile}`).not.toMatch(/file:\/\//u);
   });
 });

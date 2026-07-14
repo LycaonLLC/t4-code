@@ -356,36 +356,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           generate_release_notes: true
           fail_on_unmatched_files: true
-          body: |
-            ## Android app
-
-            This release includes a signed Android APK for direct installation. It is a thin client: the T4 Code interface is bundled in the APK, while OMP sessions and runtime state remain on the host. On first run, enter the host's HTTPS Tailscale address and complete the normal T4 pairing flow.
-
-            Android device credentials are encrypted with an app-specific Android Keystore key. The app does not contain an OMP appserver and does not require a public route; the phone and host should use the same tailnet.
-
-            ## Browser and iOS
-
-            The installable Tailnet web app remains available. iOS TestFlight is coming soon; there is no iOS binary in this release.
-
-            ## Connection security
-
-            The Tailnet gateway accepts only the configured HTTPS web origin and the exact native app origins. It rejects wildcard, opaque, and untrusted origins. Keep the route on Tailscale Serve and do not enable Funnel.
-
-            ## Install notes
-
-            The Android APK is signed and supports Android 7.0 or later. Linux packages are built for x86_64. macOS packages are built for Apple Silicon.
-
-            ## Runtime compatibility
-
-            This release vendors app-wire 0.5.2 from public integration commit [5d4315ee](https://github.com/lyc-aon/oh-my-pi/commit/5d4315eea317260fec030e2b4726f10fed0cd5f6) and was verified with OMP 16.5.0 built from [d4a0b934](https://github.com/lyc-aon/oh-my-pi/commit/d4a0b9344e1796c0e56041cfeea3431a8a728e61), tagged [t4code-16.5.0-appserver-3](https://github.com/lyc-aon/oh-my-pi/tree/t4code-16.5.0-appserver-3). The integration is based on the official upstream [v16.5.0 tag](https://github.com/can1357/oh-my-pi/tree/v16.5.0), commit [3047c27c](https://github.com/can1357/oh-my-pi/commit/3047c27c332c5629c8e063283d349384c10c9a56). It adds bounded growing-session replay, complete session event projection, catalog-backed session lifecycle management, ordered remote outbound frames, cross-client control-state convergence, terminal streaming-state settlement, and restart-safe session teardown. Official upstream OMP v16.5.0 has no `appserver` command and cannot host T4 Code. The verified runtime is built normally from the public `lyc-aon/oh-my-pi` source; it does not require private home-directory files, an auth broker, or a custom Codex CLI fork.
-
-            The macOS build is unsigned and unnotarized. Gatekeeper will block the first launch. After copying T4 Code to Applications, run:
-
-            ```sh
-            xattr -dr com.apple.quarantine "/Applications/T4 Code.app"
-            ```
-
-            Verify downloads with `SHA256SUMS.txt`.
+          body_path: docs/CURRENT_RELEASE_NOTES.md
           files: |
             artifacts/T4-Code-*.apk
             artifacts/T4-Code-*.deb

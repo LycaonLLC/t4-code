@@ -5,12 +5,15 @@ import {
   decodeServerFrame,
   decodeTerminalClient,
   inputObject,
+  isSecretLikeKey,
   object,
   controlFree,
+  utf8ByteLength,
   type CommandFrame,
   type CommandId,
   type ConfirmationId,
   type HostId,
+  type ResultError,
   type ServerFrame,
   type SessionId,
   type TerminalId,
@@ -48,7 +51,12 @@ export const DESKTOP_IPC_EVENTS = [
 ] as const;
 export type DesktopEventChannel = (typeof DESKTOP_IPC_EVENTS)[number];
 export type DesktopPlatform = "linux" | "darwin";
-export type ConnectionState = "disconnected" | "connecting" | "connected" | "pairing-required" | "error";
+export type ConnectionState =
+  | "disconnected"
+  | "connecting"
+  | "connected"
+  | "pairing-required"
+  | "error";
 export type RuntimeErrorCode = "transport" | "protocol" | "internal";
 export interface BootstrapRequest {}
 export type ServiceAvailabilityIssue =
@@ -64,7 +72,9 @@ export interface ServiceInspection {
 }
 export type ServiceAction = "install" | "start" | "stop" | "restart" | "uninstall";
 export interface ServiceActionRequest {}
-export interface ServiceActionResult { completed: true; }
+export interface ServiceActionResult {
+  completed: true;
+}
 export interface BootstrapResult {
   platform: DesktopPlatform;
   version: typeof PROTOCOL_VERSION;
@@ -77,7 +87,9 @@ export interface PairLinkEvent {
   issuedAt: number;
 }
 export interface PairLinksDrainRequest {}
-export interface PairLinksDrainResult { links: readonly PairLinkEvent[]; }
+export interface PairLinksDrainResult {
+  links: readonly PairLinkEvent[];
+}
 export interface DesktopTarget {
   targetId: string;
   label: string;
@@ -88,7 +100,9 @@ export interface DesktopTarget {
   status?: "unknown" | "online" | "offline" | "revoked";
 }
 export interface TargetListRequest {}
-export interface TargetListResult { targets: readonly DesktopTarget[]; }
+export interface TargetListResult {
+  targets: readonly DesktopTarget[];
+}
 export interface TargetAddRequest {
   target: {
     targetId: string;
@@ -105,9 +119,18 @@ export interface TargetAddRequest {
     autoConnect?: boolean;
   };
 }
-export interface TargetAddResult { target: DesktopTarget; }
-export interface TargetRemoveResult { targetId: string; removed: boolean; }
-export interface PairStatusResult { targetId: string; state: ConnectionState; paired: boolean; }
+export interface TargetAddResult {
+  target: DesktopTarget;
+}
+export interface TargetRemoveResult {
+  targetId: string;
+  removed: boolean;
+}
+export interface PairStatusResult {
+  targetId: string;
+  state: ConnectionState;
+  paired: boolean;
+}
 export interface TargetRequest {
   targetId: string;
 }
@@ -132,12 +155,18 @@ export interface CommandRequest {
   targetId: string;
   intent: CommandIntent;
 }
+export interface CommandResultError {
+  readonly code: string;
+  readonly message: string;
+  readonly details?: Readonly<Record<string, unknown>>;
+}
 export interface CommandResult {
   targetId: string;
   requestId: string;
   commandId: string;
   accepted: boolean;
   result?: unknown;
+  error?: CommandResultError;
 }
 export interface ConfirmRequest {
   targetId: string;
@@ -180,6 +209,131 @@ export interface TerminalCloseRequest {
 export interface TerminalResult {
   targetId: string;
   accepted: boolean;
+}
+
+const MAX_COMMAND_ERROR_CODE_BYTES = 128;
+const MAX_COMMAND_ERROR_MESSAGE_BYTES = 1_024;
+const MAX_COMMAND_ERROR_DETAILS_BYTES = 8_192;
+const MAX_COMMAND_ERROR_DETAIL_STRING_BYTES = 1_024;
+const MAX_COMMAND_ERROR_DETAIL_DEPTH = 4;
+const MAX_COMMAND_ERROR_DETAIL_NODES = 64;
+const MAX_COMMAND_ERROR_DETAIL_KEYS = 16;
+const MAX_COMMAND_ERROR_DETAIL_ITEMS = 16;
+
+function boundedDisplayText(value: unknown, maxBytes: number): string | undefined {
+  if (typeof value !== "string" || value.length === 0) return undefined;
+  let printable = "";
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    printable +=
+      codePoint !== undefined && (codePoint <= 31 || (codePoint >= 127 && codePoint <= 159))
+        ? " "
+        : character;
+  }
+  try {
+    if (utf8ByteLength(printable) <= maxBytes) return printable;
+  } catch {
+    return undefined;
+  }
+  let output = "";
+  for (const character of printable) {
+    const next = `${output}${character}`;
+    try {
+      if (utf8ByteLength(next) > maxBytes) break;
+    } catch {
+      break;
+    }
+    output = next;
+  }
+  return output.length === 0 ? undefined : output;
+}
+
+function redactedDisplayText(value: unknown, maxBytes: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const redacted = value
+    .replace(/\b(?:https?|wss?|file):\/\/[^\r\n,;]*/giu, "[redacted]")
+    .replace(/\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+/giu, "[redacted]")
+    .replace(
+      /(["']?)(authorization|access[_-]?token|client[_-]?secret|api[_-]?key|token|secret|password|credential)\1\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:bearer|basic)\s+[^\s,;}\]]+|[^\s,;}\]]+)/giu,
+      "$2=[redacted]",
+    )
+    .replace(
+      /(?:~\/|\/(?:Users|home|tmp|var|private|etc|opt|srv|mnt|run|usr|Library|Applications|Volumes|dev|proc|sys)(?:\/|$))[^\r\n,;]*/gu,
+      "[redacted]",
+    );
+  return boundedDisplayText(redacted, maxBytes);
+}
+
+interface DetailBudget {
+  nodes: number;
+}
+
+function commandErrorDetailValue(value: unknown, depth: number, budget: DetailBudget): unknown {
+  budget.nodes += 1;
+  if (budget.nodes > MAX_COMMAND_ERROR_DETAIL_NODES || depth > MAX_COMMAND_ERROR_DETAIL_DEPTH) {
+    return undefined;
+  }
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value === "string") {
+    return redactedDisplayText(value, MAX_COMMAND_ERROR_DETAIL_STRING_BYTES);
+  }
+  if (Array.isArray(value)) {
+    const items: unknown[] = [];
+    for (const item of value.slice(0, MAX_COMMAND_ERROR_DETAIL_ITEMS)) {
+      const safe = commandErrorDetailValue(item, depth + 1, budget);
+      if (safe !== undefined) items.push(safe);
+    }
+    return items;
+  }
+  if (typeof value !== "object") return undefined;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return undefined;
+  const output: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value).slice(0, MAX_COMMAND_ERROR_DETAIL_KEYS)) {
+    if (isSecretLikeKey(key)) continue;
+    const safeKey = boundedDisplayText(key, 128);
+    if (safeKey === undefined) continue;
+    const safe = commandErrorDetailValue(item, depth + 1, budget);
+    if (safe !== undefined) output[safeKey] = safe;
+  }
+  return output;
+}
+
+/** Copy a decoded app-wire error across desktop IPC with bounded, non-secret details. */
+export function commandResultError(error: ResultError | undefined): CommandResultError | undefined {
+  if (error === undefined) return undefined;
+  const code = boundedDisplayText(error.code, MAX_COMMAND_ERROR_CODE_BYTES);
+  const message = redactedDisplayText(error.message, MAX_COMMAND_ERROR_MESSAGE_BYTES);
+  if (code === undefined || message === undefined) return undefined;
+  const details = commandErrorDetailValue(error.details, 0, { nodes: 0 });
+  let boundedDetails: Readonly<Record<string, unknown>> | undefined;
+  if (
+    details !== undefined &&
+    details !== null &&
+    typeof details === "object" &&
+    !Array.isArray(details)
+  ) {
+    try {
+      const selected: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(details)) {
+        selected[key] = value;
+        if (utf8ByteLength(JSON.stringify(selected)) > MAX_COMMAND_ERROR_DETAILS_BYTES) {
+          delete selected[key];
+        }
+      }
+      boundedDetails = Object.freeze(selected);
+    } catch {
+      // A malformed future detail value must not break the command response.
+    }
+  }
+  return Object.freeze({
+    code,
+    message,
+    ...(boundedDetails === undefined || Object.keys(boundedDetails).length === 0
+      ? {}
+      : { details: boundedDetails }),
+  });
 }
 
 export interface ConnectionStateEvent {
@@ -263,26 +417,60 @@ function target(value: unknown): string {
   return s;
 }
 function state(value: unknown): ConnectionState {
-  if (!["disconnected", "connecting", "connected", "pairing-required", "error"].includes(value as string))
+  if (
+    !["disconnected", "connecting", "connected", "pairing-required", "error"].includes(
+      value as string,
+    )
+  )
     throw new Error("invalid state");
   return value as ConnectionState;
 }
 function targetRecord(value: unknown): TargetAddRequest["target"] {
   const item = object(value, "target");
-  exact(item, ["targetId", "label", "mode", "address", "port", "expectedHostId", "requestedCapabilities", "grantedCapabilities", "status", "deviceId", "lastSeen", "autoConnect"]);
+  exact(item, [
+    "targetId",
+    "label",
+    "mode",
+    "address",
+    "port",
+    "expectedHostId",
+    "requestedCapabilities",
+    "grantedCapabilities",
+    "status",
+    "deviceId",
+    "lastSeen",
+    "autoConnect",
+  ]);
   const mode = item.mode;
   if (mode !== "direct" && mode !== "serve") throw new Error("invalid target mode");
   const status = item.status;
-  if (status !== "unknown" && status !== "online" && status !== "offline" && status !== "revoked") throw new Error("invalid target status");
-  if (!Array.isArray(item.requestedCapabilities) || !Array.isArray(item.grantedCapabilities) || item.requestedCapabilities.length > 32 || item.grantedCapabilities.length > 32) throw new Error("invalid target capabilities");
-  const requestedCapabilities = item.requestedCapabilities.map((value) => controlFree(value, "capability", 96));
-  const grantedCapabilities = item.grantedCapabilities.map((value) => controlFree(value, "capability", 96));
+  if (status !== "unknown" && status !== "online" && status !== "offline" && status !== "revoked")
+    throw new Error("invalid target status");
+  if (
+    !Array.isArray(item.requestedCapabilities) ||
+    !Array.isArray(item.grantedCapabilities) ||
+    item.requestedCapabilities.length > 32 ||
+    item.grantedCapabilities.length > 32
+  )
+    throw new Error("invalid target capabilities");
+  const requestedCapabilities = item.requestedCapabilities.map((value) =>
+    controlFree(value, "capability", 96),
+  );
+  const grantedCapabilities = item.grantedCapabilities.map((value) =>
+    controlFree(value, "capability", 96),
+  );
   const port = item.port;
-  if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error("invalid target port");
+  if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535)
+    throw new Error("invalid target port");
   const label = controlFree(item.label, "label", 128);
   const address = controlFree(item.address, "address", 2048);
-  if (item.lastSeen !== undefined && (typeof item.lastSeen !== "number" || !Number.isFinite(item.lastSeen) || item.lastSeen < 0)) throw new Error("invalid target lastSeen");
-  if (item.autoConnect !== undefined && typeof item.autoConnect !== "boolean") throw new Error("invalid autoConnect");
+  if (
+    item.lastSeen !== undefined &&
+    (typeof item.lastSeen !== "number" || !Number.isFinite(item.lastSeen) || item.lastSeen < 0)
+  )
+    throw new Error("invalid target lastSeen");
+  if (item.autoConnect !== undefined && typeof item.autoConnect !== "boolean")
+    throw new Error("invalid autoConnect");
   return {
     targetId: target(item.targetId),
     label,
@@ -292,7 +480,9 @@ function targetRecord(value: unknown): TargetAddRequest["target"] {
     requestedCapabilities,
     grantedCapabilities,
     status,
-    ...(item.expectedHostId === undefined ? {} : { expectedHostId: controlFree(item.expectedHostId, "expectedHostId") }),
+    ...(item.expectedHostId === undefined
+      ? {}
+      : { expectedHostId: controlFree(item.expectedHostId, "expectedHostId") }),
     ...(item.deviceId === undefined ? {} : { deviceId: controlFree(item.deviceId, "deviceId") }),
     ...(item.lastSeen === undefined ? {} : { lastSeen: item.lastSeen }),
     ...(item.autoConnect === undefined ? {} : { autoConnect: item.autoConnect }),
@@ -319,18 +509,40 @@ function decodeConfirmRequest(payload: Record<string, unknown>): ConfirmRequest 
     decision: decoded.decision,
   };
 }
-function decodeTerminalRequest(channel: "omp:terminal:input" | "omp:terminal:resize" | "omp:terminal:close", payload: Record<string, unknown>): TerminalInputRequest | TerminalResizeRequest | TerminalCloseRequest {
-  const type = channel === "omp:terminal:input" ? "terminal.input" : channel === "omp:terminal:resize" ? "terminal.resize" : "terminal.close";
-  exact(payload, channel === "omp:terminal:input" ? ["targetId", "hostId", "sessionId", "terminalId", "data", "encoding"] : channel === "omp:terminal:resize" ? ["targetId", "hostId", "sessionId", "terminalId", "cols", "rows"] : ["targetId", "hostId", "sessionId", "terminalId", "reason"]);
+function decodeTerminalRequest(
+  channel: "omp:terminal:input" | "omp:terminal:resize" | "omp:terminal:close",
+  payload: Record<string, unknown>,
+): TerminalInputRequest | TerminalResizeRequest | TerminalCloseRequest {
+  const type =
+    channel === "omp:terminal:input"
+      ? "terminal.input"
+      : channel === "omp:terminal:resize"
+        ? "terminal.resize"
+        : "terminal.close";
+  exact(
+    payload,
+    channel === "omp:terminal:input"
+      ? ["targetId", "hostId", "sessionId", "terminalId", "data", "encoding"]
+      : channel === "omp:terminal:resize"
+        ? ["targetId", "hostId", "sessionId", "terminalId", "cols", "rows"]
+        : ["targetId", "hostId", "sessionId", "terminalId", "reason"],
+  );
   const decoded = decodeTerminalClient({
     v: PROTOCOL_VERSION,
     type,
     hostId: payload.hostId,
     sessionId: payload.sessionId,
     terminalId: payload.terminalId,
-    ...(type === "terminal.input" ? { data: payload.data, ...(payload.encoding === undefined ? {} : { encoding: payload.encoding }) } : {}),
+    ...(type === "terminal.input"
+      ? {
+          data: payload.data,
+          ...(payload.encoding === undefined ? {} : { encoding: payload.encoding }),
+        }
+      : {}),
     ...(type === "terminal.resize" ? { cols: payload.cols, rows: payload.rows } : {}),
-    ...(type === "terminal.close" && payload.reason !== undefined ? { reason: payload.reason } : {}),
+    ...(type === "terminal.close" && payload.reason !== undefined
+      ? { reason: payload.reason }
+      : {}),
   });
   const common = {
     targetId: target(payload.targetId),
@@ -338,15 +550,22 @@ function decodeTerminalRequest(channel: "omp:terminal:input" | "omp:terminal:res
     sessionId: decoded.sessionId,
     terminalId: decoded.terminalId,
   };
-  if (decoded.type === "terminal.input") return { ...common, data: decoded.data, ...(decoded.encoding === undefined ? {} : { encoding: decoded.encoding }) };
-  if (decoded.type === "terminal.resize") return { ...common, cols: decoded.cols, rows: decoded.rows };
+  if (decoded.type === "terminal.input")
+    return {
+      ...common,
+      data: decoded.data,
+      ...(decoded.encoding === undefined ? {} : { encoding: decoded.encoding }),
+    };
+  if (decoded.type === "terminal.resize")
+    return { ...common, cols: decoded.cols, rows: decoded.rows };
   return { ...common, ...(decoded.reason === undefined ? {} : { reason: decoded.reason }) };
 }
 
 export function decodeDesktopInvokeRequest(input: unknown): DesktopInvokeRequest {
   const frame = inputObject(input);
   exact(frame, ["channel", "payload"]);
-  if (!(DESKTOP_IPC_CHANNELS as readonly string[]).includes(frame.channel as string)) throw new Error("unknown channel");
+  if (!(DESKTOP_IPC_CHANNELS as readonly string[]).includes(frame.channel as string))
+    throw new Error("unknown channel");
   const channel = frame.channel as DesktopInvokeChannel;
   const payload = object(frame.payload, "payload");
   switch (channel) {
@@ -382,7 +601,14 @@ export function decodeDesktopInvokeRequest(input: unknown): DesktopInvokeRequest
       exact(payload, ["targetId", "intent"]);
       {
         const intent = object(payload.intent, "intent");
-        exact(intent, ["hostId", "sessionId", "command", "expectedRevision", "confirmationId", "args"]);
+        exact(intent, [
+          "hostId",
+          "sessionId",
+          "command",
+          "expectedRevision",
+          "confirmationId",
+          "args",
+        ]);
         const command = decodeCommand({
           v: PROTOCOL_VERSION,
           type: "command",
@@ -411,8 +637,10 @@ function pairLink(value: unknown): PairLinkEvent {
   exact(item, ["hostHint", "code", "issuedAt"]);
   const hostHint = controlFree(item.hostHint, "hostHint", 128);
   const code = controlFree(item.code, "code", 6);
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(hostHint) || !/^\d{6}$/u.test(code)) throw new Error("invalid pair link");
-  if (typeof item.issuedAt !== "number" || !Number.isFinite(item.issuedAt) || item.issuedAt < 0) throw new Error("invalid pair link issuedAt");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(hostHint) || !/^\d{6}$/u.test(code))
+    throw new Error("invalid pair link");
+  if (typeof item.issuedAt !== "number" || !Number.isFinite(item.issuedAt) || item.issuedAt < 0)
+    throw new Error("invalid pair link issuedAt");
   return { hostHint, code, issuedAt: item.issuedAt };
 }
 export function decodeDesktopEvent(input: unknown): DesktopEvent {

@@ -64,6 +64,7 @@ describe("deterministic fixture engine", () => {
     expect(names).toEqual([
       "session.archive",
       "session.cancel",
+      "session.close",
       "session.create",
       "session.delete",
       "session.fast.set",

@@ -13,35 +13,18 @@ export const RELEASE_CONTRACT_PATHS = [
   "apps/site/src/release.ts",
   "apps/web/src/platform/browser-shell-port.ts",
   "compat/omp-app-matrix.json",
+  "docs/CURRENT_RELEASE_NOTES.md",
   "packages/client/src/omp-client-frames.ts",
+  "vendor/app-wire/manifest.json",
 ];
 
 const REPOSITORY_URL = "https://github.com/LycaonLLC/t4-code";
-const APP_WIRE_VERSION = "0.5.2";
-const APP_WIRE_SOURCE_COMMIT = "5d4315eea317260fec030e2b4726f10fed0cd5f6";
-const APP_WIRE_SOURCE_TREE = "713688e8099d4553a0a30b1bf415a7cffb5963f4";
-const OMP_RUNTIME_VERSION = "16.5.0";
-const OMP_RUNTIME_COMMIT = "d4a0b9344e1796c0e56041cfeea3431a8a728e61";
 const OMP_RUNTIME_REPOSITORY = "https://github.com/lyc-aon/oh-my-pi";
-const OMP_RUNTIME_COMMIT_URL = `${OMP_RUNTIME_REPOSITORY}/commit/${OMP_RUNTIME_COMMIT}`;
-const OMP_RUNTIME_SOURCE_TAG = "t4code-16.5.0-appserver-3";
-const OMP_RUNTIME_SOURCE_URL = `${OMP_RUNTIME_REPOSITORY}/tree/${OMP_RUNTIME_SOURCE_TAG}`;
 const OMP_UPSTREAM_REPOSITORY = "https://github.com/can1357/oh-my-pi";
-const OMP_UPSTREAM_TAG = "v16.5.0";
-const OMP_UPSTREAM_COMMIT = "3047c27c332c5629c8e063283d349384c10c9a56";
-const OMP_UPSTREAM_TAG_URL = `${OMP_UPSTREAM_REPOSITORY}/tree/${OMP_UPSTREAM_TAG}`;
-const OMP_UPSTREAM_COMMIT_URL = `${OMP_UPSTREAM_REPOSITORY}/commit/${OMP_UPSTREAM_COMMIT}`;
-const OMP_INTEGRATION_PATCHES = [
-  "bounded-growing-session-replay",
-  "complete-session-event-projection",
-  "session-lifecycle-management",
-  "ordered-remote-outbound-frames",
-  "restart-safe-rpc-session-teardown",
-  "catalog-advertised-session-management",
-  "cross-client-control-state-convergence",
-  "terminal-streaming-state-settlement",
-];
 const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
+const SHA_PATTERN = /^[0-9a-f]{40}$/u;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
+const PATCH_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 
 export function expectedReleaseAssetNames(version) {
   return [
@@ -115,76 +98,143 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     errors.push(`release tag ${releaseTag} does not match ${expectedTag}`);
   }
 
-  const matrix = parseJson(files, "compat/omp-app-matrix.json", errors);
+  const matrixPath = "compat/omp-app-matrix.json";
+  const matrix = parseJson(files, matrixPath, errors);
   if (matrix?.desktop?.version !== version) {
-    errors.push(`compat/omp-app-matrix.json desktop version must be ${version}`);
+    errors.push(`${matrixPath} desktop version must be ${version}`);
   }
+
+  // The compatibility matrix is the release's provenance authority. These
+  // checks validate its shape and internal relationships; the cross-surface
+  // checks below ensure the site, README, and release notes match it.
   const appWire = matrix?.appWire;
-  if (appWire?.version !== APP_WIRE_VERSION) {
-    errors.push(`compat/omp-app-matrix.json app-wire version must be ${APP_WIRE_VERSION}`);
+  const appWireVersion = appWire?.version;
+  const appWireSourceCommit = typeof appWire?.sourceCommit === "string" ? appWire.sourceCommit : "";
+  const appWireSourceTree =
+    typeof appWire?.sourceTreeHash === "string" ? appWire.sourceTreeHash : "";
+  if (appWire?.package !== "@oh-my-pi/app-wire") {
+    errors.push(`${matrixPath} app-wire package must be @oh-my-pi/app-wire`);
+  }
+  if (typeof appWireVersion !== "string" || !VERSION_PATTERN.test(appWireVersion)) {
+    errors.push(`${matrixPath} app-wire version must be a stable x.y.z version`);
   }
   if (appWire?.sourceRepository !== OMP_RUNTIME_REPOSITORY) {
-    errors.push(`compat/omp-app-matrix.json app-wire repository must be ${OMP_RUNTIME_REPOSITORY}`);
+    errors.push(`${matrixPath} app-wire repository must be ${OMP_RUNTIME_REPOSITORY}`);
   }
-  if (appWire?.sourceCommit !== APP_WIRE_SOURCE_COMMIT) {
-    errors.push(`compat/omp-app-matrix.json app-wire commit must be ${APP_WIRE_SOURCE_COMMIT}`);
+  if (!SHA_PATTERN.test(appWireSourceCommit)) {
+    errors.push(`${matrixPath} app-wire commit must be a lowercase 40-character Git SHA`);
   }
-  if (appWire?.sourceTreeHash !== APP_WIRE_SOURCE_TREE) {
-    errors.push(`compat/omp-app-matrix.json app-wire source tree must be ${APP_WIRE_SOURCE_TREE}`);
+  if (!SHA_PATTERN.test(appWireSourceTree)) {
+    errors.push(`${matrixPath} app-wire source tree must be a lowercase 40-character Git SHA`);
   }
+  if (
+    typeof appWireVersion === "string" &&
+    appWire?.tarball !== `vendor/app-wire/oh-my-pi-app-wire-${appWireVersion}.tgz`
+  ) {
+    errors.push(`${matrixPath} app-wire tarball path must match its version`);
+  }
+  if (typeof appWire?.tarballSha256 !== "string" || !SHA256_PATTERN.test(appWire.tarballSha256)) {
+    errors.push(`${matrixPath} app-wire tarball SHA-256 must be 64 lowercase hex characters`);
+  }
+  if (
+    typeof appWire?.goldenCorpusSha256 !== "string" ||
+    !SHA256_PATTERN.test(appWire.goldenCorpusSha256)
+  ) {
+    errors.push(`${matrixPath} golden corpus SHA-256 must be 64 lowercase hex characters`);
+  }
+
+  const appWireManifestPath = "vendor/app-wire/manifest.json";
+  const appWireManifest = parseJson(files, appWireManifestPath, errors);
+  const expectedManifest = {
+    package: appWire?.package,
+    version: appWireVersion,
+    sourceRepository: appWire?.sourceRepository,
+    sourceCommit: appWireSourceCommit,
+    sourceTreeHash: appWireSourceTree,
+    tarball:
+      typeof appWire?.tarball === "string"
+        ? appWire.tarball.replace(/^vendor\/app-wire\//u, "")
+        : undefined,
+    tarballSha256: appWire?.tarballSha256,
+    appProtocol: matrix?.appProtocol,
+    goldenCorpusSha256: appWire?.goldenCorpusSha256,
+  };
+  for (const [field, expected] of Object.entries(expectedManifest)) {
+    if (appWireManifest?.[field] !== expected) {
+      errors.push(`${appWireManifestPath} ${field} must match ${matrixPath}`);
+    }
+  }
+  const manifestCreatedAt = appWireManifest?.createdAt;
+  if (
+    typeof manifestCreatedAt !== "string" ||
+    !Number.isFinite(Date.parse(manifestCreatedAt)) ||
+    new Date(manifestCreatedAt).toISOString().replace(".000Z", "Z") !== manifestCreatedAt
+  ) {
+    errors.push(`${appWireManifestPath} createdAt must be a canonical ISO timestamp`);
+  }
+
   const verifiedRuntime = matrix?.verifiedRuntime;
+  const ompRuntimeVersion = verifiedRuntime?.version;
+  const ompRuntimeCommit = verifiedRuntime?.sourceCommit;
+  const ompRuntimeSourceTag = verifiedRuntime?.sourceTag;
+  const ompUpstreamTag = verifiedRuntime?.upstreamTag;
+  const ompUpstreamCommit = verifiedRuntime?.upstreamCommit;
+  const ompRuntimeCommitUrl = `${OMP_RUNTIME_REPOSITORY}/commit/${ompRuntimeCommit ?? ""}`;
+  const ompRuntimeSourceUrl = `${OMP_RUNTIME_REPOSITORY}/tree/${ompRuntimeSourceTag ?? ""}`;
+  const ompUpstreamTagUrl = `${OMP_UPSTREAM_REPOSITORY}/tree/${ompUpstreamTag ?? ""}`;
+  const ompUpstreamCommitUrl = `${OMP_UPSTREAM_REPOSITORY}/commit/${ompUpstreamCommit ?? ""}`;
+
   if (verifiedRuntime?.package !== "omp") {
-    errors.push("compat/omp-app-matrix.json verified runtime package must be omp");
+    errors.push(`${matrixPath} verified runtime package must be omp`);
   }
-  if (verifiedRuntime?.version !== OMP_RUNTIME_VERSION) {
-    errors.push(
-      `compat/omp-app-matrix.json verified runtime version must be ${OMP_RUNTIME_VERSION}`,
-    );
+  if (typeof ompRuntimeVersion !== "string" || !VERSION_PATTERN.test(ompRuntimeVersion)) {
+    errors.push(`${matrixPath} verified runtime version must be a stable x.y.z version`);
   }
   if (verifiedRuntime?.sourceRepository !== OMP_RUNTIME_REPOSITORY) {
-    errors.push(
-      `compat/omp-app-matrix.json verified runtime repository must be ${OMP_RUNTIME_REPOSITORY}`,
-    );
+    errors.push(`${matrixPath} verified runtime repository must be ${OMP_RUNTIME_REPOSITORY}`);
   }
-  if (verifiedRuntime?.sourceCommit !== OMP_RUNTIME_COMMIT) {
-    errors.push(`compat/omp-app-matrix.json verified runtime commit must be ${OMP_RUNTIME_COMMIT}`);
+  if (typeof ompRuntimeCommit !== "string" || !SHA_PATTERN.test(ompRuntimeCommit)) {
+    errors.push(`${matrixPath} verified runtime commit must be a lowercase 40-character Git SHA`);
   }
-  if (verifiedRuntime?.sourceUrl !== OMP_RUNTIME_COMMIT_URL) {
-    errors.push(
-      `compat/omp-app-matrix.json verified runtime URL must be ${OMP_RUNTIME_COMMIT_URL}`,
-    );
+  if (verifiedRuntime?.sourceUrl !== ompRuntimeCommitUrl) {
+    errors.push(`${matrixPath} verified runtime URL must be ${ompRuntimeCommitUrl}`);
   }
-  if (verifiedRuntime?.sourceTag !== OMP_RUNTIME_SOURCE_TAG) {
+  if (
+    typeof ompRuntimeVersion === "string" &&
+    (typeof ompRuntimeSourceTag !== "string" ||
+      !new RegExp(
+        `^t4code-${ompRuntimeVersion.replaceAll(".", "\\.")}-appserver-[1-9]\\d*$`,
+        "u",
+      ).test(ompRuntimeSourceTag))
+  ) {
     errors.push(
-      `compat/omp-app-matrix.json verified runtime tag must be ${OMP_RUNTIME_SOURCE_TAG}`,
+      `${matrixPath} verified runtime tag must identify the OMP version and appserver revision`,
     );
   }
   if (verifiedRuntime?.upstreamRepository !== OMP_UPSTREAM_REPOSITORY) {
-    errors.push(
-      `compat/omp-app-matrix.json upstream repository must be ${OMP_UPSTREAM_REPOSITORY}`,
-    );
+    errors.push(`${matrixPath} upstream repository must be ${OMP_UPSTREAM_REPOSITORY}`);
   }
-  if (verifiedRuntime?.upstreamTag !== OMP_UPSTREAM_TAG) {
-    errors.push(`compat/omp-app-matrix.json upstream tag must be ${OMP_UPSTREAM_TAG}`);
+  if (typeof ompRuntimeVersion === "string" && ompUpstreamTag !== `v${ompRuntimeVersion}`) {
+    errors.push(`${matrixPath} upstream tag must be v${ompRuntimeVersion}`);
   }
-  if (verifiedRuntime?.upstreamCommit !== OMP_UPSTREAM_COMMIT) {
-    errors.push(`compat/omp-app-matrix.json upstream commit must be ${OMP_UPSTREAM_COMMIT}`);
+  if (typeof ompUpstreamCommit !== "string" || !SHA_PATTERN.test(ompUpstreamCommit)) {
+    errors.push(`${matrixPath} upstream commit must be a lowercase 40-character Git SHA`);
   }
+  const integrationPatches = verifiedRuntime?.integrationPatches;
   if (
-    !Array.isArray(verifiedRuntime?.integrationPatches) ||
-    verifiedRuntime.integrationPatches.length !== OMP_INTEGRATION_PATCHES.length ||
-    verifiedRuntime.integrationPatches.some(
-      (patch, index) => patch !== OMP_INTEGRATION_PATCHES[index],
-    )
+    !Array.isArray(integrationPatches) ||
+    integrationPatches.length === 0 ||
+    integrationPatches.some(
+      (patch) => typeof patch !== "string" || !PATCH_NAME_PATTERN.test(patch),
+    ) ||
+    new Set(integrationPatches).size !== integrationPatches.length
   ) {
     errors.push(
-      `compat/omp-app-matrix.json verified runtime integration patches must be ${OMP_INTEGRATION_PATCHES.join(", ")}`,
+      `${matrixPath} verified runtime integration patches must be unique kebab-case names`,
     );
   }
   if (verifiedRuntime?.upstreamTagContainsIntegrationPatches !== false) {
-    errors.push(
-      "compat/omp-app-matrix.json must record that stock upstream v16.5.0 lacks the integration patches",
-    );
+    errors.push(`${matrixPath} must record that stock upstream lacks the integration patches`);
   }
 
   const site = files.get("apps/site/src/release.ts") ?? "";
@@ -202,31 +252,31 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   requireText(
     site,
-    `export const OMP_RUNTIME_VERSION = "${OMP_RUNTIME_VERSION}";`,
+    `export const OMP_RUNTIME_VERSION = "${ompRuntimeVersion}";`,
     "apps/site/src/release.ts",
     errors,
   );
   requireText(
     site,
-    `export const OMP_RUNTIME_COMMIT = "${OMP_RUNTIME_COMMIT}";`,
+    `export const OMP_RUNTIME_COMMIT = "${ompRuntimeCommit}";`,
     "apps/site/src/release.ts",
     errors,
   );
   requireText(
     site,
-    `export const OMP_RUNTIME_TAG = "${OMP_RUNTIME_SOURCE_TAG}";`,
+    `export const OMP_RUNTIME_TAG = "${ompRuntimeSourceTag}";`,
     "apps/site/src/release.ts",
     errors,
   );
   requireText(
     site,
-    `export const OMP_UPSTREAM_TAG = "${OMP_UPSTREAM_TAG}";`,
+    `export const OMP_UPSTREAM_TAG = "${ompUpstreamTag}";`,
     "apps/site/src/release.ts",
     errors,
   );
   requireText(
     site,
-    `export const OMP_UPSTREAM_COMMIT = "${OMP_UPSTREAM_COMMIT}";`,
+    `export const OMP_UPSTREAM_COMMIT = "${ompUpstreamCommit}";`,
     "apps/site/src/release.ts",
     errors,
   );
@@ -244,7 +294,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   requireText(
     site,
-    `export const APP_WIRE_VERSION = "${APP_WIRE_VERSION}";`,
+    `export const APP_WIRE_VERSION = "${appWireVersion}";`,
     "apps/site/src/release.ts",
     errors,
   );
@@ -273,25 +323,25 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   requireText(
     readme,
-    `T4 Code ${expectedTag} was verified with OMP ${OMP_RUNTIME_VERSION} built from [\`${OMP_RUNTIME_COMMIT.slice(0, 8)}\`](${OMP_RUNTIME_COMMIT_URL}), tagged [\`${OMP_RUNTIME_SOURCE_TAG}\`](${OMP_RUNTIME_SOURCE_URL}).`,
+    `T4 Code ${expectedTag} was verified with OMP ${ompRuntimeVersion} built from [\`${String(ompRuntimeCommit).slice(0, 8)}\`](${ompRuntimeCommitUrl}), tagged [\`${ompRuntimeSourceTag}\`](${ompRuntimeSourceUrl}).`,
     "README.md",
     errors,
   );
   requireText(
     readme,
-    `official upstream [\`${OMP_UPSTREAM_TAG}\`](${OMP_UPSTREAM_TAG_URL}) tag at [\`${OMP_UPSTREAM_COMMIT.slice(0, 8)}\`](${OMP_UPSTREAM_COMMIT_URL})`,
+    `official upstream [\`${ompUpstreamTag}\`](${ompUpstreamTagUrl}) tag at [\`${String(ompUpstreamCommit).slice(0, 8)}\`](${ompUpstreamCommitUrl})`,
     "README.md",
     errors,
   );
   requireText(
     readme,
-    "The official upstream v16.5.0 tag has no `appserver` command, so it cannot host T4 Code.",
+    `The official upstream ${ompUpstreamTag} tag has no \`appserver\` command, so it cannot host T4 Code.`,
     "README.md",
     errors,
   );
   requireText(
     readme,
-    `T4 Code vendors \`@oh-my-pi/app-wire\` ${APP_WIRE_VERSION} from integration commit [\`${APP_WIRE_SOURCE_COMMIT.slice(0, 8)}\`](${OMP_RUNTIME_REPOSITORY}/commit/${APP_WIRE_SOURCE_COMMIT}), source tree \`${APP_WIRE_SOURCE_TREE}\`.`,
+    `T4 Code vendors \`@oh-my-pi/app-wire\` ${appWireVersion} from integration commit [\`${appWireSourceCommit.slice(0, 8)}\`](${OMP_RUNTIME_REPOSITORY}/commit/${appWireSourceCommit}), source tree \`${appWireSourceTree}\`.`,
     "README.md",
     errors,
   );
@@ -317,6 +367,19 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     }
   }
 
+  const releaseNotes = files.get("docs/CURRENT_RELEASE_NOTES.md") ?? "";
+  for (const expected of [
+    `app-wire ${appWireVersion}`,
+    `[${appWireSourceCommit.slice(0, 8)}](${OMP_RUNTIME_REPOSITORY}/commit/${appWireSourceCommit})`,
+    `OMP ${ompRuntimeVersion}`,
+    `[${String(ompRuntimeCommit).slice(0, 8)}](${ompRuntimeCommitUrl})`,
+    `[${ompRuntimeSourceTag}](${ompRuntimeSourceUrl})`,
+    `[${ompUpstreamTag} tag](${ompUpstreamTagUrl})`,
+    `[${String(ompUpstreamCommit).slice(0, 8)}](${ompUpstreamCommitUrl})`,
+  ]) {
+    requireText(releaseNotes, expected, "docs/CURRENT_RELEASE_NOTES.md", errors);
+  }
+
   requireText(
     files.get("SECURITY.md") ?? "",
     `The macOS ${expectedTag} build is unsigned and unnotarized`,
@@ -330,13 +393,15 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     errors,
   );
 
-  const runtimeVersions = [
-    ["apps/desktop/src/target-manager.ts", `version: "${version}", build: "desktop"`],
-    ["apps/web/src/platform/browser-shell-port.ts", `version: "${version}"`],
-    ["packages/client/src/omp-client-frames.ts", `version: "${version}", build: "client"`],
+  const runtimeIdentifiers = [
+    ["apps/desktop/src/target-manager.ts", [`version: "${version}"`, 'build: "desktop"']],
+    ["apps/web/src/platform/browser-shell-port.ts", [`version: "${version}"`]],
+    ["packages/client/src/omp-client-frames.ts", [`version: "${version}"`, 'build: "client"']],
   ];
-  for (const [path, expected] of runtimeVersions) {
-    requireText(files.get(path) ?? "", expected, path, errors);
+  for (const [path, expectedValues] of runtimeIdentifiers) {
+    for (const expected of expectedValues) {
+      requireText(files.get(path) ?? "", expected, path, errors);
+    }
   }
 
   const siteDocs = files.get("apps/site/src/docs/content.ts") ?? "";
@@ -365,37 +430,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   requireText(
     releaseWorkflow,
-    OMP_RUNTIME_COMMIT_URL,
-    ".github/workflows/release.yml",
-    errors,
-  );
-  requireText(
-    releaseWorkflow,
-    OMP_RUNTIME_SOURCE_URL,
-    ".github/workflows/release.yml",
-    errors,
-  );
-  requireText(
-    releaseWorkflow,
-    OMP_UPSTREAM_TAG_URL,
-    ".github/workflows/release.yml",
-    errors,
-  );
-  requireText(
-    releaseWorkflow,
-    OMP_UPSTREAM_COMMIT_URL,
-    ".github/workflows/release.yml",
-    errors,
-  );
-  requireText(
-    releaseWorkflow,
-    `This release vendors app-wire ${APP_WIRE_VERSION}`,
-    ".github/workflows/release.yml",
-    errors,
-  );
-  requireText(
-    releaseWorkflow,
-    "Official upstream OMP v16.5.0 has no `appserver` command and cannot host T4 Code.",
+    "body_path: docs/CURRENT_RELEASE_NOTES.md",
     ".github/workflows/release.yml",
     errors,
   );

@@ -1,0 +1,12 @@
+[Unit]
+Description=Check for the latest stable official OMP release
+
+[Timer]
+OnCalendar=*-*-* 00/2:17:00
+Persistent=true
+AccuracySec=1min
+RandomizedDelaySec=5min
+Unit=t4-omp-maintainer.service
+
+[Install]
+WantedBy=timers.target

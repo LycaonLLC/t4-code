@@ -26,7 +26,9 @@ import {
   restoreLiveSession,
   sessionCreateSupport,
   sessionIsArchived,
+  sessionIsClosed,
   sessionIsWorking,
+  terminateLiveSession,
 } from "../src/features/session-runtime/session-management.ts";
 import type { LiveSessionAddress } from "../src/platform/live-workspace.ts";
 
@@ -64,29 +66,33 @@ function catalog(): CatalogFrame {
       "session.rename",
       "session.archive",
       "session.restore",
+      "session.close",
       "session.delete",
-    ].map(
-      (name) => ({
-        id: `command-${name}` as never,
-        kind: "command" as const,
-        name,
-        supported: true,
-        capabilities: ["sessions.manage"],
-      }),
-    ),
+    ].map((name) => ({
+      id: `command-${name}` as never,
+      kind: "command" as const,
+      name,
+      supported: true,
+      capabilities: ["sessions.manage"],
+    })),
   };
 }
 
 class FakeManagementController {
   readonly commands: CommandRequest["intent"][] = [];
   readonly controllerLeaseCommands: CommandRequest["intent"][] = [];
+  readonly controllerLeaseAcquisitions: string[] = [];
   readonly confirms: ConfirmRequest[] = [];
+  maxConcurrentChallengedCommands = 0;
   private readonly snapshotListeners = new Set<(snapshot: DesktopRuntimeSnapshot) => void>();
   private readonly frameListeners = new Set<(event: RendererServerFrameEvent) => void>();
   private readonly sessionIndex = new Map<string, SessionRef>();
-  private pendingMutation: "rename" | "archive" | "restore" | "delete" | null = null;
+  closeRejection: NonNullable<CommandResult["error"]> | null = null;
+  emitStaleCloseChallengeDuringLease = false;
+  private pendingMutation: "rename" | "archive" | "restore" | "close" | "delete" | null = null;
   private pendingName = "";
-  private deleteGate: ReturnType<typeof Promise.withResolvers<void>> | null = null;
+  private challengeGate: ReturnType<typeof Promise.withResolvers<void>> | null = null;
+  private activeChallengedCommands = 0;
   private sequence = 0;
 
   constructor(initial: SessionRef = ref()) {
@@ -171,9 +177,45 @@ class FakeManagementController {
       this.pendingMutation = "restore";
       return { ...base, result: { restored: true } };
     }
+    if (intent.command === "session.close" && this.closeRejection !== null) {
+      return { ...base, accepted: false, error: this.closeRejection };
+    }
+    if (intent.command === "session.close") {
+      this.pendingMutation = "close";
+      this.challengeGate = Promise.withResolvers<void>();
+      this.activeChallengedCommands += 1;
+      this.maxConcurrentChallengedCommands = Math.max(
+        this.maxConcurrentChallengedCommands,
+        this.activeChallengedCommands,
+      );
+      const current = this.sessionIndex.get(KEY);
+      this.emitFrame({
+        v: "omp-app/1",
+        type: "confirmation",
+        confirmationId: confirmationId("close-confirmation"),
+        commandId: commandId(base.commandId),
+        hostId: hostId(ADDRESS.hostId),
+        sessionId: sessionId(ADDRESS.sessionId),
+        commandHash: "sha256:close",
+        revision: current?.revision ?? revision("missing"),
+        expiresAt: "2999-01-01T00:00:00.000Z",
+        summary: "session.close",
+      });
+      try {
+        await this.challengeGate.promise;
+      } finally {
+        this.activeChallengedCommands -= 1;
+      }
+      return { ...base, result: { closed: true } };
+    }
     if (intent.command === "session.delete") {
       this.pendingMutation = "delete";
-      this.deleteGate = Promise.withResolvers<void>();
+      this.challengeGate = Promise.withResolvers<void>();
+      this.activeChallengedCommands += 1;
+      this.maxConcurrentChallengedCommands = Math.max(
+        this.maxConcurrentChallengedCommands,
+        this.activeChallengedCommands,
+      );
       const current = this.sessionIndex.get(KEY);
       this.emitFrame({
         v: "omp-app/1",
@@ -187,7 +229,11 @@ class FakeManagementController {
         expiresAt: "2999-01-01T00:00:00.000Z",
         summary: "session.delete",
       });
-      await this.deleteGate.promise;
+      try {
+        await this.challengeGate.promise;
+      } finally {
+        this.activeChallengedCommands -= 1;
+      }
       return { ...base, result: { deleted: true } };
     }
     if (intent.command === "session.list") {
@@ -206,9 +252,33 @@ class FakeManagementController {
     return this.command(targetId, intent);
   }
 
+  async acquireControllerLease(
+    _targetId: string,
+    _hostId: string,
+    _sessionId: string,
+    expectedRevision: string,
+  ): Promise<{ readonly required: false }> {
+    this.controllerLeaseAcquisitions.push(expectedRevision);
+    if (this.emitStaleCloseChallengeDuringLease) {
+      this.emitFrame({
+        v: "omp-app/1",
+        type: "confirmation",
+        confirmationId: confirmationId("stale-close-confirmation"),
+        commandId: commandId("stale-close-command"),
+        hostId: hostId(ADDRESS.hostId),
+        sessionId: sessionId(ADDRESS.sessionId),
+        commandHash: "sha256:stale-close",
+        revision: revision(expectedRevision),
+        expiresAt: "2999-01-01T00:00:00.000Z",
+        summary: "session.close",
+      });
+    }
+    return { required: false };
+  }
+
   async confirm(request: ConfirmRequest): Promise<ConfirmResult> {
     this.confirms.push(request);
-    this.deleteGate?.resolve();
+    this.challengeGate?.resolve();
     return {
       targetId: request.targetId,
       requestId: "confirm-request",
@@ -236,7 +306,8 @@ class FakeManagementController {
     } else {
       const alreadyDesired =
         (this.pendingMutation === "archive" && sessionIsArchived(current)) ||
-        (this.pendingMutation === "restore" && !sessionIsArchived(current));
+        (this.pendingMutation === "restore" && !sessionIsArchived(current)) ||
+        (this.pendingMutation === "close" && sessionIsClosed(current));
       const nextRevision = alreadyDesired
         ? current.revision
         : revision(`${String(current.revision)}-next`);
@@ -244,6 +315,20 @@ class FakeManagementController {
         ...current,
         revision: nextRevision,
         ...(this.pendingMutation === "rename" ? { title: this.pendingName } : {}),
+        ...(this.pendingMutation === "close"
+          ? {
+              status: "closed",
+              pendingApproval: false,
+              pendingUserInput: false,
+              working: false,
+              isWorking: false,
+              turnActive: false,
+              inFlight: false,
+              queuedMessageCount: 0,
+              queuedMessages: [],
+              liveState: { phase: "idle" },
+            }
+          : {}),
       } as SessionRef & { archivedAt?: string };
       if (this.pendingMutation === "archive") {
         next.archivedAt = "2026-07-13T02:00:00.000Z";
@@ -272,7 +357,10 @@ describe("session management authority helpers", () => {
       catalogs: new Map([
         [
           ADDRESS.hostId,
-          { ...catalogWithoutCreate, items: catalogWithoutCreate.items.filter((item) => item.name !== "session.create") },
+          {
+            ...catalogWithoutCreate,
+            items: catalogWithoutCreate.items.filter((item) => item.name !== "session.create"),
+          },
         ],
       ]),
     } as DesktopRuntimeSnapshot;
@@ -331,18 +419,145 @@ describe("session management authority helpers", () => {
     expect(fake.getSnapshot().projection.sessionIndex.has(KEY)).toBe(false);
   });
 
+  it("terminates an active runtime separately, confirms it, and waits for closed host truth", async () => {
+    const stuck = {
+      ...ref({ status: "active" }),
+      pendingApproval: true,
+      pendingUserInput: true,
+      working: true,
+      isWorking: true,
+      turnActive: true,
+      inFlight: true,
+      queuedMessageCount: 1,
+      queuedMessages: ["next"],
+      liveState: {
+        phase: "compacting",
+        isCompacting: true,
+        pendingApproval: true,
+        pendingUserInput: true,
+        queuedMessageCount: 1,
+        queuedMessages: ["next"],
+      },
+    } as SessionRef;
+    const fake = new FakeManagementController(stuck);
+    expect(sessionIsWorking(fake.getSnapshot().projection.sessionIndex.get(KEY))).toBe(true);
+    expect(managementCommandSupport(fake.getSnapshot(), ADDRESS, "session.close")).toEqual({
+      supported: true,
+      reason: null,
+    });
+    await terminateLiveSession(controller(fake), ADDRESS);
+    expect(fake.controllerLeaseAcquisitions).toEqual(["revision-1"]);
+    expect(fake.confirms).toEqual([
+      expect.objectContaining({
+        targetId: ADDRESS.targetId,
+        confirmationId: "close-confirmation",
+        hostId: ADDRESS.hostId,
+        sessionId: ADDRESS.sessionId,
+        decision: "approve",
+      }),
+    ]);
+    expect(fake.commands.map((intent) => intent.command)).toEqual([
+      "session.close",
+      "session.list",
+    ]);
+    const closed = fake.getSnapshot().projection.sessionIndex.get(KEY);
+    expect(sessionIsClosed(closed)).toBe(true);
+    expect(sessionIsWorking(closed)).toBe(false);
+    expect(closed).toMatchObject({
+      pendingApproval: false,
+      pendingUserInput: false,
+      working: false,
+      isWorking: false,
+      turnActive: false,
+      inFlight: false,
+      queuedMessageCount: 0,
+      queuedMessages: [],
+      liveState: { phase: "idle" },
+    });
+    expect(managementCommandSupport(fake.getSnapshot(), ADDRESS, "session.archive")).toEqual({
+      supported: true,
+      reason: null,
+    });
+  });
+
+  it("ignores a matching stale close challenge emitted during lease acquisition", async () => {
+    const fake = new FakeManagementController(ref({ status: "active" }));
+    fake.emitStaleCloseChallengeDuringLease = true;
+    await terminateLiveSession(controller(fake), ADDRESS);
+    expect(fake.confirms).toHaveLength(1);
+    expect(fake.confirms[0]?.confirmationId).toBe("close-confirmation");
+    expect(fake.confirms[0]?.commandId).not.toBe("stale-close-command");
+  });
+
+  it("serializes concurrent destructive commands for the same session", async () => {
+    const fake = new FakeManagementController(ref({ status: "active" }));
+    await Promise.all([
+      terminateLiveSession(controller(fake), ADDRESS),
+      terminateLiveSession(controller(fake), ADDRESS),
+    ]);
+    expect(fake.maxConcurrentChallengedCommands).toBe(1);
+    expect(fake.confirms).toHaveLength(2);
+    expect(fake.commands.map((intent) => intent.command)).toEqual([
+      "session.close",
+      "session.list",
+      "session.close",
+      "session.list",
+    ]);
+  });
+
+  it("surfaces a stale termination rejection and does not confirm or retry it", async () => {
+    const fake = new FakeManagementController(ref({ status: "active" }));
+    fake.closeRejection = { code: "stale_revision", message: "revision changed" };
+    await expect(terminateLiveSession(controller(fake), ADDRESS)).rejects.toThrow(
+      "The session changed before the host could complete this action",
+    );
+    expect(fake.commands.map((intent) => intent.command)).toEqual(["session.close"]);
+    expect(fake.confirms).toHaveLength(0);
+  });
+
+  it("still sends idempotent termination when projection is closed so an orphan worker can be reaped", async () => {
+    const fake = new FakeManagementController(ref({ status: "closed" }));
+    expect(managementCommandSupport(fake.getSnapshot(), ADDRESS, "session.close")).toEqual({
+      supported: true,
+      reason: null,
+    });
+    await terminateLiveSession(controller(fake), ADDRESS);
+    expect(fake.commands.map((intent) => intent.command)).toEqual([
+      "session.close",
+      "session.list",
+    ]);
+    expect(fake.confirms).toHaveLength(1);
+    expect(sessionIsClosed(fake.getSnapshot().projection.sessionIndex.get(KEY))).toBe(true);
+  });
+
+  it("keeps runtime termination off archived sessions", async () => {
+    const fake = new FakeManagementController(ref({ archived: true, status: "closed" }));
+    expect(managementCommandSupport(fake.getSnapshot(), ADDRESS, "session.close")).toEqual({
+      supported: false,
+      reason: "Restore this session before terminating its runtime",
+    });
+    await expect(terminateLiveSession(controller(fake), ADDRESS)).rejects.toThrow(
+      "Restore this session before terminating its runtime",
+    );
+    expect(fake.commands).toHaveLength(0);
+  });
+
   it("blocks destructive actions while the host reports active work", async () => {
     const fake = new FakeManagementController(ref({ status: "active" }));
     const snapshot = fake.getSnapshot();
     expect(managementCommandSupport(snapshot, ADDRESS, "session.archive")).toEqual({
       supported: false,
-      reason: "Stop the session before archiving or deleting it",
+      reason: "Terminate the runtime before archiving or deleting it",
+    });
+    expect(managementCommandSupport(snapshot, ADDRESS, "session.close")).toEqual({
+      supported: true,
+      reason: null,
     });
     await expect(archiveLiveSession(controller(fake), ADDRESS)).rejects.toThrow(
-      "Stop the session before archiving or deleting it",
+      "Terminate the runtime before archiving or deleting it",
     );
     await expect(deleteLiveSession(controller(fake), ADDRESS)).rejects.toThrow(
-      "Stop the session before archiving or deleting it",
+      "Terminate the runtime before archiving or deleting it",
     );
     expect(fake.commands).toHaveLength(0);
   });

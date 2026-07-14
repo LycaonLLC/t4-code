@@ -1,0 +1,19 @@
+[Unit]
+Description=T4 Code live OMP release maintainer
+
+[Service]
+Type=oneshot
+UMask=0077
+TimeoutStartSec=infinity
+TimeoutStopSec=infinity
+RuntimeMaxSec=infinity
+TasksMax=infinity
+MemoryMax=infinity
+Environment=HOME=@HOME@
+Environment=T4_MAINTAINER_ROOT=@MAINTAINER_ROOT@
+Environment=T4_MAINTAINER_PROMPT_FILE=@MAINTAINER_ROOT@/libexec/prompt.md
+EnvironmentFile=-@MAINTAINER_ROOT@/environment
+WorkingDirectory=@MAINTAINER_ROOT@/work
+ExecStart=@MAINTAINER_ROOT@/libexec/run.sh
+StandardOutput=append:@MAINTAINER_ROOT@/logs/service.log
+StandardError=append:@MAINTAINER_ROOT@/logs/service.error.log

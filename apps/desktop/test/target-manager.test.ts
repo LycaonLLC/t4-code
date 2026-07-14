@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { DESKTOP_IPC_CHANNELS, decodeDesktopInvokeRequest } from "@t4-code/protocol/desktop-ipc";
-import type { CursorStore, OmpTransport } from "@t4-code/client";
-import { commandId, confirmationId, DEVICE_CAPABILITIES, hostId, sessionId, type WelcomeFrame } from "@t4-code/protocol";
+import type { CursorStore, OmpTransport, PublicServerFrame } from "@t4-code/client";
+import {
+  commandId,
+  confirmationId,
+  DEVICE_CAPABILITIES,
+  hostId,
+  sessionId,
+  type WelcomeFrame,
+} from "@t4-code/protocol";
 import { validEvent } from "../src/ipc.ts";
 import { DesktopTargetManager } from "../src/target-manager.ts";
 import type { RemoteTargetRecord, RemoteTargetRegistry } from "../src/remote-runtime/registry.ts";
@@ -9,10 +16,25 @@ import type { RemoteTargetRecord, RemoteTargetRegistry } from "../src/remote-run
 const V = "omp-app/1" as const;
 function welcome(host = "host-fixture"): WelcomeFrame {
   return {
-    v: V, type: "welcome", selectedProtocol: V, hostId: hostId(host), ompVersion: "fixture", ompBuild: "test",
-    appserverVersion: "fixture", appserverBuild: "test", epoch: "epoch-a",
-    grantedCapabilities: ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage"], grantedFeatures: ["resume"],
-    negotiatedLimits: { maxInputBytes: 1_048_576 }, authentication: "local", resumed: false,
+    v: V,
+    type: "welcome",
+    selectedProtocol: V,
+    hostId: hostId(host),
+    ompVersion: "fixture",
+    ompBuild: "test",
+    appserverVersion: "fixture",
+    appserverBuild: "test",
+    epoch: "epoch-a",
+    grantedCapabilities: [
+      "sessions.read",
+      "sessions.prompt",
+      "sessions.control",
+      "sessions.manage",
+    ],
+    grantedFeatures: ["resume"],
+    negotiatedLimits: { maxInputBytes: 1_048_576 },
+    authentication: "local",
+    resumed: false,
   };
 }
 function pairingWelcome(host = "host-fixture"): WelcomeFrame {
@@ -20,7 +42,9 @@ function pairingWelcome(host = "host-fixture"): WelcomeFrame {
 }
 class Transport implements OmpTransport {
   private readonly helloFrame: WelcomeFrame;
-  constructor(helloFrame: WelcomeFrame = welcome()) { this.helloFrame = helloFrame; }
+  constructor(helloFrame: WelcomeFrame = welcome()) {
+    this.helloFrame = helloFrame;
+  }
   readonly sent: string[] = [];
   closed = false;
   private readonly messages = new Set<(data: string) => void>();
@@ -31,11 +55,13 @@ class Transport implements OmpTransport {
   send(data: string): void {
     this.sent.push(data);
     for (const listener of this.sentListeners) listener();
-    if (JSON.parse(data).type === "hello") for (const listener of this.messages) listener(JSON.stringify(this.helloFrame));
+    if (JSON.parse(data).type === "hello")
+      for (const listener of this.messages) listener(JSON.stringify(this.helloFrame));
   }
   waitForSent(index: number): Promise<Record<string, unknown>> {
     const existing = this.sent[index];
-    if (existing !== undefined) return Promise.resolve(JSON.parse(existing) as Record<string, unknown>);
+    if (existing !== undefined)
+      return Promise.resolve(JSON.parse(existing) as Record<string, unknown>);
     const { promise, resolve } = Promise.withResolvers<Record<string, unknown>>();
     const listener = () => {
       const data = this.sent[index];
@@ -46,29 +72,83 @@ class Transport implements OmpTransport {
     this.sentListeners.add(listener);
     return promise;
   }
-  receive(frame: Record<string, unknown>): void { for (const listener of this.messages) listener(JSON.stringify(frame)); }
-  close(): void { if (this.closed) return; this.closed = true; for (const listener of this.closes) listener(1000, "closed"); this.messages.clear(); this.closes.clear(); this.errors.clear(); this.sentListeners.clear(); }
-  onMessage(listener: (data: string | Uint8Array) => void): () => void { const wrapped = (data: string) => listener(data); this.messages.add(wrapped); return () => this.messages.delete(wrapped); }
-  onClose(listener: (code?: number, reason?: string) => void): () => void { this.closes.add(listener); return () => this.closes.delete(listener); }
-  onError(listener: (error: unknown) => void): () => void { this.errors.add(listener); return () => this.errors.delete(listener); }
+  receive(frame: Record<string, unknown>): void {
+    for (const listener of this.messages) listener(JSON.stringify(frame));
+  }
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    for (const listener of this.closes) listener(1000, "closed");
+    this.messages.clear();
+    this.closes.clear();
+    this.errors.clear();
+    this.sentListeners.clear();
+  }
+  onMessage(listener: (data: string | Uint8Array) => void): () => void {
+    const wrapped = (data: string) => listener(data);
+    this.messages.add(wrapped);
+    return () => this.messages.delete(wrapped);
+  }
+  onClose(listener: (code?: number, reason?: string) => void): () => void {
+    this.closes.add(listener);
+    return () => this.closes.delete(listener);
+  }
+  onError(listener: (error: unknown) => void): () => void {
+    this.errors.add(listener);
+    return () => this.errors.delete(listener);
+  }
 }
-class Store implements CursorStore { load(): readonly never[] { return []; } save(): void {} }
+class Store implements CursorStore {
+  load(): readonly never[] {
+    return [];
+  }
+  save(): void {}
+}
 class Registry implements RemoteTargetRegistry {
   private readonly values = new Map<string, RemoteTargetRecord>();
-  async list(): Promise<readonly RemoteTargetRecord[]> { return [...this.values.values()]; }
-  async get(id: string): Promise<RemoteTargetRecord | null> { return this.values.get(id) ?? null; }
-  async put(value: RemoteTargetRecord): Promise<void> { this.values.set(value.targetId, value); }
-  async remove(id: string): Promise<void> { this.values.delete(id); }
+  async list(): Promise<readonly RemoteTargetRecord[]> {
+    return [...this.values.values()];
+  }
+  async get(id: string): Promise<RemoteTargetRecord | null> {
+    return this.values.get(id) ?? null;
+  }
+  async put(value: RemoteTargetRecord): Promise<void> {
+    this.values.set(value.targetId, value);
+  }
+  async remove(id: string): Promise<void> {
+    this.values.delete(id);
+  }
 }
-const target = (targetId: string): RemoteTargetRecord => ({ targetId, label: targetId, mode: "direct", address: "100.64.0.1", port: 4210, requestedCapabilities: ["sessions.read"], grantedCapabilities: [], status: "unknown" });
-function manager(transports: Transport[], registry = new Registry()): DesktopTargetManager {
+const target = (targetId: string): RemoteTargetRecord => ({
+  targetId,
+  label: targetId,
+  mode: "direct",
+  address: "100.64.0.1",
+  port: 4210,
+  requestedCapabilities: ["sessions.read"],
+  grantedCapabilities: [],
+  status: "unknown",
+});
+function manager(
+  transports: Transport[],
+  registry = new Registry(),
+  onFrame: (frame: PublicServerFrame) => void = () => undefined,
+): DesktopTargetManager {
   return new DesktopTargetManager({
     cursorStore: new Store(),
     registry,
-    transportFactory: () => { const next = new Transport(); transports.push(next); return next as never; },
-    remoteTransportFactory: () => { const next = new Transport(); transports.push(next); return next as never; },
+    transportFactory: () => {
+      const next = new Transport();
+      transports.push(next);
+      return next as never;
+    },
+    remoteTransportFactory: () => {
+      const next = new Transport();
+      transports.push(next);
+      return next as never;
+    },
     capabilities: ["sessions.read"],
-    events: { onFrame: () => {}, onState: () => {}, onError: () => {} },
+    events: { onFrame: (_targetId, frame) => onFrame(frame), onState: () => {}, onError: () => {} },
   });
 }
 
@@ -91,20 +171,36 @@ describe("desktop target manager boundaries", () => {
     const localTransports: Transport[] = [];
     const local = new DesktopTargetManager({
       cursorStore: new Store(),
-      transportFactory: () => { const next = new Transport(); localTransports.push(next); return next as never; },
+      transportFactory: () => {
+        const next = new Transport();
+        localTransports.push(next);
+        return next as never;
+      },
       events: { onFrame: () => {}, onState: () => {}, onError: () => {} },
     });
     await local.connect();
     const localHello = JSON.parse(localTransports[0]?.sent[0] ?? "{}") as Record<string, unknown>;
-    expect(localHello).toMatchObject({ type: "hello", capabilities: { client: [...DEVICE_CAPABILITIES] } });
+    expect(localHello).toMatchObject({
+      type: "hello",
+      capabilities: { client: [...DEVICE_CAPABILITIES] },
+    });
     await local.close();
 
     const transports: Transport[] = [];
     const registry = new Registry();
-    const observe = { ...target("observe"), requestedCapabilities: ["sessions.read", "catalog.read"] };
+    const observe = {
+      ...target("observe"),
+      requestedCapabilities: ["sessions.read", "catalog.read"],
+    };
     const settingsControl = {
       ...target("settings-control"),
-      requestedCapabilities: ["sessions.read", "config.read", "config.write", "sessions.prompt", "sessions.control"],
+      requestedCapabilities: [
+        "sessions.read",
+        "config.read",
+        "config.write",
+        "sessions.prompt",
+        "sessions.control",
+      ],
     };
     await registry.put(observe);
     await registry.put(settingsControl);
@@ -112,32 +208,52 @@ describe("desktop target manager boundaries", () => {
     await Promise.all([runtime.connect("observe"), runtime.connect("settings-control")]);
     const observeHello = JSON.parse(transports[0]?.sent[0] ?? "{}") as Record<string, unknown>;
     const settingsHello = JSON.parse(transports[1]?.sent[0] ?? "{}") as Record<string, unknown>;
-    expect(observeHello).toMatchObject({ type: "hello", capabilities: { client: observe.requestedCapabilities } });
-    expect(settingsHello).toMatchObject({ type: "hello", capabilities: { client: settingsControl.requestedCapabilities } });
+    expect(observeHello).toMatchObject({
+      type: "hello",
+      capabilities: { client: observe.requestedCapabilities },
+    });
+    expect(settingsHello).toMatchObject({
+      type: "hello",
+      capabilities: { client: settingsControl.requestedCapabilities },
+    });
 
     const firstObserveTransport = transports[0];
     await runtime.disconnect("observe");
     await runtime.connect("observe");
     const reconnectHello = JSON.parse(transports[2]?.sent[0] ?? "{}") as Record<string, unknown>;
     expect(firstObserveTransport?.closed).toBe(true);
-    expect(reconnectHello).toMatchObject({ type: "hello", capabilities: { client: observe.requestedCapabilities } });
+    expect(reconnectHello).toMatchObject({
+      type: "hello",
+      capabilities: { client: observe.requestedCapabilities },
+    });
 
-    const changedSettings = { ...settingsControl, requestedCapabilities: ["sessions.read", "config.read"] };
+    const changedSettings = {
+      ...settingsControl,
+      requestedCapabilities: ["sessions.read", "config.read"],
+    };
     await registry.put(changedSettings);
     const firstSettingsTransport = transports[1];
     await runtime.connect("settings-control");
     const changedHello = JSON.parse(transports[3]?.sent[0] ?? "{}") as Record<string, unknown>;
     expect(firstSettingsTransport?.closed).toBe(true);
-    expect(changedHello).toMatchObject({ type: "hello", capabilities: { client: changedSettings.requestedCapabilities } });
+    expect(changedHello).toMatchObject({
+      type: "hello",
+      capabilities: { client: changedSettings.requestedCapabilities },
+    });
     await runtime.close();
   });
   it("uses the remote scope for pairing and never asks for a broad grant", async () => {
     const transports: Transport[] = [];
     const registry = new Registry();
-    const remote = { ...target("observe-pair"), requestedCapabilities: ["sessions.read", "catalog.read"] };
+    const remote = {
+      ...target("observe-pair"),
+      requestedCapabilities: ["sessions.read", "catalog.read"],
+    };
     await registry.put(remote);
     const credentials = {
-      withCredential<T>(): T { throw new Error("credential unavailable"); },
+      withCredential<T>(): T {
+        throw new Error("credential unavailable");
+      },
       set: async () => {},
       revoke: async () => {},
     };
@@ -160,7 +276,10 @@ describe("desktop target manager boundaries", () => {
     const pairRequestPromise = pairTransport.waitForSent(1);
     const pairing = runtime.pairStart("observe-pair", "123456");
     const pairRequest = await pairRequestPromise;
-    expect(pairRequest).toMatchObject({ type: "pair.start", requestedCapabilities: remote.requestedCapabilities });
+    expect(pairRequest).toMatchObject({
+      type: "pair.start",
+      requestedCapabilities: remote.requestedCapabilities,
+    });
     expect(pairRequest).not.toMatchObject({ requestedCapabilities: [...DEVICE_CAPABILITIES] });
     pairTransport.receive({
       v: V,
@@ -185,18 +304,42 @@ describe("desktop target manager boundaries", () => {
     await registry.put(target("commands"));
     const runtime = manager(transports, registry);
     await runtime.connect("commands");
-    const first = runtime.command("commands", { hostId: "host-fixture", command: "host.list", args: {} });
-    const second = runtime.command("commands", { hostId: "host-fixture", command: "host.list", args: {} });
+    const first = runtime.command("commands", {
+      hostId: "host-fixture",
+      command: "host.list",
+      args: {},
+    });
+    const second = runtime.command("commands", {
+      hostId: "host-fixture",
+      command: "host.list",
+      args: {},
+    });
     await runtime.disconnect("commands");
-    const outcomes = await Promise.all([first.then(() => "resolved", (error: { code?: string }) => error.code), second.then(() => "resolved", (error: { code?: string }) => error.code)]);
+    const outcomes = await Promise.all([
+      first.then(
+        () => "resolved",
+        (error: { code?: string }) => error.code,
+      ),
+      second.then(
+        () => "resolved",
+        (error: { code?: string }) => error.code,
+      ),
+    ]);
     expect(outcomes).toEqual(["outcome_unknown", "outcome_unknown"]);
     await runtime.close();
   });
   it("forwards decoded command payloads needed by lease consumers", async () => {
     const transports: Transport[] = [];
-    const runtime = manager(transports);
+    const frames: PublicServerFrame[] = [];
+    const runtime = manager(transports, new Registry(), (frame) => frames.push(frame));
     await runtime.connect();
-    const pending = runtime.command({ hostId: "host-fixture", sessionId: "session-a", command: "controller.lease.acquire", expectedRevision: "revision-a", args: { ownerId: "desktop" } });
+    const pending = runtime.command({
+      hostId: "host-fixture",
+      sessionId: "session-a",
+      command: "controller.lease.acquire",
+      expectedRevision: "revision-a",
+      args: { ownerId: "desktop" },
+    });
     const command = JSON.parse(transports[0]?.sent.at(-1) ?? "{}") as Record<string, unknown>;
     transports[0]?.receive({
       v: V,
@@ -216,7 +359,10 @@ describe("desktop target manager boundaries", () => {
       result: { accepted: true, leaseId: "lease-live", expiresAt: "2030-01-01T00:00:00.000Z" },
     });
     const rejected = runtime.command({ hostId: "host-fixture", command: "host.list", args: {} });
-    const rejectedCommand = JSON.parse(transports[0]?.sent.at(-1) ?? "{}") as Record<string, unknown>;
+    const rejectedCommand = JSON.parse(transports[0]?.sent.at(-1) ?? "{}") as Record<
+      string,
+      unknown
+    >;
     transports[0]?.receive({
       v: V,
       type: "response",
@@ -225,9 +371,35 @@ describe("desktop target manager boundaries", () => {
       hostId: "host-fixture",
       ok: false,
       command: "host.list",
-      error: { code: "outcome_unknown", message: "command failed" },
+      error: {
+        code: "outcome_unknown",
+        message: "command failed; Bearer live-message-token",
+        details: {
+          recovery: "inspect transcript",
+          diagnostic: "token=live-detail-token",
+          accessToken: "must-not-cross-renderer-ipc",
+        },
+      },
     });
-    expect((await rejected).accepted).toBe(false);
+    expect(await rejected).toMatchObject({
+      accepted: false,
+      error: {
+        code: "outcome_unknown",
+        message: "command failed; [redacted]",
+        details: { recovery: "inspect transcript", diagnostic: "token=[redacted]" },
+      },
+    });
+    const responseFrame = frames.find((frame) => frame.type === "response" && !frame.ok);
+    expect(responseFrame).toMatchObject({
+      error: {
+        code: "outcome_unknown",
+        message: "command failed; [redacted]",
+        details: { recovery: "inspect transcript", diagnostic: "token=[redacted]" },
+      },
+    });
+    expect(JSON.stringify(responseFrame)).not.toContain("live-message-token");
+    expect(JSON.stringify(responseFrame)).not.toContain("live-detail-token");
+    expect(JSON.stringify(responseFrame)).not.toContain("must-not-cross-renderer-ipc");
     await runtime.close();
   });
   it("treats a host-acknowledged denial as a consumed confirmation decision", async () => {
@@ -297,7 +469,10 @@ describe("desktop target manager boundaries", () => {
     let reads = 0;
     const token = "A".repeat(43);
     const credentials = {
-      withCredential<T>(_targetId: string, provider: (value: { token: string; deviceId: string }) => T): T {
+      withCredential<T>(
+        _targetId: string,
+        provider: (value: { token: string; deviceId: string }) => T,
+      ): T {
         reads += 1;
         return provider({ token, deviceId: "device-auth" });
       },
@@ -305,26 +480,50 @@ describe("desktop target manager boundaries", () => {
       revoke: async () => {},
     };
     const runtime = new DesktopTargetManager({
-      cursorStore: new Store(), registry, credentials,
-      remoteTransportFactory: () => { const next = new Transport(); transports.push(next); return next as never; },
-      events: { onFrame: () => {}, onState: () => {}, onError: () => {} }, capabilities: ["sessions.read"],
+      cursorStore: new Store(),
+      registry,
+      credentials,
+      remoteTransportFactory: () => {
+        const next = new Transport();
+        transports.push(next);
+        return next as never;
+      },
+      events: { onFrame: () => {}, onState: () => {}, onError: () => {} },
+      capabilities: ["sessions.read"],
     });
     await runtime.connect("auth");
-    const internals = runtime as unknown as { runtimes: Map<string, { client: { options: { authentication?: () => unknown } } }> };
+    const internals = runtime as unknown as {
+      runtimes: Map<string, { client: { options: { authentication?: () => unknown } } }>;
+    };
     expect(reads).toBe(2);
     expect(JSON.stringify(internals)).toContain("runtimes");
     expect(JSON.stringify(internals).includes(token)).toBe(false);
     await runtime.close();
   });
   it("rejects malformed invoke channels, targets, and pairing credentials at the IPC schema boundary", () => {
-    expect(() => decodeDesktopInvokeRequest({ channel: "omp:targets:list", payload: { extra: true } })).toThrow();
-    expect(() => decodeDesktopInvokeRequest({ channel: "omp:connect", payload: { targetId: "../secret" } })).toThrow();
-    expect(() => decodeDesktopInvokeRequest({ channel: "omp:pair", payload: { targetId: "local", code: "token!" } })).toThrow();
-    expect(JSON.stringify({ targetId: "remote", paired: true }).includes("deviceToken")).toBe(false);
+    expect(() =>
+      decodeDesktopInvokeRequest({ channel: "omp:targets:list", payload: { extra: true } }),
+    ).toThrow();
+    expect(() =>
+      decodeDesktopInvokeRequest({ channel: "omp:connect", payload: { targetId: "../secret" } }),
+    ).toThrow();
+    expect(() =>
+      decodeDesktopInvokeRequest({
+        channel: "omp:pair",
+        payload: { targetId: "local", code: "token!" },
+      }),
+    ).toThrow();
+    expect(JSON.stringify({ targetId: "remote", paired: true }).includes("deviceToken")).toBe(
+      false,
+    );
   });
   it("uses canonical frozen pairing capabilities and ignores caller mutation", () => {
     const supplied = ["sessions.read"] as const;
-    const custom = new DesktopTargetManager({ cursorStore: new Store(), capabilities: supplied, events: { onFrame: () => {}, onState: () => {}, onError: () => {} } });
+    const custom = new DesktopTargetManager({
+      cursorStore: new Store(),
+      capabilities: supplied,
+      events: { onFrame: () => {}, onState: () => {}, onError: () => {} },
+    });
     const values = custom as unknown as { capabilities: readonly string[] };
     expect(values.capabilities).toEqual(["sessions.read"]);
     expect(Object.isFrozen(values.capabilities)).toBe(true);
