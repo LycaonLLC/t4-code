@@ -202,7 +202,11 @@ const localSessions: DocTopic = {
       kind: "note",
       text: "This release does not independently alias, pin, reorder, or hide working-folder groups. Those controls need a server-owned workspace registry so desktop and phone agree; a browser-only preference would drift between clients.",
     },
-    { kind: "h2", id: "local-sessions-lifecycle", text: "Rename, archive, restore, or delete" },
+    {
+      kind: "h2",
+      id: "local-sessions-lifecycle",
+      text: "Terminate, rename, archive, restore, or delete",
+    },
     {
       kind: "p",
       text: "The rail has Current and Archived views. Rename changes a session title. Archive is reversible and keeps the transcript and artifacts. Restore returns the session to Current.",
@@ -210,6 +214,10 @@ const localSessions: DocTopic = {
     {
       kind: "p",
       text: "Permanent delete removes the session transcript and its artifact directory. T4 Code asks you to type the exact session title, and OMP refuses the operation if the session is busy or its revision changed during confirmation.",
+    },
+    {
+      kind: "p",
+      text: "Use **Terminate runtime** when a session worker needs to close before archive or delete. The action has its own confirmation, asks OMP to close the worker, then waits for the authoritative session list to report closed and idle. It stays available for a current session even when an earlier status already says closed.",
     },
     { kind: "h2", id: "local-sessions-switching", text: "Switching stays instant" },
     {
@@ -473,6 +481,15 @@ const troubleshooting: DocTopic = {
     {
       kind: "p",
       text: `First confirm that \`omp appserver status --json\` succeeds. Official upstream OMP v${OMP_RUNTIME_VERSION} cannot answer that command and cannot host T4 Code. On older public appserver integration builds, a large, actively growing transcript can exceed the replay limit during attach. T4 Code v${RELEASE_VERSION} stops the resulting reconnect loop, but the client cannot repair a snapshot the host never delivered. Use the [verified OMP integration tag](${OMP_RUNTIME_URL}) or a later public or upstream build that includes appserver support and the same bounded replay behavior.`,
+    },
+    {
+      kind: "h2",
+      id: "troubleshooting-prompt-delivery",
+      text: "Prompt stays in the composer",
+    },
+    {
+      kind: "p",
+      text: "T4 Code keeps the draft and shows the command code, host message, and redacted details. Follow that reason before sending again. If the host reports an unknown delivery outcome, check the transcript first; the prompt may already be there.",
     },
     { kind: "h2", id: "troubleshooting-declined", text: "\u201cThe host declined…\u201d" },
     {

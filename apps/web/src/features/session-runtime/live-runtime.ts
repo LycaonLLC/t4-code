@@ -37,6 +37,7 @@ import type {
   SessionRuntimeSnapshot,
 } from "./controller.ts";
 import type { SessionIntent } from "./intents.ts";
+import { promptRejectionReason } from "./command-errors.ts";
 import {
   commandSupport,
   deriveComposerControls,
@@ -53,9 +54,8 @@ export interface LiveRuntimeOptions {
   readonly sessionId: string;
 }
 
-const REJECTED_REASON = "The host turned this message away. It stays here so you can try again.";
 const UNKNOWN_REASON =
-  "The connection dropped before the host answered. Check the transcript before sending again.";
+  "The connection dropped before the host answered. Your draft is safe. Check the transcript before resending so you do not send it twice.";
 
 /** Bounded failure copy per control; the label itself never lies. */
 const CONTROL_REJECTED: Record<PendingControl, string> = {
@@ -191,7 +191,9 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
             promptLeaseRevision === undefined ? undefined : String(promptLeaseRevision),
           )
         : await controller.commandWithControllerLease(targetId, intentPayload);
-      return result.accepted ? { kind: "accepted" } : { kind: "rejected", reason: REJECTED_REASON };
+      return result.accepted
+        ? { kind: "accepted" }
+        : { kind: "rejected", reason: promptRejectionReason(result.error) };
     } catch {
       return { kind: "unknown", reason: UNKNOWN_REASON };
     }
@@ -237,7 +239,9 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
         },
         String(leaseRevision),
       );
-      return result.accepted ? { kind: "accepted" } : { kind: "rejected", reason: REJECTED_REASON };
+      return result.accepted
+        ? { kind: "accepted" }
+        : { kind: "rejected", reason: promptRejectionReason(result.error) };
     } catch {
       return { kind: "unknown", reason: UNKNOWN_REASON };
     }
@@ -584,7 +588,6 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
               ? "cached"
               : "live";
         const granted = grantedFor(runtime);
-        const canPrompt = link === "live" && granted.includes("sessions.prompt");
         const catalog = runtime.catalogs.get(options.hostId);
         const cancelItem = catalog === undefined ? undefined : findCancelCommand(catalog.items);
         const cancelSupported = cancelItem !== undefined && cancelItem.supported !== false;
@@ -603,6 +606,8 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
 
         // Session control truth: warm ref first, session index second.
         const ref = warmNow?.ref ?? runtime.projection.sessionIndex.get(projectionKey);
+        const canPrompt =
+          link === "live" && granted.includes("sessions.prompt") && ref?.status !== "closed";
         const queuedFollowUps = getQueuedFollowUps(ref);
 
         snapshot = {

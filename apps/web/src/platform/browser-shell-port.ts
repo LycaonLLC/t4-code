@@ -16,6 +16,7 @@ import {
   type OmpClient,
   type OmpClientOptions,
   type OmpTransport,
+  type PublicServerFrame,
   type Unsubscribe,
 } from "@t4-code/client";
 import {
@@ -51,6 +52,7 @@ import type {
   TerminalResizeRequest,
   TerminalResult,
 } from "@t4-code/protocol/desktop-ipc";
+import { commandResultError } from "@t4-code/protocol/desktop-ipc";
 import type { DesktopShellPort } from "@t4-code/client";
 
 import { BrowserWebSocketTransport } from "./browser-transport.ts";
@@ -92,7 +94,11 @@ function validatedWsUrl(value: unknown): string {
   } catch {
     throw new Error("invalid browser backend wsUrl");
   }
-  if ((parsed.protocol !== "ws:" && parsed.protocol !== "wss:") || parsed.username !== "" || parsed.password !== "") {
+  if (
+    (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") ||
+    parsed.username !== "" ||
+    parsed.password !== ""
+  ) {
     throw new Error("invalid browser backend wsUrl");
   }
   return parsed.toString();
@@ -104,22 +110,29 @@ function parseBackendPayload(value: unknown): BrowserBackendConfig {
   }
   const data = value as Record<string, unknown>;
   const wsUrl = validatedWsUrl(data.wsUrl);
-  const label = data.label === undefined ? "OMP Appserver" : boundedText(data.label, "label", MAX_LABEL_LENGTH);
+  const label =
+    data.label === undefined ? "OMP Appserver" : boundedText(data.label, "label", MAX_LABEL_LENGTH);
   const auth = data.auth;
   let deviceId = data.deviceId;
   let deviceToken = data.deviceToken ?? data.token;
   if (auth !== undefined) {
-    if (auth === null || typeof auth !== "object" || Array.isArray(auth)) throw new Error("invalid browser backend auth");
+    if (auth === null || typeof auth !== "object" || Array.isArray(auth))
+      throw new Error("invalid browser backend auth");
     const authData = auth as Record<string, unknown>;
     if (deviceId === undefined) deviceId = authData.deviceId;
     if (deviceToken === undefined) deviceToken = authData.deviceToken ?? authData.token;
   }
-  if ((deviceId === undefined) !== (deviceToken === undefined)) throw new Error("incomplete browser backend auth");
+  if ((deviceId === undefined) !== (deviceToken === undefined))
+    throw new Error("incomplete browser backend auth");
   return {
     wsUrl,
     label,
-    ...(deviceId === undefined ? {} : { deviceId: boundedText(deviceId, "deviceId", MAX_DEVICE_ID_LENGTH) }),
-    ...(deviceToken === undefined ? {} : { deviceToken: validateDeviceToken(deviceToken, "deviceToken") }),
+    ...(deviceId === undefined
+      ? {}
+      : { deviceId: boundedText(deviceId, "deviceId", MAX_DEVICE_ID_LENGTH) }),
+    ...(deviceToken === undefined
+      ? {}
+      : { deviceToken: validateDeviceToken(deviceToken, "deviceToken") }),
   };
 }
 
@@ -133,7 +146,8 @@ export function detectBackend(): BrowserBackendConfig | null {
   if (typeof document !== "undefined") {
     const script = document.getElementById("t4-backend");
     if (script !== null) {
-      if (script.textContent === null || script.textContent.trim() === "") throw new Error("invalid browser backend payload");
+      if (script.textContent === null || script.textContent.trim() === "")
+        throw new Error("invalid browser backend payload");
       let data: unknown;
       try {
         data = JSON.parse(script.textContent);
@@ -145,9 +159,14 @@ export function detectBackend(): BrowserBackendConfig | null {
   }
   if (typeof window === "undefined") return null;
   const params = new URLSearchParams(window.location.search);
-  if (["deviceId", "deviceToken", "token"].some((key) => params.has(key))) throw new Error("browser auth must not be supplied in query parameters");
+  if (["deviceId", "deviceToken", "token"].some((key) => params.has(key)))
+    throw new Error("browser auth must not be supplied in query parameters");
   if (!hasExplicitQueryConfig(params)) return null;
-  const wsUrl = params.get("wsUrl") ?? params.get("backend") ?? params.get("backendUrl") ?? params.get("t4-backend");
+  const wsUrl =
+    params.get("wsUrl") ??
+    params.get("backend") ??
+    params.get("backendUrl") ??
+    params.get("t4-backend");
   if (wsUrl === null) throw new Error("browser backend wsUrl is required");
   return parseBackendPayload({
     wsUrl,
@@ -155,20 +174,28 @@ export function detectBackend(): BrowserBackendConfig | null {
   });
 }
 
-
 // --------------------------------------------------------------------------- shell port
 
-interface StateListener { (event: ConnectionStateEvent): void; }
-interface FrameListener { (event: RendererServerFrameEvent): void; }
-interface ErrorListener { (event: RuntimeErrorEvent): void; }
-interface PairLinkListener { (event: PairLinkEvent): void; }
+interface StateListener {
+  (event: ConnectionStateEvent): void;
+}
+interface FrameListener {
+  (event: RendererServerFrameEvent): void;
+}
+interface ErrorListener {
+  (event: RuntimeErrorEvent): void;
+}
+interface PairLinkListener {
+  (event: PairLinkEvent): void;
+}
 
 export interface BrowserShellPortOptions {
   readonly clientFactory?: (options: OmpClientOptions) => OmpClient;
 }
 
-export function createBrowserShellPort(options: BrowserShellPortOptions = {}): DesktopShellPort | null {
-
+export function createBrowserShellPort(
+  options: BrowserShellPortOptions = {},
+): DesktopShellPort | null {
   const config = detectBackend();
   if (config === null) return null;
   const backendConfig = config;
@@ -201,14 +228,31 @@ export function createBrowserShellPort(options: BrowserShellPortOptions = {}): D
     for (const listener of stateListeners) listener(event);
   }
 
-  function emitError(targetId: string | undefined, code: RuntimeErrorEvent["code"], message: string): void {
-    const event: RuntimeErrorEvent = { ...(targetId === undefined ? {} : { targetId }), code, message };
+  function emitError(
+    targetId: string | undefined,
+    code: RuntimeErrorEvent["code"],
+    message: string,
+  ): void {
+    const event: RuntimeErrorEvent = {
+      ...(targetId === undefined ? {} : { targetId }),
+      code,
+      message,
+    };
     for (const listener of errorListeners) listener(event);
   }
 
   function emitFrame(targetId: string, frame: RendererServerFrameEvent["frame"]): void {
     const event: RendererServerFrameEvent = { targetId, frame };
     for (const listener of frameListeners) listener(event);
+  }
+
+  function safePublicFrame(frame: PublicServerFrame): PublicServerFrame {
+    if (frame.type !== "response" || frame.error === undefined) return frame;
+    const error = commandResultError(frame.error) ?? {
+      code: "internal",
+      message: "command failed",
+    };
+    return { ...frame, error };
   }
 
   function buildClient(): OmpClient {
@@ -229,7 +273,7 @@ export function createBrowserShellPort(options: BrowserShellPortOptions = {}): D
       },
       client: {
         name: "T4 Code",
-        version: "0.1.9",
+        version: "0.1.10",
         build: mobilePlatform ?? "browser",
         platform: mobilePlatform ?? (platform === "darwin" ? "darwin" : "linux"),
       },
@@ -238,7 +282,7 @@ export function createBrowserShellPort(options: BrowserShellPortOptions = {}): D
 
     c.onFrame((frame) => {
       if (frame.type === "welcome") welcome = frame;
-      emitFrame(TARGET_ID, frame);
+      emitFrame(TARGET_ID, safePublicFrame(frame));
     });
 
     c.onState((snapshot) => {
@@ -264,7 +308,6 @@ export function createBrowserShellPort(options: BrowserShellPortOptions = {}): D
 
     return c;
   }
-
 
   // ------------------------------------------------------------------ shell port
 
@@ -292,7 +335,9 @@ export function createBrowserShellPort(options: BrowserShellPortOptions = {}): D
         client = buildClient();
       }
       // connect() is idempotent — it calls connection.begin() if idle
-      void client.connect().catch(() => { /* state callback handles errors */ });
+      void client.connect().catch(() => {
+        /* state callback handles errors */
+      });
       return { targetId: TARGET_ID, state: "connecting" };
     },
 
@@ -313,12 +358,14 @@ export function createBrowserShellPort(options: BrowserShellPortOptions = {}): D
       }
       const result = await client.command(request.intent);
       if (typeof result.commandId !== "string") throw new Error("invalid command response");
+      const error = commandResultError(result.error);
       return {
         targetId: request.targetId,
         requestId: String(result.requestId),
         commandId: result.commandId,
         accepted: result.ok,
         ...(result.result === undefined ? {} : { result: result.result }),
+        ...(error === undefined ? {} : { error }),
       };
     },
 
@@ -388,7 +435,10 @@ export function createBrowserShellPort(options: BrowserShellPortOptions = {}): D
       const result = await client.pairStart({
         code: request.code,
         deviceId: browserDeviceId,
-        deviceName: mobilePlatform === null ? "T4 Browser" : `T4 ${mobilePlatform === "android" ? "Android" : "iOS"}`,
+        deviceName:
+          mobilePlatform === null
+            ? "T4 Browser"
+            : `T4 ${mobilePlatform === "android" ? "Android" : "iOS"}`,
         platform: mobilePlatform ?? platform,
         requestedCapabilities: DEVICE_CAPABILITIES,
       });
@@ -403,13 +453,15 @@ export function createBrowserShellPort(options: BrowserShellPortOptions = {}): D
 
     // Target management: browser mode has exactly one preconfigured remote target.
     async listTargets(): Promise<TargetListResult> {
-      const targets: DesktopTarget[] = [{
-        targetId: TARGET_ID,
-        label: backendConfig.label,
-        kind: "remote",
-        state: connectionState,
-        paired: authentication !== undefined || welcome?.authentication === "paired",
-      }];
+      const targets: DesktopTarget[] = [
+        {
+          targetId: TARGET_ID,
+          label: backendConfig.label,
+          kind: "remote",
+          state: connectionState,
+          paired: authentication !== undefined || welcome?.authentication === "paired",
+        },
+      ];
       return { targets };
     },
 

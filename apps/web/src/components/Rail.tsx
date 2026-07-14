@@ -25,6 +25,7 @@ import {
   Archive,
   Cable,
   ChevronRight,
+  CircleStop,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -50,6 +51,7 @@ import {
   renameLiveSession,
   restoreLiveSession,
   sessionCreateSupport,
+  terminateLiveSession,
 } from "../features/session-runtime/session-management.ts";
 import { resolveSessionManagementNavigation } from "../features/session-runtime/session-navigation.ts";
 import { desktopRuntime, useDesktopRuntimeSnapshot } from "../platform/desktop-runtime.ts";
@@ -67,8 +69,8 @@ function describeSessionState(session: WorkspaceSession): string {
   return session.status === null ? "Idle" : "";
 }
 
-type SessionDialog = "rename" | "delete" | null;
-type SessionAction = "rename" | "archive" | "restore" | "delete";
+type SessionDialog = "rename" | "terminate" | "delete" | null;
+type SessionAction = "rename" | "terminate" | "archive" | "restore" | "delete";
 
 function SessionRowItem({
   row,
@@ -100,19 +102,25 @@ function SessionRowItem({
   const archived = session.archivedAt !== undefined;
 
   const support = (
-    command: "session.rename" | "session.archive" | "session.restore" | "session.delete",
+    command:
+      | "session.rename"
+      | "session.close"
+      | "session.archive"
+      | "session.restore"
+      | "session.delete",
   ) =>
     snapshot === null || address === null
       ? { supported: false, reason: "Connect to this host to manage the session" }
       : managementCommandSupport(snapshot, address, command);
   const renameSupport = support("session.rename");
+  const terminateSupport = support("session.close");
   const archiveSupport = support("session.archive");
   const restoreSupport = support("session.restore");
   const deleteSupport = support("session.delete");
   const workingReason =
-    archiveSupport.reason === "Stop the session before archiving or deleting it" ||
-    deleteSupport.reason === "Stop the session before archiving or deleting it"
-      ? "Stop the session before archiving or deleting it"
+    archiveSupport.reason === "Terminate the runtime before archiving or deleting it" ||
+    deleteSupport.reason === "Terminate the runtime before archiving or deleting it"
+      ? "Terminate the runtime before archiving or deleting it"
       : null;
 
   const runAction = useCallback(
@@ -123,21 +131,24 @@ function SessionRowItem({
       setError(null);
       try {
         if (action === "rename") await renameLiveSession(controller, address, renameValue);
+        else if (action === "terminate") await terminateLiveSession(controller, address);
         else if (action === "archive") await archiveLiveSession(controller, address);
         else if (action === "restore") await restoreLiveSession(controller, address);
         else await deleteLiveSession(controller, address);
         const verb =
           action === "rename"
             ? "renamed"
-            : action === "archive"
-              ? "archived"
-              : action === "restore"
-                ? "restored"
-                : "permanently deleted";
+            : action === "terminate"
+              ? "runtime terminated"
+              : action === "archive"
+                ? "archived"
+                : action === "restore"
+                  ? "restored"
+                  : "permanently deleted";
         onAnnounce(`${session.title} ${verb}.`);
         setMenuOpen(false);
         setDialog(null);
-        if (action !== "rename") {
+        if (action !== "rename" && action !== "terminate") {
           const navigation = resolveSessionManagementNavigation(
             action,
             session,
@@ -185,6 +196,10 @@ function SessionRowItem({
         if (action === "rename") {
           setRenameValue(session.title);
           setDialog("rename");
+          setMenuOpen(false);
+        } else if (action === "terminate") {
+          setError(null);
+          setDialog("terminate");
           setMenuOpen(false);
         } else if (action === "delete") {
           setDeleteValue("");
@@ -287,6 +302,13 @@ function SessionRowItem({
                       <Pencil aria-hidden="true" className="size-4" />,
                       renameSupport,
                     )}
+                  {!archived &&
+                    menuItem(
+                      "terminate",
+                      "Terminate runtime",
+                      <CircleStop aria-hidden="true" className="size-4" />,
+                      terminateSupport,
+                    )}
                   {archived
                     ? menuItem(
                         "restore",
@@ -383,6 +405,55 @@ function SessionRowItem({
               </Button>
             </DialogFooter>
           </form>
+        </DialogPopup>
+      </Dialog>
+
+      <Dialog
+        onOpenChange={(open) => (open ? undefined : setDialog(null))}
+        open={dialog === "terminate"}
+      >
+        <DialogPopup
+          aria-label={`Terminate runtime for ${session.title}`}
+          className="max-w-md"
+          showCloseButton={false}
+        >
+          <DialogHeader>
+            <DialogTitle className="text-base">Terminate runtime for “{session.title}”?</DialogTitle>
+            <DialogDescription>
+              This stops the process handling this session and ends any in-flight turn. The
+              transcript, draft, artifacts, and generated output stay intact. Archive or delete
+              only after the host reports the runtime closed.
+            </DialogDescription>
+            {error !== null && (
+              <p className="text-destructive-foreground text-xs" role="alert">
+                {error}
+              </p>
+            )}
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose
+              render={
+                <Button
+                  className="min-h-11 sm:min-h-8"
+                  disabled={pending !== null}
+                  size="sm"
+                  variant="ghost"
+                />
+              }
+            >
+              Keep runtime
+            </DialogClose>
+            <Button
+              className="min-h-11 sm:min-h-8"
+              disabled={pending !== null}
+              onClick={() => void runAction("terminate")}
+              size="sm"
+              variant="destructive"
+            >
+              {pending === "terminate" && <Spinner />}
+              Terminate runtime
+            </Button>
+          </DialogFooter>
         </DialogPopup>
       </Dialog>
 

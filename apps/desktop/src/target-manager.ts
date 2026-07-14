@@ -1,5 +1,5 @@
 import { createOmpClient, isConfirmationDecisionConsumed, OmpClientError, type CommandIntent, type CursorStore, type OmpClient, type PublicServerFrame } from "@t4-code/client";
-import type { CommandResult, ConnectionStateEvent, RuntimeErrorEvent } from "@t4-code/protocol/desktop-ipc";
+import { commandResultError, type CommandResult, type ConnectionStateEvent, type RuntimeErrorEvent } from "@t4-code/protocol/desktop-ipc";
 import type { ConfirmRequest, ConfirmResult, TerminalCloseRequest, TerminalInputRequest, TerminalResizeRequest, TerminalResult } from "@t4-code/protocol/desktop-ipc";
 import { ADDITIVE_FEATURES, DEVICE_CAPABILITIES, type DeviceCapability } from "@t4-code/protocol";
 import type { PairOkFrame, WelcomeFrame } from "@t4-code/protocol";
@@ -63,6 +63,12 @@ function enqueueTarget<T>(queues: Map<string, { tail: Promise<void> }>, targetId
 function safeError(error: unknown): { readonly code: RuntimeErrorEvent["code"]; readonly message: string } {
   if (error instanceof OmpClientError) return { code: error.code === "protocol" ? "protocol" : "transport", message: error.message };
   return { code: "transport", message: "target operation failed" };
+}
+
+function safePublicFrame(frame: PublicServerFrame): PublicServerFrame {
+  if (frame.type !== "response" || frame.error === undefined) return frame;
+  const error = commandResultError(frame.error) ?? { code: "internal", message: "command failed" };
+  return { ...frame, error };
 }
 
 export class DesktopTargetManager {
@@ -175,12 +181,14 @@ export class DesktopTargetManager {
     const generation = runtime.generation;
     try {
       const result = await runtime.client.command(intent);
+      const error = commandResultError(result.error);
       return {
         targetId,
         requestId: String(result.requestId),
         commandId: String(result.commandId),
         accepted: result.ok,
         ...(result.result === undefined ? {} : { result: result.result }),
+        ...(error === undefined ? {} : { error }),
       };
     } catch (error) {
       if (this.generations.get(targetId) !== generation && error instanceof OmpClientError && error.code === "closed")
@@ -324,7 +332,7 @@ export class DesktopTargetManager {
       cursorStore: this.cursorStoreFactory(targetId),
       capabilities: requestedCapabilities,
       requestedFeatures: ADDITIVE_FEATURES,
-      client: { name: "T4 Code", version: "0.1.9", build: "desktop", platform: process.platform },
+      client: { name: "T4 Code", version: "0.1.10", build: "desktop", platform: process.platform },
       reconnect: { attemptCap: 12, baseMs: 250, maxMs: 10_000 },
     };
     const client = createOmpClient(clientOptions);
@@ -333,7 +341,7 @@ export class DesktopTargetManager {
     client.onFrame((frame) => {
       if (this.generations.get(targetId) !== generation) return;
       if (frame.type === "welcome") this.latestWelcomes.set(targetId, frame);
-      this.events.onFrame(targetId, frame);
+      this.events.onFrame(targetId, safePublicFrame(frame));
     });
     client.onState((snapshot) => {
       if (this.generations.get(targetId) !== generation) return;

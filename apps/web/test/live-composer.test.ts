@@ -6,10 +6,7 @@
 // visible until the host acknowledges, session selection attaches once,
 // and a reconnect never clears the transcript.
 import { describe, expect, it } from "vite-plus/test";
-import {
-  createDesktopRuntimeController,
-  type DesktopRuntimeController,
-} from "@t4-code/client";
+import { createDesktopRuntimeController, type DesktopRuntimeController } from "@t4-code/client";
 import {
   catalogId,
   commandId,
@@ -25,6 +22,7 @@ import {
   type SessionSnapshotFrame,
   type SessionsFrame,
 } from "@t4-code/protocol";
+import type { CommandResultError } from "@t4-code/protocol/desktop-ipc";
 
 import {
   createSubmissionGate,
@@ -169,6 +167,42 @@ const PROMPT = {
   attachments: [],
 } as const;
 
+const REJECTION_CASES: readonly {
+  readonly label: string;
+  readonly error?: CommandResultError;
+  readonly reason: string;
+}[] = [
+  {
+    label: "busy session",
+    error: { code: "session_busy", message: "session is busy" },
+    reason:
+      "This session is still handling the previous turn. Your draft is safe; wait for the session to become idle, then send it again.",
+  },
+  {
+    label: "stale revision",
+    error: { code: "stale_revision", message: "revision changed" },
+    reason:
+      "The session changed before the host could accept this message. Your draft is safe; wait for the session to refresh, then send it again.",
+  },
+  {
+    label: "closed session",
+    error: { code: "unknown_session", message: "session is not indexed" },
+    reason:
+      "This session is closed on the host, so it cannot accept another message. Your draft is safe; start a new session before sending it.",
+  },
+  {
+    label: "unknown outcome",
+    error: { code: "outcome_unknown", message: "connection closed before result" },
+    reason:
+      "The host could not confirm whether this message was accepted. Your draft is safe; check the transcript before sending again to avoid a duplicate.",
+  },
+  {
+    label: "unclassified rejection",
+    reason:
+      "The host did not accept this message. Your draft is safe; check the session state and try again.",
+  },
+];
+
 describe("prompt submission outcomes", () => {
   it("accepted clears the submitted draft and attachments through the live runtime", async () => {
     const { shell, runtime } = await startedRuntime();
@@ -211,24 +245,45 @@ describe("prompt submission outcomes", () => {
     expect(shell.commandCount("session.prompt")).toBe(0);
   });
 
-  it("a rejected outcome keeps the exact draft and shows a retry-safe notice without replaying", async () => {
+  it.each(REJECTION_CASES)(
+    "$label keeps the exact draft and shows actionable copy without replaying",
+    async ({ error, reason }) => {
+      const { shell, runtime } = await startedRuntime();
+      shell.commandBehavior = { kind: "reject", ...(error === undefined ? {} : { error }) };
+      const harness = draftHarness("ship it");
+      const gate = createSubmissionGate((intent) => runtime.submitPrompt(intent));
+      const outcome = await gate.submit(
+        PROMPT,
+        { text: "ship it", attachmentIds: ["att-1"] },
+        harness.io,
+      );
+      expect(outcome).toEqual({ kind: "rejected", reason });
+      expect(harness.draft()).toBe("ship it");
+      expect(harness.removed).toEqual([]);
+      expect(harness.notice()).toEqual({ kind: "rejected", message: reason });
+      expect(shell.commandCount("session.prompt")).toBe(1);
+    },
+  );
+
+  it("keeps the duplicate-send warning when unknown outcome includes runtime fallout", async () => {
     const { shell, runtime } = await startedRuntime();
-    shell.commandBehavior = { kind: "reject" };
+    shell.commandBehavior = {
+      kind: "reject",
+      error: {
+        code: "outcome_unknown",
+        message: "rpc child stdout frame exceeded 1 MiB after oversized agent_end",
+        details: { diagnostic: "x".repeat(8_192) },
+      },
+    };
     const harness = draftHarness("ship it");
     const gate = createSubmissionGate((intent) => runtime.submitPrompt(intent));
-
-    const outcome = await gate.submit(
-      PROMPT,
-      { text: "ship it", attachmentIds: ["att-1"] },
-      harness.io,
-    );
-
-    expect(outcome?.kind).toBe("rejected");
+    const outcome = await gate.submit(PROMPT, { text: "ship it", attachmentIds: [] }, harness.io);
+    expect(outcome).toEqual({
+      kind: "rejected",
+      reason:
+        "The host could not confirm whether this message was accepted. Your draft is safe; check the transcript before sending again to avoid a duplicate.",
+    });
     expect(harness.draft()).toBe("ship it");
-    expect(harness.removed).toEqual([]);
-    expect(harness.notice()?.kind).toBe("rejected");
-    expect(harness.notice()?.message).not.toBe("");
-    // Exactly one wire attempt: rejection never auto-replays.
     expect(shell.commandCount("session.prompt")).toBe(1);
   });
 
@@ -238,11 +293,7 @@ describe("prompt submission outcomes", () => {
     const harness = draftHarness("ship it");
     const gate = createSubmissionGate((intent) => runtime.submitPrompt(intent));
 
-    const outcome = await gate.submit(
-      PROMPT,
-      { text: "ship it", attachmentIds: [] },
-      harness.io,
-    );
+    const outcome = await gate.submit(PROMPT, { text: "ship it", attachmentIds: [] }, harness.io);
 
     expect(outcome?.kind).toBe("unknown");
     expect(harness.draft()).toBe("ship it");
@@ -295,7 +346,11 @@ describe("prompt submission outcomes", () => {
     expect(harness.draft()).toBe("v1 plus what I typed while sending");
 
     // Pure settlement invariant: acceptance clears only an unchanged draft.
-    const unchanged = settleSubmission({ kind: "accepted" }, { text: "v1", attachmentIds: [] }, "v1");
+    const unchanged = settleSubmission(
+      { kind: "accepted" },
+      { text: "v1", attachmentIds: [] },
+      "v1",
+    );
     expect(unchanged.clearDraft).toBe(true);
   });
 });
@@ -397,6 +452,31 @@ describe("confirmations", () => {
   });
 });
 describe("session lifecycle", () => {
+  it("disables prompting when the authoritative session ref is closed", async () => {
+    const { shell, runtime } = await startedRuntime();
+    const sessions: SessionsFrame = {
+      v: V,
+      type: "sessions",
+      cursor: { epoch: "epoch-1", seq: 1 },
+      sessions: [
+        {
+          hostId: hostId(HOST),
+          sessionId: sessionId(SESSION),
+          project: {
+            projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+          },
+          revision: revision("rev-closed"),
+          title: "Closed session",
+          status: "closed",
+          updatedAt: "2026-07-11T10:00:00Z",
+        },
+      ],
+    };
+    expect(runtime.getSnapshot().canPrompt).toBe(true);
+    shell.emitFrame({ targetId: "local", frame: sessions });
+    expect(runtime.getSnapshot().canPrompt).toBe(false);
+  });
+
   it("selecting the same session twice attaches exactly once", async () => {
     const { shell, controller } = await startedController();
     const cache = new Map<string, SessionRuntime>();
@@ -538,9 +618,7 @@ describe("workspace projection safety", () => {
 
     const data = deriveWorkspaceData(controller.getSnapshot());
     expect(data.sessions).toHaveLength(2);
-    expect(data.projects).toEqual([
-      expect.objectContaining({ name: "lycaon", path: "lycaon" }),
-    ]);
+    expect(data.projects).toEqual([expect.objectContaining({ name: "lycaon", path: "lycaon" })]);
   });
 
   it("renders live titles and never a remote absolute path", async () => {
@@ -553,7 +631,10 @@ describe("workspace projection safety", () => {
         {
           hostId: hostId(HOST),
           sessionId: sessionId(SESSION),
-          project: { projectId: "/home/user/dev/secret-project" as SessionsFrame["sessions"][number]["project"]["projectId"] },
+          project: {
+            projectId:
+              "/home/user/dev/secret-project" as SessionsFrame["sessions"][number]["project"]["projectId"],
+          },
           revision: revision("rev-1"),
           title: "Fix the flaky test",
           status: "active",
@@ -622,7 +703,7 @@ describe("authoritative live runtime protocol", () => {
     promptLeaseCalled = false;
     await runtime.submitPrompt(PROMPT);
     expect(promptLeaseCalled).toBe(true);
-    const cmd1 = shell.commands.find(c => c.intent.command === "session.prompt");
+    const cmd1 = shell.commands.find((c) => c.intent.command === "session.prompt");
     expect(cmd1).toBeDefined();
     expect(cmd1?.intent.args).toEqual({ message: "ship it", leaseId: "prompt-lease-fixture" });
 
@@ -630,25 +711,31 @@ describe("authoritative live runtime protocol", () => {
     promptLeaseCalled = false;
     await runtime.submitPrompt({ kind: "steer", text: "steer message" });
     expect(promptLeaseCalled).toBe(true);
-    const cmd2 = shell.commands.find(c => c.intent.command === "session.steer");
+    const cmd2 = shell.commands.find((c) => c.intent.command === "session.steer");
     expect(cmd2).toBeDefined();
-    expect(cmd2?.intent.args).toEqual({ message: "steer message", leaseId: "prompt-lease-fixture" });
+    expect(cmd2?.intent.args).toEqual({
+      message: "steer message",
+      leaseId: "prompt-lease-fixture",
+    });
     expect(cmd2?.intent.expectedRevision).toBeUndefined();
 
     // 3. followUp -> session.followUp (sent immediately, even during active turn)
     promptLeaseCalled = false;
     await runtime.submitPrompt({ kind: "followUp", text: "followup message" });
     expect(promptLeaseCalled).toBe(true);
-    const cmd3 = shell.commands.find(c => c.intent.command === "session.followUp");
+    const cmd3 = shell.commands.find((c) => c.intent.command === "session.followUp");
     expect(cmd3).toBeDefined();
-    expect(cmd3?.intent.args).toEqual({ message: "followup message", leaseId: "prompt-lease-fixture" });
+    expect(cmd3?.intent.args).toEqual({
+      message: "followup message",
+      leaseId: "prompt-lease-fixture",
+    });
     expect(cmd3?.intent.expectedRevision).toBeUndefined();
 
     // 4. cancel -> session.cancel (controller-lease path)
     controllerLeaseCalled = false;
     await runtime.submitPrompt({ kind: "cancel" });
     expect(controllerLeaseCalled).toBe(true);
-    const cmd4 = shell.commands.find(c => c.intent.command === "session.cancel");
+    const cmd4 = shell.commands.find((c) => c.intent.command === "session.cancel");
     expect(cmd4).toBeDefined();
     expect(cmd4?.intent.expectedRevision).toBeUndefined();
   });
@@ -662,7 +749,9 @@ describe("authoritative live runtime protocol", () => {
 
     const prompt = shell.commands.find((request) => request.intent.command === "session.prompt");
     const steer = shell.commands.find((request) => request.intent.command === "session.steer");
-    const followUp = shell.commands.find((request) => request.intent.command === "session.followUp");
+    const followUp = shell.commands.find(
+      (request) => request.intent.command === "session.followUp",
+    );
     expect(prompt?.intent.expectedRevision).toBe(revision("rev-1"));
     expect(steer?.intent.expectedRevision).toBeUndefined();
     expect(followUp?.intent.expectedRevision).toBeUndefined();
@@ -688,7 +777,9 @@ describe("authoritative live runtime protocol", () => {
         {
           hostId: hostId(HOST),
           sessionId: sessionId(SESSION),
-          project: { projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"] },
+          project: {
+            projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+          },
           revision: revision("rev-1"),
           title: "Session Title",
           status: "active",
@@ -715,7 +806,9 @@ describe("authoritative live runtime protocol", () => {
         {
           hostId: hostId(HOST),
           sessionId: sessionId(SESSION),
-          project: { projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"] },
+          project: {
+            projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+          },
           revision: revision("rev-1"),
           title: "Session Title",
           status: "active",

@@ -9,6 +9,7 @@ import type {
   BootstrapResult,
   CommandRequest,
   CommandResult,
+  CommandResultError,
   ConfirmRequest,
   ConfirmResult,
   ConnectionStateEvent,
@@ -84,7 +85,7 @@ export function makeWelcome(
 /** How the fake answers the next `command` calls. */
 export type CommandBehavior =
   | { readonly kind: "accept" }
-  | { readonly kind: "reject" }
+  | { readonly kind: "reject"; readonly error?: CommandResultError }
   | { readonly kind: "throw" }
   | { readonly kind: "defer"; readonly gate: Deferred<boolean> };
 
@@ -134,12 +135,16 @@ export class FakeShell implements DesktopShellPort {
   }
   async command(request: CommandRequest): Promise<CommandResult> {
     this.commands.push(request);
-    const accepted = await this.settle(this.commandBehavior, "command unreachable");
+    const behavior = this.commandBehavior;
+    const accepted = await this.settle(behavior, "command unreachable");
     return {
       targetId: request.targetId,
       requestId: `req-${this.commands.length}`,
       commandId: `cmd-${this.commands.length}`,
       accepted,
+      ...(behavior.kind === "reject" && behavior.error !== undefined
+        ? { error: behavior.error }
+        : {}),
       ...(request.intent.command === "prompt.lease.acquire" ? { leaseId: "prompt-lease-fixture" } : {}),
     } as CommandResult;
   }
