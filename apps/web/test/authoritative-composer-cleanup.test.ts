@@ -16,6 +16,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { admitAttachments, type StagedAttachment } from "../src/features/composer/attachments.ts";
 import { reconcileAuthoritativeSessionDeletion } from "../src/features/composer/authoritative-cleanup.ts";
 import { createComposerStore } from "../src/features/composer/composer-store.ts";
+import { createTranscriptImageSource } from "../src/features/session-runtime/transcript-images.ts";
 import { sessionViewId } from "../src/platform/live-workspace.ts";
 
 const HOST = hostId("cleanup-host");
@@ -130,6 +131,17 @@ describe("authoritative composer cleanup", () => {
     const revoked: string[] = [];
     const store = createComposerStore({ revokePreviewUrl: (url) => revoked.push(url) });
     store.getState().addAttachments(viewId("deleted"), [staged("deleted")]);
+    const transcriptImages = createTranscriptImageSource({
+      hostId: String(HOST),
+      sessionId: "deleted",
+      availability: { available: false, reason: "Waiting for the host." },
+      readChunk: async () => ({ accepted: false }),
+    });
+    const transcriptImage = {
+      entryId: "deleted-entry",
+      sha256: "a".repeat(64),
+      mimeType: "image/png" as const,
+    };
     const previous = apply(createProjectionSnapshot(), inventory(["deleted"], 1));
     const frame = removeDelta("deleted", 2);
     const current = apply(previous, frame);
@@ -138,5 +150,9 @@ describe("authoritative composer cleanup", () => {
 
     expect(store.getState().attachmentsBySessionId[viewId("deleted")]).toBeUndefined();
     expect(revoked).toEqual(["blob:test/deleted"]);
+    expect(transcriptImages.getSnapshot(transcriptImage)).toEqual({
+      status: "unavailable",
+      reason: "This session was removed from the host.",
+    });
   });
 });

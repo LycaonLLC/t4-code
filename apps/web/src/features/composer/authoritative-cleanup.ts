@@ -11,6 +11,7 @@ import type { RendererServerFrame } from "@t4-code/protocol/desktop-ipc";
 
 import { composerStore, type ComposerStoreApi } from "./composer-store.ts";
 import { sessionViewId } from "../../platform/live-workspace.ts";
+import { disposeTranscriptImagesForSession } from "../session-runtime/transcript-images.ts";
 
 interface CompleteInventory {
   readonly sessionIdsByHost: ReadonlyMap<string, ReadonlySet<string>>;
@@ -89,6 +90,7 @@ export function reconcileAuthoritativeSessionDeletion(
       !knownSession(current, hostId, sessionId)
     ) {
       store.getState().disposeSession(sessionViewId(hostId, sessionId));
+      disposeTranscriptImagesForSession(hostId, sessionId);
     }
     return;
   }
@@ -109,6 +111,7 @@ export function reconcileAuthoritativeSessionDeletion(
         !knownSession(current, hostId, sessionId)
       ) {
         store.getState().disposeSession(sessionViewId(hostId, sessionId));
+        disposeTranscriptImagesForSession(hostId, sessionId);
       }
     }
   }
