@@ -138,6 +138,53 @@ describe("image preparation", () => {
 });
 
 describe("image prompt upload", () => {
+  it("reads image bytes through FileReader when File.arrayBuffer is unavailable", async () => {
+    const bytes = pngBytes();
+    const legacyAttachment = attachment("legacy-webview", bytes);
+    Object.defineProperty(legacyAttachment.file, "arrayBuffer", {
+      configurable: true,
+      value: undefined,
+    });
+
+    const originalFileReader = Object.getOwnPropertyDescriptor(globalThis, "FileReader");
+    class LegacyFileReader {
+      result: string | ArrayBuffer | null = null;
+      error: DOMException | null = null;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onabort: (() => void) | null = null;
+
+      readAsArrayBuffer(): void {
+        const buffer = new ArrayBuffer(bytes.byteLength);
+        new Uint8Array(buffer).set(bytes);
+        this.result = buffer;
+        queueMicrotask(() => this.onload?.());
+      }
+    }
+    Object.defineProperty(globalThis, "FileReader", {
+      configurable: true,
+      value: LegacyFileReader,
+    });
+
+    const harness = successfulCommandHarness();
+    try {
+      await expect(
+        runImagePromptUpload(
+          baseOptions([legacyAttachment], harness.command, async () => ({ kind: "accepted" })),
+        ),
+      ).resolves.toEqual({ kind: "accepted" });
+    } finally {
+      if (originalFileReader === undefined) Reflect.deleteProperty(globalThis, "FileReader");
+      else Object.defineProperty(globalThis, "FileReader", originalFileReader);
+    }
+
+    expect(harness.events).toEqual([
+      `begin:${IMAGE_IDS[0]}:image/png`,
+      `chunk:${IMAGE_IDS[0]}:0:${bytes.byteLength}`,
+      `discard:${IMAGE_IDS[0]}`,
+    ]);
+  });
+
   it("hashes and uploads whole files sequentially, normalizes MIME by magic, and prompts with refs only", async () => {
     const large = pngBytes(IMAGE_UPLOAD_CHUNK_BYTES + 7);
     const mismatched = attachment("webp", webpBytes(), {

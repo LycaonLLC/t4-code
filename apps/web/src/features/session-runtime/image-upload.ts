@@ -58,7 +58,10 @@ const targetPipelineTails = new Map<string, Promise<void>>();
 
 function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
   const keys = Object.keys(value);
-  return keys.length === expected.length && expected.every((key) => Object.hasOwn(value, key));
+  return (
+    keys.length === expected.length &&
+    expected.every((key) => Object.prototype.hasOwnProperty.call(value, key))
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -116,6 +119,52 @@ function hex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+function readFileWithFileReader(file: File): Promise<ArrayBuffer> {
+  if (typeof globalThis.FileReader !== "function") {
+    return Promise.reject(new Error("This browser cannot read the selected file."));
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new globalThis.FileReader();
+    let settled = false;
+    const settle = (complete: () => void): void => {
+      if (settled) return;
+      settled = true;
+      reader.onload = null;
+      reader.onerror = null;
+      reader.onabort = null;
+      complete();
+    };
+
+    reader.onload = () => {
+      const result = reader.result;
+      settle(() => {
+        if (result instanceof ArrayBuffer) resolve(result);
+        else reject(new Error("The selected file returned invalid bytes."));
+      });
+    };
+    reader.onerror = () => {
+      const error = reader.error ?? new Error("The selected file could not be read.");
+      settle(() => reject(error));
+    };
+    reader.onabort = () => {
+      settle(() => reject(new Error("Reading the selected file was cancelled.")));
+    };
+
+    try {
+      reader.readAsArrayBuffer(file);
+    } catch (error) {
+      settle(() => reject(error));
+    }
+  });
+}
+
+/** File.arrayBuffer arrived after the oldest Android WebView T4 supports. */
+function readFileArrayBuffer(file: File): Promise<ArrayBuffer> {
+  const read = file.arrayBuffer;
+  return typeof read === "function" ? read.call(file) : readFileWithFileReader(file);
+}
+
 async function prepareImage(attachment: PromptAttachment): Promise<PreparedImage> {
   const file = attachment.file;
   if (
@@ -128,7 +177,7 @@ async function prepareImage(attachment: PromptAttachment): Promise<PreparedImage
   }
   let buffer: ArrayBuffer;
   try {
-    buffer = await file.arrayBuffer();
+    buffer = await readFileArrayBuffer(file);
   } catch {
     throw new ImagePreparationFailure(IMAGE_UPLOAD_PREPARATION_REASON);
   }

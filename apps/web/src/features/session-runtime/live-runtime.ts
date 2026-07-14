@@ -145,6 +145,10 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
       available: false,
       reason: "Waiting for this session to finish connecting.",
     },
+    // The controller command is not abortable. Keep the cache load slot held
+    // until it actually settles; the source checks its cancellation token
+    // immediately afterward and discards the response. This prevents rapid
+    // unmounts from creating unbounded detached RPC reads.
     readChunk: (reference, offset) =>
       controller.command(targetId, {
         hostId: wireHostId,

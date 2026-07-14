@@ -1,6 +1,6 @@
 {
   "name": "@t4-code/protocol",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "private": true,
   "type": "module",
   "exports": {
@@ -13,7 +13,7 @@
     "test": "vp test run --passWithNoTests"
   },
   "dependencies": {
-    "@oh-my-pi/app-wire": "file:../../vendor/app-wire/oh-my-pi-app-wire-0.5.4.tgz"
+    "@oh-my-pi/app-wire": "file:../../vendor/app-wire/oh-my-pi-app-wire-0.5.5.tgz"
   },
   "devDependencies": {
     "@types/node": "catalog:",

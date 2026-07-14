@@ -1,6 +1,6 @@
-import { cn } from "@t4-code/ui";
-import { CircleAlert, Image as ImageIcon, ImageOff } from "lucide-react";
-import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { Button, cn, type MotionPreference, useReducedMotion } from "@t4-code/ui";
+import { CircleAlert, Image as ImageIcon, ImageOff, Pause, Play } from "lucide-react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
 import type { TranscriptImageSource } from "../session-runtime/transcript-images.ts";
 import type { TranscriptImageReference } from "./image-metadata.ts";
@@ -11,6 +11,7 @@ export interface TranscriptImagesProps {
   readonly issue: string | null;
   readonly label: string;
   readonly className?: string;
+  readonly motionPreference?: MotionPreference;
 }
 
 function ImageState({
@@ -38,10 +39,12 @@ function TranscriptImage({
   source,
   reference,
   alt,
+  motionPreference,
 }: {
   readonly source: TranscriptImageSource;
   readonly reference: TranscriptImageReference;
   readonly alt: string;
+  readonly motionPreference?: MotionPreference;
 }) {
   const subscribe = useCallback(
     (listener: () => void) => source.subscribe(reference, listener),
@@ -52,11 +55,16 @@ function TranscriptImage({
     [reference, source],
   );
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const reducedMotion = useReducedMotion(motionPreference);
+  const [animationVisible, setAnimationVisible] = useState(() => !reducedMotion);
 
   useEffect(() => source.retain(reference), [reference, source]);
+  useEffect(() => {
+    if (reducedMotion) setAnimationVisible(false);
+  }, [reducedMotion]);
 
   if (snapshot.status === "loading") {
-    return <ImageState icon={ImageIcon} role="status" text="Loading image…" />;
+    return <ImageState icon={ImageIcon} role="note" text="Loading image…" />;
   }
   if (snapshot.status === "unavailable") {
     return <ImageState icon={ImageOff} role="note" text={snapshot.reason} />;
@@ -64,17 +72,43 @@ function TranscriptImage({
   if (snapshot.status === "error") {
     return <ImageState icon={CircleAlert} role="note" text={snapshot.reason} />;
   }
+  const showImage = !snapshot.animated || animationVisible;
+  const animationLabel = animationVisible ? "Pause animation" : "Play animation";
   return (
-    <figure className="flex aspect-4/3 w-full items-center justify-center overflow-hidden rounded-lg border border-border bg-secondary">
-      <img
-        alt={alt}
-        className="block max-h-full max-w-full object-contain"
-        decoding="async"
-        draggable={false}
-        loading="lazy"
-        onError={() => source.reportDecodeFailure(reference)}
-        src={snapshot.url}
-      />
+    <figure className="relative flex aspect-4/3 w-full items-center justify-center overflow-hidden rounded-lg border border-border bg-secondary">
+      {showImage ? (
+        <img
+          alt={alt}
+          className="block max-h-full max-w-full object-contain"
+          decoding="async"
+          draggable={false}
+          loading="lazy"
+          onError={() => source.reportDecodeFailure(reference)}
+          src={snapshot.url}
+        />
+      ) : (
+        <div
+          aria-label={`${alt}. Animated image paused.`}
+          className="flex h-full w-full items-center justify-center gap-2 px-3 text-center text-muted-foreground text-xs"
+          role="img"
+        >
+          <ImageIcon aria-hidden="true" className="size-4 shrink-0" />
+          <span>Animation paused</span>
+        </div>
+      )}
+      {snapshot.animated && (
+        <Button
+          aria-label={animationLabel}
+          aria-pressed={animationVisible}
+          className="absolute right-2 bottom-2 bg-popover/90 backdrop-blur-sm"
+          onClick={() => setAnimationVisible((visible) => !visible)}
+          size="sm"
+          variant="outline"
+        >
+          {animationVisible ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
+          {animationVisible ? "Pause" : "Play"}
+        </Button>
+      )}
     </figure>
   );
 }
@@ -86,6 +120,7 @@ export function TranscriptImages({
   issue,
   label,
   className,
+  motionPreference,
 }: TranscriptImagesProps) {
   if (images.length === 0 && issue === null) return null;
   return (
@@ -109,6 +144,7 @@ export function TranscriptImages({
         >
           <TranscriptImage
             alt={`${label} image ${index + 1} of ${images.length}`}
+            {...(motionPreference === undefined ? {} : { motionPreference })}
             reference={reference}
             source={source}
           />

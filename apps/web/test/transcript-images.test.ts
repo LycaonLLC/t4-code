@@ -16,7 +16,7 @@ import {
   createTranscriptImageSource,
   decodeTranscriptImageChunk,
   disposeTranscriptImagesForSession,
-  TRANSCRIPT_IMAGE_CACHE_ERROR,
+  isAnimatedTranscriptImage,
   TRANSCRIPT_IMAGE_CHUNK_BYTES,
   TRANSCRIPT_IMAGE_DECODE_ERROR,
   TRANSCRIPT_IMAGE_INTEGRITY_ERROR,
@@ -48,6 +48,23 @@ function pngBytes(size = 16, salt = 0): Uint8Array {
 
 function gifBytes(): Uint8Array {
   return new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x02]);
+}
+
+function animatedGifBytes(): Uint8Array {
+  const header = [
+    0x47, 0x49, 0x46, 0x38, 0x39, 0x61,
+    0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+  ];
+  const frame = [
+    0x2c,
+    0x00, 0x00, 0x00, 0x00,
+    0x01, 0x00, 0x01, 0x00,
+    0x00,
+    0x02,
+    0x02, 0x4c, 0x01,
+    0x00,
+  ];
+  return new Uint8Array([...header, ...frame, ...frame, 0x3b]);
 }
 
 function base64(bytes: Uint8Array): string {
@@ -234,6 +251,31 @@ describe("transcript image result decoding", () => {
       );
     }
   });
+
+  it("detects browser-decodable animated formats before autoplay", () => {
+    expect(isAnimatedTranscriptImage(animatedGifBytes(), "image/gif")).toBe(true);
+    expect(
+      isAnimatedTranscriptImage(
+        new Uint8Array([
+          0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+          0x00, 0x00, 0x00, 0x00, 0x61, 0x63, 0x54, 0x4c,
+          0x00, 0x00, 0x00, 0x00,
+        ]),
+        "image/png",
+      ),
+    ).toBe(true);
+    expect(
+      isAnimatedTranscriptImage(
+        new Uint8Array([
+          0x52, 0x49, 0x46, 0x46, 0x0c, 0x00, 0x00, 0x00,
+          0x57, 0x45, 0x42, 0x50,
+          0x41, 0x4e, 0x49, 0x4d, 0x00, 0x00, 0x00, 0x00,
+        ]),
+        "image/webp",
+      ),
+    ).toBe(true);
+    expect(isAnimatedTranscriptImage(pngBytes(), "image/png")).toBe(false);
+  });
 });
 
 describe("bounded transcript image source", () => {
@@ -265,6 +307,7 @@ describe("bounded transcript image source", () => {
       url: "blob:verified",
       mimeType: "image/png",
       size: bytes.byteLength,
+      animated: false,
     });
     expect(offsets).toEqual([0, TRANSCRIPT_IMAGE_CHUNK_BYTES]);
     expect(blobs).toHaveLength(1);
@@ -328,20 +371,158 @@ describe("bounded transcript image source", () => {
       revokeObjectUrl: (url) => revoked.push(url),
     });
 
+    const unsubscribeFirst = source.subscribe(first, () => undefined);
     const releaseFirst = source.retain(first);
     const firstReady = await waitForStatus(source, first, "ready");
     const releaseSecond = source.retain(second);
-    expect(await waitForStatus(source, second, "error")).toEqual({
-      status: "error",
-      reason: TRANSCRIPT_IMAGE_CACHE_ERROR,
-    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(source.getSnapshot(second)).toEqual({ status: "loading" });
     expect(revoked).toEqual([]);
 
     releaseFirst();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(source.getSnapshot(second)).toEqual({ status: "loading" });
+    expect(revoked).toEqual([]);
+    unsubscribeFirst();
     const secondReady = await waitForStatus(source, second, "ready");
     expect(secondReady.status).toBe("ready");
     expect(revoked).toEqual([firstReady.status === "ready" ? firstReady.url : ""]);
     releaseSecond();
+    source.dispose();
+  });
+
+  it("bounds concurrent reads and drains queued images in order", async () => {
+    const images = await Promise.all(
+      Array.from({ length: 5 }, async (_, index) => {
+        const bytes = pngBytes(16, index + 1);
+        return { bytes, image: await reference(bytes, { entryId: `queued-${index}` }) };
+      }),
+    );
+    const gates = new Map<string, ReturnType<typeof deferred<TranscriptImageCommandResult>>>();
+    for (const { image } of images) gates.set(image.entryId, deferred<TranscriptImageCommandResult>());
+    const started: string[] = [];
+    let active = 0;
+    let maximumActive = 0;
+    const source = createTranscriptImageSource({
+      availability: { available: true },
+      maxConcurrentLoads: 2,
+      readChunk: async (image) => {
+        started.push(image.entryId);
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        try {
+          return await gates.get(image.entryId)!.promise;
+        } finally {
+          active -= 1;
+        }
+      },
+      createObjectUrl: (blob) => `blob:queued-${blob.size}-${started.length}`,
+    });
+    const releases = images.map(({ image }) => source.retain(image));
+
+    expect(started).toEqual(["queued-0", "queued-1"]);
+    for (let index = 0; index < images.length; index += 1) {
+      const item = images[index]!;
+      gates.get(item.image.entryId)!.resolve(responseFor(item.bytes, item.image, 0));
+      expect((await waitForStatus(source, item.image, "ready")).status).toBe("ready");
+      await Promise.resolve();
+    }
+    expect(started).toEqual(images.map(({ image }) => image.entryId));
+    expect(maximumActive).toBe(2);
+    for (const release of releases) release();
+    source.dispose();
+  });
+
+  it("aborts an unretained read and wakes the next queued image", async () => {
+    const firstBytes = pngBytes(16, 11);
+    const secondBytes = pngBytes(16, 12);
+    const first = await reference(firstBytes, { entryId: "abort-first" });
+    const second = await reference(secondBytes, { entryId: "abort-second" });
+    const firstStarted = deferred<void>();
+    let aborted = false;
+    let secondReads = 0;
+    const source = createTranscriptImageSource({
+      availability: { available: true },
+      maxConcurrentLoads: 1,
+      readChunk: (image, offset, signal) => {
+        if (image.entryId === first.entryId) {
+          firstStarted.resolve(undefined);
+          return new Promise((_, reject) => {
+            signal.onCancel(() => {
+              aborted = true;
+              reject(new Error("aborted"));
+            });
+          });
+        }
+        secondReads += 1;
+        return Promise.resolve(responseFor(secondBytes, image, offset));
+      },
+      createObjectUrl: () => "blob:after-abort",
+    });
+
+    const releaseFirst = source.retain(first);
+    const releaseSecond = source.retain(second);
+    await firstStarted.promise;
+    expect(secondReads).toBe(0);
+    releaseFirst();
+
+    expect((await waitForStatus(source, second, "ready")).status).toBe("ready");
+    expect(aborted).toBe(true);
+    expect(secondReads).toBe(1);
+    releaseSecond();
+    source.dispose();
+  });
+
+  it("removes cancelled queue entries while a non-abortable host read is still live", async () => {
+    const firstBytes = pngBytes(16, 21);
+    const first = await reference(firstBytes, { entryId: "non-abortable-first" });
+    const firstResult = deferred<TranscriptImageCommandResult>();
+    const churn = await Promise.all(
+      Array.from({ length: 48 }, async (_, index) => {
+        const bytes = pngBytes(16, index + 22);
+        return { bytes, image: await reference(bytes, { entryId: `cancelled-${index}` }) };
+      }),
+    );
+    const finalBytes = pngBytes(16, 99);
+    const final = await reference(finalBytes, { entryId: "queue-survivor" });
+    const reads: string[] = [];
+    const source = createTranscriptImageSource({
+      availability: { available: true },
+      maxConcurrentLoads: 1,
+      readChunk: async (image, offset) => {
+        reads.push(image.entryId);
+        if (image.entryId === first.entryId) {
+          // Deliberately ignore the cancellation signal, matching the live
+          // controller command that can only settle when the host responds.
+          return firstResult.promise;
+        }
+        return responseFor(finalBytes, image, offset);
+      },
+      createObjectUrl: (blob) => `blob:non-abortable-${blob.size}-${reads.length}`,
+    });
+    const pendingCount = () =>
+      (source as unknown as { readonly pendingLoads: readonly unknown[] }).pendingLoads.length;
+
+    const releaseFirst = source.retain(first);
+    expect(reads).toEqual([first.entryId]);
+    for (const { image } of churn) {
+      const release = source.retain(image);
+      expect(pendingCount()).toBe(1);
+      release();
+      expect(pendingCount()).toBe(0);
+    }
+
+    const releaseFinal = source.retain(final);
+    expect(pendingCount()).toBe(1);
+    firstResult.resolve(responseFor(firstBytes, first, 0));
+    expect((await waitForStatus(source, first, "ready")).status).toBe("ready");
+    expect((await waitForStatus(source, final, "ready")).status).toBe("ready");
+    expect(reads).toEqual([first.entryId, final.entryId]);
+
+    releaseFinal();
+    releaseFirst();
     source.dispose();
   });
 
@@ -584,24 +765,9 @@ describe("runtime capability gating", () => {
     await controller.start();
     shell.emitFrame({
       targetId: "local",
-      frame: makeWelcome(HOST, ["sessions.read"]),
+      frame: makeWelcome(HOST, ["sessions.read"], ["transcript.images"]),
     });
     shell.emitFrame({ targetId: "local", frame: snapshot() });
-    // app-wire 0.5.4 intentionally rejects unknown negotiated features. Add
-    // the incoming 0.5.5 feature at the controller snapshot seam until that
-    // package is vendored; all runtime/attach behavior below stays real.
-    const getBaseSnapshot = controller.getSnapshot.bind(controller);
-    controller.getSnapshot = () => {
-      const current = getBaseSnapshot();
-      const host = current.hosts.get(HOST);
-      if (host === undefined) return current;
-      const hosts = new Map(current.hosts);
-      hosts.set(HOST, {
-        ...host,
-        grantedFeatures: [...host.grantedFeatures, "transcript.images"],
-      });
-      return { ...current, hosts };
-    };
     const runtime = createLiveSessionRuntime({
       controller,
       targetId: "local",

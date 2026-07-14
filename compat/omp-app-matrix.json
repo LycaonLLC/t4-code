@@ -2,21 +2,21 @@
   "appProtocol": "omp-app/1",
   "appWire": {
     "package": "@oh-my-pi/app-wire",
-    "version": "0.5.4",
+    "version": "0.5.5",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "0688257b283dab19894911cda8c1e6d2b2319f20",
-    "sourceTreeHash": "87cfd36bcefe71a036dd547119e1e6129bb9be9c",
-    "tarball": "vendor/app-wire/oh-my-pi-app-wire-0.5.4.tgz",
-    "tarballSha256": "1683633f10a80de9d6f21a83a6d8c54ff241d0bca64da707262f41a5dbb2a9b1",
-    "goldenCorpusSha256": "36811f39241c6c491c967a8f969f14c43431366289750538a40893d0dc267324"
+    "sourceCommit": "ea6bef2fc0bbcbc050cebcdc6bc1a13b644705f0",
+    "sourceTreeHash": "d67e3d7aca981a70e5c17a892d3fafb299cdb774",
+    "tarball": "vendor/app-wire/oh-my-pi-app-wire-0.5.5.tgz",
+    "tarballSha256": "64c6e5fd683509007213f52c00faabaf1bc12d1d4fe3f374b89638d82fefc98e",
+    "goldenCorpusSha256": "e92d3d7a4848ab6ea6403cc1c1faa6912f8fdc75d2a6abf663ece0154a6eb7fa"
   },
   "verifiedRuntime": {
     "package": "omp",
     "version": "16.5.1",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "15527d1f00bac22705f63f80b29c0c30e67fc5da",
-    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/15527d1f00bac22705f63f80b29c0c30e67fc5da",
-    "sourceTag": "t4code-16.5.1-appserver-1",
+    "sourceCommit": "ea6bef2fc0bbcbc050cebcdc6bc1a13b644705f0",
+    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/ea6bef2fc0bbcbc050cebcdc6bc1a13b644705f0",
+    "sourceTag": "t4code-16.5.1-appserver-2",
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
     "upstreamTag": "v16.5.1",
     "upstreamCommit": "14b5da76a9aece9a469288718d22c3d624daf033",
@@ -32,12 +32,23 @@
       "bounded-rpc-terminal-events",
       "reader-failure-runtime-reaping",
       "recoverable-runtime-crash-status",
-      "settled-runtime-close-state"
+      "settled-runtime-close-state",
+      "bounded-prompt-image-uploads",
+      "bounded-transcript-image-reads",
+      "strict-app-wire-frame-contracts",
+      "app-wire-metadata-key-separator-folding",
+      "portable-app-wire-module-specifiers",
+      "nodenext-app-wire-consumer-support",
+      "future-app-wire-feature-tolerance",
+      "public-app-wire-package-hardening",
+      "bounded-rpc-agent-end-frames",
+      "bounded-rpc-subagent-end-events",
+      "bounded-rpc-terminal-metadata"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },
   "desktop": {
     "package": "@t4-code/protocol",
-    "version": "0.1.11"
+    "version": "0.1.12"
   }
 }
