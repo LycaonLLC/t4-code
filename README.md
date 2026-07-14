@@ -4,37 +4,35 @@ T4 Code is a free, open-source (MIT) desktop app for [Oh My Pi](https://github.c
 
 ![T4 Code main window](docs/assets/t4-code-main.png)
 
-[**Download v0.1.6**](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.6) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
+[**Download v0.1.7**](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.7) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
 
 ## Requirements
 
-T4 Code needs an OMP build with desktop appserver support. For v0.1.6, use the public integration build below.
+T4 Code needs an OMP build with desktop appserver support. For v0.1.7, use the public integration build below.
 
-T4 Code v0.1.6 was verified with OMP 16.4.8 built from [`932bbace`](https://github.com/lyc-aon/oh-my-pi/commit/932bbaceb256f43eb3b2760341f2175803da4d07), tagged [`t4code-16.4.8-appserver-4`](https://github.com/lyc-aon/oh-my-pi/tree/t4code-16.4.8-appserver-4). That integration build adds bounded large-session replay, complete desktop runtime events, catalog-backed session management, ordered remote delivery, cross-client control-state convergence, terminal streaming-state settlement, and restart-safe session teardown. The official upstream v16.4.8 tag has no `appserver` command, so it cannot host T4 Code. The verified runtime is a normal build from the public `lyc-aon/oh-my-pi` source; T4 Code does not depend on private home-directory files, an auth broker, or a custom Codex CLI fork. T4 Code vendors `@oh-my-pi/app-wire` 0.5.2 from integration commit [`5d4315ee`](https://github.com/lyc-aon/oh-my-pi/commit/5d4315eea317260fec030e2b4726f10fed0cd5f6), source tree `713688e8099d4553a0a30b1bf415a7cffb5963f4`.
+T4 Code v0.1.7 was verified with OMP 16.5.0 built from [`d4a0b934`](https://github.com/lyc-aon/oh-my-pi/commit/d4a0b9344e1796c0e56041cfeea3431a8a728e61), tagged [`t4code-16.5.0-appserver-3`](https://github.com/lyc-aon/oh-my-pi/tree/t4code-16.5.0-appserver-3). That public integration is based on the official upstream [`v16.5.0`](https://github.com/can1357/oh-my-pi/tree/v16.5.0) tag at [`3047c27c`](https://github.com/can1357/oh-my-pi/commit/3047c27c332c5629c8e063283d349384c10c9a56). It adds bounded large-session replay, complete desktop runtime events, catalog-backed session management, ordered remote delivery, cross-client control-state convergence, terminal streaming-state settlement, and restart-safe session teardown. The official upstream v16.5.0 tag has no `appserver` command, so it cannot host T4 Code. The verified runtime is a normal build from the public `lyc-aon/oh-my-pi` source; T4 Code does not depend on private home-directory files, an auth broker, or a custom Codex CLI fork. T4 Code vendors `@oh-my-pi/app-wire` 0.5.2 from integration commit [`5d4315ee`](https://github.com/lyc-aon/oh-my-pi/commit/5d4315eea317260fec030e2b4726f10fed0cd5f6), source tree `713688e8099d4553a0a30b1bf415a7cffb5963f4`.
 
 | Platform | Arch | Package |
 | --- | --- | --- |
 | Linux | x86_64 | `.deb`, AppImage |
 | macOS | Apple Silicon (arm64) | `.dmg`, `.zip` (**unsigned, see below**) |
 
-No Windows build and no Intel Mac build in v0.1.6.
+No Windows build and no Intel Mac build in v0.1.7.
 
-## What changed in v0.1.6
+## What changed in v0.1.7
 
-- Working folders now have Current and Archived views. Sessions can be renamed, archived, restored, or permanently deleted; archived sessions are read-only, and deletion requires the exact title plus the host's current revision.
-- Desktop and Tailnet clients receive one host-wide session index. A change made in one client appears in the other, and stale routes recover instead of leaving an empty or endless loading screen.
-- The activity stream recognizes the full OMP runtime vocabulary, including turn boundaries and session lifecycle events. Durable history remains stable across reconnects, reloads, and web-to-desktop handoffs.
-- The mobile model picker follows the profile's actual `Ctrl+P` cycle, drag-scrolls under touch, and waits for the host-confirmed model before sending the next prompt. The close and new-session controls no longer overlap.
-- The verified OMP build bounds large-session replay, preserves remote frame order, settles terminal streaming state before lifecycle changes, and refuses changes while work or an unkillable child is still active.
-- The Tailnet browser path needs no separate T4 password. Tailscale Serve remains the access boundary; Funnel must stay off.
+- The verified host runtime moves to OMP 16.5.0. Its exact public integration commit and official upstream base are pinned above and in the compatibility matrix.
+- The 16.5.0 cutover was exercised through the real Tailnet path at a 320 × 568 phone viewport: profile-limited model selection, touch scrolling, provider response, second-client convergence, reload history, and session cleanup all passed.
+- The app-wire 0.5.2 protocol source is unchanged. The rebuilt desktop downloads still use ordinary public OMP and do not depend on private home-directory code, an auth broker, or a custom Codex CLI fork.
+- All v0.1.6 remote-session work remains: complete runtime events, mobile controls, Current and Archived session management, cross-client updates, stable reconnects, and Tailscale Serve access without a separate T4 password.
 
 ## Install
 
 ### Linux (Debian/Ubuntu)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.6/T4-Code-0.1.6-linux-amd64.deb
-sudo apt install ./T4-Code-0.1.6-linux-amd64.deb
+wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.7/T4-Code-0.1.7-linux-amd64.deb
+sudo apt install ./T4-Code-0.1.7-linux-amd64.deb
 ```
 
 Use `apt install` rather than `dpkg -i` so system dependencies resolve automatically.
@@ -42,17 +40,17 @@ Use `apt install` rather than `dpkg -i` so system dependencies resolve automatic
 ### Linux (AppImage)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.6/T4-Code-0.1.6-linux-x86_64.AppImage
-chmod +x T4-Code-0.1.6-linux-x86_64.AppImage
-./T4-Code-0.1.6-linux-x86_64.AppImage
+wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.7/T4-Code-0.1.7-linux-x86_64.AppImage
+chmod +x T4-Code-0.1.7-linux-x86_64.AppImage
+./T4-Code-0.1.7-linux-x86_64.AppImage
 ```
 
 ### macOS (Apple Silicon)
 
 > [!WARNING]
-> **The macOS v0.1.6 build is unsigned and unnotarized.** Apple has not signed or notarized it, so Gatekeeper can report a "damaged" app or an unidentified developer. Only continue if you trust the release from this repository. You can always build from source instead.
+> **The macOS v0.1.7 build is unsigned and unnotarized.** Apple has not signed or notarized it, so Gatekeeper can report a "damaged" app or an unidentified developer. Only continue if you trust the release from this repository. You can always build from source instead.
 
-1. Download [`T4-Code-0.1.6-mac-arm64.dmg`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.6/T4-Code-0.1.6-mac-arm64.dmg) (or [`T4-Code-0.1.6-mac-arm64.zip`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.6/T4-Code-0.1.6-mac-arm64.zip)).
+1. Download [`T4-Code-0.1.7-mac-arm64.dmg`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.7/T4-Code-0.1.7-mac-arm64.dmg) (or [`T4-Code-0.1.7-mac-arm64.zip`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.7/T4-Code-0.1.7-mac-arm64.zip)).
 2. Drag `T4 Code.app` into `/Applications`.
 3. If Gatekeeper blocks the app and you choose to proceed, remove the quarantine attributes from the copied app bundle:
 

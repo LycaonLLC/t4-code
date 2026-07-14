@@ -20,12 +20,17 @@ const REPOSITORY_URL = "https://github.com/LycaonLLC/t4-code";
 const APP_WIRE_VERSION = "0.5.2";
 const APP_WIRE_SOURCE_COMMIT = "5d4315eea317260fec030e2b4726f10fed0cd5f6";
 const APP_WIRE_SOURCE_TREE = "713688e8099d4553a0a30b1bf415a7cffb5963f4";
-const OMP_RUNTIME_VERSION = "16.4.8";
-const OMP_RUNTIME_COMMIT = "932bbaceb256f43eb3b2760341f2175803da4d07";
+const OMP_RUNTIME_VERSION = "16.5.0";
+const OMP_RUNTIME_COMMIT = "d4a0b9344e1796c0e56041cfeea3431a8a728e61";
 const OMP_RUNTIME_REPOSITORY = "https://github.com/lyc-aon/oh-my-pi";
 const OMP_RUNTIME_COMMIT_URL = `${OMP_RUNTIME_REPOSITORY}/commit/${OMP_RUNTIME_COMMIT}`;
-const OMP_RUNTIME_SOURCE_TAG = "t4code-16.4.8-appserver-4";
+const OMP_RUNTIME_SOURCE_TAG = "t4code-16.5.0-appserver-3";
 const OMP_RUNTIME_SOURCE_URL = `${OMP_RUNTIME_REPOSITORY}/tree/${OMP_RUNTIME_SOURCE_TAG}`;
+const OMP_UPSTREAM_REPOSITORY = "https://github.com/can1357/oh-my-pi";
+const OMP_UPSTREAM_TAG = "v16.5.0";
+const OMP_UPSTREAM_COMMIT = "3047c27c332c5629c8e063283d349384c10c9a56";
+const OMP_UPSTREAM_TAG_URL = `${OMP_UPSTREAM_REPOSITORY}/tree/${OMP_UPSTREAM_TAG}`;
+const OMP_UPSTREAM_COMMIT_URL = `${OMP_UPSTREAM_REPOSITORY}/commit/${OMP_UPSTREAM_COMMIT}`;
 const OMP_INTEGRATION_PATCHES = [
   "bounded-growing-session-replay",
   "complete-session-event-projection",
@@ -153,6 +158,17 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       `compat/omp-app-matrix.json verified runtime tag must be ${OMP_RUNTIME_SOURCE_TAG}`,
     );
   }
+  if (verifiedRuntime?.upstreamRepository !== OMP_UPSTREAM_REPOSITORY) {
+    errors.push(
+      `compat/omp-app-matrix.json upstream repository must be ${OMP_UPSTREAM_REPOSITORY}`,
+    );
+  }
+  if (verifiedRuntime?.upstreamTag !== OMP_UPSTREAM_TAG) {
+    errors.push(`compat/omp-app-matrix.json upstream tag must be ${OMP_UPSTREAM_TAG}`);
+  }
+  if (verifiedRuntime?.upstreamCommit !== OMP_UPSTREAM_COMMIT) {
+    errors.push(`compat/omp-app-matrix.json upstream commit must be ${OMP_UPSTREAM_COMMIT}`);
+  }
   if (
     !Array.isArray(verifiedRuntime?.integrationPatches) ||
     verifiedRuntime.integrationPatches.length !== OMP_INTEGRATION_PATCHES.length ||
@@ -166,7 +182,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   }
   if (verifiedRuntime?.upstreamTagContainsIntegrationPatches !== false) {
     errors.push(
-      "compat/omp-app-matrix.json must record that stock upstream v16.4.8 lacks the integration patches",
+      "compat/omp-app-matrix.json must record that stock upstream v16.5.0 lacks the integration patches",
     );
   }
 
@@ -198,6 +214,24 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   requireText(
     site,
     `export const OMP_RUNTIME_TAG = "${OMP_RUNTIME_SOURCE_TAG}";`,
+    "apps/site/src/release.ts",
+    errors,
+  );
+  requireText(
+    site,
+    `export const OMP_UPSTREAM_TAG = "${OMP_UPSTREAM_TAG}";`,
+    "apps/site/src/release.ts",
+    errors,
+  );
+  requireText(
+    site,
+    `export const OMP_UPSTREAM_COMMIT = "${OMP_UPSTREAM_COMMIT}";`,
+    "apps/site/src/release.ts",
+    errors,
+  );
+  requireText(
+    site,
+    "export const OMP_UPSTREAM_URL = `${OMP_URL}/tree/${OMP_UPSTREAM_TAG}`;",
     "apps/site/src/release.ts",
     errors,
   );
@@ -242,7 +276,13 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   requireText(
     readme,
-    "The official upstream v16.4.8 tag has no `appserver` command, so it cannot host T4 Code.",
+    `official upstream [\`${OMP_UPSTREAM_TAG}\`](${OMP_UPSTREAM_TAG_URL}) tag at [\`${OMP_UPSTREAM_COMMIT.slice(0, 8)}\`](${OMP_UPSTREAM_COMMIT_URL})`,
+    "README.md",
+    errors,
+  );
+  requireText(
+    readme,
+    "The official upstream v16.5.0 tag has no `appserver` command, so it cannot host T4 Code.",
     "README.md",
     errors,
   );
@@ -298,6 +338,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
 
   const siteDocs = files.get("apps/site/src/docs/content.ts") ?? "";
   requireText(siteDocs, "OMP_RUNTIME_URL", "apps/site/src/docs/content.ts", errors);
+  requireText(siteDocs, "OMP_UPSTREAM_URL", "apps/site/src/docs/content.ts", errors);
+  requireText(siteDocs, "OMP_UPSTREAM_COMMIT", "apps/site/src/docs/content.ts", errors);
   requireText(
     siteDocs,
     "Official upstream OMP v${OMP_RUNTIME_VERSION} does not ship the \\`appserver\\` command, so it cannot host T4 Code.",
@@ -332,13 +374,25 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   requireText(
     releaseWorkflow,
+    OMP_UPSTREAM_TAG_URL,
+    ".github/workflows/release.yml",
+    errors,
+  );
+  requireText(
+    releaseWorkflow,
+    OMP_UPSTREAM_COMMIT_URL,
+    ".github/workflows/release.yml",
+    errors,
+  );
+  requireText(
+    releaseWorkflow,
     `This release vendors app-wire ${APP_WIRE_VERSION}`,
     ".github/workflows/release.yml",
     errors,
   );
   requireText(
     releaseWorkflow,
-    "Official upstream OMP v16.4.8 has no `appserver` command and cannot host T4 Code.",
+    "Official upstream OMP v16.5.0 has no `appserver` command and cannot host T4 Code.",
     ".github/workflows/release.yml",
     errors,
   );
