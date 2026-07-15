@@ -4,13 +4,13 @@ T4 Code is a free, open-source (MIT) desktop app for [Oh My Pi](https://github.c
 
 ![T4 Code main window](docs/assets/t4-code-main.png)
 
-[**Download v0.1.13**](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.13) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
+[**Download v0.1.14**](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.14) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
 
 ## Requirements
 
-T4 Code needs an OMP build with desktop appserver support. For v0.1.13, use the public integration build below.
+T4 Code needs an OMP build with desktop appserver support. For v0.1.14, use the public integration build below.
 
-T4 Code v0.1.13 was verified with OMP 16.5.1 built from [`bed27ae6`](https://github.com/lyc-aon/oh-my-pi/commit/bed27ae6e5658267745e2ec774e011fe7062e2f1), tagged [`t4code-16.5.1-appserver-6`](https://github.com/lyc-aon/oh-my-pi/tree/t4code-16.5.1-appserver-6). That public integration is based on the official upstream [`v16.5.1`](https://github.com/can1357/oh-my-pi/tree/v16.5.1) tag at [`14b5da76`](https://github.com/can1357/oh-my-pi/commit/14b5da76a9aece9a469288718d22c3d624daf033). It carries forward T4's appserver and lifecycle integration, adds bounded prompt-image upload and transcript-image readback, keeps image-bearing managed RPC notifications below their line ceiling, and makes tiny canonical transcript images retrievable by digest. The official upstream v16.5.1 tag has no `appserver` command, so it cannot host T4 Code. The verified runtime is a normal build from the public `lyc-aon/oh-my-pi` source; T4 Code does not depend on private home-directory files, an auth broker, or a custom Codex CLI fork. T4 Code vendors `@oh-my-pi/app-wire` 0.5.5 from integration commit [`6a87fa64`](https://github.com/lyc-aon/oh-my-pi/commit/6a87fa6407ebff20417b4d52885a6bb3091003ea), source tree `a2495fe8781c979184fe7fb9a6d37d8f33bad30f`.
+T4 Code v0.1.14 was verified with OMP 16.5.2 built from [`d7c9ac81`](https://github.com/lyc-aon/oh-my-pi/commit/d7c9ac81a3764085d050d0b7148ac7eee976ddd3), tagged [`t4code-16.5.2-appserver-1`](https://github.com/lyc-aon/oh-my-pi/tree/t4code-16.5.2-appserver-1). That public integration is based on the official upstream [`v16.5.2`](https://github.com/can1357/oh-my-pi/tree/v16.5.2) tag at [`7d02778c`](https://github.com/can1357/oh-my-pi/commit/7d02778c60f4b5db60f84bedbca79d6e64cb91f5). It carries forward T4's appserver, lifecycle, image, and session-control integration and adds an identity-bound `drain-if-idle` operation for safe local upgrades. The official upstream v16.5.2 tag has no `appserver` command, so it cannot host T4 Code. The verified runtime is a normal build from the public `lyc-aon/oh-my-pi` source; T4 Code does not depend on private home-directory files, an auth broker, or a custom Codex CLI fork. T4 Code vendors `@oh-my-pi/app-wire` 0.5.5 from integration commit [`6a87fa64`](https://github.com/lyc-aon/oh-my-pi/commit/6a87fa6407ebff20417b4d52885a6bb3091003ea), source tree `a2495fe8781c979184fe7fb9a6d37d8f33bad30f`.
 
 | Platform | Arch                  | Package                                  |
 | -------- | --------------------- | ---------------------------------------- |
@@ -18,21 +18,21 @@ T4 Code v0.1.13 was verified with OMP 16.5.1 built from [`bed27ae6`](https://git
 | Linux    | x86_64                | `.deb`, AppImage                         |
 | macOS    | Apple Silicon (arm64) | `.dmg`, `.zip` (**unsigned, see below**) |
 
-No Windows build and no Intel Mac build in v0.1.13. The iOS TestFlight build is coming soon.
+No Windows build and no Intel Mac build in v0.1.14. The iOS TestFlight build is coming soon.
 
-## What changed in v0.1.13
+## What changed in v0.1.14
 
-- Fresh transcript images now render immediately in T4 without restarting the OMP appserver.
-- Managed RPC notifications omit redundant inline image bytes while the full image remains in OMP's session and model context, preventing image-bearing turns from losing their runtime at the one MiB line ceiling.
-- Tiny canonical transcript images are persisted by content digest, so the same verified read path works across live delivery, reloads, and reconnects.
-- Image prompts, bounded transcript reads, connection recovery, and lifecycle controls from v0.1.12 remain unchanged.
+- The Linux host maintainer can now take a stable OMP update through exact fork synchronization, atomic publication, public verification, and guarded local installation.
+- Local cutovers require an identity-bound `drain-if-idle` receipt from OMP. If any tracked work is active, the update waits.
+- Gateway ingress is the final exposure step. The deployment is accepted only after the new OMP binary, T4 package, web runtime, loopback health, and exact deployment identity pass verification.
+- Android release CI now rejects the wrong application ID, SDK bounds, APK shape, version, or production signing certificate before publication.
 
 ## Install
 
 ### Android
 
 1. On the Android phone, sign in to Tailscale with an account that can reach the T4 Code host.
-2. Download [`T4-Code-0.1.13-android.apk`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.13/T4-Code-0.1.13-android.apk).
+2. Download [`T4-Code-0.1.14-android.apk`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.14/T4-Code-0.1.14-android.apk).
 3. If Android asks, allow your browser or file manager to install unknown apps, then install the APK.
 4. Open T4 Code and enter the host's HTTPS Tailscale address, including its port.
 
@@ -41,8 +41,8 @@ The APK does not contain an appserver or expose one to the public internet. It c
 ### Linux (Debian/Ubuntu)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.13/T4-Code-0.1.13-linux-amd64.deb
-sudo apt install ./T4-Code-0.1.13-linux-amd64.deb
+wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.14/T4-Code-0.1.14-linux-amd64.deb
+sudo apt install ./T4-Code-0.1.14-linux-amd64.deb
 ```
 
 Use `apt install` rather than `dpkg -i` so system dependencies resolve automatically.
@@ -50,17 +50,17 @@ Use `apt install` rather than `dpkg -i` so system dependencies resolve automatic
 ### Linux (AppImage)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.13/T4-Code-0.1.13-linux-x86_64.AppImage
-chmod +x T4-Code-0.1.13-linux-x86_64.AppImage
-./T4-Code-0.1.13-linux-x86_64.AppImage
+wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.14/T4-Code-0.1.14-linux-x86_64.AppImage
+chmod +x T4-Code-0.1.14-linux-x86_64.AppImage
+./T4-Code-0.1.14-linux-x86_64.AppImage
 ```
 
 ### macOS (Apple Silicon)
 
 > [!WARNING]
-> **The macOS v0.1.13 build is unsigned and unnotarized.** Apple has not signed or notarized it, so Gatekeeper can report a "damaged" app or an unidentified developer. Only continue if you trust the release from this repository. You can always build from source instead.
+> **The macOS v0.1.14 build is unsigned and unnotarized.** Apple has not signed or notarized it, so Gatekeeper can report a "damaged" app or an unidentified developer. Only continue if you trust the release from this repository. You can always build from source instead.
 
-1. Download [`T4-Code-0.1.13-mac-arm64.dmg`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.13/T4-Code-0.1.13-mac-arm64.dmg) (or [`T4-Code-0.1.13-mac-arm64.zip`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.13/T4-Code-0.1.13-mac-arm64.zip)).
+1. Download [`T4-Code-0.1.14-mac-arm64.dmg`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.14/T4-Code-0.1.14-mac-arm64.dmg) (or [`T4-Code-0.1.14-mac-arm64.zip`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.14/T4-Code-0.1.14-mac-arm64.zip)).
 2. Drag `T4 Code.app` into `/Applications`.
 3. If Gatekeeper blocks the app and you choose to proceed, remove the quarantine attributes from the copied app bundle:
 
