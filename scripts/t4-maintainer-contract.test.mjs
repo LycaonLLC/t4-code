@@ -491,6 +491,7 @@ test("tagged sources prove ancestry, compatibility, artifacts, and required chec
   assertIncludesAll(
     beforeMutation,
     [
+      '"$BUN" run build:native',
       '"$BUN" --cwd packages/app-wire run check',
       '"$BUN" --cwd packages/app-wire test',
       '"$BUN" --cwd packages/appserver run build',
@@ -507,6 +508,11 @@ test("tagged sources prove ancestry, compatibility, artifacts, and required chec
     ],
     "tagged-source release gates",
   );
+  assertOrdered(beforeMutation, [
+    '"$BUN" install --frozen-lockfile',
+    '"$BUN" run build:native',
+    '"$BUN" --cwd packages/appserver test',
+  ]);
 
   const mutationFlow = deployment.slice(deployment.indexOf("MUTATION_STARTED=true"));
   assertOrdered(mutationFlow, [

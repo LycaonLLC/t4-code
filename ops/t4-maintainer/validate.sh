@@ -26,6 +26,7 @@ grep -Fq -- 'repos/$OMP_UPSTREAM_SLUG/commits/main' "$SCRIPT_DIR/deploy-local.sh
 grep -Fq -- 'repos/$OMP_INTEGRATION_SLUG/commits/main' "$SCRIPT_DIR/deploy-local.sh"
 grep -Fq -- 'repos/$OMP_UPSTREAM_SLUG/git/ref/tags/$UPSTREAM_TAG' "$SCRIPT_DIR/deploy-local.sh"
 grep -Fq -- 'repos/$OMP_INTEGRATION_SLUG/git/ref/tags/$UPSTREAM_TAG' "$SCRIPT_DIR/deploy-local.sh"
+grep -Fq -- '"$BUN" run build:native' "$SCRIPT_DIR/deploy-local.sh"
 grep -Fq -- '--cwd packages/appserver test' "$SCRIPT_DIR/deploy-local.sh"
 grep -Fq -- 'appserver-exposure-starting' "$SCRIPT_DIR/deploy-local.sh"
 grep -Fq -- '--deployment-identity "$DEPLOYMENT_IDENTITY"' "$SCRIPT_DIR/deploy-local.sh"

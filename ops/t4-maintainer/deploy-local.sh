@@ -818,6 +818,7 @@ $GIT -C "$OMP_SOURCE" merge-base --is-ancestor "$UPSTREAM_COMMIT" "$INTEGRATION_
 (
   cd -- "$OMP_SOURCE"
   "$BUN" install --frozen-lockfile
+  "$BUN" run build:native
   "$BUN" --cwd packages/app-wire run check
   "$BUN" --cwd packages/app-wire test
   "$BUN" --cwd packages/appserver run build
