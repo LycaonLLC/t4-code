@@ -9,7 +9,9 @@ const LEGAL_TRANSITIONS: Readonly<Record<OmpClientState, readonly OmpClientState
   "reconnect-wait": ["connecting", "fatal", "closing"],
   closing: ["closed"],
   closed: [],
-  fatal: ["closing", "closed"],
+  // An explicit foreground/network wake may revive a retryable transport
+  // exhaustion. Protocol, auth, and capability failures remain terminal.
+  fatal: ["connecting", "closing", "closed"],
 };
 
 export function isLegalClientTransition(current: OmpClientState, next: OmpClientState): boolean {

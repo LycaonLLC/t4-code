@@ -43,6 +43,7 @@ import type { SessionRuntime } from "../src/features/session-runtime/controller.
 import { IMAGE_PROMPTS_UNSUPPORTED_REASON } from "../src/features/session-runtime/intents.ts";
 import { IMAGE_UPLOAD_CHUNK_BYTES } from "../src/features/session-runtime/image-upload.ts";
 import { obtainLiveRuntime } from "../src/features/session-runtime/useSessionRuntime.ts";
+import { deriveAttention } from "../src/features/transcript/rows.ts";
 import { buildProjectGroups } from "../src/lib/session-tree.ts";
 import { deriveWorkspaceData, sessionViewId } from "../src/platform/live-workspace.ts";
 import {
@@ -90,6 +91,22 @@ function turnStart(seq: number): LiveEventFrame {
     hostId: hostId(HOST),
     sessionId: sessionId(SESSION),
     event: { type: "turn.start", at: "2026-07-11T10:00:01Z" },
+  };
+}
+
+function turnError(seq: number, message: string): LiveEventFrame {
+  return {
+    v: V,
+    type: "event",
+    cursor: { epoch: "epoch-1", seq },
+    hostId: hostId(HOST),
+    sessionId: sessionId(SESSION),
+    event: {
+      type: "turn.error",
+      message,
+      retryable: true,
+      at: "2026-07-11T10:00:02Z",
+    },
   };
 }
 
@@ -582,6 +599,144 @@ describe("session lifecycle", () => {
     expect(runtime.getSnapshot().canPrompt).toBe(false);
   });
 
+  it("settles stale turn UI when the authoritative session ref becomes idle", async () => {
+    const { shell, runtime } = await startedRuntime();
+    shell.emitFrame({ targetId: "local", frame: snapshotFrame(1, []) });
+    shell.emitFrame({ targetId: "local", frame: turnStart(2) });
+    expect(runtime.getSnapshot().projection.turnActive).toBe(true);
+
+    const indexed = (seq: number, status: "active" | "idle"): SessionsFrame => ({
+      v: V,
+      type: "sessions",
+      cursor: { epoch: "epoch-1", seq },
+      sessions: [
+        {
+          hostId: hostId(HOST),
+          sessionId: sessionId(SESSION),
+          project: {
+            projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+          },
+          revision: revision(`rev-${status}`),
+          title: "Session",
+          status,
+          updatedAt: `2026-07-11T10:00:0${seq}Z`,
+        },
+      ],
+    });
+    shell.emitFrame({ targetId: "local", frame: indexed(1, "active") });
+    expect(runtime.getSnapshot().projection.turnActive).toBe(true);
+    shell.emitFrame({ targetId: "local", frame: indexed(2, "idle") });
+
+    expect(runtime.getSnapshot().projection.turnActive).toBe(false);
+    expect(runtime.getSnapshot().projection.liveMessages.size).toBe(0);
+    expect(runtime.getSnapshot().canPrompt).toBe(true);
+  });
+
+  it("clears an old error only after a later turn is authoritatively settled", async () => {
+    const { shell, runtime } = await startedRuntime();
+    const indexed = (seq: number, status: "active" | "idle"): SessionsFrame => ({
+      v: V,
+      type: "sessions",
+      cursor: { epoch: "epoch-1", seq },
+      sessions: [
+        {
+          hostId: hostId(HOST),
+          sessionId: sessionId(SESSION),
+          project: {
+            projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+          },
+          revision: revision(`rev-${status}-${seq}`),
+          title: "Session",
+          status,
+          updatedAt: `2026-07-11T10:00:0${seq}Z`,
+        },
+      ],
+      totalCount: 1,
+      truncated: false,
+    });
+
+    shell.emitFrame({ targetId: "local", frame: turnStart(2) });
+    shell.emitFrame({ targetId: "local", frame: indexed(1, "active") });
+    shell.emitFrame({ targetId: "local", frame: turnError(3, "first turn failed") });
+    shell.emitFrame({ targetId: "local", frame: indexed(2, "idle") });
+
+    // Idle belongs to the failed turn itself, so it settles volatile state but
+    // must not erase the error that explains that failure.
+    expect(deriveAttention(runtime.getSnapshot().projection).error?.message).toBe(
+      "first turn failed",
+    );
+
+    // A later turn starts, but its terminal event is missed across reconnect.
+    // The complete index still proves active -> idle and safely settles it.
+    shell.emitFrame({ targetId: "local", frame: turnStart(4) });
+    shell.emitFrame({ targetId: "local", frame: indexed(3, "active") });
+    shell.emitState({ targetId: "local", state: "disconnected" });
+    shell.emitState({ targetId: "local", state: "connected" });
+    shell.emitFrame({ targetId: "local", frame: indexed(4, "idle") });
+
+    expect(runtime.getSnapshot().projection.turnActive).toBe(false);
+    expect(deriveAttention(runtime.getSnapshot().projection).error).toBeNull();
+    expect(runtime.getSnapshot().projection.notices.some((notice) => notice.kind === "error")).toBe(
+      false,
+    );
+  });
+
+  it("does not settle a turn from a truncated inventory after reconnect", async () => {
+    const { shell, runtime } = await startedRuntime();
+    shell.emitFrame({ targetId: "local", frame: snapshotFrame(1, []) });
+    shell.emitFrame({ targetId: "local", frame: turnStart(2) });
+
+    const session = (status: "active" | "idle"): SessionsFrame["sessions"][number] => ({
+      hostId: hostId(HOST),
+      sessionId: sessionId(SESSION),
+      project: {
+        projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+      },
+      revision: revision(`rev-${status}`),
+      title: "Session",
+      status,
+      updatedAt: "2026-07-11T10:00:04Z",
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "sessions",
+        cursor: { epoch: "epoch-1", seq: 1 },
+        sessions: [session("active")],
+        totalCount: 1,
+        truncated: false,
+      },
+    });
+    shell.emitState({ targetId: "local", state: "disconnected" });
+    shell.emitState({ targetId: "local", state: "connected" });
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "sessions",
+        cursor: { epoch: "epoch-2", seq: 1 },
+        sessions: [session("idle")],
+        totalCount: 2,
+        truncated: true,
+      },
+    });
+    expect(runtime.getSnapshot().projection.turnActive).toBe(true);
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "sessions",
+        cursor: { epoch: "epoch-2", seq: 2 },
+        sessions: [session("idle")],
+        totalCount: 1,
+        truncated: false,
+      },
+    });
+    expect(runtime.getSnapshot().projection.turnActive).toBe(false);
+  });
+
   it("selecting the same session twice attaches exactly once", async () => {
     const { shell, controller } = await startedController();
     const cache = new Map<string, SessionRuntime>();
@@ -727,10 +882,7 @@ describe("workspace projection safety", () => {
 
     const otherHost = "host-b";
     const rawProjectId = "/workspace" as SessionsFrame["sessions"][number]["project"]["projectId"];
-    const makeArchivedRef = (
-      host: string,
-      session: string,
-    ): SessionsFrame["sessions"][number] => ({
+    const makeArchivedRef = (host: string, session: string): SessionsFrame["sessions"][number] => ({
       hostId: hostId(host),
       sessionId: sessionId(session),
       project: { projectId: rawProjectId, name: "workspace" },
@@ -860,6 +1012,39 @@ describe("window runtime slot", () => {
     expect(shell.bootstrapCalls).toBe(1);
     expect(shell.connectCalls).toBe(1);
     await first.stop();
+  });
+
+  it("retains one live controller across a persisted pagehide/pageshow", async () => {
+    class FakePageLifecycleTarget {
+      private readonly listeners = new Map<string, Set<EventListener>>();
+      addEventListener(type: "pagehide" | "pageshow", listener: EventListener): void {
+        const listeners = this.listeners.get(type) ?? new Set<EventListener>();
+        listeners.add(listener);
+        this.listeners.set(type, listeners);
+      }
+      removeEventListener(type: "pagehide" | "pageshow", listener: EventListener): void {
+        this.listeners.get(type)?.delete(listener);
+      }
+      dispatch(type: "pagehide" | "pageshow", persisted: boolean): void {
+        const event = { type, persisted } as unknown as Event;
+        for (const listener of this.listeners.get(type) ?? []) listener(event);
+      }
+    }
+
+    const shell = new FakeShell();
+    const holder: RuntimeSlotHolder = {};
+    const pageTarget = new FakePageLifecycleTarget();
+    const first = acquireRuntimeController(shell, holder);
+    startRuntimeController(shell, holder, pageTarget);
+    await first.start();
+
+    pageTarget.dispatch("pagehide", true);
+    pageTarget.dispatch("pageshow", true);
+    expect(acquireRuntimeController(shell, holder)).toBe(first);
+    expect(first.getSnapshot().startState).toBe("started");
+
+    pageTarget.dispatch("pagehide", false);
+    expect(acquireRuntimeController(shell, holder)).not.toBe(first);
   });
 });
 describe("authoritative live runtime protocol", () => {

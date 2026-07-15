@@ -15,18 +15,18 @@ import {
   DialogHeader,
   DialogPopup,
   DialogTitle,
-  Spinner,
 } from "@t4-code/ui";
-import { CircleAlert } from "lucide-react";
 import { useRef, useState, useSyncExternalStore } from "react";
 
 import { rendererPlatform } from "../../state/store-instance.ts";
+import { useAppUpdateState } from "../updates/update-store.ts";
 import type { SaveChallenge } from "./live-controller.ts";
 import {
   createLiveSettingsScreenModel,
   type LiveSettingsScreenModel,
 } from "./live-screen-model.ts";
 import { SettingsWorkspace, type RestartAction } from "./SettingsWorkspace.tsx";
+import { UnavailableSettingsWorkspace } from "./UnavailableSettingsWorkspace.tsx";
 
 interface PendingChallenge {
   readonly challenge: SaveChallenge;
@@ -81,6 +81,7 @@ export function LiveSettingsScreen({
   }
   const model = modelRef.current;
   const state = useSyncExternalStore(model.subscribe, model.getState, model.getState);
+  const update = useAppUpdateState();
 
   const shell = rendererPlatform.shell;
   const restartAction: RestartAction | undefined =
@@ -122,25 +123,12 @@ export function LiveSettingsScreen({
         ? { title: "Settings can't load", detail: state.message, spin: false }
         : WAIT_COPY[state.detail];
     return (
-      <div className="flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-        {copy.spin ? (
-          <Spinner />
-        ) : (
-          <CircleAlert aria-hidden="true" className="size-5 text-muted-foreground" />
-        )}
-        <p className="font-medium text-sm">{copy.title}</p>
-        <p className="max-w-[48ch] text-muted-foreground text-xs" role={state.phase === "error" ? "alert" : undefined}>
-          {copy.detail}
-        </p>
-        <div className="flex items-center gap-1.5 pt-2">
-          <Button onClick={onOpenHosts} size="sm" variant="outline">
-            Manage hosts
-          </Button>
-          <Button onClick={onBack} size="sm" variant="ghost">
-            Back
-          </Button>
-        </div>
-      </div>
+      <UnavailableSettingsWorkspace
+        copy={{ ...copy, error: state.phase === "error" }}
+        onBack={onBack}
+        onOpenHosts={onOpenHosts}
+        update={update}
+      />
     );
   }
 

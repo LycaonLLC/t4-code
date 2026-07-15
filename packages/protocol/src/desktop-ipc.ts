@@ -41,6 +41,11 @@ export const DESKTOP_IPC_CHANNELS = [
   "omp:service:stop",
   "omp:service:restart",
   "omp:service:uninstall",
+  "app:update:get-state",
+  "app:update:check",
+  "app:update:download",
+  "app:update:restart",
+  "app:update:renderer-ready",
 ] as const;
 export type DesktopInvokeChannel = (typeof DESKTOP_IPC_CHANNELS)[number];
 export const DESKTOP_IPC_EVENTS = [
@@ -48,6 +53,8 @@ export const DESKTOP_IPC_EVENTS = [
   "omp:connection-state",
   "omp:runtime-error",
   "omp:pair-link",
+  "app:update:state",
+  "app:update:open",
 ] as const;
 export type DesktopEventChannel = (typeof DESKTOP_IPC_EVENTS)[number];
 export type DesktopPlatform = "linux" | "darwin";
@@ -211,6 +218,35 @@ export interface TerminalResult {
   accepted: boolean;
 }
 
+export type DesktopUpdatePhase =
+  | "idle"
+  | "checking"
+  | "current"
+  | "available"
+  | "manual"
+  | "downloading"
+  | "ready"
+  | "error";
+
+/** Renderer-safe update metadata. Download URLs and filesystem paths stay in Electron main. */
+export interface DesktopUpdateState {
+  readonly version: 1;
+  readonly currentVersion: string;
+  readonly phase: DesktopUpdatePhase;
+  readonly checkedAt?: number;
+  readonly availableVersion?: string;
+  readonly progressPercent?: number;
+  readonly message?: string;
+}
+
+export interface DesktopUpdateRequest {}
+export interface DesktopUpdateRendererReadyResult {
+  readonly openSettings: boolean;
+}
+export interface DesktopUpdateOpenEvent {
+  readonly source: "menu";
+}
+
 const MAX_COMMAND_ERROR_CODE_BYTES = 128;
 const MAX_COMMAND_ERROR_MESSAGE_BYTES = 1_024;
 const MAX_COMMAND_ERROR_DETAILS_BYTES = 8_192;
@@ -365,6 +401,11 @@ export interface DesktopInvokeRequestMap {
   "omp:service:stop": ServiceActionRequest;
   "omp:service:restart": ServiceActionRequest;
   "omp:service:uninstall": ServiceActionRequest;
+  "app:update:get-state": DesktopUpdateRequest;
+  "app:update:check": DesktopUpdateRequest;
+  "app:update:download": DesktopUpdateRequest;
+  "app:update:restart": DesktopUpdateRequest;
+  "app:update:renderer-ready": DesktopUpdateRequest;
 }
 export interface DesktopInvokeResponseMap {
   "omp:targets:list": TargetListResult;
@@ -386,6 +427,11 @@ export interface DesktopInvokeResponseMap {
   "omp:service:stop": ServiceActionResult;
   "omp:service:restart": ServiceActionResult;
   "omp:service:uninstall": ServiceActionResult;
+  "app:update:get-state": DesktopUpdateState;
+  "app:update:check": DesktopUpdateState;
+  "app:update:download": DesktopUpdateState;
+  "app:update:restart": DesktopUpdateState;
+  "app:update:renderer-ready": DesktopUpdateRendererReadyResult;
 }
 export interface RendererServerFrameEvent {
   targetId: string;
@@ -396,6 +442,8 @@ export interface DesktopEventPayloadMap {
   "omp:connection-state": ConnectionStateEvent;
   "omp:runtime-error": RuntimeErrorEvent;
   "omp:pair-link": PairLinkEvent;
+  "app:update:state": DesktopUpdateState;
+  "app:update:open": DesktopUpdateOpenEvent;
 }
 export type DesktopInvokeRequest<C extends DesktopInvokeChannel = DesktopInvokeChannel> = {
   channel: C;
@@ -424,6 +472,81 @@ function state(value: unknown): ConnectionState {
   )
     throw new Error("invalid state");
   return value as ConnectionState;
+}
+
+const DESKTOP_VERSION_PATTERN =
+  /^\d{1,6}\.\d{1,6}\.\d{1,6}(?:-[0-9A-Za-z](?:[0-9A-Za-z.-]{0,62}[0-9A-Za-z])?)?$/u;
+
+function desktopVersion(value: unknown, name: string): string {
+  const decoded = controlFree(value, name, 96);
+  if (!DESKTOP_VERSION_PATTERN.test(decoded)) throw new Error(`invalid ${name}`);
+  return decoded;
+}
+
+/** Strictly decode and freeze update state before it crosses either IPC boundary. */
+export function decodeDesktopUpdateState(value: unknown): DesktopUpdateState {
+  const item = object(value, "desktop update state");
+  exact(item, [
+    "version",
+    "currentVersion",
+    "phase",
+    "checkedAt",
+    "availableVersion",
+    "progressPercent",
+    "message",
+  ]);
+  if (item.version !== 1) throw new Error("unsupported desktop update state");
+  if (
+    ![
+      "idle",
+      "checking",
+      "current",
+      "available",
+      "manual",
+      "downloading",
+      "ready",
+      "error",
+    ].includes(item.phase as string)
+  )
+    throw new Error("invalid desktop update phase");
+  if (
+    item.checkedAt !== undefined &&
+    (typeof item.checkedAt !== "number" ||
+      !Number.isSafeInteger(item.checkedAt) ||
+      item.checkedAt < 0)
+  )
+    throw new Error("invalid desktop update checkedAt");
+  if (
+    item.progressPercent !== undefined &&
+    (typeof item.progressPercent !== "number" ||
+      !Number.isFinite(item.progressPercent) ||
+      item.progressPercent < 0 ||
+      item.progressPercent > 100)
+  )
+    throw new Error("invalid desktop update progress");
+  const decoded: DesktopUpdateState = {
+    version: 1,
+    currentVersion: desktopVersion(item.currentVersion, "currentVersion"),
+    phase: item.phase as DesktopUpdatePhase,
+    ...(item.checkedAt === undefined ? {} : { checkedAt: item.checkedAt }),
+    ...(item.availableVersion === undefined
+      ? {}
+      : { availableVersion: desktopVersion(item.availableVersion, "availableVersion") }),
+    ...(item.progressPercent === undefined ? {} : { progressPercent: item.progressPercent }),
+    ...(item.message === undefined ? {} : { message: controlFree(item.message, "message", 512) }),
+  };
+  return Object.freeze(decoded);
+}
+
+export function decodeDesktopUpdateRendererReadyResult(
+  value: unknown,
+): DesktopUpdateRendererReadyResult {
+  const item = object(value, "desktop update renderer-ready result");
+  exact(item, ["openSettings"]);
+  if (typeof item.openSettings !== "boolean") {
+    throw new Error("invalid desktop update renderer-ready result");
+  }
+  return Object.freeze({ openSettings: item.openSettings });
 }
 function targetRecord(value: unknown): TargetAddRequest["target"] {
   const item = object(value, "target");
@@ -595,6 +718,11 @@ export function decodeDesktopInvokeRequest(input: unknown): DesktopInvokeRequest
     case "omp:service:stop":
     case "omp:service:restart":
     case "omp:service:uninstall":
+    case "app:update:get-state":
+    case "app:update:check":
+    case "app:update:download":
+    case "app:update:restart":
+    case "app:update:renderer-ready":
       exact(payload, []);
       return { channel, payload: {} };
     case "omp:command":
@@ -665,6 +793,14 @@ export function decodeDesktopEvent(input: unknown): DesktopEvent {
     };
   }
   if (channel === "omp:pair-link") return { channel, payload: pairLink(payload) };
+  if (channel === "app:update:state") {
+    return { channel, payload: decodeDesktopUpdateState(payload) };
+  }
+  if (channel === "app:update:open") {
+    exact(payload, ["source"]);
+    if (payload.source !== "menu") throw new Error("invalid desktop update open source");
+    return { channel, payload: Object.freeze({ source: "menu" as const }) };
+  }
   exact(payload, ["targetId", "code", "message"]);
   if (!["transport", "protocol", "internal"].includes(payload.code as string))
     throw new Error("invalid error code");

@@ -79,6 +79,8 @@ fi
 install -m 0700 "$SCRIPT_DIR/run.sh" "$MAINTAINER_ROOT/libexec/run.sh"
 install -m 0700 "$SCRIPT_DIR/deploy-local.sh" "$MAINTAINER_ROOT/libexec/deploy-local.sh"
 install -m 0700 "$SCRIPT_DIR/publish-omp-atomic.sh" "$MAINTAINER_ROOT/libexec/publish-omp-atomic.sh"
+install -m 0600 "$SCRIPT_DIR/../../scripts/inspect-linux-update.mjs" \
+  "$MAINTAINER_ROOT/libexec/inspect-linux-update.mjs"
 install -m 0600 "$SCRIPT_DIR/prompt.md" "$MAINTAINER_ROOT/libexec/prompt.md"
 
 temporary=$(mktemp -d)

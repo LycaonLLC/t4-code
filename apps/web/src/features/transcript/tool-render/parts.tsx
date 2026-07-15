@@ -113,6 +113,97 @@ export interface OutputProps {
   bare?: boolean | undefined;
 }
 
+export const MAX_TOOL_TEXT_RENDER_CHARS = 64 * 1024;
+export const MAX_TOOL_TEXT_RENDER_LINES = 500;
+const TOOL_TEXT_HEAD_CHARS = 46 * 1024;
+const TOOL_TEXT_TAIL_CHARS = 16 * 1024;
+const TOOL_TEXT_HEAD_LINES = 349;
+const TOOL_TEXT_TAIL_LINES = 150;
+
+export interface BoundedToolText {
+  readonly text: string;
+  readonly totalLines: number;
+  readonly omittedCharacters: number;
+  readonly truncated: boolean;
+}
+
+function lineCount(value: string): number {
+  if (value === "") return 0;
+  let count = 1;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value.charCodeAt(index) === 10) count += 1;
+  }
+  return count;
+}
+
+function prefixEnd(value: string, maxChars: number, maxLines: number): number {
+  const limit = Math.min(value.length, maxChars);
+  let lines = 1;
+  for (let index = 0; index < limit; index += 1) {
+    if (value.charCodeAt(index) !== 10) continue;
+    if (lines >= maxLines) return index;
+    lines += 1;
+  }
+  return limit;
+}
+
+function suffixStart(value: string, maxChars: number, maxLines: number): number {
+  const limit = Math.max(0, value.length - maxChars);
+  let lines = 1;
+  for (let index = value.length - 1; index >= limit; index -= 1) {
+    if (value.charCodeAt(index) !== 10) continue;
+    if (lines >= maxLines) return index + 1;
+    lines += 1;
+  }
+  return limit;
+}
+
+function cleanHead(value: string): string {
+  const clean = replaceTabs(stripAnsi(value));
+  return clean.slice(0, prefixEnd(clean, TOOL_TEXT_HEAD_CHARS, TOOL_TEXT_HEAD_LINES));
+}
+
+function cleanTail(value: string): string {
+  const clean = replaceTabs(stripAnsi(value));
+  return clean.slice(suffixStart(clean, TOOL_TEXT_TAIL_CHARS, TOOL_TEXT_TAIL_LINES));
+}
+
+function cappedToolText(value: string, totalLines: number): BoundedToolText {
+  const headEnd = prefixEnd(value, TOOL_TEXT_HEAD_CHARS, TOOL_TEXT_HEAD_LINES);
+  const tailStart = Math.max(
+    headEnd,
+    suffixStart(value, TOOL_TEXT_TAIL_CHARS, TOOL_TEXT_TAIL_LINES),
+  );
+  const head = cleanHead(value.slice(0, headEnd)).replace(/\n+$/u, "");
+  const tail = cleanTail(value.slice(tailStart)).replace(/^\n+/u, "");
+  const omittedCharacters = Math.max(0, tailStart - headEnd);
+  const marker = `… output capped · ${omittedCharacters.toLocaleString("en-US")} middle characters omitted from ${totalLines.toLocaleString("en-US")} lines …`;
+  return {
+    text: `${head}\n${marker}\n${tail}`,
+    totalLines,
+    omittedCharacters,
+    truncated: true,
+  };
+}
+
+/**
+ * Build a hard-bounded head/tail display window before splitting, mapping, or
+ * syntax highlighting. The original result stays available through OMP's
+ * artifact notice; a disclosure can never expand thousands of DOM rows.
+ */
+export function boundToolTextForDisplay(value: string): BoundedToolText {
+  const rawLines = lineCount(value);
+  if (value.length > MAX_TOOL_TEXT_RENDER_CHARS || rawLines > MAX_TOOL_TEXT_RENDER_LINES) {
+    return cappedToolText(value, rawLines);
+  }
+  const clean = replaceTabs(stripAnsi(value)).replace(/\n+$/u, "");
+  const cleanLines = lineCount(clean);
+  if (clean.length > MAX_TOOL_TEXT_RENDER_CHARS || cleanLines > MAX_TOOL_TEXT_RENDER_LINES) {
+    return cappedToolText(clean, cleanLines);
+  }
+  return { text: clean, totalLines: cleanLines, omittedCharacters: 0, truncated: false };
+}
+
 /**
  * Expandable text block — the workhorse for command output, file previews,
  * search results. Tabs are widened, ANSI escapes stripped.
@@ -128,10 +219,10 @@ export function Output({
 }: OutputProps): ReactNode {
   const [expanded, setExpanded] = useState(false);
   const contentId = useId();
-  const clean = useMemo(() => replaceTabs(stripAnsi(text)).replace(/\n+$/, ""), [text]);
-  const lines = useMemo(() => clean.split("\n"), [clean]);
-  const collapsible = lines.length > maxLines + 1;
-  const shown = collapsible && !expanded ? lines.slice(0, maxLines).join("\n") : clean;
+  const bounded = useMemo(() => boundToolTextForDisplay(text), [text]);
+  const lines = useMemo(() => bounded.text.split("\n"), [bounded.text]);
+  const collapsible = bounded.truncated || lines.length > maxLines + 1;
+  const shown = collapsible && !expanded ? lines.slice(0, maxLines).join("\n") : bounded.text;
   const html = useHighlight(shown, error ? null : lang);
   const classes = ["tv-pre"];
   if (variant === "plain") classes.push("tv-pre--wrap");
@@ -159,7 +250,13 @@ export function Output({
           className="tv-expand"
           onClick={() => setExpanded((v) => !v)}
         >
-          {expanded ? "collapse" : `⋯ ${lines.length - maxLines} more lines`}
+          {expanded
+            ? bounded.truncated
+              ? "collapse bounded preview"
+              : "collapse"
+            : bounded.truncated
+              ? `⋯ ${bounded.totalLines.toLocaleString("en-US")} lines · bounded preview`
+              : `⋯ ${lines.length - maxLines} more lines`}
         </button>
       )}
     </div>
@@ -288,8 +385,9 @@ export function InvalidArg({ what }: { what?: string }): ReactNode {
 export function DiffBlock({ diff, maxLines = 80 }: { diff: string; maxLines?: number }): ReactNode {
   const [expanded, setExpanded] = useState(false);
   const contentId = useId();
-  const lines = useMemo(() => replaceTabs(stripAnsi(diff)).replace(/\n+$/, "").split("\n"), [diff]);
-  const collapsible = lines.length > maxLines + 1;
+  const bounded = useMemo(() => boundToolTextForDisplay(diff), [diff]);
+  const lines = useMemo(() => bounded.text.split("\n"), [bounded.text]);
+  const collapsible = bounded.truncated || lines.length > maxLines + 1;
   const shown = collapsible && !expanded ? lines.slice(0, maxLines) : lines;
   return (
     <div className="tv-out">
@@ -297,6 +395,7 @@ export function DiffBlock({ diff, maxLines = 80 }: { diff: string; maxLines?: nu
         {shown.map((line, i) => {
           let cls = "";
           if (line.trim().length === 0) cls = "--gap";
+          else if (line.startsWith("… output capped")) cls = "--hunk";
           else if (line.startsWith("+")) cls = "--add";
           else if (line.startsWith("-")) cls = "--del";
           else if (line.startsWith("@@")) cls = "--hunk";
@@ -315,7 +414,13 @@ export function DiffBlock({ diff, maxLines = 80 }: { diff: string; maxLines?: nu
           className="tv-expand"
           onClick={() => setExpanded((v) => !v)}
         >
-          {expanded ? "collapse" : `⋯ ${lines.length - maxLines} more lines`}
+          {expanded
+            ? bounded.truncated
+              ? "collapse bounded preview"
+              : "collapse"
+            : bounded.truncated
+              ? `⋯ ${bounded.totalLines.toLocaleString("en-US")} lines · bounded preview`
+              : `⋯ ${lines.length - maxLines} more lines`}
         </button>
       )}
     </div>

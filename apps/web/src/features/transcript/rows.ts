@@ -10,6 +10,11 @@
 // re-derives (or re-renders) the list. `formatElapsed` is the pure formatter
 // those labels share: first paint is a function of (fromIso, nowMs).
 import {
+  collaborationMessageFromEntry,
+  type CollaborationMessage,
+} from "./collaboration-messages.ts";
+import { transcriptImagesFromEntry, type TranscriptImageReference } from "./image-metadata.ts";
+import {
   type ApprovalRequest,
   type AskRequest,
   type DurableEntry,
@@ -19,7 +24,6 @@ import {
   type TranscriptNotice,
   type TranscriptProjection,
 } from "./projection.ts";
-import { transcriptImagesFromEntry, type TranscriptImageReference } from "./image-metadata.ts";
 
 /** Pure elapsed formatter: "42s" under a minute, then "3m 7s". */
 export function formatElapsed(fromIso: string, nowMs: number): string {
@@ -48,6 +52,12 @@ export type TranscriptRow =
       readonly calls: readonly TranscriptToolCall[];
       /** True while any call in the group is still running. */
       readonly running: boolean;
+    }
+  | {
+      readonly id: string;
+      readonly kind: "collaboration";
+      readonly message: CollaborationMessage;
+      readonly timestamp: string;
     }
   | {
       readonly id: string;
@@ -139,6 +149,16 @@ function rowsFromEntries(entries: readonly DurableEntry[]): TranscriptRow[] {
     switch (entry.kind) {
       case "message": {
         flushTools();
+        const collaboration = collaborationMessageFromEntry(entry);
+        if (collaboration !== null) {
+          rows.push({
+            id: entry.id,
+            kind: "collaboration",
+            message: collaboration,
+            timestamp: entry.timestamp,
+          });
+          break;
+        }
         const role = textOf(entry.data, "role") === "user" ? "user" : "assistant";
         const transcriptImages = transcriptImagesFromEntry(entry);
         rows.push({
@@ -214,6 +234,19 @@ function rowsFromEntries(entries: readonly DurableEntry[]): TranscriptRow[] {
  */
 export function deriveTranscriptRows(projection: TranscriptProjection): TranscriptRow[] {
   const rows = rowsFromEntries(projection.entries);
+
+  if (projection.historyTruncated) {
+    rows.unshift({
+      id: "notice-history-truncated",
+      kind: "notice",
+      notice: {
+        kind: "history-truncated",
+        id: "history-truncated",
+        message:
+          "Earlier transcript entries are not shown. This app retained the newest history to stay within its memory limit.",
+      },
+    });
+  }
 
   if (projection.toolCalls.size > 0) {
     const calls: TranscriptToolCall[] = [...projection.toolCalls.values()].map((call) => ({
@@ -343,6 +376,49 @@ function toolCallsEqual(a: TranscriptToolCall, b: TranscriptToolCall): boolean {
   return true;
 }
 
+function collaborationMessagesEqual(a: CollaborationMessage, b: CollaborationMessage): boolean {
+  if (
+    a === b ||
+    (a.variant === b.variant &&
+      a.customType === b.customType &&
+      a.from === b.from &&
+      a.to === b.to &&
+      a.body === b.body &&
+      a.replyTo === b.replyTo &&
+      a.status === b.status &&
+      a.jobs === b.jobs)
+  ) {
+    return true;
+  }
+  if (
+    a.variant !== b.variant ||
+    a.customType !== b.customType ||
+    a.from !== b.from ||
+    a.to !== b.to ||
+    a.body !== b.body ||
+    a.replyTo !== b.replyTo ||
+    a.status !== b.status ||
+    a.jobs.length !== b.jobs.length
+  ) {
+    return false;
+  }
+  for (let index = 0; index < a.jobs.length; index += 1) {
+    const left = a.jobs[index];
+    const right = b.jobs[index];
+    if (
+      left === undefined ||
+      right === undefined ||
+      left.id !== right.id ||
+      left.type !== right.type ||
+      left.label !== right.label ||
+      left.durationMs !== right.durationMs
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function rowsEqual(a: TranscriptRow, b: TranscriptRow): boolean {
   if (a.id !== b.id) return false;
   switch (a.kind) {
@@ -369,6 +445,12 @@ function rowsEqual(a: TranscriptRow, b: TranscriptRow): boolean {
       }
       return true;
     }
+    case "collaboration":
+      return (
+        b.kind === "collaboration" &&
+        a.timestamp === b.timestamp &&
+        collaborationMessagesEqual(a.message, b.message)
+      );
     case "notice": {
       if (b.kind !== "notice") return false;
       if (a.notice === b.notice) return true;

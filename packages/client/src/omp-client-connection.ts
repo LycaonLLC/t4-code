@@ -3,6 +3,7 @@ import { ClientTimerRegistry, type ClientTimer } from "./omp-client-timers.ts";
 
 export interface ConnectionCallbacks {
   connected(transport: OmpTransport, generation: number): void;
+  reconnectBegin(): void;
   message(raw: string | Uint8Array, generation: number): void;
   close(code?: number, reason?: string): void;
   error(error: unknown): void;
@@ -120,7 +121,20 @@ export class OmpClientConnection {
     const floor = Math.floor(ceiling / 2);
     const delay = floor + Math.floor(random * (ceiling - floor));
     this.callbacks.reconnectWait();
-    this.reconnectTimer = this.timers.schedule(() => this.begin(), delay);
+    this.reconnectTimer = this.timers.schedule(() => {
+      this.reconnectTimer = undefined;
+      this.callbacks.reconnectBegin();
+      this.begin();
+    }, delay);
+  }
+
+  /** Skip a pending backoff without creating a second in-flight transport generation. */
+  beginReconnectNow(): boolean {
+    if (!this.active() || this.reconnectTimer === undefined) return false;
+    this.clearReconnect();
+    this.callbacks.reconnectBegin();
+    this.begin();
+    return true;
   }
 
   startHeartbeat(active: () => boolean, tick: () => boolean): void {

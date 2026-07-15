@@ -42,13 +42,21 @@ test("site deploy uploads immutable assets before switching entry documents", ()
     { bucket: "t4code-net-site-595529182031", distributionId: "E1ABCDEF234567" },
     "/repo",
     (command, args, cwd) => calls.push({ command, args, cwd }),
+    "0.1.17",
   );
 
-  assert.equal(calls.length, 4);
-  assert.deepEqual(calls.map(({ command }) => command), ["pnpm", "aws", "aws", "aws"]);
-  assert.equal(calls[1].args[2], "apps/site/dist/assets");
-  assert.equal(calls[2].args[2], "apps/site/dist");
-  assert.equal(calls[1].args.includes("--delete"), false);
-  assert.equal(calls[2].args.includes("--delete"), true);
-  assert.deepEqual(calls.map(({ cwd }) => cwd), ["/repo", "/repo", "/repo", "/repo"]);
+  assert.equal(calls.length, 5);
+  assert.deepEqual(calls.map(({ command }) => command), ["pnpm", "node", "aws", "aws", "aws"]);
+  assert.deepEqual(calls[1].args, [
+    "scripts/generate-release-manifest.mjs",
+    "--version",
+    "0.1.17",
+    "--output",
+    "apps/site/dist/releases/latest.json",
+  ]);
+  assert.equal(calls[2].args[2], "apps/site/dist/assets");
+  assert.equal(calls[3].args[2], "apps/site/dist");
+  assert.equal(calls[2].args.includes("--delete"), false);
+  assert.equal(calls[3].args.includes("--delete"), true);
+  assert.deepEqual(calls.map(({ cwd }) => cwd), ["/repo", "/repo", "/repo", "/repo", "/repo"]);
 });

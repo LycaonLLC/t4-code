@@ -4,9 +4,17 @@
 // anywhere with a store api and owns no routing.
 import { Badge, Button, cn, IconButton, Spinner } from "@t4-code/ui";
 import { ArrowLeft, Cable, Download, RotateCcw, Search } from "lucide-react";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { RAIL_OVERLAY_QUERY, useMediaQuery } from "../../hooks/useMediaQuery.ts";
+import { updateIsAvailable } from "../updates/update-model.ts";
+import {
+  consumeUpdateSettingsRequest,
+  getUpdateSettingsRequest,
+  subscribeUpdateSettingsRequest,
+} from "../updates/update-navigation.ts";
+import { UpdateSettingsPanel } from "../updates/UpdateSettingsPanel.tsx";
+import { useAppUpdateState } from "../updates/update-store.ts";
 import { AccentRow } from "./AccentRow.tsx";
 import { FIELD_CLASS } from "./controls.tsx";
 import { buildDiagnosticsExport } from "./diagnostics.ts";
@@ -28,6 +36,24 @@ export const SCOPE_TAB_LABEL: Record<EditableScope, string> = {
   project: "This project",
   session: "This run",
 };
+
+export const UPDATE_SECTION_ID = "t4-updates";
+
+interface SettingsRailEntry {
+  readonly id: string;
+  readonly label: string;
+}
+
+export function buildSettingsRailSections(sections: readonly SettingsSection[]): readonly SettingsRailEntry[] {
+  const entries = sections.map(({ id, label }) => ({ id, label }));
+  const diagnostics = entries.findIndex((section) => section.id === "diagnostics");
+  const index = diagnostics < 0 ? entries.length : diagnostics;
+  return [
+    ...entries.slice(0, index),
+    { id: UPDATE_SECTION_ID, label: "Updates" },
+    ...entries.slice(index),
+  ];
+}
 
 function ScopeTabs({
   api,
@@ -67,13 +93,18 @@ function ScopeTabs({
 function SectionRail({
   api,
   sections,
+  activeSectionId,
+  onSelect,
   matchedIds,
+  updateAvailable,
 }: {
   readonly api: SettingsStoreApi;
-  readonly sections: readonly SettingsSection[];
+  readonly sections: readonly SettingsRailEntry[];
+  readonly activeSectionId: string;
+  readonly onSelect: (id: string) => void;
   readonly matchedIds: ReadonlySet<string> | null;
+  readonly updateAvailable: boolean;
 }) {
-  const activeSectionId = useSettings(api, (state) => state.activeSectionId);
   const drafts = useSettings(api, (state) => state.drafts);
   const itemRefs = useRef(new Map<string, HTMLButtonElement>());
 
@@ -105,7 +136,7 @@ function SectionRail({
                     : "text-muted-foreground hover:bg-accent hover:text-foreground",
                   dimmed && "opacity-64",
                 )}
-                onClick={() => api.getState().setActiveSection(section.id)}
+                onClick={() => onSelect(section.id)}
                 onKeyDown={(event) => {
                   if (
                     event.key !== "ArrowDown" &&
@@ -122,7 +153,7 @@ function SectionRail({
                   );
                   if (target === null) return;
                   event.preventDefault();
-                  api.getState().setActiveSection(target);
+                  onSelect(target);
                   itemRefs.current.get(target)?.focus();
                 }}
                 ref={(node) => {
@@ -136,6 +167,9 @@ function SectionRail({
                   <span aria-hidden="true" className="absolute inset-y-1.5 start-0 w-0.5 rounded-full bg-primary" />
                 )}
                 <span className="min-w-0 flex-1 truncate">{section.label}</span>
+                {section.id === UPDATE_SECTION_ID && updateAvailable && (
+                  <span aria-label="T4 Code update available" className="size-1.5 rounded-full bg-primary" />
+                )}
                 {dirtyCount > 0 && (
                   <Badge aria-label={`${dirtyCount} unsaved`} size="sm" variant="secondary">
                     {dirtyCount}
@@ -285,22 +319,42 @@ export function SettingsWorkspace({
   const restartIds = useSettings(api, (state) => state.restartIds);
   const railOverlaid = useMediaQuery(RAIL_OVERLAY_QUERY);
   const editScope = useSettings(api, (state) => state.editScope);
+  const update = useAppUpdateState();
+  const updateRequest = useSyncExternalStore(
+    subscribeUpdateSettingsRequest,
+    getUpdateSettingsRequest,
+    getUpdateSettingsRequest,
+  );
+  const [appSectionActive, setAppSectionActive] = useState(false);
 
   const contentRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   const searching = query.trim().length > 0;
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const updateMatches =
+    searching &&
+    "updates version release download install restart".includes(normalizedQuery);
   const matchedSections = useMemo(
     () => (searching ? filterSections(viewModel.sections, query) : null),
     [searching, viewModel, query],
   );
   const matchedIds = useMemo(
-    () => (matchedSections === null ? null : new Set(matchedSections.map((section) => section.id))),
-    [matchedSections],
+    () =>
+      matchedSections === null
+        ? null
+        : new Set([
+            ...matchedSections.map((section) => section.id),
+            ...(updateMatches ? [UPDATE_SECTION_ID] : []),
+          ]),
+    [matchedSections, updateMatches],
   );
   const activeSection = viewModel.sections.find((section) => section.id === activeSectionId);
   const shownSections: readonly SettingsSection[] =
-    matchedSections ?? (activeSection === undefined ? [] : [activeSection]);
+    matchedSections ?? (appSectionActive || activeSection === undefined ? [] : [activeSection]);
+  const shownUpdate = searching ? updateMatches : appSectionActive;
+  const selectedSectionId = appSectionActive ? UPDATE_SECTION_ID : activeSectionId;
+  const sectionsForRail = useMemo(() => buildSettingsRailSections(viewModel.sections), [viewModel.sections]);
 
   const dirtyCount = Object.keys(drafts).length;
   const errorCount = Object.keys(draftErrors).length;
@@ -333,7 +387,22 @@ export function SettingsWorkspace({
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll reset keyed on the section
   useEffect(() => {
     contentRef.current?.scrollTo({ top: 0 });
-  }, [activeSectionId]);
+  }, [selectedSectionId]);
+
+  useEffect(() => {
+    if (!consumeUpdateSettingsRequest(updateRequest)) return;
+    setAppSectionActive(true);
+    requestAnimationFrame(() => document.getElementById("section-t4-updates")?.focus());
+  }, [updateRequest]);
+
+  function selectSection(id: string) {
+    if (id === UPDATE_SECTION_ID) {
+      setAppSectionActive(true);
+      return;
+    }
+    setAppSectionActive(false);
+    api.getState().setActiveSection(id);
+  }
 
   async function handleSave() {
     await api.getState().save();
@@ -353,7 +422,7 @@ export function SettingsWorkspace({
         <h1 className="font-heading font-semibold text-base" ref={headingRef} tabIndex={-1}>
           Settings
         </h1>
-        <Badge variant="outline">{viewModel.hostLabel}</Badge>
+        <Badge variant="outline">{appSectionActive ? "Application" : viewModel.hostLabel}</Badge>
         <p aria-live="polite" className="min-w-0 flex-1 truncate text-end text-muted-foreground text-xs" role="status">
           {announcement}
         </p>
@@ -374,9 +443,9 @@ export function SettingsWorkspace({
             Hosts
           </Button>
         )}
-        <ScopeTabs api={api} scopes={scopes} />
+        {!appSectionActive && <ScopeTabs api={api} scopes={scopes} />}
       </header>
-      {editScope === "session" && scopes.includes("session") && (
+      {!appSectionActive && editScope === "session" && scopes.includes("session") && (
         <p className="shrink-0 border-border border-b bg-secondary/40 px-4 py-1.5 text-muted-foreground text-xs" role="note">
           Changes here apply to everything on {viewModel.hostLabel} until OMP restarts. They are
           not saved to disk.
@@ -385,7 +454,14 @@ export function SettingsWorkspace({
 
       <div className="flex min-h-0 min-w-0 flex-1">
         {!railOverlaid && (
-          <SectionRail api={api} matchedIds={matchedIds} sections={viewModel.sections} />
+          <SectionRail
+            activeSectionId={selectedSectionId}
+            api={api}
+            matchedIds={matchedIds}
+            onSelect={selectSection}
+            sections={sectionsForRail}
+            updateAvailable={updateIsAvailable(update.phase)}
+          />
         )}
 
         <div className="flex min-w-0 flex-1 flex-col">
@@ -440,24 +516,27 @@ export function SettingsWorkspace({
                   <span className="font-medium text-muted-foreground text-xs">Section</span>
                   <select
                     className={cn(FIELD_CLASS, "w-full")}
-                    onChange={(event) => api.getState().setActiveSection(event.target.value)}
-                    value={activeSectionId}
+                    onChange={(event) => selectSection(event.target.value)}
+                    value={selectedSectionId}
                   >
-                    {viewModel.sections.map((section) => (
+                    {sectionsForRail.map((section) => (
                       <option key={section.id} value={section.id}>
                         {section.label}
+                        {section.id === UPDATE_SECTION_ID && updateIsAvailable(update.phase) ? " · Update available" : ""}
                       </option>
                     ))}
                   </select>
                 </label>
               )}
 
-              {searching && shownSections.length === 0 && (
+              {searching && shownSections.length === 0 && !shownUpdate && (
                 <p className="py-8 text-center text-muted-foreground text-sm">
                   Nothing matches “{query.trim()}”. Try a setting name or a word from its
                   description.
                 </p>
               )}
+
+              {shownUpdate && <UpdateSettingsPanel state={update} />}
 
               {shownSections.map((section) => (
                 <section aria-labelledby={`section-${section.id}`} key={section.id}>

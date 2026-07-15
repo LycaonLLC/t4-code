@@ -8,6 +8,7 @@ import { discoverOmpExecutable } from "../src/service.ts";
 import type { TargetManagerOptions } from "../src/target-manager.ts";
 import type { ServiceManager } from "@t4-code/service-manager";
 import type { ProcessRunner } from "@t4-code/remote";
+import type { ApplicationMenuOptions } from "../src/menu.ts";
 
 describe("appserver log authority", () => {
   it("stays independent from Electron user-data overrides", () => {
@@ -43,6 +44,7 @@ class FakeWindow {
     mainFrame: this.frame,
     isDestroyed: () => this.destroyed,
     send: (...args: unknown[]) => this.sent.push(args),
+    on: (event: string, listener: (...args: never[]) => void) => { this.listeners.set(event, listener); },
     once: (event: string, listener: (...args: never[]) => void) => { this.onceListeners.set(event, listener); },
   };
   showCount = 0;
@@ -79,6 +81,19 @@ function setup(
   const runtimes: unknown[] = [];
   let managerOptions: TargetManagerOptions | undefined;
   let closeCount = 0;
+  let updateScheduleCount = 0;
+  let updateDisposeCount = 0;
+  let menuOptions: ApplicationMenuOptions | undefined;
+  const updateState = { version: 1 as const, currentVersion: "0.1.17", phase: "idle" as const };
+  const updateController = {
+    getState: () => updateState,
+    checkForUpdate: async () => updateState,
+    downloadUpdate: async () => updateState,
+    restartToUpdate: () => updateState,
+    subscribe: () => () => {},
+    schedulePassiveCheck: () => { updateScheduleCount += 1; },
+    dispose: () => { updateDisposeCount += 1; },
+  };
   const manager = { isConnected: () => false, close: async () => { closeCount += 1; }, connect: async () => "connecting", disconnect: async () => {}, command: async () => ({ targetId: "local", requestId: "1", commandId: "1", accepted: true }), pairStart: async () => ({ targetId: "remote", paired: false }), listTargets: async () => [], addRemoteTarget: async (target: never) => target, removeTarget: async () => {} };
   const lifecycle = new DesktopLifecycle({
     app: app as never,
@@ -99,8 +114,10 @@ function setup(
         : { createServiceManager: overrides.createServiceManager ?? (() => serviceManager!), probeAppserver }
     ),
     createTargetManager: (options) => { managerOptions = options; return manager as never; },
+    createUpdateController: () => updateController as never,
+    installMenu: (options) => { menuOptions = options; },
   });
-  return { app, windows, ipc, registries, runtimes, lifecycle, manager, get managerOptions() { return managerOptions; }, get closeCount() { return closeCount; } };
+  return { app, windows, ipc, registries, runtimes, lifecycle, manager, get managerOptions() { return managerOptions; }, get closeCount() { return closeCount; }, get updateScheduleCount() { return updateScheduleCount; }, get updateDisposeCount() { return updateDisposeCount; }, get menuOptions() { return menuOptions; } };
 }
 
 describe("desktop Electron lifecycle", () => {
@@ -138,6 +155,40 @@ describe("desktop Electron lifecycle", () => {
     expect(fixture.runtimes[1]).toMatchObject({ manager: fixture.manager });
     expect(fixture.managerOptions).toBeDefined();
     await fixture.lifecycle.stop();
+  });
+  it("routes the native update menu to the trusted renderer and schedules one passive check", async () => {
+    const fixture = setup();
+    await fixture.lifecycle.start();
+    fixture.menuOptions?.onOpenUpdates();
+    const window = fixture.windows[0]!;
+    expect(window.sent).toEqual([]);
+    window.finishLoad();
+    expect(window.sent).toEqual([]);
+    const rendererReady = fixture.ipc.handlers.get("app:update:renderer-ready") as (
+      event: unknown,
+      payload: unknown,
+    ) => unknown;
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+    expect(rendererReady(event, { channel: "app:update:renderer-ready", payload: {} })).toEqual({
+      openSettings: true,
+    });
+    expect(rendererReady(event, { channel: "app:update:renderer-ready", payload: {} })).toEqual({
+      openSettings: false,
+    });
+    fixture.menuOptions?.onOpenUpdates();
+    expect(window.sent).toEqual([["app:update:open", { source: "menu" }]]);
+
+    window.emit("did-start-loading");
+    fixture.menuOptions?.onOpenUpdates();
+    expect(window.sent).toHaveLength(1);
+    expect(rendererReady(event, { channel: "app:update:renderer-ready", payload: {} })).toEqual({
+      openSettings: true,
+    });
+    expect(window.showCount).toBe(3);
+    expect(window.focusCount).toBe(3);
+    expect(fixture.updateScheduleCount).toBe(1);
+    await fixture.lifecycle.stop();
+    expect(fixture.updateDisposeCount).toBe(1);
   });
   it("closes the target manager exactly once across before-quit and stop", async () => {
     const fixture = setup();

@@ -66,6 +66,45 @@ test("rejects version drift in a newly added workspace package", () => {
   );
 });
 
+test("rejects updater channel, stable manifest, and publication-contract drift", () => {
+  const cases = [
+    [
+      "electron-builder.config.mjs",
+      (text) => text.replace('repo: "t4-code"', 'repo: "renamed"'),
+    ],
+    [
+      "scripts/generate-release-manifest.mjs",
+      (text) => text.replace("RELEASE_MANIFEST_SCHEMA_VERSION = 1", "RELEASE_MANIFEST_SCHEMA_VERSION = 2"),
+    ],
+    [
+      "scripts/wait-for-release-assets.mjs",
+      (text) => text.replace(', "latest-linux.yml"', ""),
+    ],
+    [
+      ".github/workflows/release.yml",
+      (text) => text.replace("artifacts/latest-linux.yml", "artifacts/missing-linux.yml"),
+    ],
+    [
+      "scripts/reconcile-release-assets.mjs",
+      (text) => text.replace('method: "DELETE"', 'method: "POST"'),
+    ],
+    [
+      "scripts/dispatch-site-deployment.mjs",
+      (text) => text.replace("body: { ref: tag", 'body: { ref: "main"'),
+    ],
+    [
+      ".github/workflows/deploy-site.yml",
+      (text) => text.replace("startsWith(github.ref, 'refs/tags/')", "github.ref == 'refs/heads/main'"),
+    ],
+  ];
+  for (const [path, replace] of cases) {
+    assert.ok(
+      collectReleaseConsistencyErrors(changed(path, replace)).length > 0,
+      `${path} updater drift should fail`,
+    );
+  }
+});
+
 test("rejects app-wire matrix changes until the release surfaces agree", () => {
   const drifted = changed("compat/omp-app-matrix.json", (text) =>
     text.replace('"version": "0.5.5"', '"version": "0.5.1"'),
@@ -180,8 +219,19 @@ test("rejects stale README release URLs while allowing historical prose", () => 
 });
 
 test("deploys release site source only after artifact publication", () => {
+  const ciWorkflow = files.get(".github/workflows/ci.yml");
   const releaseWorkflow = files.get(".github/workflows/release.yml");
   const deployWorkflow = files.get(".github/workflows/deploy-site.yml");
+
+  assert.ok(ciWorkflow.includes("android-debug:"));
+  assert.ok(ciWorkflow.includes("java-version: \"21\""));
+  assert.ok(ciWorkflow.includes('sdkmanager --install "platforms;android-36" "build-tools;36.0.0"'));
+  assert.ok(ciWorkflow.includes("pnpm --filter @t4-code/mobile check:android:debug"));
+  assert.ok(!ciWorkflow.includes("T4_ANDROID_KEYSTORE_BASE64"));
+  assert.equal(
+    JSON.parse(files.get("apps/mobile/package.json")).scripts["check:android:debug"],
+    "pnpm sync:android && node ./scripts/run-gradle.mjs testDebugUnitTest assembleDebug lintDebug",
+  );
 
   assert.ok(releaseWorkflow.includes("github.ref == 'refs/heads/main'"));
   assert.ok(releaseWorkflow.includes("Check out trusted release-control source"));
@@ -206,30 +256,49 @@ test("deploys release site source only after artifact publication", () => {
     releaseWorkflow.includes('test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "$SOURCE_SHA"'),
   );
   assert.ok(!releaseWorkflow.includes("ref: ${{ env.RELEASE_TAG }}"));
-  assert.ok(releaseWorkflow.includes("Dispatch site deployment after release publication"));
-  assert.ok(releaseWorkflow.includes("needs: publish"));
+  assert.ok(
+    releaseWorkflow.includes(
+      "Preserve an exact release or prepare an incomplete release for repair",
+    ),
+  );
+  assert.ok(releaseWorkflow.includes("Verify the exact remote release bundle"));
+  assert.ok(
+    releaseWorkflow.indexOf("--mode prepare") <
+      releaseWorkflow.indexOf("softprops/action-gh-release@"),
+  );
+  assert.ok(
+    releaseWorkflow.includes("if: steps.release-assets.outputs.publish_required == 'true'"),
+  );
+  assert.ok(releaseWorkflow.indexOf("softprops/action-gh-release@") < releaseWorkflow.indexOf("--mode verify"));
+  assert.ok(releaseWorkflow.includes("needs: [verify, publish]"));
   assert.ok(releaseWorkflow.includes("actions: write"));
-  assert.ok(releaseWorkflow.includes("GH_REPO: ${{ github.repository }}"));
-  assert.ok(releaseWorkflow.includes("gh workflow run deploy-site.yml"));
-  assert.ok(releaseWorkflow.includes("--ref main"));
-  assert.ok(releaseWorkflow.includes('-f release_tag="$RELEASE_TAG"'));
+  assert.ok(releaseWorkflow.includes("node scripts/dispatch-site-deployment.mjs"));
+  assert.ok(releaseWorkflow.includes('--tag "$RELEASE_TAG"'));
+  assert.ok(releaseWorkflow.includes('--commit "$SOURCE_SHA"'));
+  assert.ok(!releaseWorkflow.includes("gh workflow run deploy-site.yml"));
+  assert.ok(!releaseWorkflow.includes("--ref main"));
 
   assert.ok(deployWorkflow.includes("workflow_dispatch:"));
   assert.ok(deployWorkflow.includes("release_tag:"));
-  assert.ok(deployWorkflow.includes("github.ref == 'refs/heads/main'"));
+  assert.ok(deployWorkflow.includes("dispatch_nonce:"));
+  assert.ok(deployWorkflow.includes("inputs.dispatch_nonce || github.sha"));
+  assert.ok(deployWorkflow.includes("startsWith(github.ref, 'refs/tags/')"));
+  assert.ok(deployWorkflow.includes('[[ "$GITHUB_REF" != "refs/tags/${expected_tag}" ]]'));
   assert.ok(deployWorkflow.includes('expected_tag="v${TRUSTED_VERSION}"'));
   assert.ok(deployWorkflow.includes('release_tag="$expected_tag"'));
   assert.ok(deployWorkflow.includes("releases/tags/${release_tag}"));
-  assert.ok(deployWorkflow.includes('git merge-base --is-ancestor "$source_sha" "$MAIN_SHA"'));
+  assert.ok(deployWorkflow.includes('[[ "$source_sha" != "$TRUSTED_SHA" ]]'));
+  assert.ok(deployWorkflow.includes('git merge-base --is-ancestor "$source_sha" "$TRUSTED_SHA"'));
   assert.ok(deployWorkflow.includes("ref: ${{ steps.immutable_source.outputs.source_sha }}"));
   assert.ok(!deployWorkflow.includes('source_sha="$MAIN_SHA"'));
   assert.ok(!deployWorkflow.includes("cache: pnpm"));
   assert.ok(
     deployWorkflow.indexOf("Resolve immutable deployment source") >
-      deployWorkflow.indexOf("Check whether an ordinary main push references an existing release"),
+      deployWorkflow.indexOf("Classify the stable release referenced by an ordinary main push"),
   );
   assert.ok(!deployWorkflow.includes("source_ref:"));
   assert.ok(!deployWorkflow.includes("release_published:"));
-  assert.ok(deployWorkflow.includes("steps.existing_release.outcome == 'failure'"));
+  assert.ok(deployWorkflow.includes("steps.release_state.outputs.state == 'not-published'"));
+  assert.ok(!deployWorkflow.includes("continue-on-error: true"));
   assert.ok(deployWorkflow.includes("branches: [main, master]"));
 });

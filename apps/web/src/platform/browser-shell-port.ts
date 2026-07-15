@@ -57,6 +57,10 @@ import type { DesktopShellPort } from "@t4-code/client";
 
 import { BrowserWebSocketTransport } from "./browser-transport.ts";
 import {
+  bindBrowserConnectionWake,
+  type BrowserConnectionLifecycleOptions,
+} from "./browser-connection-lifecycle.ts";
+import {
   currentNativeMobileBackend,
   nativeMobilePlatform,
   persistNativeMobileCredentials,
@@ -196,6 +200,7 @@ interface PairLinkListener {
 
 export interface BrowserShellPortOptions {
   readonly clientFactory?: (options: OmpClientOptions) => OmpClient;
+  readonly lifecycle?: BrowserConnectionLifecycleOptions;
 }
 
 export function createBrowserShellPort(
@@ -215,6 +220,7 @@ export function createBrowserShellPort(
   let client: OmpClient | undefined;
   let transport: BrowserWebSocketTransport | undefined;
   let welcome: WelcomeFrame | undefined;
+  let stopLifecycle: Unsubscribe | undefined;
   let connectionState: DesktopTarget["state"] = "disconnected";
   let authentication: { deviceId: string; deviceToken: string } | undefined =
     backendConfig.deviceId === undefined || backendConfig.deviceToken === undefined
@@ -315,6 +321,10 @@ export function createBrowserShellPort(
     return c;
   }
 
+  function ensureLifecycle(): void {
+    stopLifecycle ??= bindBrowserConnectionWake(() => client?.wake(), options.lifecycle);
+  }
+
   // ------------------------------------------------------------------ shell port
 
   const shell: DesktopShellPort = {
@@ -329,6 +339,7 @@ export function createBrowserShellPort(
       if (client === undefined) {
         client = buildClient();
       }
+      ensureLifecycle();
       return {
         platform,
         version: PROTOCOL_VERSION,
@@ -340,6 +351,7 @@ export function createBrowserShellPort(
       if (client === undefined) {
         client = buildClient();
       }
+      ensureLifecycle();
       // connect() is idempotent — it calls connection.begin() if idle
       void client.connect().catch(() => {
         /* state callback handles errors */
@@ -354,6 +366,8 @@ export function createBrowserShellPort(
         transport = undefined;
         welcome = undefined;
       }
+      stopLifecycle?.();
+      stopLifecycle = undefined;
       emitState(TARGET_ID, "disconnected");
       return { targetId: TARGET_ID, state: "disconnected" };
     },

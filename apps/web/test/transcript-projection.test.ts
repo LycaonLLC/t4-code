@@ -2,6 +2,12 @@
 // live/durable double-render exclusion, attention states, and 10k stress
 // stability with structural row sharing. Pure — no DOM.
 import { describe, expect, it } from "vite-plus/test";
+import {
+  MAX_RETAINED_LIVE_MESSAGES,
+  MAX_RETAINED_TOOL_CALLS,
+  MAX_RETAINED_TRANSCRIPT_BYTES,
+  retainedJsonBytes,
+} from "@t4-code/client";
 
 import { FrameFactory } from "../src/features/session-runtime/frame-builders.ts";
 import {
@@ -72,6 +78,71 @@ describe("snapshot install", () => {
     projection = reduceTranscript(projection, factory.snapshot([settled]));
     expect(projection.liveMessages.size).toBe(0);
   });
+
+  it("bounds huge tool history while preserving image references for rendered rows", () => {
+    const factory = makeFactory();
+    const digest = "b".repeat(64);
+    const entries = Array.from({ length: 200 }, (_, index) =>
+      factory.entryRecord({
+        id: `large-tool-${index}`,
+        kind: "tool-result",
+        timestamp: "2026-07-15T09:00:00Z",
+        data: {
+          tool: "bash",
+          title: `Large output ${index}`,
+          images: [{ sha256: digest, mimeType: "image/png" }],
+          result: {
+            output: `head-${index}\n${"x".repeat(300_000)}\ntail-${index}`,
+          },
+        },
+      }),
+    );
+
+    const projection = reduceTranscript(initialProjection(), factory.snapshot(entries));
+    expect(projection.historyTruncated).toBe(true);
+    expect(projection.entries.length).toBeLessThan(entries.length);
+    expect(projection.entries.at(-1)?.id).toBe("large-tool-199");
+    expect(retainedJsonBytes(projection.entries)).toBeLessThanOrEqual(
+      MAX_RETAINED_TRANSCRIPT_BYTES,
+    );
+
+    const rows = deriveTranscriptRows(projection);
+    const historyNotices = rows.filter(
+      (row) => row.kind === "notice" && row.notice.kind === "history-truncated",
+    );
+    expect(historyNotices).toHaveLength(1);
+    expect(rows[0]?.id).toBe("notice-history-truncated");
+    expect(deriveAttention(projection).error).toBeNull();
+    const lastGroup = rows.findLast((row) => row.kind === "tool-group");
+    expect(lastGroup?.kind).toBe("tool-group");
+    if (lastGroup?.kind !== "tool-group") throw new Error("expected a tool row");
+    expect(lastGroup.calls.at(-1)?.images).toEqual([
+      { entryId: "large-tool-199", sha256: digest, mimeType: "image/png" },
+    ]);
+  });
+
+  it("clears stale in-flight state when a fresh snapshot crosses a server epoch", () => {
+    const first = makeFactory();
+    let projection = withSnapshot(first, 0);
+    projection = reduceTranscript(projection, first.event({ type: "turn.start" }));
+    projection = reduceTranscript(
+      projection,
+      first.event({ type: "message.update", entryId: "stale", text: "partial" }),
+    );
+    projection = reduceTranscript(
+      projection,
+      first.event({ type: "tool.start", callId: "tool-1", tool: "bash", title: "test" }),
+    );
+
+    const restarted = new FrameFactory({ host: "h", session: "s", epoch: "e2", startSeq: 0 });
+    projection = reduceTranscript(projection, restarted.snapshot([]));
+
+    expect(projection.turnActive).toBe(false);
+    expect(projection.turnStartedAt).toBeNull();
+    expect(projection.liveMessages.size).toBe(0);
+    expect(projection.toolCalls.size).toBe(0);
+    expect(projection.cursor?.epoch).toBe("e2");
+  });
 });
 
 describe("sequenced frames", () => {
@@ -89,6 +160,105 @@ describe("sequenced frames", () => {
     // Same frame again: duplicate seq → strict no-op, same reference.
     projection = reduceTranscript(projection, event);
     expect(projection).toBe(afterFirst);
+  });
+
+  it("keeps existing live messages and tool calls in start order while new items evict oldest", () => {
+    const factory = makeFactory();
+    let projection = withSnapshot(factory, 0);
+
+    for (let index = 0; index < MAX_RETAINED_LIVE_MESSAGES; index += 1) {
+      projection = reduceTranscript(
+        projection,
+        factory.event({
+          type: "message.update",
+          entryId: `live-${index}`,
+          role: "assistant",
+          text: `message ${index}`,
+        }),
+      );
+    }
+    projection = reduceTranscript(
+      projection,
+      factory.event({
+        type: "message.update",
+        entryId: "live-0",
+        role: "assistant",
+        text: "updated in place",
+      }),
+    );
+    expect([...projection.liveMessages.keys()]).toEqual(
+      Array.from({ length: MAX_RETAINED_LIVE_MESSAGES }, (_, index) => `live-${index}`),
+    );
+    projection = reduceTranscript(
+      projection,
+      factory.event({
+        type: "message.settled",
+        transientEntryId: "live-1",
+        entryId: "durable-1",
+      }),
+    );
+    expect([...projection.liveMessages.keys()]).toEqual([
+      "live-0",
+      "durable-1",
+      ...Array.from({ length: MAX_RETAINED_LIVE_MESSAGES - 2 }, (_, index) => `live-${index + 2}`),
+    ]);
+
+    projection = reduceTranscript(
+      projection,
+      factory.event({
+        type: "message.update",
+        entryId: "live-overflow",
+        role: "assistant",
+        text: "new tail",
+      }),
+    );
+    expect([...projection.liveMessages.keys()]).toEqual([
+      "durable-1",
+      ...Array.from({ length: MAX_RETAINED_LIVE_MESSAGES - 2 }, (_, index) => `live-${index + 2}`),
+      "live-overflow",
+    ]);
+
+    for (let index = 0; index < MAX_RETAINED_TOOL_CALLS; index += 1) {
+      projection = reduceTranscript(
+        projection,
+        factory.event({
+          type: "tool.start",
+          callId: `tool-${index}`,
+          tool: "bash",
+          title: `Tool ${index}`,
+        }),
+      );
+    }
+    projection = reduceTranscript(
+      projection,
+      factory.event({ type: "tool.progress", callId: "tool-0", note: "still first" }),
+    );
+    projection = reduceTranscript(
+      projection,
+      factory.event({
+        type: "tool.result",
+        callId: "tool-1",
+        ok: true,
+        result: { output: "done" },
+      }),
+    );
+    expect([...projection.toolCalls.keys()]).toEqual(
+      Array.from({ length: MAX_RETAINED_TOOL_CALLS }, (_, index) => `tool-${index}`),
+    );
+
+    projection = reduceTranscript(
+      projection,
+      factory.event({
+        type: "tool.start",
+        callId: "tool-overflow",
+        tool: "bash",
+        title: "New tail",
+      }),
+    );
+    expect([...projection.toolCalls.keys()]).toEqual([
+      ...Array.from({ length: MAX_RETAINED_TOOL_CALLS - 1 }, (_, index) => `tool-${index + 1}`),
+      "tool-overflow",
+    ]);
   });
 
   it("pauses the stream on a sequence gap and applies nothing after", () => {
@@ -440,6 +610,68 @@ describe("attention and notice states", () => {
     expect(projection.cursor?.seq).toBe((unknownCursor?.seq ?? 0) + 1);
     expect(projection.turnActive).toBe(true);
   });
+
+  it("does not resurrect an older turn error after a later turn succeeds", () => {
+    const factory = makeFactory();
+    let projection = withSnapshot(factory, 0);
+    projection = reduceTranscript(
+      projection,
+      factory.event({ type: "turn.error", message: "old failure", retryable: true }),
+    );
+    expect(deriveAttention(projection).error?.message).toBe("old failure");
+
+    projection = reduceTranscript(
+      projection,
+      factory.event({ type: "agent.end", status: "failed", messageCount: 0 }),
+    );
+    expect(deriveAttention(projection).error?.message).toBe("old failure");
+
+    projection = reduceTranscript(projection, factory.event({ type: "turn.start" }));
+    expect(deriveAttention(projection).error).toBeNull();
+    projection = reduceTranscript(projection, factory.event({ type: "turn.end" }));
+
+    expect(deriveAttention(projection).error).toBeNull();
+    expect(projection.notices.some((notice) => notice.kind === "error")).toBe(false);
+  });
+
+  it("preserves a same-turn error through turn.end, then clears it after a later success", () => {
+    const factory = makeFactory();
+    let projection = withSnapshot(factory, 0);
+    projection = reduceTranscript(projection, factory.event({ type: "turn.start" }));
+    projection = reduceTranscript(
+      projection,
+      factory.event({ type: "turn.error", message: "failed generation", retryable: true }),
+    );
+    const failedGeneration = projection.turnGeneration;
+    expect(deriveAttention(projection).error?.turnGeneration).toBe(failedGeneration);
+
+    // Appserver emits this terminal frame after turn.error for the same turn.
+    projection = reduceTranscript(projection, factory.event({ type: "turn.end" }));
+    expect(deriveAttention(projection).error?.message).toBe("failed generation");
+
+    projection = reduceTranscript(projection, factory.event({ type: "turn.start" }));
+    expect(projection.turnGeneration).toBe(failedGeneration + 1);
+    projection = reduceTranscript(projection, factory.event({ type: "turn.end" }));
+    expect(deriveAttention(projection).error).toBeNull();
+  });
+
+  for (const status of ["failed", "cancelled"] as const) {
+    it(`preserves the current error when agent.end is ${status}`, () => {
+      const factory = makeFactory();
+      let projection = withSnapshot(factory, 0);
+      projection = reduceTranscript(projection, factory.event({ type: "turn.start" }));
+      projection = reduceTranscript(
+        projection,
+        factory.event({ type: "turn.error", message: `${status} turn`, retryable: false }),
+      );
+      projection = reduceTranscript(
+        projection,
+        factory.event({ type: "agent.end", status, messageCount: 0 }),
+      );
+
+      expect(deriveAttention(projection).error?.message).toBe(`${status} turn`);
+    });
+  }
 });
 
 describe("10k stress projection", () => {

@@ -29,7 +29,6 @@ export const SETTINGS_SECTIONS_FIXTURE = [
   { id: "browser", label: "Browser", summary: "The browser OMP drives for web tasks." },
   { id: "terminal", label: "Terminal", summary: "Your terminal inside sessions." },
   { id: "remote-hosts", label: "Remote Hosts", summary: "Machines this app can pair with." },
-  { id: "updates", label: "Updates", summary: "Release channel and install timing." },
   { id: "diagnostics", label: "Diagnostics", summary: "Logs, health checks, and exports." },
 ] as const;
 
@@ -481,30 +480,6 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
     control: { kind: "list", itemLabel: "host", maxItems: 32 },
     default: [],
     layers: { global: { value: ["build-linux", "studio-mac"], sourcePath: "~/.omp/hosts.yml" } },
-  },
-  // ── Updates ───────────────────────────────────────────────────────────────
-  {
-    id: "updates.channel",
-    section: "updates",
-    label: "Release channel",
-    help: "Stable gets tested releases. Beta gets features earlier, with rougher edges.",
-    control: {
-      kind: "enum",
-      options: [
-        { value: "stable", label: "Stable" },
-        { value: "beta", label: "Beta" },
-      ],
-    },
-    default: "stable",
-    restartRequired: true,
-  },
-  {
-    id: "updates.auto",
-    section: "updates",
-    label: "Install updates automatically",
-    help: "Download updates in the background and apply them the next time the app starts.",
-    control: { kind: "boolean" },
-    default: true,
   },
   // ── Diagnostics ───────────────────────────────────────────────────────────
   {

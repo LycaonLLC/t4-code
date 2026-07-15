@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,9 +26,25 @@ function run(command, args, cwd) {
   }
 }
 
-export function deploySite(config, repoRoot = resolve(import.meta.dirname, ".."), runCommand = run) {
+export function deploySite(
+  config,
+  repoRoot = resolve(import.meta.dirname, ".."),
+  runCommand = run,
+  releaseVersion = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8")).version,
+) {
   const destination = `s3://${config.bucket}`;
   runCommand("pnpm", ["--filter", "@t4-code/site", "build"], repoRoot);
+  runCommand(
+    "node",
+    [
+      "scripts/generate-release-manifest.mjs",
+      "--version",
+      releaseVersion,
+      "--output",
+      "apps/site/dist/releases/latest.json",
+    ],
+    repoRoot,
+  );
   // Publish new content hashes first and retain old hashes for already-cached entry documents.
   runCommand(
     "aws",

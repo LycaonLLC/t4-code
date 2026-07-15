@@ -48,6 +48,10 @@ import { DesktopRuntimeHostState } from "./desktop-runtime-hosts.ts";
 import { boundedText, commandFailure, DEFAULT_MAX_RUNTIME_ERRORS, leasePayload, type DesktopControllerLeaseEntry } from "./desktop-runtime-policy.ts";
 import { bootstrapDesktopHost } from "./desktop-runtime-bootstrap.ts";
 import { PromptLeaseStore } from "./prompt-lease.ts";
+import {
+  sanitizeRetainedTranscriptFrame,
+  type RetainedTranscriptFrame,
+} from "./transcript-retention.ts";
 export { DesktopRuntimeError } from "./desktop-runtime-contracts.ts";
 export type {
   DesktopControllerLease,
@@ -494,7 +498,14 @@ export class DesktopRuntimeController {
     }
   }
   private handleFrame(event: RendererServerFrameEvent): void {
-    const frame = freezeClone(event.frame);
+    const incomingFrame = event.frame;
+    const transcriptFrame = this.isRetainedTranscriptFrame(incomingFrame);
+    // Do not deep-clone a potentially large transcript payload before applying
+    // retention. The shared projection consumes the decoded frame directly;
+    // renderer subscribers receive only the bounded immutable copy.
+    const frame = transcriptFrame
+      ? sanitizeRetainedTranscriptFrame(incomingFrame)
+      : freezeClone(incomingFrame);
     if (frame.type === "welcome") {
       if (!this.handleWelcome(event.targetId, frame)) return;
     } else {
@@ -509,9 +520,12 @@ export class DesktopRuntimeController {
         if (frame.type === "catalog") this.replace({ catalogs: mapValue(new Map(this.current.catalogs).set(hostIdValue, frame as CatalogFrame)) });
         else this.replace({ settings: mapValue(new Map(this.current.settings).set(hostIdValue, frame as SettingsFrame)) });
       }
-      this.applyProjection(event.targetId, frame);
+      this.applyProjection(event.targetId, transcriptFrame ? incomingFrame : frame);
     }
     this.notifyFrames({ targetId: event.targetId, frame });
+  }
+  private isRetainedTranscriptFrame(frame: RendererServerFrame): frame is RetainedTranscriptFrame {
+    return frame.type === "snapshot" || frame.type === "entry" || frame.type === "event" || frame.type === "gap" || frame.type === "agent.transcript";
   }
   private handleHostResponse(targetId: string, frame: RendererServerFrame): void {
     if (frame.type !== "response" || !frame.ok || frame.command === undefined) return;

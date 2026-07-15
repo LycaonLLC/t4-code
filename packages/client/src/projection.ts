@@ -23,6 +23,21 @@ import {
   sameSafeValue,
   sanitizeSessionRef,
 } from "./projection-sanitize.ts";
+import {
+  MAX_RETAINED_AGENT_TRANSCRIPTS,
+  MAX_RETAINED_AGENT_TRANSCRIPT_BYTES,
+  MAX_RETAINED_AGENT_TRANSCRIPT_ENTRIES,
+  MAX_RETAINED_SESSION_EVENT_BYTES,
+  MAX_RETAINED_SESSION_EVENTS,
+  MAX_RETAINED_SESSION_EVENTS_BYTES,
+  MAX_RETAINED_TRANSCRIPT_BYTES,
+  MAX_RETAINED_TRANSCRIPT_ENTRIES,
+  MAX_RETAINED_TRANSCRIPT_ENTRY_BYTES,
+  appendRetainedDurableEntry,
+  appendRetainedValue,
+  retainDurableEntries,
+  sanitizeRetainedRecord,
+} from "./transcript-retention.ts";
 
 export type ProjectionFrame = Exclude<ServerFrame, Extract<ServerFrame, { type: "pair.ok" }>>;
 export type ProjectionFreshness = "fresh" | "catching-up" | "cached";
@@ -100,10 +115,15 @@ export interface ProjectionOptions {
   readonly maxWarmSessions?: number;
   readonly maxIndexedSessions?: number;
   readonly maxEntries?: number;
+  readonly maxTranscriptBytes?: number;
+  readonly maxEntryBytes?: number;
   readonly maxEvents?: number;
+  readonly maxEventsBytes?: number;
+  readonly maxEventBytes?: number;
   readonly maxAudit?: number;
   readonly maxAgentTranscripts?: number;
   readonly maxAgentTranscriptEntries?: number;
+  readonly maxAgentTranscriptBytes?: number;
 }
 
 
@@ -115,11 +135,16 @@ export const MAX_INDEXED_SESSION_REFS = 1000;
 const DEFAULT_OPTIONS: Required<ProjectionOptions> = {
   maxWarmSessions: 8,
   maxIndexedSessions: MAX_INDEXED_SESSION_REFS,
-  maxEntries: 16_384,
-  maxEvents: 512,
+  maxEntries: MAX_RETAINED_TRANSCRIPT_ENTRIES,
+  maxTranscriptBytes: MAX_RETAINED_TRANSCRIPT_BYTES,
+  maxEntryBytes: MAX_RETAINED_TRANSCRIPT_ENTRY_BYTES,
+  maxEvents: MAX_RETAINED_SESSION_EVENTS,
+  maxEventsBytes: MAX_RETAINED_SESSION_EVENTS_BYTES,
+  maxEventBytes: MAX_RETAINED_SESSION_EVENT_BYTES,
   maxAudit: 256,
-  maxAgentTranscripts: 256,
-  maxAgentTranscriptEntries: 512,
+  maxAgentTranscripts: MAX_RETAINED_AGENT_TRANSCRIPTS,
+  maxAgentTranscriptEntries: MAX_RETAINED_AGENT_TRANSCRIPT_ENTRIES,
+  maxAgentTranscriptBytes: MAX_RETAINED_AGENT_TRANSCRIPT_BYTES,
 };
 const EMPTY_MAP: ReadonlyMap<string, never> = new ImmutableMap<string, never>();
 
@@ -133,34 +158,29 @@ function appendBounded<T>(items: readonly T[], item: T, max: number): readonly T
   const next = items.length >= max ? [...items.slice(items.length - max + 1), item] : [...items, item];
   return freezeArray(next);
 }
-function safeDurableEntry(entry: DurableEntry): DurableEntry {
-  return Object.freeze({
-    ...entry,
-    data: Object.freeze(safeValue(entry.data) as Record<string, unknown>),
-  });
-}
 function boundedUniqueEntries(
   entries: readonly DurableEntry[],
   max: number,
+  maxBytes: number,
+  maxEntryBytes: number,
 ): { readonly entries: readonly DurableEntry[]; readonly entryIds: ReadonlySet<string>; readonly truncated: boolean } {
-  const limit = Math.max(1, Math.floor(max));
-  const unique = new Map<string, DurableEntry>();
-  for (const entry of entries) {
-    const entryId = String(entry.id);
-    if (unique.has(entryId)) continue;
-    unique.set(entryId, safeDurableEntry(entry));
-  }
-  const bounded = [...unique.values()].slice(-limit);
+  const bounded = retainDurableEntries(entries, {
+    maxEntries: max,
+    maxBytes,
+    maxEntryBytes,
+  });
   return {
-    entries: freezeArray(bounded),
-    entryIds: new ImmutableSet(bounded.map((entry) => String(entry.id))),
-    truncated: unique.size > limit,
+    entries: bounded.entries,
+    entryIds: new ImmutableSet(bounded.entries.map((entry) => String(entry.id))),
+    truncated: bounded.truncated,
   };
 }
 function agentTranscriptProjection(
   previous: AgentTranscriptProjection | undefined,
   frame: AgentTranscriptFrame,
   maxEntries: number,
+  maxBytes: number,
+  maxEntryBytes: number,
 ): AgentTranscriptProjection | undefined {
   const cursor = Object.freeze({ ...frame.cursor });
   const epochChanged = previous !== undefined && previous.cursor.epoch !== cursor.epoch;
@@ -180,7 +200,7 @@ function agentTranscriptProjection(
     !recoveringCachedBaseline &&
     cursor.seq === previous.cursor.seq + 1;
   const source = contiguous ? [...previous.entries, ...frame.entries] : frame.entries;
-  const bounded = boundedUniqueEntries(source, maxEntries);
+  const bounded = boundedUniqueEntries(source, maxEntries, maxBytes, maxEntryBytes);
   return Object.freeze({
     entries: bounded.entries,
     entryIds: bounded.entryIds,
@@ -462,13 +482,17 @@ export function applyPublicFrame(
     }
     case "snapshot": {
       const sessionKey = key(String(frame.hostId), String(frame.sessionId));
-      const entries = frame.entries.slice(-config.maxEntries).map((entry) => safeDurableEntry(entry));
-      const entryIds = new ImmutableSet(entries.map((entry) => String(entry.id)));
+      const retained = retainDurableEntries(frame.entries, {
+        maxEntries: config.maxEntries,
+        maxBytes: config.maxTranscriptBytes,
+        maxEntryBytes: config.maxEntryBytes,
+      });
+      const entryIds = new ImmutableSet(retained.entries.map((entry) => String(entry.id)));
       const next = withSession(snapshot, sessionKey, (session) => Object.freeze({
         ...session,
-        entries: freezeArray(entries),
+        entries: retained.entries,
         entryIds,
-        historyTruncated: frame.entries.length > config.maxEntries,
+        historyTruncated: retained.truncated,
         events: freezeArray([]),
         revision: String(frame.revision),
         cursor: frame.cursor,
@@ -498,13 +522,18 @@ export function applyPublicFrame(
               epoch: frame.cursor.epoch,
             });
           }
-          const entryIds = new ImmutableSet([...session.entryIds, entryId].slice(-config.maxEntries));
+          const retained = appendRetainedDurableEntry(session.entries, frame.entry, {
+            maxEntries: config.maxEntries,
+            maxBytes: config.maxTranscriptBytes,
+            maxEntryBytes: config.maxEntryBytes,
+          });
+          const entryIds = new ImmutableSet(retained.entries.map((entry) => String(entry.id)));
           return Object.freeze({
             ...session,
-            entries: appendBounded(session.entries, Object.freeze({ ...frame.entry, data: Object.freeze(safeValue(frame.entry.data) as Record<string, unknown>) }), config.maxEntries),
+            entries: retained.entries,
             entryIds,
             events: retiredEvents,
-            historyTruncated: session.historyTruncated === true || session.entries.length >= config.maxEntries,
+            historyTruncated: session.historyTruncated === true || retained.truncated,
             revision: String(frame.revision),
             cursor: frame.cursor,
             epoch: frame.cursor.epoch,
@@ -525,9 +554,20 @@ export function applyPublicFrame(
                   (event) => String(event.event.entryId ?? "") !== transientEntryId,
                 ),
               );
+        const sanitizedEvent = Object.freeze({
+          ...frame,
+          event: Object.freeze(
+            sanitizeRetainedRecord(frame.event, config.maxEventBytes) as SessionEvent,
+          ),
+        });
         return Object.freeze({
           ...session,
-          events: appendBounded(retiredEvents, Object.freeze({ ...frame, event: Object.freeze(safeValue(frame.event) as SessionEvent) }), config.maxEvents),
+          events: appendRetainedValue(
+            retiredEvents,
+            sanitizedEvent,
+            config.maxEvents,
+            config.maxEventsBytes,
+          ),
           cursor: frame.cursor,
           epoch: frame.cursor.epoch,
           freshness: "fresh",
@@ -551,6 +591,8 @@ export function applyPublicFrame(
           session.agentTranscripts.get(agentId),
           frame,
           config.maxAgentTranscriptEntries,
+          config.maxAgentTranscriptBytes,
+          config.maxEntryBytes,
         );
         if (transcript === undefined) return session;
         return Object.freeze({

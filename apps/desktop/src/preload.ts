@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron";
 import {
   decodeDesktopEvent,
+  decodeDesktopUpdateRendererReadyResult,
+  decodeDesktopUpdateState,
   type BootstrapResult,
   type CommandRequest,
   type CommandResult,
@@ -9,6 +11,9 @@ import {
   type ConnectionStateEvent,
   type ConnectResult,
   type DisconnectResult,
+  type DesktopUpdateOpenEvent,
+  type DesktopUpdateRendererReadyResult,
+  type DesktopUpdateState,
   type PairLinkEvent,
   type PairLinksDrainResult,
   type PairRequest,
@@ -47,6 +52,11 @@ export interface OmpShellBridge {
   readonly serviceStop: () => Promise<ServiceActionResult>;
   readonly serviceRestart: () => Promise<ServiceActionResult>;
   readonly serviceUninstall: () => Promise<ServiceActionResult>;
+  readonly getUpdateState: () => Promise<DesktopUpdateState>;
+  readonly checkForUpdate: () => Promise<DesktopUpdateState>;
+  readonly downloadUpdate: () => Promise<DesktopUpdateState>;
+  readonly restartToUpdate: () => Promise<DesktopUpdateState>;
+  readonly updateRendererReady: () => Promise<DesktopUpdateRendererReadyResult>;
   readonly listTargets: () => Promise<TargetListResult>;
   readonly addTarget: (request: TargetAddRequest) => Promise<TargetAddResult>;
   readonly removeTarget: (request: TargetRequest) => Promise<TargetRemoveResult>;
@@ -56,20 +66,34 @@ export interface OmpShellBridge {
   readonly onConnectionState: (listener: (event: ConnectionStateEvent) => void) => () => void;
   readonly onRuntimeError: (listener: (event: RuntimeErrorEvent) => void) => () => void;
   readonly onPairLink: (listener: (event: PairLinkEvent) => void) => () => void;
+  readonly onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  readonly onOpenUpdateSettings: (listener: (event: DesktopUpdateOpenEvent) => void) => () => void;
 }
 
-function invoke<C extends "omp:bootstrap" | "omp:connect" | "omp:disconnect" | "omp:command" | "omp:confirm" | "omp:terminal:input" | "omp:terminal:resize" | "omp:terminal:close" | "omp:pair" | "omp:pair-links:drain" | "omp:service:inspect" | "omp:service:install" | "omp:service:start" | "omp:service:stop" | "omp:service:restart" | "omp:service:uninstall" | "omp:targets:list" | "omp:targets:add" | "omp:targets:remove", R>(channel: C, payload: unknown): Promise<R> {
+function invoke<C extends "omp:bootstrap" | "omp:connect" | "omp:disconnect" | "omp:command" | "omp:confirm" | "omp:terminal:input" | "omp:terminal:resize" | "omp:terminal:close" | "omp:pair" | "omp:pair-links:drain" | "omp:service:inspect" | "omp:service:install" | "omp:service:start" | "omp:service:stop" | "omp:service:restart" | "omp:service:uninstall" | "omp:targets:list" | "omp:targets:add" | "omp:targets:remove" | "app:update:get-state" | "app:update:check" | "app:update:download" | "app:update:restart" | "app:update:renderer-ready", R>(channel: C, payload: unknown): Promise<R> {
   return ipcRenderer.invoke(channel, { channel, payload }) as Promise<R>;
 }
 
-function subscribe<C extends "omp:server-frame" | "omp:connection-state" | "omp:runtime-error" | "omp:pair-link">(
+type SubscriptionPayload<C> = C extends "omp:server-frame"
+  ? RendererServerFrameEvent
+  : C extends "omp:connection-state"
+    ? ConnectionStateEvent
+    : C extends "omp:runtime-error"
+      ? RuntimeErrorEvent
+      : C extends "omp:pair-link"
+        ? PairLinkEvent
+        : C extends "app:update:state"
+          ? DesktopUpdateState
+          : DesktopUpdateOpenEvent;
+
+function subscribe<C extends "omp:server-frame" | "omp:connection-state" | "omp:runtime-error" | "omp:pair-link" | "app:update:state" | "app:update:open">(
   channel: C,
-  listener: (payload: C extends "omp:server-frame" ? RendererServerFrameEvent : C extends "omp:connection-state" ? ConnectionStateEvent : C extends "omp:runtime-error" ? RuntimeErrorEvent : PairLinkEvent) => void,
+  listener: (payload: SubscriptionPayload<C>) => void,
 ): () => void {
   const wrapped = (_event: Electron.IpcRendererEvent, value: unknown) => {
     try {
       const decoded = decodeDesktopEvent({ channel, payload: value });
-      listener(decoded.payload as C extends "omp:server-frame" ? RendererServerFrameEvent : C extends "omp:connection-state" ? ConnectionStateEvent : C extends "omp:runtime-error" ? RuntimeErrorEvent : PairLinkEvent);
+      listener(decoded.payload as SubscriptionPayload<C>);
     } catch {
       // Invalid renderer events are dropped at the preload boundary.
     }
@@ -97,6 +121,11 @@ const bridge: OmpShellBridge = {
   serviceStop: () => invoke("omp:service:stop", {}),
   serviceRestart: () => invoke("omp:service:restart", {}),
   serviceUninstall: () => invoke("omp:service:uninstall", {}),
+  getUpdateState: () => invoke<"app:update:get-state", unknown>("app:update:get-state", {}).then(decodeDesktopUpdateState),
+  checkForUpdate: () => invoke<"app:update:check", unknown>("app:update:check", {}).then(decodeDesktopUpdateState),
+  downloadUpdate: () => invoke<"app:update:download", unknown>("app:update:download", {}).then(decodeDesktopUpdateState),
+  restartToUpdate: () => invoke<"app:update:restart", unknown>("app:update:restart", {}).then(decodeDesktopUpdateState),
+  updateRendererReady: () => invoke<"app:update:renderer-ready", unknown>("app:update:renderer-ready", {}).then(decodeDesktopUpdateRendererReadyResult),
   listTargets: () => invoke("omp:targets:list", {}),
   addTarget: (request) => invoke("omp:targets:add", request),
   removeTarget: (request) => invoke("omp:targets:remove", request),
@@ -106,6 +135,8 @@ const bridge: OmpShellBridge = {
   onConnectionState: (listener) => subscribe("omp:connection-state", listener),
   onRuntimeError: (listener) => subscribe("omp:runtime-error", listener),
   onPairLink: (listener) => subscribe("omp:pair-link", listener),
+  onUpdateState: (listener) => subscribe("app:update:state", listener),
+  onOpenUpdateSettings: (listener) => subscribe("app:update:open", listener),
 };
 
 contextBridge.exposeInMainWorld("ompShell", bridge);

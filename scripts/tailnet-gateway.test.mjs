@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { connect as connectSocket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { connect as connectSocket } from "node:net";
 import { test } from "node:test";
 
 import WebSocket, { WebSocketServer } from "ws";
@@ -295,6 +295,61 @@ test("gateway survives peer resets while rejecting websocket upgrades", async ()
     assert.equal(healthResponse.status, 200);
     assert.equal((await healthResponse.json()).ok, true);
   } finally {
+    await running.close();
+  }
+});
+
+test("gateway survives an allowed browser reset while appserver socket resolution is pending", async () => {
+  let releaseResolution;
+  let markResolutionStarted;
+  const resolutionStarted = new Promise((resolvePromise) => {
+    markResolutionStarted = resolvePromise;
+  });
+  const resolutionReleased = new Promise((resolvePromise) => {
+    releaseResolution = resolvePromise;
+  });
+  const running = await fixture("symlink", {
+    resolveAppSocket: async (path) => {
+      markResolutionStarted();
+      await resolutionReleased;
+      return resolveAppSocket(path);
+    },
+  });
+  try {
+    const request = [
+      "GET /v1/ws HTTP/1.1",
+      `Host: ${running.gateway.host}:${running.gateway.port}`,
+      "Connection: Upgrade",
+      "Upgrade: websocket",
+      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+      "Sec-WebSocket-Version: 13",
+      `Origin: ${ALLOWED_ORIGIN}`,
+      "",
+      "",
+    ].join("\r\n");
+    const socket = connectSocket({
+      host: running.gateway.host,
+      port: running.gateway.port,
+    });
+    socket.on("error", () => {});
+    await new Promise((resolvePromise, reject) => {
+      socket.once("connect", resolvePromise);
+      socket.once("error", reject);
+    });
+    await new Promise((resolvePromise, reject) => {
+      socket.write(request, (error) => (error ? reject(error) : resolvePromise()));
+    });
+    await resolutionStarted;
+    socket.resetAndDestroy();
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+    releaseResolution();
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+
+    const healthResponse = await fetch(`${running.url}/healthz`);
+    assert.equal(healthResponse.status, 200);
+    assert.equal((await healthResponse.json()).ok, true);
+  } finally {
+    releaseResolution();
     await running.close();
   }
 });

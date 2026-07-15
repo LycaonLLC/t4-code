@@ -8,12 +8,14 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   catalogId,
+  entryId,
   hostId,
   projectId,
   revision,
   sessionId,
   type CatalogFrame,
   type CatalogItem,
+  type DurableEntry,
   type LiveEventFrame,
   type SessionDeltaFrame,
   type SessionsFrame,
@@ -23,6 +25,7 @@ import { createDesktopRuntimeController, type DesktopRuntimeController } from "@
 
 import { createLiveSessionRuntime } from "../src/features/session-runtime/live-runtime.ts";
 import type { SessionRuntime } from "../src/features/session-runtime/controller.ts";
+import { deriveAttention, deriveTranscriptRows } from "../src/features/transcript/rows.ts";
 import { deferred, FakeShell, makeWelcome } from "./fake-shell.ts";
 
 const V = "omp-app/1" as const;
@@ -90,9 +93,16 @@ async function startedRuntime(options?: {
   readonly skipCatalog?: boolean;
   readonly capabilities?: readonly string[];
   readonly features?: readonly string[];
+  readonly maxTranscriptBytes?: number;
+  readonly snapshotEntries?: readonly DurableEntry[];
 }): Promise<Setup> {
   const shell = new FakeShell();
-  const controller = createDesktopRuntimeController({ shell });
+  const controller = createDesktopRuntimeController({
+    shell,
+    ...(options?.maxTranscriptBytes === undefined
+      ? {}
+      : { projectionOptions: { maxTranscriptBytes: options.maxTranscriptBytes } }),
+  });
   await controller.start();
   shell.emitFrame({
     targetId: "local",
@@ -111,7 +121,7 @@ async function startedRuntime(options?: {
       revision: revision("rev-1"),
       hostId: hostId(HOST),
       sessionId: sessionId(SESSION),
-      entries: [],
+      entries: [...(options?.snapshotEntries ?? [])],
     },
   });
   if (options?.skipCatalog !== true) {
@@ -131,6 +141,18 @@ async function startedRuntime(options?: {
     sessionId: SESSION,
   });
   return { shell, controller, runtime };
+}
+
+function transcriptEntry(index: number, size = 400): DurableEntry {
+  return {
+    id: entryId(`retained-${index}`),
+    parentId: null,
+    hostId: hostId(HOST),
+    sessionId: sessionId(SESSION),
+    kind: "message",
+    timestamp: "2026-07-12T10:00:00Z",
+    data: { role: "assistant", text: `${index}:${"x".repeat(size)}` },
+  };
 }
 
 function sessionsUpsert(seq: number, extra: Record<string, unknown>): SessionsFrame {
@@ -289,6 +311,69 @@ describe("defaults from live host settings", () => {
       "xhigh",
       "max",
     ]);
+  });
+});
+
+describe("retained transcript history", () => {
+  it("propagates the shared client truncation flag and renders one inline history notice", async () => {
+    const largeEntries = Array.from({ length: 4 }, (_, index) => transcriptEntry(index));
+    const { controller, runtime, shell } = await startedRuntime({
+      maxTranscriptBytes: 900,
+      snapshotEntries: largeEntries,
+    });
+    const projectionKey = `${HOST}\u0000${SESSION}`;
+
+    expect(controller.getSnapshot().projection.sessions.get(projectionKey)?.historyTruncated).toBe(
+      true,
+    );
+    expect(runtime.getSnapshot().projection.historyTruncated).toBe(true);
+    expect(
+      deriveTranscriptRows(runtime.getSnapshot().projection).filter(
+        (row) => row.kind === "notice" && row.notice.kind === "history-truncated",
+      ),
+    ).toHaveLength(1);
+    expect(deriveAttention(runtime.getSnapshot().projection).error).toBeNull();
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "snapshot",
+        cursor: { epoch: "epoch-1", seq: 2 },
+        revision: revision("rev-2"),
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        entries: [transcriptEntry(10, 20)],
+      },
+    });
+    expect(runtime.getSnapshot().projection.historyTruncated).toBe(false);
+    expect(
+      deriveTranscriptRows(runtime.getSnapshot().projection).some(
+        (row) => row.kind === "notice" && row.notice.kind === "history-truncated",
+      ),
+    ).toBe(false);
+
+    // This snapshot arrives after the renderer subscribed. The desktop client
+    // retains it with its custom budget, while the sanitized renderer frame is
+    // small enough that the web reducer would not infer the omission itself.
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "snapshot",
+        cursor: { epoch: "epoch-1", seq: 3 },
+        revision: revision("rev-3"),
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        entries: largeEntries,
+      },
+    });
+    expect(runtime.getSnapshot().projection.historyTruncated).toBe(true);
+    expect(
+      deriveTranscriptRows(runtime.getSnapshot().projection).filter(
+        (row) => row.kind === "notice" && row.notice.kind === "history-truncated",
+      ),
+    ).toHaveLength(1);
   });
 });
 

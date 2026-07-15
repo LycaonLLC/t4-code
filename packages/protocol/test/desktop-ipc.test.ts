@@ -3,6 +3,8 @@ import {
   commandResultError,
   decodeDesktopEvent,
   decodeDesktopInvokeRequest,
+  decodeDesktopUpdateRendererReadyResult,
+  decodeDesktopUpdateState,
   isDesktopInvokeRequest,
 } from "../src/desktop-ipc.ts";
 
@@ -270,5 +272,78 @@ describe("desktop IPC boundary", () => {
       },
     ])
       expect(isDesktopInvokeRequest(value)).toBe(false);
+  });
+
+  it("strictly decodes immutable desktop update requests and state", () => {
+    for (const channel of [
+      "app:update:get-state",
+      "app:update:check",
+      "app:update:download",
+      "app:update:restart",
+      "app:update:renderer-ready",
+    ] as const) {
+      expect(decodeDesktopInvokeRequest({ channel, payload: {} })).toEqual({
+        channel,
+        payload: {},
+      });
+      expect(() =>
+        decodeDesktopInvokeRequest({ channel, payload: { url: "https://attacker.invalid" } }),
+      ).toThrow("unknown key");
+    }
+
+    const state = decodeDesktopUpdateState({
+      version: 1,
+      currentVersion: "0.1.17",
+      phase: "available",
+      checkedAt: 123,
+      availableVersion: "0.1.18",
+      progressPercent: 25.5,
+      message: "Update ready to download.",
+    });
+    expect(state).toEqual({
+      version: 1,
+      currentVersion: "0.1.17",
+      phase: "available",
+      checkedAt: 123,
+      availableVersion: "0.1.18",
+      progressPercent: 25.5,
+      message: "Update ready to download.",
+    });
+    expect(Object.isFrozen(state)).toBe(true);
+    const rendererReady = decodeDesktopUpdateRendererReadyResult({ openSettings: true });
+    expect(rendererReady).toEqual({ openSettings: true });
+    expect(Object.isFrozen(rendererReady)).toBe(true);
+    expect(() =>
+      decodeDesktopUpdateRendererReadyResult({
+        openSettings: true,
+        url: "https://attacker.invalid",
+      }),
+    ).toThrow("unknown key");
+    expect(() => decodeDesktopUpdateRendererReadyResult({ openSettings: "yes" })).toThrow();
+    expect(decodeDesktopEvent({ channel: "app:update:state", payload: state })).toEqual({
+      channel: "app:update:state",
+      payload: state,
+    });
+    expect(decodeDesktopEvent({ channel: "app:update:open", payload: { source: "menu" } })).toEqual(
+      { channel: "app:update:open", payload: { source: "menu" } },
+    );
+
+    for (const value of [
+      { ...state, url: "https://attacker.invalid" },
+      { ...state, phase: "installing" },
+      { ...state, currentVersion: "latest" },
+      { ...state, availableVersion: "1.2.3\nhttps://attacker.invalid" },
+      { ...state, checkedAt: -1 },
+      { ...state, progressPercent: 101 },
+      { ...state, message: "x".repeat(513) },
+    ]) {
+      expect(() => decodeDesktopUpdateState(value)).toThrow();
+    }
+    expect(() =>
+      decodeDesktopEvent({
+        channel: "app:update:open",
+        payload: { source: "renderer", url: "https://attacker.invalid" },
+      }),
+    ).toThrow();
   });
 });

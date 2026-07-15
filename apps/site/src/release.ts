@@ -16,6 +16,7 @@ export const APP_WIRE_VERSION = "0.5.5";
 export const RELEASE_TAG = "v0.1.18";
 export const RELEASE_VERSION = "0.1.18";
 export const RELEASES_URL = `${REPO_URL}/releases/tag/${RELEASE_TAG}`;
+export const RELEASE_MANIFEST_URL = `${SITE_URL}/releases/latest.json`;
 
 export type Platform = "android" | "linux" | "mac";
 export type DesktopPlatform = Exclude<Platform, "android">;

@@ -1,11 +1,18 @@
 name: Deploy project site
+run-name: Deploy project site ${{ inputs.release_tag || github.ref_name }} ${{ inputs.dispatch_nonce || github.sha }}
 
 on:
   push:
     branches: [main, master]
     paths:
       - "apps/site/**"
+      - "scripts/check-release-publication.mjs"
       - "scripts/deploy-site.mjs"
+      - "scripts/dispatch-site-deployment.mjs"
+      - "scripts/generate-release-manifest.mjs"
+      - "scripts/inspect-linux-update.mjs"
+      - "scripts/read-bounded-response.mjs"
+      - "scripts/reconcile-release-assets.mjs"
       - "scripts/wait-for-release-assets.mjs"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -14,6 +21,10 @@ on:
     inputs:
       release_tag:
         description: Published release tag whose immutable source must be deployed.
+        required: true
+        type: string
+      dispatch_nonce:
+        description: Unique release-workflow dispatch identity.
         required: true
         type: string
 
@@ -27,7 +38,7 @@ concurrency:
 
 jobs:
   deploy:
-    if: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     environment:
@@ -41,15 +52,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Read trusted main release version
+      - name: Read trusted workflow source version
         id: source
         shell: bash
         env:
-          MAIN_SHA: ${{ github.sha }}
+          TRUSTED_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           version=$(node -p "require('./package.json').version")
-          printf 'version=%s\nmain_sha=%s\n' "$version" "$MAIN_SHA" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\ntrusted_sha=%s\n' "$version" "$TRUSTED_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Install pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -68,16 +79,23 @@ jobs:
           RELEASE_VERSION: ${{ steps.source.outputs.version }}
         run: node scripts/wait-for-release-assets.mjs --version "$RELEASE_VERSION" --timeout-ms 2400000 --interval-ms 15000
 
-      - name: Check whether an ordinary main push references an existing release
-        id: existing_release
+      - name: Classify the stable release referenced by an ordinary main push
+        id: release_state
         if: ${{ github.event_name == 'push' }}
-        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.source.outputs.version }}
+        run: node scripts/check-release-publication.mjs --version "$RELEASE_VERSION" --github-output "$GITHUB_OUTPUT"
+
+      - name: Confirm assets for an existing stable release
+        id: existing_release
+        if: ${{ github.event_name == 'push' && steps.release_state.outputs.state == 'published' }}
         env:
           RELEASE_VERSION: ${{ steps.source.outputs.version }}
         run: node scripts/wait-for-release-assets.mjs --version "$RELEASE_VERSION" --timeout-ms 15000 --interval-ms 3000
 
       - name: Defer a release-version site update until publication
-        if: ${{ github.event_name == 'push' && steps.existing_release.outcome == 'failure' }}
+        if: ${{ github.event_name == 'push' && steps.release_state.outputs.state == 'not-published' }}
         run: echo "The referenced release is not public yet; the release workflow will deploy this site after publication."
 
       - name: Resolve immutable deployment source
@@ -87,7 +105,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           GH_TOKEN: ${{ github.token }}
-          MAIN_SHA: ${{ steps.source.outputs.main_sha }}
+          TRUSTED_SHA: ${{ steps.source.outputs.trusted_sha }}
           REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
           TRUSTED_VERSION: ${{ steps.source.outputs.version }}
         run: |
@@ -97,6 +115,10 @@ jobs:
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             if [[ "$REQUESTED_RELEASE_TAG" != "$expected_tag" ]]; then
               echo "release_tag must be the current release ${expected_tag}" >&2
+              exit 1
+            fi
+            if [[ "$GITHUB_REF" != "refs/tags/${expected_tag}" ]]; then
+              echo "workflow_dispatch must run from the immutable release tag ${expected_tag}" >&2
               exit 1
             fi
             release_tag="$REQUESTED_RELEASE_TAG"
@@ -110,11 +132,16 @@ jobs:
           source_sha=$(git rev-parse "${release_tag}^{commit}")
           tag_version=$(git show "${source_sha}:package.json" | jq -er '.version')
           if [[ "$tag_version" != "$TRUSTED_VERSION" ]]; then
-            echo "release tag package version ${tag_version} does not match trusted main ${TRUSTED_VERSION}" >&2
+            echo "release tag package version ${tag_version} does not match trusted source ${TRUSTED_VERSION}" >&2
             exit 1
           fi
-          if ! git merge-base --is-ancestor "$source_sha" "$MAIN_SHA"; then
-            echo "release tag source is not reachable from trusted main" >&2
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$source_sha" != "$TRUSTED_SHA" ]]; then
+              echo "release tag moved after this immutable deployment was dispatched" >&2
+              exit 1
+            fi
+          elif ! git merge-base --is-ancestor "$source_sha" "$TRUSTED_SHA"; then
+            echo "release tag source is not reachable from the trusted workflow source" >&2
             exit 1
           fi
           printf 'release_tag=%s\nsource_sha=%s\n' "$release_tag" "$source_sha" >> "$GITHUB_OUTPUT"
@@ -140,6 +167,7 @@ jobs:
       - name: Build and deploy static site
         if: ${{ steps.published_release.outcome == 'success' || steps.existing_release.outcome == 'success' }}
         env:
+          GH_TOKEN: ${{ github.token }}
           T4_SITE_BUCKET: ${{ vars.T4_SITE_BUCKET }}
           T4_CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.T4_CLOUDFRONT_DISTRIBUTION_ID }}
         run: pnpm deploy:site

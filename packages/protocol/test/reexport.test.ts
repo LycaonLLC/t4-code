@@ -33,4 +33,45 @@ describe("@omp/protocol app-wire facade", () => {
     expect(decodeServerFixture("gap.json")).toMatchObject({ type: "gap", from: { epoch: "epoch-2", seq: 12 } });
     expect(decodeServerFixture("error.json")).toMatchObject({ type: "error", code: "NOT_AUTHORIZED" });
   });
+
+  it("preserves bounded custom-message metadata in durable entry data", () => {
+    const decoded = decodeServerFrame({
+      v: "omp-app/1",
+      type: "snapshot",
+      cursor: { epoch: "epoch-2", seq: 9 },
+      revision: "rev-10",
+      hostId: "host-a",
+      sessionId: "same-raw-id",
+      entries: [
+        {
+          id: "entry-irc-1",
+          parentId: null,
+          hostId: "host-a",
+          sessionId: "same-raw-id",
+          kind: "message",
+          timestamp: "2026-07-15T20:00:00Z",
+          data: {
+            role: "assistant",
+            text: "machine-owned wrapper",
+            customType: "irc:incoming",
+            customDetails: { from: "ReviewAgent", message: "One finding" },
+          },
+        },
+      ],
+      continuity: { epoch: "epoch-2" },
+    });
+
+    expect(decoded).toMatchObject({
+      type: "snapshot",
+      entries: [
+        {
+          kind: "message",
+          data: {
+            customType: "irc:incoming",
+            customDetails: { from: "ReviewAgent", message: "One finding" },
+          },
+        },
+      ],
+    });
+  });
 });

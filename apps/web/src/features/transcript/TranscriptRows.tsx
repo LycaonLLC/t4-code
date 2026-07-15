@@ -16,6 +16,7 @@ import {
   Eye,
   FileJson,
   Globe,
+  MessageCircle,
   RotateCcw,
   SearchIcon,
   SquarePen,
@@ -144,6 +145,129 @@ function MessageRow({
       >
         <CopyButton label="Copy response" text={row.text} />
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Collaboration messages
+// ---------------------------------------------------------------------------
+
+function durationLabel(durationMs: number): string {
+  if (durationMs < 1000) return `${Math.round(durationMs)}ms`;
+  const seconds = durationMs / 1000;
+  if (seconds < 60) return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)}s`;
+  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+}
+
+function collaborationTitle(row: Extract<TranscriptRow, { kind: "collaboration" }>): string {
+  const { message } = row;
+  if (message.variant === "irc") {
+    if (message.customType === "irc:incoming") return `← ${message.from ?? "agent"}`;
+    if (message.customType === "irc:autoreply") return `→ ${message.to ?? "agent"}`;
+    return `${message.from ?? "agent"} → ${message.to ?? "agent"}`;
+  }
+  if (message.variant === "collaborator") return message.from ?? "Collaborator";
+  if (message.jobs.length === 1) {
+    const label = message.jobs[0]?.label;
+    if (message.from !== null && label !== undefined && message.from !== label) {
+      return `${message.from} · ${label}`;
+    }
+    return message.from ?? label ?? "Subagent result";
+  }
+  return `${message.jobs.length || 1} subagent results`;
+}
+
+interface BodyPreview {
+  readonly text: string;
+  readonly truncated: boolean;
+}
+
+function bodyPreview(body: string): BodyPreview {
+  const visible: string[] = [];
+  let offset = 0;
+  while (offset < body.length && visible.length < 3) {
+    const lineEnd = body.indexOf("\n", offset);
+    const end = lineEnd === -1 ? body.length : lineEnd;
+    const line = body.slice(offset, end);
+    offset = lineEnd === -1 ? body.length : lineEnd + 1;
+    if (line.trim() === "" && visible.length === 0) continue;
+    visible.push(line);
+  }
+  return { text: visible.join("\n"), truncated: offset < body.length };
+}
+
+function CollaborationMessageRow({
+  row,
+}: {
+  readonly row: Extract<TranscriptRow, { kind: "collaboration" }>;
+}) {
+  const [open, setOpen] = useState(false);
+  const anchoredToggle = useAnchoredDisclosure();
+  const { message } = row;
+  const title = collaborationTitle(row);
+  const preview = bodyPreview(message.body);
+  const duration =
+    message.variant === "task-result" && message.jobs.length === 1
+      ? message.jobs[0]?.durationMs
+      : null;
+  const statusTone =
+    message.status === "failed" || message.status === "aborted"
+      ? "text-status-error"
+      : message.status === "completed"
+        ? "text-status-done"
+        : "text-muted-foreground";
+  return (
+    <div
+      className="my-1.5 overflow-hidden rounded-lg border border-border/70 bg-card/40"
+      data-collaboration-message={message.customType}
+    >
+      <button
+        aria-expanded={open}
+        className="flex min-h-11 w-full cursor-pointer items-center gap-2 px-2.5 py-2 text-left outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent/70 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:min-h-0"
+        onClick={(event) => anchoredToggle(event.currentTarget, () => setOpen((value) => !value))}
+        type="button"
+      >
+        {message.variant === "task-result" ? (
+          <Bot aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+        ) : (
+          <MessageCircle aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
+        <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 font-medium text-[0.625rem] text-muted-foreground uppercase tracking-wide">
+          {message.variant === "task-result"
+            ? "Agent"
+            : message.variant === "collaborator"
+              ? "Collab"
+              : "IRC"}
+        </span>
+        <span className="min-w-0 flex-1 truncate font-medium text-xs">{title}</span>
+        <span className={cn("shrink-0 text-[0.6875rem]", statusTone)}>{message.status}</span>
+        {duration !== null && duration !== undefined && (
+          <span className="hidden shrink-0 text-muted-foreground text-[0.6875rem] sm:inline">
+            {durationLabel(duration)}
+          </span>
+        )}
+        <ChevronRight
+          aria-hidden="true"
+          className={cn(
+            "size-3.5 shrink-0 text-muted-foreground transition-transform duration-(--motion-duration-fast)",
+            open && "rotate-90",
+          )}
+        />
+      </button>
+      {!open && preview.text !== "" && (
+        <div className="mx-2.5 mb-2 border-border border-l-2 pl-2.5 text-muted-foreground text-xs leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]">
+          {preview.text}
+          {preview.truncated && <span className="ml-1 text-muted-foreground/70">…</span>}
+        </div>
+      )}
+      <AnimatedHeight>
+        {open && message.body.trim() !== "" && (
+          <div className="disclosure-content-enter mx-2.5 mb-2 border-border border-l-2 pl-2.5 text-xs leading-relaxed">
+            <Markdown className="text-xs" text={message.body} />
+          </div>
+        )}
+      </AnimatedHeight>
     </div>
   );
 }
@@ -378,6 +502,12 @@ function noticeContent(notice: TranscriptNotice): {
         text: `${notice.summary}${notice.droppedEntries > 0 ? ` (${notice.droppedEntries} entries folded)` : ""}`,
         toneClass: "text-muted-foreground",
       };
+    case "history-truncated":
+      return {
+        Icon: Archive,
+        text: notice.message,
+        toneClass: "text-muted-foreground",
+      };
     case "gap":
       return {
         Icon: Unplug,
@@ -475,6 +605,8 @@ export const TranscriptRowContent = memo(function TranscriptRowContent({
   switch (row.kind) {
     case "message":
       return <MessageRow imageSource={imageSource} row={row} />;
+    case "collaboration":
+      return <CollaborationMessageRow row={row} />;
     case "tool-group":
       return <ToolGroupRow imageSource={imageSource} nowMs={nowMs} row={row} toolHost={toolHost} />;
     case "notice":

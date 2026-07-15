@@ -25,6 +25,7 @@ import type { RendererServerFrame } from "@t4-code/protocol/desktop-ipc";
 import {
   initialProjection,
   reduceTranscript,
+  settleTranscriptTurn,
   type ApprovalRequest,
   type TranscriptFrame,
   type TranscriptProjection,
@@ -51,6 +52,7 @@ import {
   THINKING_SET_COMMAND,
   type PendingControl,
 } from "./session-controls.ts";
+import { sessionIsWorking } from "./session-management.ts";
 
 export interface LiveRuntimeOptions {
   readonly controller: DesktopRuntimeController;
@@ -76,12 +78,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Frame types the transcript reducer accepts; mirrors the subscription. */
-const TRANSCRIPT_FRAME_TYPES: ReadonlySet<string> = new Set([
-  "snapshot",
-  "entry",
-  "event",
-  "gap",
-]);
+const TRANSCRIPT_FRAME_TYPES: ReadonlySet<string> = new Set(["snapshot", "entry", "event", "gap"]);
 
 function isTranscriptFrame(frame: RendererServerFrame): frame is TranscriptFrame {
   return TRANSCRIPT_FRAME_TYPES.has(frame.type);
@@ -101,12 +98,37 @@ function getQueuedFollowUps(ref: SessionRef | undefined): readonly string[] {
   return result;
 }
 
+/**
+ * Return working truth only when this connected host has supplied a complete
+ * live inventory. Cached or truncated rows may be useful to render, but they
+ * cannot settle a turn after a disconnect.
+ */
+function authoritativeWorkingState(
+  runtime: DesktopRuntimeSnapshot,
+  targetId: string,
+  hostId: string,
+  projectionKey: string,
+): boolean | null {
+  if (runtime.connections.get(targetId) !== "connected") return null;
+  const metadata = runtime.projection.sessionIndexMetadata.get(hostId);
+  if (metadata === undefined || metadata.truncated) return null;
+  let indexed = 0;
+  for (const ref of runtime.projection.sessionIndex.values()) {
+    if (String(ref.hostId) === hostId) indexed += 1;
+  }
+  if (indexed < metadata.totalCount) return null;
+  const ref = runtime.projection.sessionIndex.get(projectionKey);
+  return ref === undefined ? null : sessionIsWorking(ref);
+}
+
 /** Commands the runtime recognizes as this session's abort affordance. */
 function findCancelCommand(items: readonly CatalogItem[]): CatalogItem | undefined {
   return items.find(
     (item) =>
       item.kind === "command" &&
-      (String(item.id) === "session.cancel" || item.name === "session.cancel" || item.name === "cancel"),
+      (String(item.id) === "session.cancel" ||
+        item.name === "session.cancel" ||
+        item.name === "cancel"),
   );
 }
 
@@ -190,6 +212,14 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   const warmSession = (runtime: DesktopRuntimeSnapshot): SessionProjection | undefined =>
     runtime.projection.sessions.get(projectionKey);
 
+  const withWarmHistoryTruncation = (
+    projection: TranscriptProjection,
+    runtime: DesktopRuntimeSnapshot,
+  ): TranscriptProjection =>
+    warmSession(runtime)?.historyTruncated === true && !projection.historyTruncated
+      ? { ...projection, historyTruncated: true }
+      : projection;
+
   const notify = () => {
     snapshot = null;
     for (const listener of listeners) listener();
@@ -210,7 +240,10 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
       sessionId: wireSessionId,
       entries: [...warm.entries],
     };
-    transcript = reduceTranscript(transcript, seed);
+    transcript = withWarmHistoryTruncation(
+      reduceTranscript(transcript, seed),
+      controller.getSnapshot(),
+    );
   }
 
   const expectedRevision = (): Revision | undefined => {
@@ -230,7 +263,8 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     promptLeaseRevision?: Revision,
   ): Promise<PromptOutcome> => {
     const revisionValue = withRevision ? (revisionOverride ?? expectedRevision()) : undefined;
-    if (withRevision && revisionValue === undefined) return { kind: "unknown", reason: UNKNOWN_REASON };
+    if (withRevision && revisionValue === undefined)
+      return { kind: "unknown", reason: UNKNOWN_REASON };
     try {
       const intentPayload = {
         hostId: wireHostId,
@@ -319,7 +353,11 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     args: Record<string, unknown>,
   ): Promise<PromptOutcome> => {
     const runtime = controller.getSnapshot();
-    const support = commandSupport(runtime.catalogs.get(options.hostId), grantedFor(runtime), command);
+    const support = commandSupport(
+      runtime.catalogs.get(options.hostId),
+      grantedFor(runtime),
+      command,
+    );
     if (!support.supported) {
       const reason = support.reason ?? "Not available on this host";
       controlError = reason;
@@ -407,7 +445,13 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   };
 
   const applyFrame = (frame: TranscriptFrame) => {
-    const next = reduceTranscript(transcript, frame);
+    // Renderer frames are sanitized to their global retention budget before
+    // delivery. Preserve the shared client's smaller/custom retention truth,
+    // which is otherwise not representable on the app-wire snapshot itself.
+    const next = withWarmHistoryTruncation(
+      reduceTranscript(transcript, frame),
+      controller.getSnapshot(),
+    );
     if (next !== transcript) {
       transcript = next;
       notify();
@@ -419,6 +463,12 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   let retryAfterAttach = false;
   let connectionGeneration = 0;
   let previousConnected = controller.getSnapshot().connections.get(targetId) === "connected";
+  let previousAuthoritativeWorking: boolean | null = authoritativeWorkingState(
+    controller.getSnapshot(),
+    targetId,
+    options.hostId,
+    projectionKey,
+  );
   const attachIfConnected = (runtime: DesktopRuntimeSnapshot) => {
     if (disposed) return;
     const connected = runtime.connections.get(targetId) === "connected";
@@ -487,7 +537,36 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   // Connection state, catalog, confirmation, and freshness changes all
   // surface through the controller snapshot; re-derive on every change.
   const unsubscribeRuntime = controller.subscribe((runtime) => {
+    const retainedTranscript = withWarmHistoryTruncation(transcript, runtime);
+    if (retainedTranscript !== transcript) transcript = retainedTranscript;
+    const wasConnected = previousConnected;
     attachIfConnected(runtime);
+    const connected = runtime.connections.get(targetId) === "connected";
+    const authoritativeWorking = authoritativeWorkingState(
+      runtime,
+      targetId,
+      options.hostId,
+      projectionKey,
+    );
+    const reconnected = !wasConnected && connected;
+    if (authoritativeWorking !== null) {
+      if (
+        connected &&
+        authoritativeWorking === false &&
+        (reconnected || previousAuthoritativeWorking === true)
+      ) {
+        const next = settleTranscriptTurn(transcript, {
+          // turn.error itself makes turnActive false. Seeing it true here is
+          // direct evidence that a later turn started and this authoritative
+          // idle observation supersedes that older transient error.
+          supersedeTransientErrors: transcript.turnActive,
+        });
+        if (next !== transcript) transcript = next;
+      }
+      // Unknown (offline/truncated) evidence must not erase the last complete
+      // working observation; the next complete idle inventory settles it.
+      previousAuthoritativeWorking = authoritativeWorking;
+    }
     syncTranscriptImageAvailability(runtime);
     notify();
   });

@@ -3,10 +3,12 @@ import { MAX_INDEXED_SESSION_REFS } from "./projection.ts";
 import type { AgentTranscriptProjection, ProjectionFreshness, ProjectionSnapshot, ResultProjection, SessionIndexMetadata, SessionProjection, TerminalProjection } from "./projection.ts";
 import { ImmutableSet } from "./immutable-set.ts";
 import { ImmutableMap } from "./immutable-map.ts";
+import { retainedJsonBytes } from "./transcript-retention.ts";
 
 export const PROJECTION_CACHE_VERSION = 1 as const;
 export const MAX_PROJECTION_CACHE_BYTES = 2 * 1024 * 1024;
 export const MAX_PROJECTION_CACHE_SESSIONS = 8;
+const MAX_PROJECTION_CACHE_TRANSCRIPT_BYTES = Math.floor(MAX_PROJECTION_CACHE_BYTES * 0.75);
 
 export interface ProjectionCacheStore {
   load(): string | Uint8Array | ProjectionCacheEnvelope | null | undefined | Promise<string | Uint8Array | ProjectionCacheEnvelope | null | undefined>;
@@ -95,16 +97,55 @@ function cachedAgentTranscripts(
   ]);
 }
 
+function cachedEntries(
+  entries: readonly DurableEntry[],
+  maxBytes: number,
+): { readonly entries: readonly DurableEntry[]; readonly truncated: boolean } {
+  const retained: DurableEntry[] = [];
+  let bytes = 2;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry === undefined) continue;
+    const entryBytes = retainedJsonBytes(entry);
+    const separator = retained.length === 0 ? 0 : 1;
+    if (bytes + separator + entryBytes > maxBytes) break;
+    retained.push(entry);
+    bytes += separator + entryBytes;
+  }
+  retained.reverse();
+  return { entries: Object.freeze(retained), truncated: retained.length < entries.length };
+}
+
 export function encodeProjectionCache(snapshot: ProjectionSnapshot, savedAt = Date.now()): string {
+  const cacheOrder = [
+    ...snapshot.lru.toReversed(),
+    ...[...snapshot.sessions.keys()].filter((key) => !snapshot.lru.includes(key)),
+  ];
+  const cachedSessions = cacheOrder
+    .slice(0, MAX_PROJECTION_CACHE_SESSIONS)
+    .flatMap((key) => {
+      const session = snapshot.sessions.get(key);
+      return session === undefined ? [] : [[key, session] as const];
+    });
+  let transcriptBytesRemaining = MAX_PROJECTION_CACHE_TRANSCRIPT_BYTES;
   const data: ProjectionCacheData = {
-    sessions: [...snapshot.sessions.entries()].slice(0, MAX_PROJECTION_CACHE_SESSIONS).map(([key, value]) => ({
-      key,
-      value: {
+    sessions: cachedSessions.map(([key, value]) => {
+      // Spend the shared transcript allowance newest-LRU first. Dividing it
+      // evenly made several empty sessions evict half of one compact 10k-entry
+      // history even though the final cache still had room.
+      const retained = cachedEntries(value.entries, Math.max(2, transcriptBytesRemaining));
+      transcriptBytesRemaining = Math.max(
+        0,
+        transcriptBytesRemaining - retainedJsonBytes(retained.entries),
+      );
+      return {
+        key,
+        value: {
         hostId: value.hostId,
         sessionId: value.sessionId,
         ...(value.ref === undefined ? {} : { ref: safeJson(value.ref) as SessionRef }),
-        entries: value.entries.slice(-10_000).map((entry) => safeJson(entry) as DurableEntry),
-        historyTruncated: value.historyTruncated === true || value.entries.length > 10_000,
+        entries: retained.entries.map((entry) => safeJson(entry) as DurableEntry),
+        historyTruncated: value.historyTruncated === true || retained.truncated,
         events: value.events.slice(-512).map((event) => safeJson(event)),
         agents: arrayFromMap(value.agents),
         agentTranscripts: cachedAgentTranscripts(value.agentTranscripts),
@@ -123,7 +164,8 @@ export function encodeProjectionCache(snapshot: ProjectionSnapshot, savedAt = Da
         freshness: value.freshness,
         ...(value.gap === undefined ? {} : { gap: safeJson(value.gap) }),
       },
-    })),
+      };
+    }),
     sessionIndex: [...snapshot.sessionIndex.entries()].slice(0, MAX_INDEXED_SESSION_REFS).map(([key, value]) => [key, safeJson(value) as SessionRef]),
     sessionIndexMetadata: [...snapshot.sessionIndexMetadata.entries()].slice(0, MAX_INDEXED_SESSION_REFS).map(([key, value]) => [key, safeJson(value) as SessionIndexMetadata]),
     sessionDeltaCursors: [...snapshot.sessionDeltaCursors.entries()].slice(0, MAX_INDEXED_SESSION_REFS).map(([key, value]) => [key, safeJson(value) as Cursor]),

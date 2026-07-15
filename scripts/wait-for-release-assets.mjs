@@ -12,7 +12,7 @@ const REPOSITORY_URL = "https://github.com/LycaonLLC/t4-code";
 
 export function releaseAssetUrls(version) {
   const tag = `v${version}`;
-  return [...expectedReleaseAssetNames(version), "SHA256SUMS.txt"].map((filename) => ({
+  return [...expectedReleaseAssetNames(version), "latest-linux.yml", "SHA256SUMS.txt"].map((filename) => ({
     filename,
     url: `${REPOSITORY_URL}/releases/download/${tag}/${filename}`,
   }));

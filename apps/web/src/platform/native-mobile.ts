@@ -29,8 +29,32 @@ interface T4SecureStoragePlugin {
   clearCredentials(): Promise<void>;
 }
 
+export interface NativeUpdateState {
+  readonly currentVersion: string;
+  readonly latestVersion?: string;
+  readonly checkedAt?: number;
+  readonly phase: "idle" | "checking" | "current" | "available" | "downloading" | "installer" | "error";
+  readonly revision: number;
+  readonly error?: string;
+  readonly message?: string;
+}
+
+export interface T4UpdatePlugin {
+  getState(): Promise<NativeUpdateState>;
+  checkForUpdate(): Promise<NativeUpdateState>;
+  /** Starts the native-owned download; later state changes report verification and installer handoff. */
+  openUpdate(): Promise<NativeUpdateState>;
+  addListener(
+    eventName: "stateChanged",
+    listener: (state: NativeUpdateState) => void,
+  ): Promise<{ remove(): Promise<void> }>;
+}
+
 interface CapacitorBridge {
-  readonly Plugins?: { readonly T4SecureStorage?: T4SecureStoragePlugin };
+  readonly Plugins?: {
+    readonly T4SecureStorage?: T4SecureStoragePlugin;
+    readonly T4Update?: T4UpdatePlugin;
+  };
   readonly getPlatform?: () => string;
   readonly isNativePlatform?: () => boolean;
 }
@@ -57,6 +81,11 @@ export function nativeMobilePlatform(): NativeMobilePlatform | null {
   if (bridge?.isNativePlatform?.() !== true) return null;
   const platform = bridge.getPlatform?.();
   return platform === "android" || platform === "ios" ? platform : null;
+}
+
+export function nativeUpdatePlugin(): T4UpdatePlugin | null {
+  if (nativeMobilePlatform() !== "android") return null;
+  return window.Capacitor?.Plugins?.T4Update ?? null;
 }
 
 function requiredLabel(value: unknown): string {

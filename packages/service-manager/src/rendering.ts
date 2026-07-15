@@ -110,6 +110,12 @@ export function renderSystemd(spec: ServiceSpec, _label: string): string {
     "[Service]",
     "Type=simple",
     `ExecStart=${shellFreeExec(spec)}`,
+    // The appserver owns independent session workers. If the kernel kills one
+    // runaway worker under memory pressure, keep the broker (and unrelated
+    // sessions) alive instead of treating the child OOM as a unit failure.
+    // This is isolation, not a memory limit: workers retain the full host
+    // environment and available memory.
+    "OOMPolicy=continue",
     "Restart=on-failure",
     "UMask=0077",
     `StandardOutput=append:${systemdFilePath(`${spec.logsDirectory}/appserver.log`)}`,

@@ -144,12 +144,23 @@ jobs:
       - name: Inspect Linux packages
         run: pnpm inspect:package -- release/*.deb release/*.AppImage
 
+      - name: Inspect Linux updater metadata
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: >-
+          node scripts/inspect-linux-update.mjs
+          --version "$VERSION"
+          --metadata release/latest-linux.yml
+          --artifact "release/T4-Code-${VERSION}-linux-amd64.deb"
+          --artifact "release/T4-Code-${VERSION}-linux-x86_64.AppImage"
+
       - name: Stage Linux artifacts
         shell: bash
         run: |
           mkdir -p artifacts
-          cp release/T4-Code-*.deb release/T4-Code-*.AppImage artifacts/
+          cp release/T4-Code-*.deb release/T4-Code-*.AppImage release/latest-linux.yml artifacts/
           (cd artifacts && sha256sum T4-Code-* > SHA256SUMS-linux.txt)
+          (cd artifacts && sha256sum latest-linux.yml >> SHA256SUMS-linux.txt)
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -197,6 +208,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build web application for Android
+        run: pnpm build:web
+
+      - name: Verify unsigned Android application
+        run: pnpm --filter @t4-code/mobile check:android:debug
+
       - name: Restore and validate Android release signing key
         shell: bash
         env:
@@ -232,7 +249,6 @@ jobs:
           T4_ANDROID_KEY_ALIAS: ${{ secrets.T4_ANDROID_KEY_ALIAS }}
           T4_ANDROID_KEY_PASSWORD: ${{ secrets.T4_ANDROID_KEY_PASSWORD }}
         run: |
-          pnpm build:web
           pnpm --filter @t4-code/mobile build:android:release
 
       - name: Inspect signed Android APK
@@ -345,11 +361,43 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.13.1
+
       - name: Assemble checksums
         shell: bash
         run: cat artifacts/SHA256SUMS-android.txt artifacts/SHA256SUMS-linux.txt artifacts/SHA256SUMS-macos.txt | sort -k2 > artifacts/SHA256SUMS.txt
 
+      - name: Verify exact public release bundle
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          expected=$(printf '%s\n' \
+            "SHA256SUMS.txt" \
+            "T4-Code-${VERSION}-android.apk" \
+            "T4-Code-${VERSION}-linux-amd64.deb" \
+            "T4-Code-${VERSION}-linux-x86_64.AppImage" \
+            "T4-Code-${VERSION}-mac-arm64.dmg" \
+            "T4-Code-${VERSION}-mac-arm64.zip" \
+            "latest-linux.yml" | sort)
+          actual=$(find artifacts -maxdepth 1 -type f ! -name 'SHA256SUMS-*.txt' -printf '%f\n' | sort)
+          [[ "$actual" == "$expected" ]]
+          [[ $(wc -l < artifacts/SHA256SUMS.txt) == 6 ]]
+          (cd artifacts && sha256sum --check SHA256SUMS.txt)
+
+      - name: Preserve an exact release or prepare an incomplete release for repair
+        id: release-assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: node scripts/reconcile-release-assets.mjs --mode prepare --version "$VERSION"
+
       - name: Publish GitHub release
+        if: steps.release-assets.outputs.publish_required == 'true'
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
@@ -362,22 +410,40 @@ jobs:
             artifacts/T4-Code-*.AppImage
             artifacts/T4-Code-*.dmg
             artifacts/T4-Code-*.zip
+            artifacts/latest-linux.yml
             artifacts/SHA256SUMS.txt
 
+      - name: Verify the exact remote release bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: node scripts/reconcile-release-assets.mjs --mode verify --version "$VERSION"
+
   dispatch-site:
-    name: Dispatch site deployment after release publication
-    needs: publish
+    name: Deploy and verify the production site after release publication
+    needs: [verify, publish]
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 60
     permissions:
       actions: write
       contents: read
     steps:
-      - name: Dispatch the production workflow from main with exact release source
+      - name: Check out verified release source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.13.1
+
+      - name: Dispatch and await the exact immutable production deployment
         env:
           GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
         run: >-
-          gh workflow run deploy-site.yml
-          --ref main
-          -f release_tag="$RELEASE_TAG"
+          node scripts/dispatch-site-deployment.mjs
+          --tag "$RELEASE_TAG"
+          --commit "$SOURCE_SHA"

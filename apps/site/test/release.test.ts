@@ -13,6 +13,7 @@ import {
   OMP_UPSTREAM_URL,
   primaryAsset,
   RELEASE_ASSETS,
+  RELEASE_MANIFEST_URL,
   RELEASE_TAG,
   RELEASE_VERSION,
   REPO_URL,
@@ -39,6 +40,7 @@ describe("release assets", () => {
     expect(REPO_URL).toBe("https://github.com/LycaonLLC/t4-code");
     expect(RELEASE_TAG).toBe("v0.1.18");
     expect(RELEASE_VERSION).toBe("0.1.18");
+    expect(RELEASE_MANIFEST_URL).toBe("https://t4code.net/releases/latest.json");
   });
 
   it("splits assets by platform with correct architectures", () => {

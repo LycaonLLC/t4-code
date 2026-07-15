@@ -2,6 +2,8 @@ import { ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from "electron";
 import {
   decodeDesktopEvent,
   decodeDesktopInvokeRequest,
+  decodeDesktopUpdateRendererReadyResult,
+  decodeDesktopUpdateState,
   type BootstrapResult,
   type CommandRequest,
   type CommandResult,
@@ -12,6 +14,8 @@ import {
   type DesktopEventChannel,
   type DesktopInvokeChannel,
   type DesktopInvokeRequest,
+  type DesktopUpdateRendererReadyResult,
+  type DesktopUpdateState,
   type DisconnectResult,
   type PairLinkEvent,
   type PairRequest,
@@ -46,6 +50,14 @@ export interface IpcRuntime {
   readonly acquireServiceManager?: () => Promise<ServiceManager | undefined>;
   readonly getServiceAvailabilityIssue?: () => ServiceAvailabilityIssue | undefined;
   readonly drainPairLinks?: () => readonly PairLinkEvent[];
+  readonly drainPendingUpdateOpen?: () => boolean;
+  readonly updateController?: {
+    readonly getState: () => DesktopUpdateState;
+    readonly checkForUpdate: (interactive?: boolean) => Promise<DesktopUpdateState>;
+    readonly downloadUpdate: () => Promise<DesktopUpdateState>;
+    readonly restartToUpdate: () => DesktopUpdateState;
+    readonly subscribe: (listener: (state: DesktopUpdateState) => void) => () => void;
+  };
 }
 export class RemotePairingUnavailableError extends Error {
   readonly code = "remote_pairing_unavailable" as const;
@@ -77,6 +89,7 @@ export class DesktopIpcRegistry {
   private readonly runtime: IpcRuntime;
   private readonly serviceQueue = { tail: Promise.resolve() };
   private serviceInspectionPromise: Promise<ServiceInspection> | undefined;
+  private updateUnsubscribe: (() => void) | undefined;
   private readonly ipc: IpcMainLike;
   constructor(runtime: IpcRuntime, ipc: IpcMainLike = ipcMain) {
     this.runtime = runtime;
@@ -171,14 +184,48 @@ export class DesktopIpcRegistry {
         return { completed: true };
       });
     }
+    this.ipc.handle("app:update:get-state", (event, payload: unknown): DesktopUpdateState => {
+      this.assertSender(event);
+      decodeRequest("app:update:get-state", payload);
+      return decodeDesktopUpdateState(this.updateController().getState());
+    });
+    this.ipc.handle("app:update:check", async (event, payload: unknown): Promise<DesktopUpdateState> => {
+      this.assertSender(event);
+      decodeRequest("app:update:check", payload);
+      return decodeDesktopUpdateState(await this.updateController().checkForUpdate(true));
+    });
+    this.ipc.handle("app:update:download", async (event, payload: unknown): Promise<DesktopUpdateState> => {
+      this.assertSender(event);
+      decodeRequest("app:update:download", payload);
+      return decodeDesktopUpdateState(await this.updateController().downloadUpdate());
+    });
+    this.ipc.handle("app:update:restart", (event, payload: unknown): DesktopUpdateState => {
+      this.assertSender(event);
+      decodeRequest("app:update:restart", payload);
+      return decodeDesktopUpdateState(this.updateController().restartToUpdate());
+    });
+    this.ipc.handle("app:update:renderer-ready", (event, payload: unknown): DesktopUpdateRendererReadyResult => {
+      this.assertSender(event);
+      decodeRequest("app:update:renderer-ready", payload);
+      return decodeDesktopUpdateRendererReadyResult({
+        openSettings: this.runtime.drainPendingUpdateOpen?.() ?? false,
+      });
+    });
+    this.updateUnsubscribe = this.runtime.updateController?.subscribe((state) => {
+      this.emit("app:update:state", state);
+    });
   }
   uninstall(): void {
+    this.updateUnsubscribe?.();
+    this.updateUnsubscribe = undefined;
     for (const channel of [
       "omp:bootstrap", "omp:connect", "omp:disconnect", "omp:command", "omp:confirm",
       "omp:terminal:input", "omp:terminal:resize", "omp:terminal:close", "omp:pair",
       "omp:pair-links:drain", "omp:targets:list", "omp:targets:add", "omp:targets:remove",
       "omp:service:inspect", "omp:service:install", "omp:service:start", "omp:service:stop",
       "omp:service:restart", "omp:service:uninstall",
+      "app:update:get-state", "app:update:check", "app:update:download", "app:update:restart",
+      "app:update:renderer-ready",
     ] as const) this.ipc.removeHandler(channel);
     this.installed = false;
   }
@@ -193,6 +240,9 @@ export class DesktopIpcRegistry {
   }
   emitPairLink(event: PairLinkEvent): void {
     this.emit("omp:pair-link", event);
+  }
+  emitOpenUpdateSettings(): void {
+    this.emit("app:update:open", { source: "menu" });
   }
 
   private assertSender(event: IpcMainInvokeEvent): void {
@@ -253,6 +303,12 @@ export class DesktopIpcRegistry {
     const result = this.serviceQueue.tail.then(operation, operation);
     this.serviceQueue.tail = result.then(() => undefined, () => undefined);
     return result;
+  }
+  private updateController(): NonNullable<IpcRuntime["updateController"]> {
+    if (this.runtime.updateController === undefined) {
+      throw new Error("Desktop updates are unavailable in this runtime");
+    }
+    return this.runtime.updateController;
   }
   private emit(channel: DesktopEventChannel, payload: unknown): void {
     const decoded = decodeDesktopEvent({ channel, payload });

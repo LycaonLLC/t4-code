@@ -33,6 +33,12 @@ DPKG_QUERY=${T4_MAINTAINER_DPKG_QUERY:-dpkg-query}
 DPKG=${T4_MAINTAINER_DPKG:-dpkg}
 GIT=${T4_MAINTAINER_GIT:-git}
 NODE=${T4_MAINTAINER_NODE:-node}
+if [[ -f "$SCRIPT_DIR/inspect-linux-update.mjs" ]]; then
+  DEFAULT_LINUX_UPDATE_INSPECTOR="$SCRIPT_DIR/inspect-linux-update.mjs"
+else
+  DEFAULT_LINUX_UPDATE_INSPECTOR="$SCRIPT_DIR/../../scripts/inspect-linux-update.mjs"
+fi
+LINUX_UPDATE_INSPECTOR=${T4_MAINTAINER_LINUX_UPDATE_INSPECTOR:-$DEFAULT_LINUX_UPDATE_INSPECTOR}
 REALPATH=${T4_MAINTAINER_REALPATH:-realpath}
 SYNC=${T4_MAINTAINER_SYNC:-sync}
 LOCAL_DEPLOY=${T4_MAINTAINER_LOCAL_DEPLOY:-"$SCRIPT_DIR/deploy-local.sh"}
@@ -755,10 +761,11 @@ release_assets_are_public() {
     "T4-Code-${version}-linux-x86_64.AppImage"
     "T4-Code-${version}-mac-arm64.dmg"
     "T4-Code-${version}-mac-arm64.zip"
+    "latest-linux.yml"
   )
   local name url manifest_url manifest_digest manifest_file actual_manifest_digest expected_digest asset_digest
   local manifest_entries release_asset_count
-  release_asset_count=$(printf '%s' "$release_json" | $JQ -er 'select(.assets | length == 6) | .assets | length') || return 1
+  release_asset_count=$(printf '%s' "$release_json" | $JQ -er 'select(.assets | length == 7) | .assets | length') || return 1
   [[ $release_asset_count == "${#expected[@]}" ]] || return 1
   manifest_url=$(printf '%s' "$release_json" | $JQ -er '
     .assets[] | select(.name == "SHA256SUMS.txt" and .state == "uploaded" and .size > 0)
@@ -812,7 +819,258 @@ release_assets_are_public() {
   done
   manifest_entries=$(awk '$1 ~ /^[0-9a-f]{64}$/ && NF == 2 {count += 1} END {print count + 0}' "$manifest_file")
   rm -f -- "$manifest_file"
-  [[ $manifest_entries == 5 ]]
+  [[ $manifest_entries == 6 ]]
+}
+
+canonical_linux_update_assets() {
+  local release_json=$1 version=$2
+  printf '%s' "$release_json" | $JQ -ceS --arg version "$version" '
+    [
+      {name: "T4-Code-\($version)-linux-amd64.deb", maximumSize: 536870912},
+      {name: "T4-Code-\($version)-linux-x86_64.AppImage", maximumSize: 536870912},
+      {name: "latest-linux.yml", maximumSize: 65536}
+    ] as $expected |
+    . as $release |
+    [$expected[] as $wanted |
+      ([$release.assets[] | select(.name == $wanted.name)]) as $matches |
+      select(($matches | length) == 1) |
+      ($matches[0]) as $asset |
+      select(
+        $asset.state == "uploaded" and
+        (($asset.size | type) == "number" and
+          $asset.size > 0 and
+          ($asset.size | floor) == $asset.size and
+          $asset.size <= $wanted.maximumSize) and
+        ($asset.digest | type == "string" and test("^sha256:[0-9a-f]{64}$")) and
+        $asset.browser_download_url ==
+          "https://github.com/LycaonLLC/t4-code/releases/download/v\($version)/\($wanted.name)"
+      ) |
+      {
+        name: $asset.name,
+        size: $asset.size,
+        digest: $asset.digest,
+        browserDownloadUrl: $asset.browser_download_url
+      }
+    ] as $assets |
+    select(($assets | length) == 3) |
+    {tagName: "v\($version)", assets: ($assets | sort_by(.name))}
+  '
+}
+
+download_exact_release_asset() {
+  local url=$1 destination=$2 expected_size=$3 maximum_seconds=$4 hard_limit_bytes file_limit_kib actual_size
+  [[ $expected_size =~ ^[1-9][0-9]*$ && $maximum_seconds =~ ^[1-9][0-9]*$ ]] || return 1
+  hard_limit_bytes=$((expected_size + 1048576))
+  file_limit_kib=$(((hard_limit_bytes + 1023) / 1024))
+  (
+    ulimit -c 0
+    ulimit -f "$file_limit_kib"
+    "$CURL" -fsSL --retry 3 --retry-all-errors --proto '=https' --proto-redir '=https' \
+      --max-redirs 5 --connect-timeout 15 --max-time "$maximum_seconds" \
+      --max-filesize "$expected_size" "$url" -o "$destination"
+  ) || return 1
+  [[ -f $destination && ! -L $destination ]] || return 1
+  actual_size=$(wc -c <"$destination") || return 1
+  [[ $actual_size == "$expected_size" ]]
+}
+
+verify_live_linux_update() {
+  local result_file=$1 release_json=$2 version=$3 allow_stored_proof=${4:-false}
+  local canonical fingerprint stored download_dir asset name url size expected_digest actual_digest
+  local metadata_path deb_path appimage_path temporary
+  canonical=$(canonical_linux_update_assets "$release_json" "$version") || return 1
+  fingerprint=$(printf '%s' "$canonical" | $SHA256SUM | awk '{print "sha256:" $1}') || return 1
+  [[ $fingerprint =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  if [[ $allow_stored_proof == true ]] \
+    && stored=$($JQ -ce '.publicProof.t4LinuxUpdate' "$result_file" 2>/dev/null); then
+    printf '%s' "$stored" | $JQ -e \
+      --arg fingerprint "$fingerprint" \
+      --argjson canonical "$canonical" '
+        .fingerprint == $fingerprint and .canonical == $canonical
+      ' >/dev/null || return 1
+    return 0
+  fi
+
+  [[ -s $LINUX_UPDATE_INSPECTOR && -f $LINUX_UPDATE_INSPECTOR && ! -L $LINUX_UPDATE_INSPECTOR ]] \
+    || return 1
+  download_dir=$(mktemp -d "$STATE_DIR/t4-linux-update.XXXXXX") || return 1
+  while IFS= read -r asset; do
+    name=$(printf '%s' "$asset" | $JQ -er '.name') || {
+      rm -rf -- "$download_dir"
+      return 1
+    }
+    url=$(printf '%s' "$asset" | $JQ -er '.browserDownloadUrl') || {
+      rm -rf -- "$download_dir"
+      return 1
+    }
+    size=$(printf '%s' "$asset" | $JQ -er '.size | select(type == "number" and . > 0 and floor == .)') || {
+      rm -rf -- "$download_dir"
+      return 1
+    }
+    expected_digest=$(printf '%s' "$asset" | $JQ -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))') || {
+      rm -rf -- "$download_dir"
+      return 1
+    }
+    if [[ $name == latest-linux.yml ]]; then
+      download_exact_release_asset "$url" "$download_dir/$name" "$size" 45 || {
+        rm -rf -- "$download_dir"
+        return 1
+      }
+    else
+      download_exact_release_asset "$url" "$download_dir/$name" "$size" 600 || {
+        rm -rf -- "$download_dir"
+        return 1
+      }
+    fi
+    actual_digest=$($SHA256SUM "$download_dir/$name" | awk '{print "sha256:" $1}')
+    [[ $actual_digest == "$expected_digest" ]] || {
+      rm -rf -- "$download_dir"
+      return 1
+    }
+  done < <(printf '%s' "$canonical" | $JQ -c '.assets[]')
+
+  metadata_path="$download_dir/latest-linux.yml"
+  deb_path="$download_dir/T4-Code-${version}-linux-amd64.deb"
+  appimage_path="$download_dir/T4-Code-${version}-linux-x86_64.AppImage"
+  "$NODE" "$LINUX_UPDATE_INSPECTOR" \
+    --version "$version" \
+    --metadata "$metadata_path" \
+    --artifact "$deb_path" \
+    --artifact "$appimage_path" >/dev/null || {
+    rm -rf -- "$download_dir"
+    return 1
+  }
+  rm -rf -- "$download_dir"
+
+  temporary=$(mktemp "$(dirname -- "$result_file")/.result-with-linux-update-proof.XXXXXX") || return 1
+  $JQ \
+    --arg verified_at "$(timestamp)" \
+    --arg fingerprint "$fingerprint" \
+    --argjson canonical "$canonical" '
+      .publicProof.t4LinuxUpdate = {
+        verifiedAt: $verified_at,
+        fingerprint: $fingerprint,
+        canonical: $canonical
+      }
+    ' "$result_file" >"$temporary" || {
+    rm -f -- "$temporary"
+    return 1
+  }
+  durable_replace "$temporary" "$result_file"
+}
+
+site_release_manifest_matches() {
+  local release_json=$1 version=$2 manifest_status=0
+  local cache_bust checksums_url checksums_digest checksums_file actual_checksums_digest
+  local manifest_file release_file manifest_size checksums_size
+  cache_bust=$(date +%s)
+  checksums_url=$(printf '%s' "$release_json" | $JQ -er '
+    [.assets[] | select(
+      .name == "SHA256SUMS.txt" and .state == "uploaded" and .size > 0 and
+      (.browser_download_url | type == "string") and
+      (.digest | type == "string" and test("^sha256:[0-9a-f]{64}$"))
+    )] | select(length == 1) | .[0].browser_download_url
+  ') || return 1
+  checksums_digest=$(printf '%s' "$release_json" | $JQ -er '
+    [.assets[] | select(.name == "SHA256SUMS.txt")]
+    | select(length == 1) | .[0].digest
+    | select(test("^sha256:[0-9a-f]{64}$"))
+  ') || return 1
+  checksums_file=$(mktemp "$STATE_DIR/site-release-checksums.XXXXXX")
+  manifest_file=$(mktemp "$STATE_DIR/site-release-manifest.XXXXXX")
+  release_file=$(mktemp "$STATE_DIR/site-release-github.XXXXXX")
+  printf '%s' "$release_json" >"$release_file"
+  $CURL -fsSL --retry 3 --retry-all-errors --max-time 45 "$checksums_url" \
+    -o "$checksums_file" || {
+    rm -f -- "$checksums_file" "$manifest_file" "$release_file"
+    return 1
+  }
+  checksums_size=$(wc -c <"$checksums_file")
+  [[ $checksums_size -gt 0 && $checksums_size -le 65536 ]] || {
+    rm -f -- "$checksums_file" "$manifest_file" "$release_file"
+    return 1
+  }
+  actual_checksums_digest=$($SHA256SUM "$checksums_file" | awk '{print "sha256:" $1}')
+  [[ $actual_checksums_digest == "$checksums_digest" ]] || {
+    rm -f -- "$checksums_file" "$manifest_file" "$release_file"
+    return 1
+  }
+  $CURL -fsSL --retry 3 --retry-all-errors --max-time 45 \
+    "$T4_SITE/releases/latest.json?maintainer=$cache_bust" -o "$manifest_file" || {
+    rm -f -- "$checksums_file" "$manifest_file" "$release_file"
+    return 1
+  }
+  manifest_size=$(wc -c <"$manifest_file")
+  [[ $manifest_size -gt 0 && $manifest_size -le 131072 ]] || {
+    rm -f -- "$checksums_file" "$manifest_file" "$release_file"
+    return 1
+  }
+  $JQ -e \
+    --arg version "$version" \
+    --slurpfile github "$release_file" \
+    --rawfile sums "$checksums_file" '
+      def expected_packages($version): [
+        {platform: "android", kind: "apk", arch: "universal", name: "T4-Code-\($version)-android.apk"},
+        {platform: "linux", kind: "deb", arch: "x86_64", name: "T4-Code-\($version)-linux-amd64.deb"},
+        {platform: "linux", kind: "appimage", arch: "x86_64", name: "T4-Code-\($version)-linux-x86_64.AppImage"},
+        {platform: "mac", kind: "dmg", arch: "arm64", name: "T4-Code-\($version)-mac-arm64.dmg"},
+        {platform: "mac", kind: "zip", arch: "arm64", name: "T4-Code-\($version)-mac-arm64.zip"}
+      ];
+      def checksum_entries:
+        ($sums | if endswith("\n") then .[0:-1] else . end) | split("\n") | map(
+          capture("^(?<digest>[0-9a-f]{64})  (?<name>[A-Za-z0-9][A-Za-z0-9._-]*)$")
+        );
+      ($github[0]) as $release |
+      (expected_packages($version)) as $expected |
+      (checksum_entries) as $entries |
+      (reduce $entries[] as $entry ({};
+        if has($entry.name) then error("duplicate checksum entry")
+        else .[$entry.name] = $entry.digest end
+      )) as $checksums |
+      . as $manifest |
+      ($expected | map(.name)) as $package_names |
+      ($package_names + ["latest-linux.yml"]) as $checksummed_names |
+      (. | keys | sort) ==
+        (["assets", "channel", "publishedAt", "releaseUrl", "schemaVersion", "tag", "version"] | sort) and
+      .schemaVersion == 1 and .channel == "stable" and
+      .version == $version and .tag == "v\($version)" and
+      .publishedAt == $release.published_at and
+      .releaseUrl == $release.html_url and
+      ($release.published_at | type == "string") and
+      ($release.published_at | fromdateiso8601 | type == "number") and
+      (.assets | type == "array" and length == 5) and
+      (($checksums | keys | sort) == ($checksummed_names | sort)) and
+      ([range(0; 5) as $index |
+        $expected[$index] as $wanted |
+        $manifest.assets[$index] as $actual |
+        ([$release.assets[] | select(.name == $wanted.name)]) as $matches |
+        (($actual | keys | sort) ==
+          (["arch", "kind", "name", "platform", "sha256", "size", "url"] | sort)) and
+        $actual.platform == $wanted.platform and
+        $actual.kind == $wanted.kind and
+        $actual.arch == $wanted.arch and
+        $actual.name == $wanted.name and
+        ($actual.size | type == "number" and . > 0 and floor == .) and
+        ($actual.sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+        ($matches | length) == 1 and
+        (($matches[0]) as $published |
+          $published.state == "uploaded" and
+          $published.size == $actual.size and
+          $published.browser_download_url == $actual.url and
+          $published.browser_download_url ==
+            "https://github.com/LycaonLLC/t4-code/releases/download/v\($version)/\($wanted.name)" and
+          $published.digest == "sha256:\($actual.sha256)" and
+          $checksums[$wanted.name] == $actual.sha256)
+      ] | all) and
+      ([$checksummed_names[] as $name |
+        ([$release.assets[] | select(.name == $name)]) as $matches |
+        ($matches | length) == 1 and
+        (($matches[0]) as $published |
+          $published.digest == "sha256:\($checksums[$name])")
+      ] | all)
+  ' "$manifest_file" >/dev/null || manifest_status=$?
+  rm -f -- "$checksums_file" "$manifest_file" "$release_file"
+  return "$manifest_status"
 }
 
 atomic_publication_receipt_is_valid() {
@@ -1030,7 +1288,7 @@ publication_workflows_succeeded() {
   printf '%s' "$runs" | $JQ -e --arg tag "$t4_tag" --arg commit "$commit" '
     any(.workflow_runs[]; .name == "CI" and .path == ".github/workflows/ci.yml" and .head_sha == $commit and .event == "push" and .status == "completed" and .conclusion == "success") and
     any(.workflow_runs[]; .name == "Release app builds" and .path == ".github/workflows/release.yml" and .head_sha == $commit and .event == "push" and .head_branch == $tag and .status == "completed" and .conclusion == "success") and
-    any(.workflow_runs[]; .name == "Deploy project site" and .path == ".github/workflows/deploy-site.yml" and .head_sha == $commit and .event == "workflow_dispatch" and .head_branch == "main" and .status == "completed" and .conclusion == "success")
+    any(.workflow_runs[]; .name == "Deploy project site" and .path == ".github/workflows/deploy-site.yml" and .head_sha == $commit and .event == "workflow_dispatch" and .status == "completed" and .conclusion == "success")
   ' >/dev/null
 }
 
@@ -1042,12 +1300,12 @@ publication_workflows_active_or_recent() {
     def relevant:
       (.name == "CI" and .path == ".github/workflows/ci.yml" and .head_sha == $commit and .event == "push") or
       (.name == "Release app builds" and .path == ".github/workflows/release.yml" and .head_sha == $commit and .event == "push" and .head_branch == $tag) or
-      (.name == "Deploy project site" and .path == ".github/workflows/deploy-site.yml" and .head_sha == $commit and .event == "workflow_dispatch" and .head_branch == "main");
+      (.name == "Deploy project site" and .path == ".github/workflows/deploy-site.yml" and .head_sha == $commit and .event == "workflow_dispatch");
     any(.workflow_runs[]; relevant and .status != "completed") or
     (
       any(.workflow_runs[]; .name == "CI" and .path == ".github/workflows/ci.yml" and .head_sha == $commit and .event == "push" and .conclusion == "success") and
       any(.workflow_runs[]; .name == "Release app builds" and .path == ".github/workflows/release.yml" and .head_sha == $commit and .event == "push" and .head_branch == $tag and .conclusion == "success") and
-      any(.workflow_runs[]; .name == "Deploy project site" and .path == ".github/workflows/deploy-site.yml" and .head_sha == $commit and .event == "workflow_dispatch" and .head_branch == "main" and .conclusion == "success") and
+      any(.workflow_runs[]; .name == "Deploy project site" and .path == ".github/workflows/deploy-site.yml" and .head_sha == $commit and .event == "workflow_dispatch" and .conclusion == "success") and
       any(.workflow_runs[]; relevant and .conclusion == "success" and ((.updated_at | fromdateiso8601) >= $cutoff))
     )
   ' >/dev/null
@@ -1197,7 +1455,10 @@ verify_result_once() {
     .tag_name == $tag and .html_url == $url and .draft == false and .prerelease == false
   ' >/dev/null || return 1
   release_assets_are_public "$release_json" "$t4_version" || return 1
+  site_release_manifest_matches "$release_json" "$t4_version" || return 1
   site_has_release "$t4_tag" "$integration_tag" "$t4_version" || return 1
+  verify_live_linux_update "$result_file" "$release_json" "$t4_version" \
+    "$allow_stored_proof" || return 1
 }
 
 verify_result() {
@@ -1205,11 +1466,11 @@ verify_result() {
   [[ -s $result_file ]] || fail "the maintainer result file is missing"
   retry_stored_proof=$allow_stored_proof
   if [[ $allow_stored_proof != true ]] \
-    && $JQ -e '.publicProof? | type == "object" and has("ompRelease")' \
+    && $JQ -e '.publicProof? | type == "object" and (has("ompRelease") or has("t4LinuxUpdate"))' \
       "$result_file" >/dev/null 2>&1; then
     temporary=$(mktemp "$(dirname -- "$result_file")/.result-without-untrusted-proof.XXXXXX")
     $JQ '
-      del(.publicProof.ompRelease)
+      del(.publicProof.ompRelease, .publicProof.t4LinuxUpdate)
       | if .publicProof == {} then del(.publicProof) else . end
     ' "$result_file" >"$temporary"
     durable_replace "$temporary" "$result_file"

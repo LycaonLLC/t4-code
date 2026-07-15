@@ -32,7 +32,7 @@ describe("schema mapping", () => {
     expect(VM.sections.map((section) => section.id)).toEqual(
       SETTINGS_SECTIONS_FIXTURE.map((section) => section.id),
     );
-    expect(VM.sections).toHaveLength(17);
+    expect(VM.sections).toHaveLength(SETTINGS_SECTIONS_FIXTURE.length);
   });
 
   it("maps each declared control kind to its editor model", () => {

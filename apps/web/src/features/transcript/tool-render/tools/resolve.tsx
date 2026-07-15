@@ -4,8 +4,12 @@ import { Badge, Badges, Kv, KvGrid, Note, ResultText } from "../parts.tsx";
 import type { ToolRenderer, ToolRenderProps } from "../types.ts";
 import { detailsRecord, isRecord, normalizeWs, str, truncate } from "../util.ts";
 
-function Summary({ args, result }: ToolRenderProps): ReactNode {
-  const action = str(args.action);
+function actionFor(name: string, args: Record<string, unknown>): string | null {
+  return str(args.action) ?? (name === "resolve" ? "apply" : name === "reject" ? "discard" : null);
+}
+
+function Summary({ name, args, result }: ToolRenderProps): ReactNode {
+  const action = actionFor(name, args);
   const reason = str(args.reason);
   const tone = result?.isError ? "err" : action === "apply" ? "ok" : "warn";
   return (
@@ -16,8 +20,8 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
   );
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
-  const action = str(args.action);
+function Body({ name, args, result }: ToolRenderProps): ReactNode {
+  const action = actionFor(name, args);
   const reason = str(args.reason);
   const tone = result?.isError ? "err" : action === "apply" ? "ok" : "warn";
   const details = detailsRecord(result);
