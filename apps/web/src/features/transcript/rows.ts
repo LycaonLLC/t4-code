@@ -19,10 +19,7 @@ import {
   type TranscriptNotice,
   type TranscriptProjection,
 } from "./projection.ts";
-import {
-  transcriptImagesFromEntry,
-  type TranscriptImageReference,
-} from "./image-metadata.ts";
+import { transcriptImagesFromEntry, type TranscriptImageReference } from "./image-metadata.ts";
 
 /** Pure elapsed formatter: "42s" under a minute, then "3m 7s". */
 export function formatElapsed(fromIso: string, nowMs: number): string {
@@ -246,10 +243,18 @@ export function deriveTranscriptRows(projection: TranscriptProjection): Transcri
     });
   }
 
+  // Recovery notices describe current stream health, not durable history.
+  // Old cached projections may predate reducer cleanup, so render at most the
+  // newest gap and never render one after the projection is active again.
+  const visibleGap =
+    projection.phase === "paused" || projection.phase === "resyncing"
+      ? projection.notices.findLast((notice) => notice.kind === "gap")
+      : undefined;
   for (const notice of projection.notices) {
     // Errors surface in the attention stack above the composer, not inline;
     // everything else reads as an inline stream notice.
     if (notice.kind === "error") continue;
+    if (notice.kind === "gap" && notice !== visibleGap) continue;
     rows.push({ id: `notice-${notice.id}`, kind: "notice", notice });
   }
 

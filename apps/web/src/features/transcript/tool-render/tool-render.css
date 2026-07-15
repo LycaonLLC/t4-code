@@ -1,0 +1,518 @@
+/* OMP Collab tool-renderer atoms inside T4's existing transcript chrome.
+ * All color decisions bridge to T4 semantic tokens; the host continues to
+ * own row status, disclosure, spacing, and image-reference presentation. */
+
+.tv-render {
+  --tv-fg: var(--foreground);
+  --tv-muted: var(--muted-foreground);
+  --tv-faint: var(--muted-foreground);
+  --tv-accent: var(--accent-text);
+  --tv-ok: var(--success-foreground);
+  --tv-err: var(--destructive-foreground);
+  --tv-warn: var(--warning-foreground);
+  --tv-border: var(--border);
+  --tv-inset: var(--markdown-codeblock-background);
+  --tv-raised: var(--secondary);
+  --tv-ring: var(--ring);
+  --tv-mono: var(--font-mono);
+
+  min-width: 0;
+  color: var(--tv-fg);
+  font-family: var(--tv-mono);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.tv-render.tv-summary {
+  overflow: hidden;
+  color: var(--tv-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tv-render.tv-summary > * {
+  white-space: nowrap;
+}
+
+.tv-render-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
+  gap: 0.5rem;
+  padding-right: 0.375rem;
+}
+
+.tv-render .tv-intent {
+  color: var(--tv-faint);
+  font-size: 0.6875rem;
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+
+.tv-render .tv-badge {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0 0.3125rem;
+  border-radius: var(--radius-sm);
+  background: var(--tv-raised);
+  color: var(--tv-muted);
+  font-size: 0.625rem;
+  line-height: 1rem;
+  overflow-wrap: anywhere;
+  vertical-align: 0.0625rem;
+}
+
+.tv-render .tv-badge--accent {
+  background: var(--accent-soft);
+  color: var(--tv-accent);
+}
+
+.tv-render .tv-badge--ok {
+  background: color-mix(in oklch, var(--tv-ok) 14%, transparent);
+  color: var(--tv-ok);
+}
+
+.tv-render .tv-badge--err {
+  background: color-mix(in oklch, var(--tv-err) 14%, transparent);
+  color: var(--tv-err);
+}
+
+.tv-render .tv-badge--warn {
+  background: color-mix(in oklch, var(--tv-warn) 14%, transparent);
+  color: var(--tv-warn);
+}
+
+.tv-render .tv-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.tv-render .tv-path {
+  color: var(--tv-fg);
+  overflow-wrap: anywhere;
+}
+
+.tv-render .tv-lines,
+.tv-render .tv-faint {
+  color: var(--tv-faint);
+  overflow-wrap: anywhere;
+}
+
+.tv-render .tv-pattern {
+  color: var(--tv-accent);
+  overflow-wrap: anywhere;
+}
+
+.tv-render .tv-muted {
+  color: var(--tv-muted);
+  overflow-wrap: anywhere;
+}
+
+.tv-render .tv-err-text {
+  color: var(--tv-err);
+  overflow-wrap: anywhere;
+}
+
+.tv-render .tv-ok-text {
+  color: var(--tv-ok);
+  overflow-wrap: anywhere;
+}
+
+.tv-render .tv-warn-text {
+  color: var(--tv-warn);
+  overflow-wrap: anywhere;
+}
+
+.tv-render .tv-trunc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tv-render .tv-agent-link {
+  border: 0;
+  font: inherit;
+  font-size: 0.625rem;
+  cursor: pointer;
+}
+
+.tv-render .tv-agent-link:hover {
+  background: color-mix(in oklch, var(--tv-accent) 22%, transparent);
+  text-decoration: underline;
+}
+
+.tv-render .tv-agent-link:focus-visible,
+.tv-render .tv-expand:focus-visible,
+.tv-render .tv-image-button:focus-visible,
+.tv-render .tv-link:focus-visible {
+  border-radius: var(--radius-sm);
+  outline: 2px solid var(--tv-ring);
+  outline-offset: 1px;
+}
+
+.tv-render .tv-agent-link-arrow {
+  opacity: 0.7;
+}
+
+.tv-render .tv-kv {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.125rem 0.625rem;
+  font-size: 0.71875rem;
+}
+
+.tv-render .tv-kv-key {
+  color: var(--tv-faint);
+}
+
+.tv-render .tv-kv-val {
+  min-width: 0;
+  color: var(--tv-fg);
+  overflow-wrap: anywhere;
+}
+
+.tv-render .tv-out {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tv-render .tv-pre {
+  max-width: 100%;
+  margin: 0;
+  padding: 0.4375rem 0.5625rem;
+  overflow-x: auto;
+  border: 1px solid var(--tv-border);
+  border-radius: var(--radius-md);
+  background: var(--tv-inset);
+  font-family: var(--tv-mono);
+  font-size: 0.71875rem;
+  line-height: 1.5;
+  tab-size: 3;
+}
+
+.tv-render .tv-pre--wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tv-render .tv-pre--bare {
+  padding: 0 0.0625rem;
+  border: 0;
+  background: none;
+}
+
+.tv-render .tv-pre--error {
+  color: var(--tv-err);
+}
+
+.tv-render .tv-out-title,
+.tv-render .tv-cell-title {
+  padding: 0 0.0625rem 0.1875rem;
+  color: var(--tv-faint);
+  font-size: 0.625rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.tv-render .tv-expand {
+  align-self: flex-start;
+  min-height: 2.75rem;
+  margin-top: 0.1875rem;
+  padding: 0 0.0625rem;
+  border: 0;
+  background: none;
+  color: var(--tv-faint);
+  font-family: var(--tv-mono);
+  font-size: 0.65625rem;
+  cursor: pointer;
+}
+
+.tv-render .tv-expand:hover {
+  color: var(--tv-fg);
+  text-decoration: underline;
+}
+
+.tv-render .tv-cmd {
+  display: flex;
+  gap: 0.4375rem;
+  font-size: 0.71875rem;
+}
+
+.tv-render .tv-cmd-prompt {
+  flex: none;
+  color: var(--tv-accent);
+  user-select: none;
+}
+
+.tv-render .tv-cmd-text {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tv-render .tv-cmd-env {
+  color: var(--tv-faint);
+}
+
+.tv-render .tv-diff {
+  max-width: 100%;
+  margin: 0;
+  padding: 0.3125rem 0;
+  overflow-x: auto;
+  border: 1px solid var(--tv-border);
+  border-radius: var(--radius-md);
+  background: var(--tv-inset);
+  font-size: 0.71875rem;
+  line-height: 1.5;
+}
+
+.tv-render .tv-diff-row {
+  padding: 0 0.5625rem;
+  white-space: pre;
+}
+
+.tv-render .tv-diff-row--add {
+  background: var(--diff-added-background);
+  color: var(--tv-fg);
+}
+
+.tv-render .tv-diff-row--del {
+  background: var(--diff-removed-background);
+  color: var(--tv-fg);
+}
+
+.tv-render .tv-diff-row--hunk,
+.tv-render .tv-diff-row--gap {
+  color: var(--tv-faint);
+}
+
+.tv-render .tv-diff-row--gap {
+  user-select: none;
+}
+
+.tv-render .tv-cells {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.tv-render .tv-cell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tv-render .tv-list,
+.tv-render .tv-todo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1875rem;
+  font-size: 0.71875rem;
+}
+
+.tv-render .tv-row,
+.tv-render .tv-task {
+  display: flex;
+  min-width: 0;
+  gap: 0.4375rem;
+}
+
+.tv-render .tv-row-key {
+  flex: none;
+  color: var(--tv-faint);
+}
+
+.tv-render .tv-row-val {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tv-render .tv-todo-phase {
+  margin-top: 0.25rem;
+  color: var(--tv-muted);
+  font-size: 0.65625rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
+  text-transform: uppercase;
+}
+
+.tv-render .tv-todo-phase:first-child {
+  margin-top: 0;
+}
+
+.tv-render .tv-task {
+  color: var(--tv-fg);
+}
+
+.tv-render .tv-task-content {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tv-render .tv-task-icon {
+  flex: none;
+  width: 0.75rem;
+  color: var(--tv-faint);
+  text-align: center;
+}
+
+.tv-render .tv-task--completed {
+  color: var(--tv-faint);
+}
+
+.tv-render .tv-task--completed .tv-task-icon {
+  color: var(--tv-ok);
+}
+
+.tv-render .tv-task--in_progress .tv-task-icon {
+  color: var(--tv-accent);
+}
+
+.tv-render .tv-task--abandoned {
+  color: var(--tv-faint);
+  text-decoration: line-through;
+}
+
+.tv-render .tv-note {
+  padding: 0.375rem 0.5625rem;
+  border-radius: var(--radius-md);
+  background: var(--tv-raised);
+  color: var(--tv-muted);
+  font-size: 0.71875rem;
+  overflow-wrap: anywhere;
+}
+
+.tv-render .tv-note--err {
+  background: color-mix(in oklch, var(--tv-err) 10%, transparent);
+  color: var(--tv-err);
+}
+
+.tv-render .tv-note--warn {
+  background: color-mix(in oklch, var(--tv-warn) 10%, transparent);
+  color: var(--tv-warn);
+}
+
+.tv-render .tv-note--ok {
+  background: color-mix(in oklch, var(--tv-ok) 10%, transparent);
+  color: var(--tv-ok);
+}
+
+.tv-render .tv-imgs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+.tv-render .tv-image-button {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: zoom-in;
+}
+
+.tv-render .tv-img {
+  max-width: 100%;
+  max-height: 11.25rem;
+  border: 1px solid var(--tv-border);
+  border-radius: var(--radius-md);
+  background: var(--tv-inset);
+}
+
+.tv-render .tv-link {
+  max-width: 100%;
+  color: var(--markdown-link);
+  text-decoration: underline;
+  text-decoration-thickness: from-font;
+  text-underline-offset: 0.125em;
+  overflow-wrap: anywhere;
+}
+
+.tv-render .tv-link:hover {
+  text-decoration-thickness: 0.125em;
+}
+
+.tv-render .tv-prose {
+  color: var(--tv-fg);
+  font-size: 0.71875rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tv-render .tv-pre .hljs-comment,
+.tv-render .tv-pre .hljs-quote {
+  color: var(--tv-faint);
+  font-style: italic;
+}
+
+.tv-render .tv-pre .hljs-keyword,
+.tv-render .tv-pre .hljs-selector-tag,
+.tv-render .tv-pre .hljs-section,
+.tv-render .tv-pre .hljs-name,
+.tv-render .tv-pre .hljs-tag,
+.tv-render .tv-pre .hljs-title,
+.tv-render .tv-pre .hljs-attr,
+.tv-render .tv-pre .hljs-attribute,
+.tv-render .tv-pre .hljs-selector-id,
+.tv-render .tv-pre .hljs-selector-class,
+.tv-render .tv-pre .hljs-type,
+.tv-render .tv-pre .hljs-built_in {
+  color: var(--tv-accent);
+}
+
+.tv-render .tv-pre .hljs-string,
+.tv-render .tv-pre .hljs-regexp,
+.tv-render .tv-pre .hljs-addition {
+  color: var(--tv-ok);
+}
+
+.tv-render .tv-pre .hljs-number,
+.tv-render .tv-pre .hljs-literal,
+.tv-render .tv-pre .hljs-symbol,
+.tv-render .tv-pre .hljs-bullet,
+.tv-render .tv-pre .hljs-link,
+.tv-render .tv-pre .hljs-meta {
+  color: var(--tv-warn);
+}
+
+.tv-render .tv-pre .hljs-deletion {
+  color: var(--tv-err);
+}
+
+.tv-render .tv-pre .hljs-emphasis {
+  font-style: italic;
+}
+
+.tv-render .tv-pre .hljs-strong {
+  font-weight: 600;
+}
+
+@media (min-width: 40rem) {
+  .tv-render .tv-expand {
+    min-height: 1.5rem;
+  }
+}
+
+@media (max-width: 39.999rem) {
+  .tv-render .tv-agent-link,
+  .tv-render .tv-image-button,
+  .tv-render .tv-link {
+    display: inline-flex;
+    min-height: 2.75rem;
+    align-items: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tv-render * {
+    scroll-behavior: auto;
+  }
+}

@@ -6,15 +6,15 @@ export const DOCS_URL = `${SITE_URL}/docs`;
 export const REPO_URL = "https://github.com/LycaonLLC/t4-code";
 export const OMP_URL = "https://github.com/can1357/oh-my-pi";
 export const OMP_RUNTIME_VERSION = "16.5.2";
-export const OMP_RUNTIME_COMMIT = "d7c9ac81a3764085d050d0b7148ac7eee976ddd3";
-export const OMP_RUNTIME_TAG = "t4code-16.5.2-appserver-1";
+export const OMP_RUNTIME_COMMIT = "f9322817981e16bf3f1e3d77684f4269f026aa64";
+export const OMP_RUNTIME_TAG = "t4code-16.5.2-appserver-2";
 export const OMP_RUNTIME_URL = `https://github.com/lyc-aon/oh-my-pi/tree/${OMP_RUNTIME_TAG}`;
 export const OMP_UPSTREAM_TAG = "v16.5.2";
 export const OMP_UPSTREAM_COMMIT = "7d02778c60f4b5db60f84bedbca79d6e64cb91f5";
 export const OMP_UPSTREAM_URL = `${OMP_URL}/tree/${OMP_UPSTREAM_TAG}`;
 export const APP_WIRE_VERSION = "0.5.5";
-export const RELEASE_TAG = "v0.1.14";
-export const RELEASE_VERSION = "0.1.14";
+export const RELEASE_TAG = "v0.1.15";
+export const RELEASE_VERSION = "0.1.15";
 export const RELEASES_URL = `${REPO_URL}/releases/tag/${RELEASE_TAG}`;
 
 export type Platform = "android" | "linux" | "mac";
@@ -48,11 +48,11 @@ function asset(
 }
 
 export const RELEASE_ASSETS: readonly ReleaseAsset[] = [
-  asset("android", "apk", "universal", "T4-Code-0.1.14-android.apk", "Android APK"),
-  asset("linux", "deb", "x86_64", "T4-Code-0.1.14-linux-amd64.deb", "Linux .deb"),
-  asset("linux", "appimage", "x86_64", "T4-Code-0.1.14-linux-x86_64.AppImage", "Linux AppImage"),
-  asset("mac", "dmg", "arm64", "T4-Code-0.1.14-mac-arm64.dmg", "macOS .dmg"),
-  asset("mac", "zip", "arm64", "T4-Code-0.1.14-mac-arm64.zip", "macOS .zip"),
+  asset("android", "apk", "universal", "T4-Code-0.1.15-android.apk", "Android APK"),
+  asset("linux", "deb", "x86_64", "T4-Code-0.1.15-linux-amd64.deb", "Linux .deb"),
+  asset("linux", "appimage", "x86_64", "T4-Code-0.1.15-linux-x86_64.AppImage", "Linux AppImage"),
+  asset("mac", "dmg", "arm64", "T4-Code-0.1.15-mac-arm64.dmg", "macOS .dmg"),
+  asset("mac", "zip", "arm64", "T4-Code-0.1.15-mac-arm64.zip", "macOS .zip"),
 ];
 
 export function assetsFor(platform: Platform): readonly ReleaseAsset[] {

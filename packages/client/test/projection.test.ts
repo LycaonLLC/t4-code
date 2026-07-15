@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { hostId, revision, sessionId, type SessionRef } from "@t4-code/protocol";
+import { hostId, revision, sessionId, type DurableEntry, type SessionRef } from "@t4-code/protocol";
 import { MAX_INDEXED_SESSION_REFS } from "../src/projection.ts";
 import {
   MAX_PROJECTION_CACHE_BYTES,
@@ -46,6 +46,33 @@ function delta(host: string, session: string, cursorSeq: number, upsert?: Sessio
     revision: revision(`delta-${cursorSeq}`),
     ...(upsert === undefined ? {} : { upsert }),
     ...(remove === undefined ? {} : { remove: sessionId(remove) }),
+  };
+}
+function childEntry(id: string, text: string): DurableEntry {
+  return {
+    id: id as never,
+    parentId: null,
+    hostId: HOST,
+    sessionId: sessionId("session-a"),
+    kind: "message",
+    timestamp: `2026-07-15T00:00:0${id.length}.000Z`,
+    data: { role: "assistant", text },
+  };
+}
+function childTranscript(
+  seq: number,
+  entries: readonly DurableEntry[],
+  epoch = "child-e1",
+): Extract<ProjectionFrame, { type: "agent.transcript" }> {
+  return {
+    v: V,
+    type: "agent.transcript",
+    hostId: HOST,
+    sessionId: sessionId("session-a"),
+    agentId: "agent-a" as never,
+    cursor: { epoch, seq },
+    entries: [...entries],
+    revision: revision(`child-r${seq}`),
   };
 }
 
@@ -553,6 +580,69 @@ describe("client projections", () => {
     expect(session.confirmations.size).toBe(0);
     expect(session.audit).toHaveLength(1);
     expect(session.results.get("request-a")?.result).toEqual({ answer: 42 });
+  });
+
+  it("projects each subagent transcript on its own bounded replay cursor", () => {
+    let state = applyPublicFrame(createProjectionSnapshot(), frame("snapshot"));
+    const first = childEntry("child-1", "First child message");
+    const second = childEntry("child-2", "Second child message");
+    state = applyPublicFrame(state, childTranscript(7, [first]));
+    let transcript = state.sessions.get(sessionKey("session-a"))!.agentTranscripts.get("agent-a")!;
+    expect(transcript.entries.map((entry) => entry.id)).toEqual(["child-1"]);
+    expect(transcript.cursor).toEqual({ epoch: "child-e1", seq: 7 });
+    expect(state.sessions.get(sessionKey("session-a"))!.cursor?.seq).toBe(1);
+
+    state = applyPublicFrame(state, childTranscript(8, [first, second]));
+    transcript = state.sessions.get(sessionKey("session-a"))!.agentTranscripts.get("agent-a")!;
+    expect(transcript.entries.map((entry) => entry.id)).toEqual(["child-1", "child-2"]);
+
+    const duplicate = state;
+    state = applyPublicFrame(state, childTranscript(8, [second]));
+    expect(state.sessions.get(sessionKey("session-a"))!.agentTranscripts.get("agent-a")).toBe(
+      duplicate.sessions.get(sessionKey("session-a"))!.agentTranscripts.get("agent-a"),
+    );
+
+    const recovered = childEntry("child-recovered", "Authoritative retained baseline");
+    state = applyPublicFrame(state, childTranscript(12, [recovered]));
+    transcript = state.sessions.get(sessionKey("session-a"))!.agentTranscripts.get("agent-a")!;
+    expect(transcript.entries.map((entry) => entry.id)).toEqual(["child-recovered"]);
+    expect(transcript.freshness).toBe("fresh");
+
+    state = applyPublicFrame(state, {
+      ...frame("snapshot"),
+      cursor: { epoch: "parent-e2", seq: 1 },
+    });
+    expect(
+      state.sessions.get(sessionKey("session-a"))!.agentTranscripts.get("agent-a")!.entries[0]?.id,
+    ).toBe("child-recovered");
+
+    state = applyPublicFrame(state, childTranscript(1, [], "child-e2"));
+    transcript = state.sessions.get(sessionKey("session-a"))!.agentTranscripts.get("agent-a")!;
+    expect(transcript.entries).toEqual([]);
+    expect(transcript.cursor).toEqual({ epoch: "child-e2", seq: 1 });
+  });
+
+  it("bounds and cache-restores subagent transcripts before an attach baseline refreshes them", () => {
+    let state = applyPublicFrame(createProjectionSnapshot(), frame("snapshot"));
+    const entries = Array.from({ length: 600 }, (_, index) =>
+      childEntry(`child-${index}`, `Child message ${index}`),
+    );
+    state = applyPublicFrame(state, childTranscript(44, entries));
+    const live = state.sessions.get(sessionKey("session-a"))!.agentTranscripts.get("agent-a")!;
+    expect(live.entries).toHaveLength(512);
+    expect(live.historyTruncated).toBe(true);
+
+    const restored = decodeProjectionCacheValue(encodeProjectionCache(state))!;
+    const cached = restored.sessions.get(sessionKey("session-a"))!.agentTranscripts.get("agent-a")!;
+    expect(cached.entries).toHaveLength(64);
+    expect(cached.freshness).toBe("cached");
+    expect(cached.historyTruncated).toBe(true);
+
+    const baseline = childEntry("child-baseline", "Fresh attach baseline");
+    const refreshed = applyPublicFrame(restored, childTranscript(44, [baseline]));
+    const fresh = refreshed.sessions.get(sessionKey("session-a"))!.agentTranscripts.get("agent-a")!;
+    expect(fresh.entries.map((entry) => entry.id)).toEqual(["child-baseline"]);
+    expect(fresh.freshness).toBe("fresh");
   });
 
   it("keeps the challenge after confirmation_invalid", () => {

@@ -148,6 +148,7 @@ case $tool in
         t4_ci_path='.github/workflows/ci.yml'
         t4_release_path='.github/workflows/release.yml'
         t4_site_path='.github/workflows/deploy-site.yml'
+        mock_workflow_updated_at=$( /usr/bin/date --utc +%Y-%m-%dT%H:%M:%SZ )
         [[ \${MOCK_T4_WORKFLOW_WRONG_PATH:-0} != 1 ]] || t4_ci_path='.github/workflows/not-ci.yml'
         if [[ (\${MOCK_WORKFLOWS_TERMINAL:-0} == 1 && ! -f $state/sol-ran) ||
               (\${MOCK_WORKFLOWS_FAIL_ONCE_AFTER_SOL:-0} == 1 && -f $state/sol-ran && ! -f $state/workflows-failed-once) ]]; then
@@ -163,17 +164,17 @@ JSON
         elif [[ \${MOCK_WORKFLOWS_ACTIVE:-0} == 1 ]]; then
           cat <<JSON
 {"workflow_runs":[
- {"name":"CI","path":"$t4_ci_path","head_sha":"$MOCK_T4_COMMIT","event":"push","head_branch":"main","status":"in_progress","conclusion":null,"updated_at":"2026-07-15T00:00:00Z"},
- {"name":"Release app builds","path":"$t4_release_path","head_sha":"$MOCK_T4_COMMIT","event":"push","head_branch":"v1.2.3","status":"queued","conclusion":null,"updated_at":"2026-07-15T00:00:00Z"},
- {"name":"Deploy project site","path":"$t4_site_path","head_sha":"$MOCK_T4_COMMIT","event":"workflow_dispatch","head_branch":"main","status":"queued","conclusion":null,"updated_at":"2026-07-15T00:00:00Z"}
+ {"name":"CI","path":"$t4_ci_path","head_sha":"$MOCK_T4_COMMIT","event":"push","head_branch":"main","status":"in_progress","conclusion":null,"updated_at":"$mock_workflow_updated_at"},
+ {"name":"Release app builds","path":"$t4_release_path","head_sha":"$MOCK_T4_COMMIT","event":"push","head_branch":"v1.2.3","status":"queued","conclusion":null,"updated_at":"$mock_workflow_updated_at"},
+ {"name":"Deploy project site","path":"$t4_site_path","head_sha":"$MOCK_T4_COMMIT","event":"workflow_dispatch","head_branch":"main","status":"queued","conclusion":null,"updated_at":"$mock_workflow_updated_at"}
 ]}
 JSON
         else
           cat <<JSON
 {"workflow_runs":[
- {"name":"CI","path":"$t4_ci_path","head_sha":"$MOCK_T4_COMMIT","event":"push","head_branch":"main","status":"completed","conclusion":"success","updated_at":"2026-07-15T00:00:00Z"},
- {"name":"Release app builds","path":"$t4_release_path","head_sha":"$MOCK_T4_COMMIT","event":"push","head_branch":"v1.2.3","status":"completed","conclusion":"success","updated_at":"2026-07-15T00:00:00Z"},
- {"name":"Deploy project site","path":"$t4_site_path","head_sha":"$MOCK_T4_COMMIT","event":"workflow_dispatch","head_branch":"main","status":"completed","conclusion":"success","updated_at":"2026-07-15T00:00:00Z"}
+ {"name":"CI","path":"$t4_ci_path","head_sha":"$MOCK_T4_COMMIT","event":"push","head_branch":"main","status":"completed","conclusion":"success","updated_at":"$mock_workflow_updated_at"},
+ {"name":"Release app builds","path":"$t4_release_path","head_sha":"$MOCK_T4_COMMIT","event":"push","head_branch":"v1.2.3","status":"completed","conclusion":"success","updated_at":"$mock_workflow_updated_at"},
+ {"name":"Deploy project site","path":"$t4_site_path","head_sha":"$MOCK_T4_COMMIT","event":"workflow_dispatch","head_branch":"main","status":"completed","conclusion":"success","updated_at":"$mock_workflow_updated_at"}
 ]}
 JSON
         fi
@@ -2676,6 +2677,45 @@ test("processed no-op rechecks public invariants without redownloading OMP binar
   const finalCalls = await fixture.callsText();
   assert.equal(finalCalls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length, 1);
   assert.equal(finalCalls.split("\n").filter((line) => line.startsWith("omp\t")).length, 0);
+});
+
+test("default maintenance adopts a newer compatible T4 pair for the same OMP release", async (t) => {
+  const fixture = await createRunnerFixture();
+  t.after(() => fixture.cleanup());
+  const first = fixture.runRunner();
+  assert.equal(first.status, 0, `${first.stdout}\n${first.stderr}`);
+
+  const processed = JSON.parse(await readFile(fixture.processed, "utf8"));
+  processed.t4.version = "1.2.2";
+  processed.t4.tag = "v1.2.2";
+  processed.release.url = "https://github.com/LycaonLLC/t4-code/releases/tag/v1.2.2";
+  processed.site.releaseTag = "v1.2.2";
+  processed.localDeployment.t4.version = "1.2.2";
+  processed.localDeployment.t4.tag = "v1.2.2";
+  processed.localDeployment.desktop.installedVersion = "1.2.2";
+  await writeFile(fixture.processed, `${JSON.stringify(processed)}\n`);
+  await writeFile(join(fixture.state, "package-version"), "1.2.2");
+
+  const callsBefore = await fixture.callsText();
+  const second = fixture.runRunner({ MOCK_LOCAL_DEPLOY_FAIL: "1" });
+  assert.notEqual(second.status, 0, `${second.stdout}\n${second.stderr}`);
+  assert.match(
+    second.stdout,
+    /newer compatible publication candidate than processed v1\.2\.2/u,
+  );
+  assert.equal(await pathExists(fixture.pending), true, await fixture.callsText());
+  const pending = JSON.parse(await readFile(fixture.pending, "utf8"));
+  assert.equal(pending.publication.upstream.tag, "v1.2.3");
+  assert.equal(pending.publication.integration.tag, "t4code-1.2.3-appserver-1");
+  assert.equal(pending.publication.t4.tag, "v1.2.3");
+
+  const delta = (await fixture.callsText()).slice(callsBefore.length);
+  assert.equal(
+    delta.split("\n").filter((line) => line.startsWith("local-deploy\t")).length,
+    1,
+    delta,
+  );
+  assert.equal(delta.split("\n").filter((line) => line.startsWith("omp\t")).length, 0, delta);
 });
 
 test("active but durably disabled gateway is repaired from processed state without Sol", async (t) => {

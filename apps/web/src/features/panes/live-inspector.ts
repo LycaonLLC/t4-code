@@ -364,7 +364,11 @@ export function createLiveInspectorStore(
     if (warm === undefined) return;
 
     for (const frame of warm.agents.values()) {
-      const node = agentNodeFromFrame(frame, warm.events);
+      const node = agentNodeFromFrame(
+        frame,
+        warm.events,
+        warm.agentTranscripts.get(String(frame.agentId)),
+      );
       const previous = agentCache.get(node.id);
       if (previous !== undefined && sameAgentNode(previous, node)) continue;
       agentCache.set(node.id, node);
@@ -458,6 +462,7 @@ function emptyProjection(): SessionProjection {
     entries: [],
     events: [],
     agents: new Map(),
+    agentTranscripts: new Map(),
     terminals: new Map(),
     files: new Map(),
     reviews: new Map(),

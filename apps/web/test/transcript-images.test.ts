@@ -17,6 +17,7 @@ import {
   decodeTranscriptImageChunk,
   disposeTranscriptImagesForSession,
   isAnimatedTranscriptImage,
+  transcriptImageSourceForSession,
   TRANSCRIPT_IMAGE_CHUNK_BYTES,
   TRANSCRIPT_IMAGE_DECODE_ERROR,
   TRANSCRIPT_IMAGE_INTEGRITY_ERROR,
@@ -279,6 +280,25 @@ describe("transcript image result decoding", () => {
 });
 
 describe("bounded transcript image source", () => {
+  it("exposes only the newest registered source and restores the prior source on disposal", () => {
+    const first = createTranscriptImageSource({
+      hostId: "registry-host",
+      sessionId: "registry-session",
+      readChunk: async () => ({ accepted: false }),
+    });
+    const second = createTranscriptImageSource({
+      hostId: "registry-host",
+      sessionId: "registry-session",
+      readChunk: async () => ({ accepted: false }),
+    });
+
+    expect(transcriptImageSourceForSession("registry-host", "registry-session")).toBe(second);
+    second.dispose();
+    expect(transcriptImageSourceForSession("registry-host", "registry-session")).toBe(first);
+    first.dispose();
+    expect(transcriptImageSourceForSession("registry-host", "registry-session")).toBeNull();
+  });
+
   it("deduplicates duplicate references, reconstructs sequentially, and revokes on dispose", async () => {
     const bytes = pngBytes(TRANSCRIPT_IMAGE_CHUNK_BYTES + 17);
     const image = await reference(bytes);

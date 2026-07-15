@@ -2,7 +2,7 @@
 // desktop runtime already validated and bounded) to the inspector pane
 // view models. Every function here is derivation only: unknown fields stay
 // null, unsafe paths disappear, and nothing is invented to fill a gap.
-import type { ResultProjection, SessionProjection } from "@t4-code/client";
+import type { AgentTranscriptProjection, ResultProjection, SessionProjection } from "@t4-code/client";
 import type { AgentFrame, FileFrame, LiveEventFrame, ReviewFrame } from "@t4-code/protocol";
 
 import { classifySessionEvent } from "./activity-log.ts";
@@ -78,6 +78,7 @@ function transcriptEntryFrom(
 export function agentNodeFromFrame(
   frame: AgentFrame,
   events: readonly LiveEventFrame[],
+  durableTranscript?: AgentTranscriptProjection,
 ): AgentNode {
   const id = String(frame.agentId);
   const detail: Readonly<Record<string, unknown>> = frame.detail ?? {};
@@ -134,6 +135,10 @@ export function agentNodeFromFrame(
     path: readSafePath(detail, "path"),
     currentTool: readString(detail, "currentTool") ?? readString(detail, "tool"),
     evidence: readString(detail, "evidence"),
+    transcriptEntries: durableTranscript?.entries ?? [],
+    transcriptReceived: durableTranscript !== undefined,
+    transcriptFreshness: durableTranscript?.freshness ?? "fresh",
+    transcriptHistoryTruncated: durableTranscript?.historyTruncated === true,
     transcript,
   };
 }
@@ -156,6 +161,10 @@ export function sameAgentNode(a: AgentNode, b: AgentNode): boolean {
     a.path !== b.path ||
     a.currentTool !== b.currentTool ||
     a.evidence !== b.evidence ||
+    a.transcriptEntries !== b.transcriptEntries ||
+    a.transcriptReceived !== b.transcriptReceived ||
+    a.transcriptFreshness !== b.transcriptFreshness ||
+    a.transcriptHistoryTruncated !== b.transcriptHistoryTruncated ||
     a.transcript.length !== b.transcript.length
   ) {
     return false;

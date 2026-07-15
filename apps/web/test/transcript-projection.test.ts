@@ -116,10 +116,7 @@ describe("sequenced frames", () => {
     const factory = makeFactory();
     const projection = withSnapshot(factory);
     const other = new FrameFactory({ host: "h", session: "s", epoch: "e2", startSeq: 0 });
-    const crossed = reduceTranscript(
-      projection,
-      other.event({ type: "turn.start" }),
-    );
+    const crossed = reduceTranscript(projection, other.event({ type: "turn.start" }));
     expect(crossed.phase).toBe("paused");
   });
 
@@ -130,6 +127,45 @@ describe("sequenced frames", () => {
     expect(projection.phase).toBe("resyncing");
     projection = reduceTranscript(projection, factory.snapshot(projection.entries));
     expect(projection.phase).toBe("active");
+  });
+
+  it("keeps one stable recovery notice and clears it on the fresh snapshot", () => {
+    const factory = makeFactory();
+    let projection = withSnapshot(factory);
+
+    projection = reduceTranscript(projection, factory.gap("replay_budget_exceeded", 5));
+    const firstGapRows = deriveTranscriptRows(projection).filter(
+      (row) => row.kind === "notice" && row.notice.kind === "gap",
+    );
+    expect(firstGapRows).toHaveLength(1);
+    const firstKey = firstGapRows[0]?.id;
+
+    // A repeated server gap while the same session is still resyncing is the
+    // same recovery episode, even if its replay boundary advanced.
+    const duplicate = reduceTranscript(projection, factory.gap("replay_budget_exceeded", 2));
+    expect(duplicate).toBe(projection);
+    const duplicateGapRows = deriveTranscriptRows(duplicate).filter(
+      (row) => row.kind === "notice" && row.notice.kind === "gap",
+    );
+    expect(duplicateGapRows).toHaveLength(1);
+    expect(duplicateGapRows[0]?.id).toBe(firstKey);
+
+    projection = reduceTranscript(duplicate, factory.snapshot(duplicate.entries));
+    expect(projection.phase).toBe("active");
+    expect(projection.notices.some((notice) => notice.kind === "gap")).toBe(false);
+    expect(
+      deriveTranscriptRows(projection).some(
+        (row) => row.kind === "notice" && row.notice.kind === "gap",
+      ),
+    ).toBe(false);
+
+    // A later gap is a new episode and receives a new stable row identity.
+    projection = reduceTranscript(projection, factory.gap("retention window", 1));
+    const nextGapRows = deriveTranscriptRows(projection).filter(
+      (row) => row.kind === "notice" && row.notice.kind === "gap",
+    );
+    expect(nextGapRows).toHaveLength(1);
+    expect(nextGapRows[0]?.id).not.toBe(firstKey);
   });
 });
 
@@ -285,7 +321,12 @@ describe("attention and notice states", () => {
     let projection = withSnapshot(factory);
     projection = reduceTranscript(
       projection,
-      factory.event({ type: "approval.request", approvalId: "a1", command: "rm -rf /tmp/x", args: {} }),
+      factory.event({
+        type: "approval.request",
+        approvalId: "a1",
+        command: "rm -rf /tmp/x",
+        args: {},
+      }),
     );
     projection = reduceTranscript(
       projection,
@@ -477,13 +518,25 @@ describe("deterministic clock", () => {
 
 describe("tool transcript detail", () => {
   const call = (tool: string, title: string, args: Record<string, unknown> = {}) =>
-    ({ tool, title, args, callId: "c", state: "ok", startedAt: "", progress: [], result: null, endedAt: "" }) as never;
+    ({
+      tool,
+      title,
+      args,
+      callId: "c",
+      state: "ok",
+      startedAt: "",
+      progress: [],
+      result: null,
+      endedAt: "",
+    }) as never;
 
   it("suppresses raw and known-label duplicates while keeping meaningful previews", () => {
     expect(toolDetail(call("grep", "grep"))).toBe("");
     expect(toolDetail(call("inspect_image", "inspect_image"))).toBe("");
     expect(toolDetail(call("edit", "EDIT"))).toBe("");
     expect(toolDetail(call("bash", "bash", { command: "pwd" }))).toBe("pwd");
-    expect(toolDetail(call("read", "read", { path: "src/file.ts", range: "1-3" }))).toBe("src/file.ts:1-3");
+    expect(toolDetail(call("read", "read", { path: "src/file.ts", range: "1-3" }))).toBe(
+      "src/file.ts:1-3",
+    );
   });
 });

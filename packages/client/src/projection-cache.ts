@@ -1,6 +1,6 @@
 import type { AgentFrame, AuditFrame, ConfirmationChallenge, Cursor, DurableEntry, FileFrame, ReviewFrame, SessionRef } from "@t4-code/protocol";
 import { MAX_INDEXED_SESSION_REFS } from "./projection.ts";
-import type { ProjectionFreshness, ProjectionSnapshot, ResultProjection, SessionIndexMetadata, SessionProjection, TerminalProjection } from "./projection.ts";
+import type { AgentTranscriptProjection, ProjectionFreshness, ProjectionSnapshot, ResultProjection, SessionIndexMetadata, SessionProjection, TerminalProjection } from "./projection.ts";
 import { ImmutableSet } from "./immutable-set.ts";
 import { ImmutableMap } from "./immutable-map.ts";
 
@@ -36,6 +36,7 @@ interface SessionProjectionData {
   readonly entries: readonly DurableEntry[];
   readonly events: readonly unknown[];
   readonly agents: Array<[string, AgentFrame]>;
+  readonly agentTranscripts?: Array<[string, AgentTranscriptProjectionData]>;
   readonly terminals: Array<[string, TerminalProjection]>;
   readonly files: Array<[string, FileFrame]>;
   readonly reviews: Array<[string, ReviewFrame]>;
@@ -47,6 +48,13 @@ interface SessionProjectionData {
   readonly epoch?: string;
   readonly freshness: ProjectionFreshness;
   readonly gap?: unknown;
+  readonly historyTruncated?: boolean;
+}
+interface AgentTranscriptProjectionData {
+  readonly entries: readonly DurableEntry[];
+  readonly cursor: Cursor;
+  readonly revision: string;
+  readonly freshness: ProjectionFreshness;
   readonly historyTruncated?: boolean;
 }
 
@@ -70,6 +78,22 @@ function safeJson(value: unknown, depth = 0): unknown {
 function arrayFromMap<T>(map: ReadonlyMap<string, T>): Array<[string, T]> {
   return [...map.entries()].map(([key, value]) => [key, safeJson(value) as T]);
 }
+function cachedAgentTranscripts(
+  map: ReadonlyMap<string, AgentTranscriptProjection>,
+): Array<[string, AgentTranscriptProjectionData]> {
+  return [...map.entries()].slice(-16).map(([agentId, transcript]) => [
+    agentId,
+    {
+      entries: transcript.entries.slice(-64).map((entry) => safeJson(entry) as DurableEntry),
+      cursor: transcript.cursor,
+      revision: transcript.revision,
+      freshness: transcript.freshness,
+      ...(transcript.historyTruncated === true || transcript.entries.length > 64
+        ? { historyTruncated: true }
+        : {}),
+    },
+  ]);
+}
 
 export function encodeProjectionCache(snapshot: ProjectionSnapshot, savedAt = Date.now()): string {
   const data: ProjectionCacheData = {
@@ -83,6 +107,7 @@ export function encodeProjectionCache(snapshot: ProjectionSnapshot, savedAt = Da
         historyTruncated: value.historyTruncated === true || value.entries.length > 10_000,
         events: value.events.slice(-512).map((event) => safeJson(event)),
         agents: arrayFromMap(value.agents),
+        agentTranscripts: cachedAgentTranscripts(value.agentTranscripts),
         terminals: arrayFromMap(value.terminals),
         files: arrayFromMap(value.files),
         reviews: arrayFromMap(value.reviews),
@@ -115,7 +140,7 @@ export function encodeProjectionCache(snapshot: ProjectionSnapshot, savedAt = Da
       ...envelope,
       data: {
         ...data,
-        sessions: data.sessions.map((item) => ({ ...item, value: { ...item.value, entries: item.value.entries.slice(-512), events: item.value.events.slice(-128), audit: item.value.audit.slice(-64), historyTruncated: true } })),
+        sessions: data.sessions.map((item) => ({ ...item, value: { ...item.value, entries: item.value.entries.slice(-512), events: item.value.events.slice(-128), agentTranscripts: [], audit: item.value.audit.slice(-64), historyTruncated: true } })),
       },
     };
     serialized = JSON.stringify(compact);
@@ -142,6 +167,33 @@ function resultValue(value: Record<string, unknown>): ResultProjection { if (typ
 function fileValue(value: Record<string, unknown>): FileFrame { if (typeof value.path !== "string") throw new Error("invalid file cache"); return identity(value) as unknown as FileFrame; }
 function reviewValue(value: Record<string, unknown>): ReviewFrame { if (typeof value.reviewId !== "string" || typeof value.status !== "string" || !Array.isArray(value.findings)) throw new Error("invalid review cache"); return identity(value) as unknown as ReviewFrame; }
 function agentValue(value: Record<string, unknown>): AgentFrame { if (typeof value.agentId !== "string" || typeof value.state !== "string") throw new Error("invalid agent cache"); return identity(value) as unknown as AgentFrame; }
+function transcriptValue(value: Record<string, unknown>): AgentTranscriptProjection {
+  if (
+    !Array.isArray(value.entries) ||
+    !isRecord(value.cursor) ||
+    typeof value.cursor.epoch !== "string" ||
+    typeof value.cursor.seq !== "number" ||
+    !Number.isSafeInteger(value.cursor.seq) ||
+    value.cursor.seq < 0 ||
+    typeof value.revision !== "string"
+  ) {
+    throw new Error("invalid agent transcript cache");
+  }
+  const entries = value.entries.slice(-64).map((entry) => {
+    if (!isRecord(entry) || typeof entry.id !== "string" || !isRecord(entry.data)) {
+      throw new Error("invalid agent transcript entry cache");
+    }
+    return Object.freeze({ ...entry, data: Object.freeze(safeJson(entry.data) as Record<string, unknown>) }) as unknown as DurableEntry;
+  });
+  return Object.freeze({
+    entries: Object.freeze(entries),
+    entryIds: new ImmutableSet(entries.map((entry) => String(entry.id))),
+    cursor: Object.freeze({ epoch: value.cursor.epoch, seq: value.cursor.seq }),
+    revision: value.revision,
+    freshness: "cached",
+    ...(value.historyTruncated === true ? { historyTruncated: true } : {}),
+  });
+}
 function restoredSessionRef(value: unknown): SessionRef | undefined {
   const safe = safeJson(value);
   if (!isRecord(safe) || typeof safe.hostId !== "string" || typeof safe.sessionId !== "string" || typeof safe.revision !== "string" || typeof safe.title !== "string" || typeof safe.status !== "string" || typeof safe.updatedAt !== "string" || !isRecord(safe.project) || typeof safe.project.projectId !== "string") return undefined;
@@ -161,6 +213,9 @@ function restoreSession(value: unknown): SessionProjection | undefined {
     entries: Object.freeze(entries),
     events: Object.freeze(events),
     agents: asMap<AgentFrame>(value.agents, agentValue),
+    agentTranscripts: value.agentTranscripts === undefined
+      ? new ImmutableMap<string, AgentTranscriptProjection>()
+      : asMap<AgentTranscriptProjection>(value.agentTranscripts, transcriptValue),
     terminals: asMap<TerminalProjection>(value.terminals, terminalValue),
     files: asMap<FileFrame>(value.files, fileValue),
     reviews: asMap<ReviewFrame>(value.reviews, reviewValue),

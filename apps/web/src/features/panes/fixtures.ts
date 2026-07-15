@@ -4,6 +4,8 @@
 // sample data whenever this module feeds it. The fixture controller answers
 // control/review/file requests locally and visibly — it never pretends to be
 // a live runtime.
+import { entryId, hostId, sessionId, type DurableEntry } from "@t4-code/protocol";
+
 import {
   createInspectorStore,
   installInspectorStoreFactory,
@@ -58,8 +60,29 @@ function agent(partial: Partial<AgentNode> & Pick<AgentNode, "id" | "title">): A
     contextUsed: null,
     contextLimit: null,
     evidence: null,
+    transcriptEntries: [],
+    transcriptReceived: false,
+    transcriptFreshness: "fresh",
+    transcriptHistoryTruncated: false,
     transcript: [],
     ...partial,
+  };
+}
+
+function childTranscriptEntry(
+  id: string,
+  kind: string,
+  minutes: number,
+  data: Record<string, unknown>,
+): DurableEntry {
+  return {
+    id: entryId(id),
+    parentId: null,
+    hostId: hostId("host-local"),
+    sessionId: sessionId("agent-replay"),
+    kind,
+    timestamp: minutesAgo(minutes),
+    data,
   };
 }
 
@@ -124,6 +147,28 @@ const STREAM_AGENTS: AgentNode[] = [
     worktree: "worktrees/replay-batch",
     path: "packages/client/src/replay.ts",
     currentTool: "edit replay.ts",
+    transcriptReceived: true,
+    transcriptEntries: [
+      childTranscriptEntry("agent-replay-message-1", "message", 12, {
+        role: "assistant",
+        text: "I reproduced the overlap: the child session installs snapshot seq 4021, then applies buffered seq 4021 again because the discard boundary uses arrival time.",
+      }),
+      childTranscriptEntry("agent-replay-read-1", "tool-use", 8, {
+        tool: "read",
+        title: "Read replay cursor boundary",
+        args: { path: "packages/client/src/replay.ts", sel: "118-166" },
+        ok: true,
+        result: {
+          lines: 49,
+          preview:
+            "const boundary = snapshot.receivedAt;\nfor (const frame of buffered) {\n  if (frame.receivedAt > boundary) apply(frame);\n}",
+        },
+      }),
+      childTranscriptEntry("agent-replay-message-2", "message", 4, {
+        role: "assistant",
+        text: "The fix is scoped: compare epoch and sequence against the installed snapshot cursor, then add the duplicate-boundary regression case.",
+      }),
+    ],
     transcript: [
       {
         id: "t-r1",
@@ -210,28 +255,192 @@ interface FixtureEvent {
 }
 
 const STREAM_EVENTS: FixtureEvent[] = [
-  { minutesAgo: 180, event: { type: "session.system", title: "Session resumed", detail: "Snapshot revision 41 loaded; replay caught up." } },
-  { minutesAgo: 172, event: { type: "tool.start", title: "grep epoch", detail: "packages/client/src", agentId: "agent-main" } },
-  { minutesAgo: 171, event: { type: "tool.end", title: "grep epoch", detail: "14 matches in 3 files", agentId: "agent-main", durationMs: 400 } },
-  { minutesAgo: 90, event: { type: "agent.spawn", title: "Spawned batch: Reconnect suspects", agentId: "agent-batch" } },
-  { minutesAgo: 84, event: { type: "agent.spawn", title: "Spawned: Replay cursor audit", agentId: "agent-replay" } },
-  { minutesAgo: 83, event: { type: "agent.spawn", title: "Spawned: Frame dedupe check", agentId: "agent-dedupe" } },
-  { minutesAgo: 76, event: { type: "job.start", title: "Job: reconnect soak", detail: "pnpm soak --cycles 200", agentId: "agent-soak" } },
-  { minutesAgo: 62, event: { type: "shell.output", title: "Agent shell", terminalId: "term-agent-soak", agentId: "agent-soak", data: "$ pnpm soak --cycles 200\ncycle 12/200 ok (441ms)\ncycle 13/200 ok (438ms)\ncycle 14/200 duplicate frame seq=4021 epoch=7\n" } },
-  { minutesAgo: 49, event: { type: "shell.output", title: "Agent shell", terminalId: "term-agent-soak", agentId: "agent-soak", data: "cycle 118/200 rss=1.9GiB\nKilled\n" } },
-  { minutesAgo: 48, event: { type: "job.end", title: "Job failed: reconnect soak", detail: "exit code 137", agentId: "agent-soak", exitCode: 137 } },
-  { minutesAgo: 48, event: { type: "session.error", title: "Agent failed: Reconnect soak run", detail: "Process killed at cycle 118 (code 137).", agentId: "agent-soak" } },
-  { minutesAgo: 33, event: { type: "tool.start", title: "read replay.ts", detail: "packages/client/src/replay.ts:120-210", agentId: "agent-replay" } },
-  { minutesAgo: 32, event: { type: "tool.end", title: "read replay.ts", detail: "91 lines", agentId: "agent-replay", durationMs: 60 } },
-  { minutesAgo: 31, event: { type: "custom.telemetry.v2", payload: { spanId: "b71", parent: "a09" }, note: "emitted by a newer runtime" } },
-  { minutesAgo: 27, event: { type: "session.compaction", title: "Context compacted", detail: "182k → 64k tokens; 3 work groups folded." } },
-  { minutesAgo: 26, event: { type: "agent.end", title: "Completed: Reconnect notes", agentId: "agent-docs", state: "completed" } },
-  { minutesAgo: 12, event: { type: "tool.start", title: "edit replay.ts", detail: "fence live frames behind snapshot seq", agentId: "agent-replay" } },
-  { minutesAgo: 11, event: { type: "tool.end", title: "edit replay.ts", detail: "2 hunks applied", agentId: "agent-replay", durationMs: 900 } },
-  { minutesAgo: 8, event: { type: "session.system", title: "Host credential refreshed", detail: "Pairing lease renewed for 24h.", authToken: "wire-sample-value", host: "bunker-2" } },
-  { minutesAgo: 4, event: { type: "tool.start", title: "vp test run client/replay", agentId: "agent-replay" } },
-  { minutesAgo: 3, event: { type: "tool.error", title: "vp test run client/replay", detail: "1 of 12 failed: duplicate seq 4021 crosses the epoch fence", agentId: "agent-replay" } },
-  { minutesAgo: 1, event: { type: "agent.progress", title: "Replay cursor audit at 80%", agentId: "agent-replay", progress: 0.8 } },
+  {
+    minutesAgo: 180,
+    event: {
+      type: "session.system",
+      title: "Session resumed",
+      detail: "Snapshot revision 41 loaded; replay caught up.",
+    },
+  },
+  {
+    minutesAgo: 172,
+    event: {
+      type: "tool.start",
+      title: "grep epoch",
+      detail: "packages/client/src",
+      agentId: "agent-main",
+    },
+  },
+  {
+    minutesAgo: 171,
+    event: {
+      type: "tool.end",
+      title: "grep epoch",
+      detail: "14 matches in 3 files",
+      agentId: "agent-main",
+      durationMs: 400,
+    },
+  },
+  {
+    minutesAgo: 90,
+    event: {
+      type: "agent.spawn",
+      title: "Spawned batch: Reconnect suspects",
+      agentId: "agent-batch",
+    },
+  },
+  {
+    minutesAgo: 84,
+    event: { type: "agent.spawn", title: "Spawned: Replay cursor audit", agentId: "agent-replay" },
+  },
+  {
+    minutesAgo: 83,
+    event: { type: "agent.spawn", title: "Spawned: Frame dedupe check", agentId: "agent-dedupe" },
+  },
+  {
+    minutesAgo: 76,
+    event: {
+      type: "job.start",
+      title: "Job: reconnect soak",
+      detail: "pnpm soak --cycles 200",
+      agentId: "agent-soak",
+    },
+  },
+  {
+    minutesAgo: 62,
+    event: {
+      type: "shell.output",
+      title: "Agent shell",
+      terminalId: "term-agent-soak",
+      agentId: "agent-soak",
+      data: "$ pnpm soak --cycles 200\ncycle 12/200 ok (441ms)\ncycle 13/200 ok (438ms)\ncycle 14/200 duplicate frame seq=4021 epoch=7\n",
+    },
+  },
+  {
+    minutesAgo: 49,
+    event: {
+      type: "shell.output",
+      title: "Agent shell",
+      terminalId: "term-agent-soak",
+      agentId: "agent-soak",
+      data: "cycle 118/200 rss=1.9GiB\nKilled\n",
+    },
+  },
+  {
+    minutesAgo: 48,
+    event: {
+      type: "job.end",
+      title: "Job failed: reconnect soak",
+      detail: "exit code 137",
+      agentId: "agent-soak",
+      exitCode: 137,
+    },
+  },
+  {
+    minutesAgo: 48,
+    event: {
+      type: "session.error",
+      title: "Agent failed: Reconnect soak run",
+      detail: "Process killed at cycle 118 (code 137).",
+      agentId: "agent-soak",
+    },
+  },
+  {
+    minutesAgo: 33,
+    event: {
+      type: "tool.start",
+      title: "read replay.ts",
+      detail: "packages/client/src/replay.ts:120-210",
+      agentId: "agent-replay",
+    },
+  },
+  {
+    minutesAgo: 32,
+    event: {
+      type: "tool.end",
+      title: "read replay.ts",
+      detail: "91 lines",
+      agentId: "agent-replay",
+      durationMs: 60,
+    },
+  },
+  {
+    minutesAgo: 31,
+    event: {
+      type: "custom.telemetry.v2",
+      payload: { spanId: "b71", parent: "a09" },
+      note: "emitted by a newer runtime",
+    },
+  },
+  {
+    minutesAgo: 27,
+    event: {
+      type: "session.compaction",
+      title: "Context compacted",
+      detail: "182k → 64k tokens; 3 work groups folded.",
+    },
+  },
+  {
+    minutesAgo: 26,
+    event: {
+      type: "agent.end",
+      title: "Completed: Reconnect notes",
+      agentId: "agent-docs",
+      state: "completed",
+    },
+  },
+  {
+    minutesAgo: 12,
+    event: {
+      type: "tool.start",
+      title: "edit replay.ts",
+      detail: "fence live frames behind snapshot seq",
+      agentId: "agent-replay",
+    },
+  },
+  {
+    minutesAgo: 11,
+    event: {
+      type: "tool.end",
+      title: "edit replay.ts",
+      detail: "2 hunks applied",
+      agentId: "agent-replay",
+      durationMs: 900,
+    },
+  },
+  {
+    minutesAgo: 8,
+    event: {
+      type: "session.system",
+      title: "Host credential refreshed",
+      detail: "Pairing lease renewed for 24h.",
+      authToken: "wire-sample-value",
+      host: "bunker-2",
+    },
+  },
+  {
+    minutesAgo: 4,
+    event: { type: "tool.start", title: "vp test run client/replay", agentId: "agent-replay" },
+  },
+  {
+    minutesAgo: 3,
+    event: {
+      type: "tool.error",
+      title: "vp test run client/replay",
+      detail: "1 of 12 failed: duplicate seq 4021 crosses the epoch fence",
+      agentId: "agent-replay",
+    },
+  },
+  {
+    minutesAgo: 1,
+    event: {
+      type: "agent.progress",
+      title: "Replay cursor audit at 80%",
+      agentId: "agent-replay",
+      progress: 0.8,
+    },
+  },
 ];
 
 function buildActivity(events: readonly FixtureEvent[]): ActivityEntry[] {
@@ -379,9 +588,7 @@ const DIR_LISTINGS: Readonly<Record<string, readonly FileTreeNode[]>> = {
       kind: "file",
     },
   ],
-  "packages/protocol": [
-    { path: "packages/protocol/index.ts", name: "index.ts", kind: "file" },
-  ],
+  "packages/protocol": [{ path: "packages/protocol/index.ts", name: "index.ts", kind: "file" }],
   docs: [
     { path: "docs/replay.md", name: "replay.md", kind: "file" },
     { path: "docs/assets", name: "assets", kind: "dir" },
@@ -684,9 +891,7 @@ function parsePaneBootOptions(search: string): PaneBootOptions {
 
 /** Wire the fixture inspector factory; the shell's fixture boot calls this. */
 export function installFixtureInspector(): void {
-  const boot = parsePaneBootOptions(
-    typeof window === "undefined" ? "" : window.location.search,
-  );
+  const boot = parsePaneBootOptions(typeof window === "undefined" ? "" : window.location.search);
   installInspectorStoreFactory((sessionId) => {
     // One deterministic clock per store: controller actions and store-authored
     // timestamps (comments) share the same second-step sequence.

@@ -1278,11 +1278,70 @@ requeue_processed_publication() {
   log "Local T4 deployment drifted; queued the exact verified publication for repair without invoking Sol."
 }
 
+semantic_version_is_newer() {
+  local candidate=$1 current=$2
+  $JQ -en --arg candidate "$candidate" --arg current "$current" '
+    def semver:
+      select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
+      | split(".")
+      | map(tonumber);
+    ($candidate | semver) > ($current | semver)
+  ' >/dev/null
+}
+
+newer_compatible_t4_publication_exists() {
+  local target=$1 current_version package_json matrix package_version release_json t4_tag
+  current_version=$($JQ -er '
+    .t4.version | strings | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
+  ' "$PROCESSED_FILE") || fail "processed T4 state has an invalid package version"
+
+  package_json=$($GH api -H 'Accept: application/vnd.github.raw+json' \
+    "repos/$T4_REPOSITORY/contents/package.json?ref=main") \
+    || fail "T4 main package metadata could not be read"
+  matrix=$($GH api -H 'Accept: application/vnd.github.raw+json' \
+    "repos/$T4_REPOSITORY/contents/compat/omp-app-matrix.json?ref=main") \
+    || fail "T4 main compatibility metadata could not be read"
+  package_version=$(printf '%s' "$package_json" | $JQ -er '
+    .version | strings | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
+  ') || fail "T4 main has an invalid package version"
+  if semantic_version_is_newer "$package_version" "$current_version" \
+    && public_metadata_is_compatible "$matrix" "$target" "$package_version"; then
+    log "T4 main v$package_version is a newer compatible publication candidate than processed v$current_version."
+    return 0
+  fi
+
+  release_json=$($GH api "repos/$T4_REPOSITORY/releases/latest") \
+    || fail "the latest public T4 release could not be read"
+  t4_tag=$(printf '%s' "$release_json" | $JQ -er '
+    select(.draft == false and .prerelease == false)
+    | .tag_name
+    | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))
+  ') || fail "the latest public T4 release is not a stable semantic-version tag"
+  package_json=$($GH api -H 'Accept: application/vnd.github.raw+json' \
+    "repos/$T4_REPOSITORY/contents/package.json?ref=$t4_tag") \
+    || fail "the latest public T4 package metadata could not be read"
+  matrix=$($GH api -H 'Accept: application/vnd.github.raw+json' \
+    "repos/$T4_REPOSITORY/contents/compat/omp-app-matrix.json?ref=$t4_tag") \
+    || fail "the latest public T4 compatibility metadata could not be read"
+  package_version=$(printf '%s' "$package_json" | $JQ -er '
+    .version | strings | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
+  ') || fail "the latest public T4 package version is invalid"
+  [[ $t4_tag == "v$package_version" ]] \
+    || fail "the latest T4 release tag and tagged package version disagree"
+  if semantic_version_is_newer "$package_version" "$current_version" \
+    && public_metadata_is_compatible "$matrix" "$target" "$package_version"; then
+    log "Public T4 $t4_tag is newer and compatible with the processed official OMP release."
+    return 0
+  fi
+  return 1
+}
+
 finish_verified_processed_noop() {
   local target upstream_tag upstream_commit
   target=$(latest_stable_release)
   processed_metadata_matches "$target" || return 1
   local_state_matches_processed || return 1
+  newer_compatible_t4_publication_exists "$target" && return 1
   verify_result "$PROCESSED_FILE" "$target" true
   upstream_tag=$($JQ -r '.tag' <<<"$target")
   upstream_commit=$($JQ -r '.commit' <<<"$target")

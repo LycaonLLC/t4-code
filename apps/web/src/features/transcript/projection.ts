@@ -179,11 +179,7 @@ export function initialProjection(): TranscriptProjection {
 
 // ---------------------------------------------------------------------------
 // Frame application
-export type TranscriptFrame =
-  | SessionSnapshotFrame
-  | DurableEntryFrame
-  | LiveEventFrame
-  | GapFrame;
+export type TranscriptFrame = SessionSnapshotFrame | DurableEntryFrame | LiveEventFrame | GapFrame;
 
 // app-wire exports DurableEntryFrame from its envelope module; mirror the
 // import here so callers can hand us the decoded union directly.
@@ -195,6 +191,12 @@ function pushNotice(
 ): readonly TranscriptNotice[] {
   const next = [...notices, notice];
   return next.length > MAX_NOTICES ? next.slice(next.length - MAX_NOTICES) : next;
+}
+
+function withoutRecoveryNotices(notices: readonly TranscriptNotice[]): readonly TranscriptNotice[] {
+  return notices.some((notice) => notice.kind === "gap")
+    ? notices.filter((notice) => notice.kind !== "gap")
+    : notices;
 }
 
 /** Contiguity decision for a sequenced frame against the current cursor. */
@@ -236,6 +238,10 @@ function installSnapshot(
     revision: frame.revision,
     entries,
     liveMessages,
+    // A snapshot is authoritative through its cursor and completes the
+    // current recovery episode. Gap notices are transient stream state, not
+    // durable transcript history, so none may remain pinned after catch-up.
+    notices: withoutRecoveryNotices(projection.notices),
     phase: "active",
   };
 }
@@ -371,9 +377,7 @@ function applyToolEvent(
     if (existing === undefined) return projection;
     const line = str(event.note, str(event.chunk));
     const progress =
-      line === ""
-        ? existing.progress
-        : [...existing.progress, line].slice(-MAX_PROGRESS_LINES);
+      line === "" ? existing.progress : [...existing.progress, line].slice(-MAX_PROGRESS_LINES);
     calls.set(callId, { ...existing, progress });
   } else {
     // tool.result
@@ -448,7 +452,8 @@ function applyEvent(projection: TranscriptProjection, frame: LiveEventFrame): Tr
         },
       };
     case "approval-resolved":
-      return projection.approval !== null && projection.approval.approvalId === str(event.approvalId)
+      return projection.approval !== null &&
+        projection.approval.approvalId === str(event.approvalId)
         ? { ...base, approval: null }
         : base;
     case "ask-request": {
@@ -538,12 +543,21 @@ function applyEvent(projection: TranscriptProjection, frame: LiveEventFrame): Tr
 }
 
 function applyGap(projection: TranscriptProjection, frame: GapFrame): TranscriptProjection {
+  // Multiple gap frames can arrive while the client is already awaiting the
+  // same recovery snapshot. Keep one row (and therefore one stable React key)
+  // for that episode instead of stacking replay-budget notices at the tail.
+  if (
+    (projection.phase === "paused" || projection.phase === "resyncing") &&
+    projection.notices.some((notice) => notice.kind === "gap")
+  ) {
+    return projection.phase === "resyncing" ? projection : { ...projection, phase: "resyncing" };
+  }
   return {
     ...projection,
     phase: "resyncing",
-    notices: pushNotice(projection.notices, {
+    notices: pushNotice(withoutRecoveryNotices(projection.notices), {
       kind: "gap",
-      id: noticeId("gap"),
+      id: `gap-${frame.from.epoch}-${frame.from.seq}-${frame.to.epoch}-${frame.to.seq}`,
       reason: frame.reason,
       missing: frame.to.seq - frame.from.seq,
       at: new Date(0).toISOString(),
@@ -574,16 +588,17 @@ export function reduceTranscript(
       const verdict = classifySequence(projection.cursor, frame.cursor);
       if (verdict === "duplicate") return projection;
       if (verdict === "gap") {
+        const from = projection.cursor;
         return {
           ...projection,
           phase: "paused",
-          notices: pushNotice(projection.notices, {
+          notices: pushNotice(withoutRecoveryNotices(projection.notices), {
             kind: "gap",
-            id: noticeId("gap"),
+            id: `gap-${from?.epoch ?? "initial"}-${from?.seq ?? 0}-${frame.cursor.epoch}-${frame.cursor.seq}`,
             reason: "sequence discontinuity",
             missing:
-              projection.cursor !== null && frame.cursor.epoch === projection.cursor.epoch
-                ? frame.cursor.seq - projection.cursor.seq - 1
+              from !== null && frame.cursor.epoch === from.epoch
+                ? frame.cursor.seq - from.seq - 1
                 : 0,
             at: new Date(0).toISOString(),
           }),

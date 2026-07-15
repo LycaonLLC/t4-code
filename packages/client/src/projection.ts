@@ -1,5 +1,6 @@
 import type {
   AgentFrame,
+  AgentTranscriptFrame,
   AuditFrame,
   ConfirmationChallenge,
   Cursor,
@@ -42,6 +43,15 @@ export interface ResultProjection {
   readonly error?: { readonly code: string; readonly message: string };
 }
 
+export interface AgentTranscriptProjection {
+  readonly entries: readonly DurableEntry[];
+  readonly entryIds: ReadonlySet<string>;
+  readonly cursor: Cursor;
+  readonly revision: string;
+  readonly freshness: ProjectionFreshness;
+  readonly historyTruncated?: boolean;
+}
+
 export interface SessionProjection {
   readonly hostId: string;
   readonly sessionId: string;
@@ -49,6 +59,7 @@ export interface SessionProjection {
   readonly entries: readonly DurableEntry[];
   readonly events: readonly LiveEventFrame[];
   readonly agents: ReadonlyMap<string, AgentFrame>;
+  readonly agentTranscripts: ReadonlyMap<string, AgentTranscriptProjection>;
   readonly terminals: ReadonlyMap<string, TerminalProjection>;
   readonly files: ReadonlyMap<string, FileFrame>;
   readonly reviews: ReadonlyMap<string, ReviewFrame>;
@@ -91,6 +102,8 @@ export interface ProjectionOptions {
   readonly maxEntries?: number;
   readonly maxEvents?: number;
   readonly maxAudit?: number;
+  readonly maxAgentTranscripts?: number;
+  readonly maxAgentTranscriptEntries?: number;
 }
 
 
@@ -105,6 +118,8 @@ const DEFAULT_OPTIONS: Required<ProjectionOptions> = {
   maxEntries: 16_384,
   maxEvents: 512,
   maxAudit: 256,
+  maxAgentTranscripts: 256,
+  maxAgentTranscriptEntries: 512,
 };
 const EMPTY_MAP: ReadonlyMap<string, never> = new ImmutableMap<string, never>();
 
@@ -117,6 +132,65 @@ function freezeArray<T>(value: T[]): readonly T[] {
 function appendBounded<T>(items: readonly T[], item: T, max: number): readonly T[] {
   const next = items.length >= max ? [...items.slice(items.length - max + 1), item] : [...items, item];
   return freezeArray(next);
+}
+function safeDurableEntry(entry: DurableEntry): DurableEntry {
+  return Object.freeze({
+    ...entry,
+    data: Object.freeze(safeValue(entry.data) as Record<string, unknown>),
+  });
+}
+function boundedUniqueEntries(
+  entries: readonly DurableEntry[],
+  max: number,
+): { readonly entries: readonly DurableEntry[]; readonly entryIds: ReadonlySet<string>; readonly truncated: boolean } {
+  const limit = Math.max(1, Math.floor(max));
+  const unique = new Map<string, DurableEntry>();
+  for (const entry of entries) {
+    const entryId = String(entry.id);
+    if (unique.has(entryId)) continue;
+    unique.set(entryId, safeDurableEntry(entry));
+  }
+  const bounded = [...unique.values()].slice(-limit);
+  return {
+    entries: freezeArray(bounded),
+    entryIds: new ImmutableSet(bounded.map((entry) => String(entry.id))),
+    truncated: unique.size > limit,
+  };
+}
+function agentTranscriptProjection(
+  previous: AgentTranscriptProjection | undefined,
+  frame: AgentTranscriptFrame,
+  maxEntries: number,
+): AgentTranscriptProjection | undefined {
+  const cursor = Object.freeze({ ...frame.cursor });
+  const epochChanged = previous !== undefined && previous.cursor.epoch !== cursor.epoch;
+  const recoveringCachedBaseline = previous?.freshness === "cached";
+  if (
+    previous !== undefined &&
+    !epochChanged &&
+    !recoveringCachedBaseline &&
+    cursor.seq <= previous.cursor.seq
+  ) {
+    return undefined;
+  }
+
+  const contiguous =
+    previous !== undefined &&
+    !epochChanged &&
+    !recoveringCachedBaseline &&
+    cursor.seq === previous.cursor.seq + 1;
+  const source = contiguous ? [...previous.entries, ...frame.entries] : frame.entries;
+  const bounded = boundedUniqueEntries(source, maxEntries);
+  return Object.freeze({
+    entries: bounded.entries,
+    entryIds: bounded.entryIds,
+    cursor,
+    revision: String(frame.revision),
+    freshness: "fresh",
+    ...(bounded.truncated || (contiguous && previous.historyTruncated === true)
+      ? { historyTruncated: true }
+      : {}),
+  });
 }
 function immutableMap<K, V>(entries?: Iterable<readonly [K, V]>): ReadonlyMap<K, V> {
   return new ImmutableMap(entries);
@@ -159,6 +233,7 @@ function initialSession(hostId: string, sessionId: string, freshness: Projection
     entries: freezeArray([]),
     events: freezeArray([]),
     agents: EMPTY_MAP,
+    agentTranscripts: EMPTY_MAP,
     terminals: EMPTY_MAP,
     files: EMPTY_MAP,
     reviews: EMPTY_MAP,
@@ -387,7 +462,7 @@ export function applyPublicFrame(
     }
     case "snapshot": {
       const sessionKey = key(String(frame.hostId), String(frame.sessionId));
-      const entries = frame.entries.slice(-config.maxEntries).map((entry) => Object.freeze({ ...entry, data: Object.freeze(safeValue(entry.data) as Record<string, unknown>) }));
+      const entries = frame.entries.slice(-config.maxEntries).map((entry) => safeDurableEntry(entry));
       const entryIds = new ImmutableSet(entries.map((entry) => String(entry.id)));
       const next = withSession(snapshot, sessionKey, (session) => Object.freeze({
         ...session,
@@ -467,6 +542,27 @@ export function applyPublicFrame(
     case "agent": {
       const sessionKey = key(String(frame.hostId), String(frame.sessionId));
       return withSession(snapshot, sessionKey, (session) => Object.freeze({ ...session, agents: mapWith(session.agents, String(frame.agentId), Object.freeze({ ...frame, ...(frame.detail === undefined ? {} : { detail: safeValue(frame.detail) as Record<string, unknown> }) })) }), config);
+    }
+    case "agent.transcript": {
+      const sessionKey = key(String(frame.hostId), String(frame.sessionId));
+      return withSession(snapshot, sessionKey, (session) => {
+        const agentId = String(frame.agentId);
+        const transcript = agentTranscriptProjection(
+          session.agentTranscripts.get(agentId),
+          frame,
+          config.maxAgentTranscriptEntries,
+        );
+        if (transcript === undefined) return session;
+        return Object.freeze({
+          ...session,
+          agentTranscripts: mapWith(
+            session.agentTranscripts,
+            agentId,
+            transcript,
+            config.maxAgentTranscripts,
+          ),
+        });
+      }, config);
     }
     case "terminal": {
       const sessionKey = key(String(frame.hostId), String(frame.sessionId));

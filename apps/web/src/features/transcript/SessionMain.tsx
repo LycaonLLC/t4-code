@@ -8,7 +8,9 @@ import { Badge, cn, Tooltip, TooltipPopup, TooltipTrigger } from "@t4-code/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { WorkspaceProject, WorkspaceSession } from "../../lib/workspace-data.ts";
+import { workspaceStore } from "../../state/store-instance.ts";
 import { Composer } from "../composer/Composer.tsx";
+import { getInspectorStore } from "../panes/inspector-store.ts";
 import {
   ApprovalPanel,
   AskPanel,
@@ -27,6 +29,7 @@ import {
   type StableRowsState,
 } from "./rows.ts";
 import { TranscriptTimeline } from "./TranscriptTimeline.tsx";
+import type { ToolRenderHost } from "./tool-render/types.ts";
 
 export interface SessionMainProps {
   readonly session: WorkspaceSession;
@@ -72,6 +75,22 @@ export function SessionMain({ session }: SessionMainProps) {
   const archived = session.archivedAt !== undefined;
   const { snapshot, runtime } = useSessionRuntime(session.id, session.freshness);
   const projection = snapshot.projection;
+  const toolHost = useMemo<ToolRenderHost>(
+    () => ({
+      hasAgent: (agentId) =>
+        getInspectorStore(session.id)?.getState().agentMap.agents[agentId] !== undefined,
+      openAgent: (agentId) => {
+        const inspector = getInspectorStore(session.id);
+        if (inspector?.getState().agentMap.agents[agentId] === undefined) return;
+        inspector.getState().selectAgent(agentId);
+        const workspace = workspaceStore.getState();
+        const view = workspace.sessionViewById[session.id];
+        if (view?.paneFamily !== "agents") workspace.togglePaneFamily(session.id, "agents");
+        workspace.setPaneOpen(session.id, true);
+      },
+    }),
+    [session.id],
+  );
 
   const rawRows = useMemo(() => deriveTranscriptRows(projection), [projection]);
   const rows = useStableTranscriptRows(rawRows);
@@ -152,6 +171,7 @@ export function SessionMain({ session }: SessionMainProps) {
             rows={rows}
             sessionId={session.id}
             streaming={projection.turnActive}
+            toolHost={toolHost}
           />
         )}
         {!archived && (
