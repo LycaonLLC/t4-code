@@ -40,6 +40,12 @@ ATOMIC_PUBLISH=${T4_MAINTAINER_ATOMIC_PUBLISH:-"$SCRIPT_DIR/publish-omp-atomic.s
 VERIFY_ATTEMPTS=${T4_MAINTAINER_VERIFY_ATTEMPTS:-91}
 VERIFY_INTERVAL_SECONDS=${T4_MAINTAINER_VERIFY_INTERVAL_SECONDS:-30}
 FORK_SYNC_ATTEMPTS=${T4_MAINTAINER_FORK_SYNC_ATTEMPTS:-3}
+FORK_SYNC_EVENT_QUIESCE_SECONDS=${T4_MAINTAINER_FORK_SYNC_EVENT_QUIESCE_SECONDS:-30}
+FORK_SYNC_RUN_SETTLE_ATTEMPTS=${T4_MAINTAINER_FORK_SYNC_RUN_SETTLE_ATTEMPTS:-18}
+FORK_SYNC_RUN_SETTLE_INTERVAL_SECONDS=${T4_MAINTAINER_FORK_SYNC_RUN_SETTLE_INTERVAL_SECONDS:-5}
+FORK_SYNC_RUN_QUIET_POLLS=${T4_MAINTAINER_FORK_SYNC_RUN_QUIET_POLLS:-3}
+FORK_SYNC_RUN_MIN_OBSERVATION_POLLS=${T4_MAINTAINER_FORK_SYNC_RUN_MIN_OBSERVATION_POLLS:-7}
+SLEEP=${T4_MAINTAINER_SLEEP:-sleep}
 
 readonly OMP_UPSTREAM_REPOSITORY="can1357/oh-my-pi"
 readonly OMP_INTEGRATION_REPOSITORY="lyc-aon/oh-my-pi"
@@ -79,6 +85,22 @@ require_positive_integer() {
   [[ $2 =~ ^[1-9][0-9]*$ ]] || fail "$1 must be a positive integer"
 }
 
+fork_sync_settings_are_valid() {
+  [[ $FORK_SYNC_ATTEMPTS =~ ^[1-9][0-9]*$ \
+    && $FORK_SYNC_EVENT_QUIESCE_SECONDS =~ ^[1-9][0-9]*$ \
+    && $FORK_SYNC_RUN_SETTLE_ATTEMPTS =~ ^[1-9][0-9]*$ \
+    && $FORK_SYNC_RUN_SETTLE_INTERVAL_SECONDS =~ ^[1-9][0-9]*$ \
+    && $FORK_SYNC_RUN_QUIET_POLLS =~ ^[1-9][0-9]*$ \
+    && $FORK_SYNC_RUN_MIN_OBSERVATION_POLLS =~ ^[1-9][0-9]*$ ]] \
+    && ((FORK_SYNC_RUN_QUIET_POLLS <= FORK_SYNC_RUN_MIN_OBSERVATION_POLLS \
+      && FORK_SYNC_RUN_MIN_OBSERVATION_POLLS <= FORK_SYNC_RUN_SETTLE_ATTEMPTS))
+}
+
+validate_fork_sync_settings() {
+  fork_sync_settings_are_valid \
+    || fail "fork-main synchronization timing settings must be positive and fit inside the bounded settlement window"
+}
+
 prepare_directories() {
   mkdir -p -- "$STATE_DIR" "$RUNS_DIR" "$WORK_DIR" "$LOGS_DIR" "$ATOMIC_PUBLICATION_STATE_DIR"
   chmod 700 -- "$MAINTAINER_ROOT" "$STATE_DIR" "$RUNS_DIR" "$WORK_DIR" "$LOGS_DIR" \
@@ -95,19 +117,19 @@ acquire_lock() {
 
 durable_replace() {
   local temporary=$1 target=$2 target_dir
-  target_dir=$(dirname -- "$target")
-  chmod 600 -- "$temporary"
-  "$SYNC" -f "$temporary"
-  mv -f -- "$temporary" "$target"
-  "$SYNC" -f "$target_dir"
+  target_dir=$(dirname -- "$target") || return 1
+  chmod 600 -- "$temporary" || return 1
+  "$SYNC" -f "$temporary" || return 1
+  mv -f -- "$temporary" "$target" || return 1
+  "$SYNC" -f "$target_dir" || return 1
 }
 
 durable_remove() {
   local target=$1 target_dir
   [[ -e $target ]] || return 0
-  target_dir=$(dirname -- "$target")
-  rm -f -- "$target"
-  "$SYNC" -f "$target_dir"
+  target_dir=$(dirname -- "$target") || return 1
+  rm -f -- "$target" || return 1
+  "$SYNC" -f "$target_dir" || return 1
 }
 
 cleanup_processed_workspace() {
@@ -220,17 +242,70 @@ enable_fork_workflow_and_prove() {
   [[ $(fork_workflow_state) == active ]]
 }
 
+fork_sync_marker_is_valid() {
+  local marker=$1
+  [[ -s $marker ]] && $JQ -e '
+    (.schemaVersion == 1 or .schemaVersion == 2) and
+    .workflow == "ci.yml" and
+    (.startedAt | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) and
+    (.officialCommit | type == "string" and test("^[0-9a-f]{40}$")) and
+    (.previousForkCommit | type == "string" and test("^[0-9a-f]{40}$")) and
+    (
+      (.schemaVersion == 1) or
+      (.schemaVersion == 2 and (
+        .phase == "prepared" or
+        (
+          .phase == "push-attempted" and
+          (.preexistingRunIds | type == "array") and
+          all(.preexistingRunIds[]; type == "number" and floor == . and . > 0)
+        )
+      ))
+    )
+  ' "$marker" >/dev/null 2>&1
+}
+
+prepared_fork_sync_marker_is_valid() {
+  local marker=$1
+  fork_sync_marker_is_valid "$marker" \
+    && $JQ -e '
+      .schemaVersion == 2 and .phase == "prepared" and
+      (has("preexistingRunIds") | not)
+    ' "$marker" >/dev/null 2>&1
+}
+
+push_attempted_fork_sync_marker_is_valid() {
+  local marker=$1
+  fork_sync_marker_is_valid "$marker" \
+    && $JQ -e '.schemaVersion == 2 and .phase == "push-attempted"' \
+      "$marker" >/dev/null 2>&1
+}
+
 recover_fork_sync() {
   [[ -e $FORK_SYNC_FILE ]] || return 0
-  [[ -s $FORK_SYNC_FILE ]] && $JQ -e '
-    .schemaVersion == 1 and .workflow == "ci.yml" and
-    (.startedAt | type == "string")
-  ' "$FORK_SYNC_FILE" >/dev/null 2>&1 \
+  fork_sync_marker_is_valid "$FORK_SYNC_FILE" \
     || fail "fork-main recovery state is invalid: $FORK_SYNC_FILE"
-  enable_fork_workflow_and_prove \
-    || fail "fork CI recovery could not prove the workflow active; retaining $FORK_SYNC_FILE and stopping before publication"
-  durable_remove "$FORK_SYNC_FILE"
-  log "Recovered and proved the fork CI workflow active before main synchronization."
+  local official_commit phase preexisting_run_ids
+  official_commit=$($JQ -r '.officialCommit' "$FORK_SYNC_FILE")
+  phase=$($JQ -r 'if .schemaVersion == 1 then "legacy" else .phase end' \
+    "$FORK_SYNC_FILE")
+  if [[ $phase == legacy || $phase == prepared ]]; then
+    enable_fork_workflow_and_prove \
+      || fail "fork CI recovery could not prove the workflow active; retaining $FORK_SYNC_FILE and stopping before publication"
+    if [[ $phase == legacy ]]; then
+      log "Recovered legacy fork-main synchronization state and proved fork CI active without settling any run."
+    else
+      log "Recovered fork-main synchronization before its push and proved fork CI active."
+    fi
+  else
+    preexisting_run_ids=$($JQ -c '
+      if .schemaVersion == 1 then [] else .preexistingRunIds end
+    ' "$FORK_SYNC_FILE") || fail "fork-main recovery state lost its run snapshot"
+    restore_fork_ci_and_settle_main_run "$official_commit" "$preexisting_run_ids" \
+      || fail "fork CI recovery could not settle the exact mirrored main run; retaining $FORK_SYNC_FILE and stopping before publication"
+    log "Recovered fork-main synchronization and proved fork CI active with its exact mirrored run settled."
+  fi
+  durable_remove "$FORK_SYNC_FILE" \
+    || fail "fork-main recovery state could not be cleared after safe recovery"
 }
 
 write_fork_sync_marker() {
@@ -242,14 +317,146 @@ write_fork_sync_marker() {
     --arg official_commit "$official_commit" \
     --arg fork_commit "$fork_commit" '
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         startedAt: $started_at,
+        phase: "prepared",
         workflow: $workflow,
         officialCommit: $official_commit,
         previousForkCommit: $fork_commit
       }
-    ' >"$temporary"
-  durable_replace "$temporary" "$FORK_SYNC_FILE"
+  ' >"$temporary" \
+    || {
+      rm -f -- "$temporary" || true
+      fail "fork-main recovery state could not be generated before the mirror operation"
+    }
+  prepared_fork_sync_marker_is_valid "$temporary" \
+    || {
+      rm -f -- "$temporary" || true
+      fail "fork-main recovery state was invalid before the mirror operation"
+    }
+  durable_replace "$temporary" "$FORK_SYNC_FILE" \
+    || fail "fork-main recovery state could not be persisted before the mirror operation"
+  prepared_fork_sync_marker_is_valid "$FORK_SYNC_FILE" \
+    || fail "persisted fork-main recovery state was invalid before the mirror operation"
+}
+
+fork_main_push_runs_json() {
+  local official_commit=$1 response
+  response=$($GH api \
+    "repos/$OMP_INTEGRATION_REPOSITORY/actions/workflows/$OMP_FORK_WORKFLOW/runs?branch=main&event=push&head_sha=$official_commit&per_page=100") \
+    || return 1
+  printf '%s' "$response" | $JQ -ce --arg commit "$official_commit" '
+    select(
+      (.workflow_runs | type == "array") and
+      ((.total_count // (.workflow_runs | length)) | type == "number" and . <= 100)
+    )
+    | [
+        .workflow_runs[]
+        | select(
+            .head_sha == $commit and .head_branch == "main" and .event == "push" and
+            .path == ".github/workflows/ci.yml"
+          )
+      ]
+    | select(all(.[];
+        (.id | type == "number" and floor == . and . > 0) and
+        (.run_attempt | type == "number" and floor == . and . > 0) and
+        (.status | type == "string" and length > 0)
+      ))
+  '
+}
+
+snapshot_fork_main_run_ids() {
+  local official_commit=$1 runs
+  runs=$(fork_main_push_runs_json "$official_commit") || return 1
+  printf '%s' "$runs" | $JQ -ce '[.[].id] | sort | unique'
+}
+
+mark_fork_sync_push_attempted() {
+  local official_commit=$1 preexisting_run_ids temporary
+  preexisting_run_ids=$(snapshot_fork_main_run_ids "$official_commit") \
+    || fail "fork-main runs could not be snapshotted before the mirror push"
+  temporary=$(mktemp "$STATE_DIR/fork-main-sync.json.XXXXXX")
+  $JQ --argjson preexisting_run_ids "$preexisting_run_ids" '
+    select(.schemaVersion == 2 and .phase == "prepared")
+    | .phase = "push-attempted"
+    | .preexistingRunIds = $preexisting_run_ids
+  ' "$FORK_SYNC_FILE" >"$temporary" \
+    || fail "fork-main recovery state could not advance before the mirror push"
+  [[ -s $temporary ]] \
+    || fail "fork-main recovery state could not advance before the mirror push"
+  push_attempted_fork_sync_marker_is_valid "$temporary" \
+    || {
+      rm -f -- "$temporary" || true
+      fail "fork-main recovery state was invalid before the mirror push"
+    }
+  durable_replace "$temporary" "$FORK_SYNC_FILE" \
+    || fail "fork-main recovery state could not advance before the mirror push"
+  push_attempted_fork_sync_marker_is_valid "$FORK_SYNC_FILE" \
+    || fail "persisted fork-main recovery state was invalid before the mirror push"
+}
+
+settle_fork_main_push_runs() {
+  local official_commit=$1 preexisting_run_ids=$2
+  local minimum_polls=${3:-$FORK_SYNC_RUN_QUIET_POLLS}
+  local attempt runs matching active_ids run_id quiet_polls=0
+  fork_sync_settings_are_valid || return 1
+  [[ $official_commit =~ ^[0-9a-f]{40}$ ]] || return 1
+  printf '%s' "$preexisting_run_ids" | $JQ -e '
+    type == "array" and all(.[]; type == "number" and floor == . and . > 0)
+  ' >/dev/null || return 1
+  [[ $minimum_polls =~ ^[1-9][0-9]*$ ]] || return 1
+  ((FORK_SYNC_RUN_QUIET_POLLS <= minimum_polls \
+    && minimum_polls <= FORK_SYNC_RUN_SETTLE_ATTEMPTS)) || return 1
+
+  for ((attempt = 1; attempt <= FORK_SYNC_RUN_SETTLE_ATTEMPTS; attempt += 1)); do
+    runs=$(fork_main_push_runs_json "$official_commit") || return 1
+    matching=$(printf '%s' "$runs" | $JQ -ce \
+      --argjson preexisting_run_ids "$preexisting_run_ids" '
+      [
+        .[]
+        | select(.run_attempt == 1 and (.id as $id | $preexisting_run_ids | index($id) | not))
+      ]
+    ') || return 1
+    active_ids=$(printf '%s' "$matching" | $JQ -r '.[] | select(.status != "completed") | .id')
+    if [[ -z $active_ids ]]; then
+      ((quiet_polls += 1))
+      if ((attempt >= minimum_polls && quiet_polls >= FORK_SYNC_RUN_QUIET_POLLS)); then
+        log "Fork CI has no active transaction-owned run for the exact mirrored main commit $official_commit."
+        return 0
+      fi
+    else
+      quiet_polls=0
+      while IFS= read -r run_id; do
+        [[ $run_id =~ ^[1-9][0-9]*$ ]] || return 1
+        if $GH api --method POST \
+          "repos/$OMP_INTEGRATION_REPOSITORY/actions/runs/$run_id/cancel" >/dev/null; then
+          log "Requested cancellation of delayed fork-main CI run $run_id for $official_commit."
+        else
+          log "Fork-main CI run $run_id changed while cancellation was requested; rechecking its exact state."
+        fi
+      done <<<"$active_ids"
+    fi
+    ((attempt < FORK_SYNC_RUN_SETTLE_ATTEMPTS)) \
+      && "$SLEEP" "$FORK_SYNC_RUN_SETTLE_INTERVAL_SECONDS"
+  done
+  return 1
+}
+
+restore_fork_ci_and_settle_main_run() {
+  local official_commit=$1 preexisting_run_ids=$2 workflow_state
+  workflow_state=$(fork_workflow_state) || return 1
+  if ! fork_sync_settings_are_valid; then
+    enable_fork_workflow_and_prove || return 1
+    return 1
+  fi
+  # Let GitHub observe the mirror event while the canonical workflow is still
+  # disabled, then guard against any delayed delivery after it is re-enabled.
+  if [[ $workflow_state == disabled_manually ]]; then
+    "$SLEEP" "$FORK_SYNC_EVENT_QUIESCE_SECONDS"
+  fi
+  enable_fork_workflow_and_prove || return 1
+  settle_fork_main_push_runs \
+    "$official_commit" "$preexisting_run_ids" "$FORK_SYNC_RUN_MIN_OBSERVATION_POLLS"
 }
 
 fork_main_is_fast_forwardable() {
@@ -284,7 +491,8 @@ fork_main_is_fast_forwardable() {
 }
 
 sync_fork_main_once() {
-  local official_commit=$1 fork_commit=$2 push_repo snapshot_status
+  local official_commit=$1 fork_commit=$2 push_repo snapshot_status push_status=0
+  local preexisting_run_ids
   if fork_main_is_fast_forwardable "$official_commit" "$fork_commit"; then
     :
   else
@@ -294,7 +502,8 @@ sync_fork_main_once() {
     fi
     return 2
   fi
-  write_fork_sync_marker "$official_commit" "$fork_commit"
+  write_fork_sync_marker "$official_commit" "$fork_commit" \
+    || fail "fork-main recovery state could not be persisted before CI was disabled"
   if ! $GH api --method PUT \
     "repos/$OMP_INTEGRATION_REPOSITORY/actions/workflows/$OMP_FORK_WORKFLOW/disable" >/dev/null \
     || [[ $(fork_workflow_state) != disabled_manually ]]; then
@@ -308,25 +517,32 @@ sync_fork_main_once() {
   if ! $GIT -C "$push_repo" init --quiet \
     || ! $GIT -C "$push_repo" fetch --quiet --no-tags "$OMP_UPSTREAM_URL" \
       "refs/heads/main:refs/remotes/official/main" \
-    || [[ $($GIT -C "$push_repo" rev-parse refs/remotes/official/main) != "$official_commit" ]] \
-    || ! $GIT -C "$push_repo" push "$OMP_INTEGRATION_URL" \
-      "$official_commit:refs/heads/main"; then
+    || [[ $($GIT -C "$push_repo" rev-parse refs/remotes/official/main) != "$official_commit" ]]; then
     rm -rf -- "$push_repo"
     enable_fork_workflow_and_prove \
-      || fail "the exact fork-main push was inconclusive and fork CI could not be proven active; retaining recovery state"
-    durable_remove "$FORK_SYNC_FILE"
+      || fail "the exact fork-main push preparation failed and fork CI could not be proven active; retaining recovery state"
+    durable_remove "$FORK_SYNC_FILE" \
+      || fail "fork-main recovery state could not be cleared after safe push preparation recovery"
     return 2
   fi
+  mark_fork_sync_push_attempted "$official_commit" \
+    || fail "fork-main recovery state could not advance before the mirror push"
+  preexisting_run_ids=$($JQ -ec '.preexistingRunIds' "$FORK_SYNC_FILE") \
+    || fail "fork-main recovery state lost its run snapshot before the mirror push"
+  $GIT -C "$push_repo" push "$OMP_INTEGRATION_URL" \
+    "$official_commit:refs/heads/main" || push_status=$?
   rm -rf -- "$push_repo"
-  enable_fork_workflow_and_prove \
-    || fail "fork main was pushed, but fork CI could not be proven active; retaining recovery state and stopping"
-  durable_remove "$FORK_SYNC_FILE"
+  restore_fork_ci_and_settle_main_run "$official_commit" "$preexisting_run_ids" \
+    || fail "the fork-main push was attempted, but fork CI could not be restored and settled; retaining recovery state and stopping"
+  durable_remove "$FORK_SYNC_FILE" \
+    || fail "fork-main recovery state could not be cleared after exact run settlement"
+  ((push_status == 0)) || return 2
 }
 
 sync_fork_main() {
   local attempt official_commit fork_commit sync_status
-  require_positive_integer T4_MAINTAINER_FORK_SYNC_ATTEMPTS "$FORK_SYNC_ATTEMPTS"
   recover_fork_sync
+  validate_fork_sync_settings
   for ((attempt = 1; attempt <= FORK_SYNC_ATTEMPTS; attempt += 1)); do
     official_commit=$(resolve_public_commit "$OMP_UPSTREAM_REPOSITORY" main) \
       || fail "official OMP main could not be resolved"
@@ -1014,7 +1230,7 @@ verify_result() {
     fi
     if ((attempt < VERIFY_ATTEMPTS)); then
       log "Public release verification is still converging (${attempt}/${VERIFY_ATTEMPTS}); checking again in ${VERIFY_INTERVAL_SECONDS}s."
-      sleep "$VERIFY_INTERVAL_SECONDS"
+      "$SLEEP" "$VERIFY_INTERVAL_SECONDS"
     fi
   done
   fail "public release verification did not converge"
@@ -1503,6 +1719,7 @@ main() {
   require_command "$NODE"
   require_command "$REALPATH"
   require_command "$SYNC"
+  require_command "$SLEEP"
   require_command awk
   require_command dirname
   require_command find
