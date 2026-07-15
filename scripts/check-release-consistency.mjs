@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const RELEASE_CONTRACT_PATHS = [
+  ".github/android-release-identity.json",
   ".github/ISSUE_TEMPLATE/bug_report.yml",
   ".github/workflows/deploy-site.yml",
   ".github/workflows/release.yml",
@@ -81,6 +82,33 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     return errors;
   }
   const expectedTag = `v${version}`;
+
+  const androidIdentityPath = ".github/android-release-identity.json";
+  const androidIdentity = parseJson(files, androidIdentityPath, errors);
+  if (androidIdentity?.schemaVersion !== 1) {
+    errors.push(`${androidIdentityPath} schemaVersion must be 1`);
+  }
+  if (androidIdentity?.applicationId !== "com.lycaonsolutions.t4code") {
+    errors.push(`${androidIdentityPath} applicationId must be com.lycaonsolutions.t4code`);
+  }
+  if (androidIdentity?.minSdkVersion !== 24) {
+    errors.push(`${androidIdentityPath} minSdkVersion must be 24`);
+  }
+  if (androidIdentity?.targetSdkVersion !== 36) {
+    errors.push(`${androidIdentityPath} targetSdkVersion must be 36`);
+  }
+  if (
+    typeof androidIdentity?.signingCertificateSha256 !== "string" ||
+    !SHA256_PATTERN.test(androidIdentity.signingCertificateSha256)
+  ) {
+    errors.push(`${androidIdentityPath} signing certificate must be a lowercase SHA-256 digest`);
+  }
+  if (
+    typeof androidIdentity?.certificateBaseline?.assetSha256 !== "string" ||
+    !SHA256_PATTERN.test(androidIdentity.certificateBaseline.assetSha256)
+  ) {
+    errors.push(`${androidIdentityPath} certificate baseline asset must have a lowercase SHA-256 digest`);
+  }
 
   const packagePaths = [...files.keys()]
     .filter(
@@ -449,7 +477,10 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "T4_ANDROID_KEY_ALIAS",
     "T4_ANDROID_KEY_PASSWORD",
     "pnpm --filter @t4-code/mobile build:android:release",
-    "apksigner verify --verbose",
+    "node scripts/inspect-android-release.mjs",
+    '--metadata "$metadata"',
+    '--aapt "$build_tools/aapt"',
+    '--apksigner "$build_tools/apksigner"',
     "T4-Code-${VERSION}-android.apk",
     "needs: [verify, build-android, build-linux, build-macos]",
   ]) {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
 import { join, resolve } from "node:path";
@@ -14,8 +14,53 @@ import {
   withPublicArtifactUmask,
   withPublicReadAccess,
 } from "./run-electron-builder.mjs";
+import {
+  deriveAndroidVersionCode,
+  parseAaptBadging,
+  parseApkSignerReport,
+  validateAndroidRelease,
+  validateIdentityContract,
+} from "./inspect-android-release.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
+
+const androidIdentity = JSON.parse(readFileSync(resolve(repoRoot, ".github/android-release-identity.json"), "utf8"));
+const productionCertificate = "fa58f53c953a078d8db2b633ee8c226cfd2ad3f7220cd55dd03a2e195a81b0ac";
+
+function androidReleaseFixture(overrides = {}) {
+  const packageVersion = overrides.packageVersion ?? "0.1.14";
+  const versionCode = deriveAndroidVersionCode(packageVersion);
+  const contract = structuredClone(androidIdentity);
+  Object.assign(contract, overrides.contract);
+  return {
+    contract,
+    packageVersion,
+    mobilePackageVersion: overrides.mobilePackageVersion ?? packageVersion,
+    apkName: overrides.apkName ?? "app-release.apk",
+    apkFileNames: overrides.apkFileNames ?? ["app-release.apk"],
+    outputMetadata: overrides.outputMetadata ?? {
+      artifactType: { type: "APK", kind: "Directory" },
+      applicationId: contract.applicationId,
+      variantName: "release",
+      elements: [
+        {
+          type: "SINGLE",
+          filters: [],
+          versionCode,
+          versionName: packageVersion,
+          outputFile: "app-release.apk",
+        },
+      ],
+    },
+    badgingOutput:
+      overrides.badgingOutput ??
+      `package: name='${contract.applicationId}' versionCode='${versionCode}' versionName='${packageVersion}' platformBuildVersionName='16' platformBuildVersionCode='36' compileSdkVersion='36' compileSdkVersionCodename='16'\nsdkVersion:'${contract.minSdkVersion}'\ntargetSdkVersion:'${contract.targetSdkVersion}'\n`,
+    manifestTreeOutput: overrides.manifestTreeOutput ?? "E: manifest\n  A: package=\"com.lycaonsolutions.t4code\"\n",
+    signerOutput:
+      overrides.signerOutput ??
+      `Verifies\nVerified using v1 scheme (JAR signing): false\nVerified using v2 scheme (APK Signature Scheme v2): true\nNumber of signers: 1\nSigner #1 certificate SHA-256 digest: ${productionCertificate}\n`,
+  };
+}
 
 test("builder config keeps release contract", () => {
   assert.equal(config.appId, "com.lycaonsolutions.t4code");
@@ -25,6 +70,157 @@ test("builder config keeps release contract", () => {
   assert.equal(config.linux.category, "Development");
   assert.equal(config.mac.category, "public.app-category.developer-tools");
   assert.equal(config.artifactName, "T4-Code-${version}-${os}-${arch}.${ext}");
+});
+
+test("Android release identity is public, pinned, and wired into the release workflow", () => {
+  assert.doesNotThrow(() => validateIdentityContract(androidIdentity));
+  assert.equal(androidIdentity.applicationId, "com.lycaonsolutions.t4code");
+  assert.equal(androidIdentity.minSdkVersion, 24);
+  assert.equal(androidIdentity.targetSdkVersion, 36);
+  assert.equal(androidIdentity.signingCertificateSha256, productionCertificate);
+  assert.equal(androidIdentity.certificateBaseline.tag, "v0.1.13");
+  assert.equal(androidIdentity.certificateBaseline.asset, "T4-Code-0.1.13-android.apk");
+
+  const releaseWorkflow = readFileSync(resolve(repoRoot, ".github/workflows/release.yml"), "utf8");
+  assert.match(releaseWorkflow, /node scripts\/inspect-android-release\.mjs/u);
+  assert.match(releaseWorkflow, /--metadata "\$metadata"/u);
+  assert.match(releaseWorkflow, /--aapt "\$build_tools\/aapt"/u);
+  assert.match(releaseWorkflow, /--apksigner "\$build_tools\/apksigner"/u);
+});
+
+test("Android versionCode is derived from the package version without a release-specific constant", () => {
+  assert.equal(deriveAndroidVersionCode("0.1.13"), 10_013);
+  assert.equal(deriveAndroidVersionCode("0.1.14"), 10_014);
+  assert.equal(deriveAndroidVersionCode("1.2.3456"), 1_023_456);
+  assert.throws(() => deriveAndroidVersionCode("0.1.14-beta.1"), /numeric major\.minor\.patch/u);
+  assert.throws(() => deriveAndroidVersionCode("0.100.0"), /minor version must be at most 99/u);
+  assert.throws(() => deriveAndroidVersionCode("0.1.10000"), /patch version must be at most 9999/u);
+});
+
+test("Android artifact parsers preserve exact package, SDK, split, and certificate identity", () => {
+  assert.deepEqual(
+    parseAaptBadging(
+      "package: name='com.lycaonsolutions.t4code' versionCode='10014' versionName='0.1.14'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
+    ),
+    {
+      applicationId: "com.lycaonsolutions.t4code",
+      versionCode: 10_014,
+      versionName: "0.1.14",
+      minSdkVersion: 24,
+      targetSdkVersion: 36,
+      splitName: null,
+      declaresSplitDependency: false,
+    },
+  );
+  assert.deepEqual(
+    parseApkSignerReport(
+      `Verified using v2 scheme (APK Signature Scheme v2): true\nNumber of signers: 1\nSigner #1 certificate SHA-256 digest: FA:58:F5:3C:95:3A:07:8D:8D:B2:B6:33:EE:8C:22:6C:FD:2A:D3:F7:22:0C:D5:5D:D0:3A:2E:19:5A:81:B0:AC\n`,
+    ),
+    {
+      signerCount: 1,
+      certificateDigests: [productionCertificate],
+      modernSchemeVerified: true,
+    },
+  );
+});
+
+test("Android release inspector accepts the exact production universal APK contract", () => {
+  assert.deepEqual(validateAndroidRelease(androidReleaseFixture()), {
+    applicationId: "com.lycaonsolutions.t4code",
+    versionName: "0.1.14",
+    versionCode: 10_014,
+    minSdkVersion: 24,
+    targetSdkVersion: 36,
+    signingCertificateSha256: productionCertificate,
+  });
+});
+
+test("Android release inspector fails closed on identity, SDK, split, and signer drift", async (t) => {
+  const cases = [
+    [
+      "application id",
+      {
+        badgingOutput: "package: name='example.wrong' versionCode='10014' versionName='0.1.14'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
+      },
+      /applicationId example\.wrong/u,
+    ],
+    [
+      "version name",
+      {
+        badgingOutput: "package: name='com.lycaonsolutions.t4code' versionCode='10014' versionName='0.1.15'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
+      },
+      /versionName 0\.1\.15/u,
+    ],
+    [
+      "version code",
+      {
+        badgingOutput: "package: name='com.lycaonsolutions.t4code' versionCode='10013' versionName='0.1.14'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
+      },
+      /versionCode 10013/u,
+    ],
+    [
+      "minimum sdk",
+      {
+        badgingOutput: "package: name='com.lycaonsolutions.t4code' versionCode='10014' versionName='0.1.14'\nsdkVersion:'23'\ntargetSdkVersion:'36'\n",
+      },
+      /minSdkVersion 23/u,
+    ],
+    [
+      "target sdk",
+      {
+        badgingOutput: "package: name='com.lycaonsolutions.t4code' versionCode='10014' versionName='0.1.14'\nsdkVersion:'24'\ntargetSdkVersion:'35'\n",
+      },
+      /targetSdkVersion 35/u,
+    ],
+    [
+      "split package",
+      {
+        badgingOutput: "package: name='com.lycaonsolutions.t4code' versionCode='10014' versionName='0.1.14' split='config.arm64_v8a'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
+      },
+      /standalone/u,
+    ],
+    ["split manifest", { manifestTreeOutput: "E: manifest\n  A: split=\"config.en\"\n" }, /split-only metadata/u],
+    [
+      "split output metadata",
+      {
+        outputMetadata: {
+          artifactType: { type: "APK" },
+          applicationId: "com.lycaonsolutions.t4code",
+          variantName: "release",
+          elements: [
+            {
+              type: "SINGLE",
+              filters: [{ filterType: "ABI", value: "arm64-v8a" }],
+              versionCode: 10_014,
+              versionName: "0.1.14",
+              outputFile: "app-release.apk",
+            },
+          ],
+        },
+      },
+      /must have no ABI/u,
+    ],
+    [
+      "wrong certificate",
+      {
+        signerOutput: `Verified using v2 scheme (APK Signature Scheme v2): true\nNumber of signers: 1\nSigner #1 certificate SHA-256 digest: ${"0".repeat(64)}\n`,
+      },
+      /pinned production certificate/u,
+    ],
+    [
+      "multiple signers",
+      {
+        signerOutput: `Verified using v2 scheme (APK Signature Scheme v2): true\nNumber of signers: 2\nSigner #1 certificate SHA-256 digest: ${productionCertificate}\nSigner #2 certificate SHA-256 digest: ${"1".repeat(64)}\n`,
+      },
+      /exactly one signing certificate/u,
+    ],
+  ];
+
+  for (const [name, overrides, expected] of cases) {
+    await t.test(name, () => {
+      assert.throws(() => validateAndroidRelease(androidReleaseFixture(overrides)), expected);
+    });
+  }
 });
 
 test("builder never publishes implicitly from a release tag", () => {

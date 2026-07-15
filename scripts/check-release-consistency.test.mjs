@@ -195,7 +195,10 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(releaseWorkflow.includes("needs: [verify, build-android, build-linux, build-macos]"));
   assert.ok(releaseWorkflow.includes("pnpm --filter @t4-code/mobile build:android:release"));
   assert.ok(releaseWorkflow.includes("T4_ANDROID_KEYSTORE_BASE64"));
-  assert.ok(releaseWorkflow.includes("apksigner verify --verbose"));
+  assert.ok(releaseWorkflow.includes("node scripts/inspect-android-release.mjs"));
+  assert.ok(releaseWorkflow.includes('--metadata "$metadata"'));
+  assert.ok(releaseWorkflow.includes('--aapt "$build_tools/aapt"'));
+  assert.ok(releaseWorkflow.includes('--apksigner "$build_tools/apksigner"'));
   assert.ok(
     releaseWorkflow.includes("Confirm the release tag still resolves to the verified source"),
   );

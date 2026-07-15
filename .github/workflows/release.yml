@@ -237,17 +237,16 @@ jobs:
 
       - name: Inspect signed Android APK
         shell: bash
-        env:
-          VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -euo pipefail
           apk="apps/mobile/android/app/build/outputs/apk/release/app-release.apk"
-          test -f "$apk"
+          metadata="apps/mobile/android/app/build/outputs/apk/release/output-metadata.json"
           build_tools="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools/36.0.0"
-          export PATH="$build_tools:$PATH"
-          apksigner verify --verbose "$apk"
-          aapt dump badging "$apk" | grep -F "package: name='com.lycaonsolutions.t4code'"
-          aapt dump badging "$apk" | grep -F "versionName='${VERSION}'"
+          node scripts/inspect-android-release.mjs \
+            --apk "$apk" \
+            --metadata "$metadata" \
+            --aapt "$build_tools/aapt" \
+            --apksigner "$build_tools/apksigner"
 
       - name: Stage Android artifact
         shell: bash
