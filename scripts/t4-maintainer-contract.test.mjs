@@ -93,7 +93,7 @@ test("reinstall waits for the active maintainer lock before replacing its bundle
   await mkdir(bin, { recursive: true });
   await writeFile(join(libexec, "run.sh"), "old-run\n");
   await writeFile(token, "test-token\n", { mode: 0o600 });
-  for (const command of ["gh", "omp", "systemctl", "systemd-analyze"]) {
+  for (const command of ["bun", "gh", "omp", "systemctl", "systemd-analyze"]) {
     const commandPath = join(bin, command);
     await writeFile(commandPath, "#!/usr/bin/env bash\nexit 1\n");
     await chmod(commandPath, 0o700);
