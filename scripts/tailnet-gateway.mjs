@@ -268,9 +268,17 @@ async function sendStatic(request, response, webRoot, path) {
   }
 }
 
+function guardSocketErrors(socket) {
+  // Upgrade sockets and custom WebSocket transports can outlive ws' own
+  // listeners during a close race. Keep one terminal error listener attached
+  // so a peer reset cannot become an uncaught process-level exception.
+  socket.on("error", () => socket.destroy());
+  return socket;
+}
+
 function rejectUpgrade(socket, status, message) {
   const body = `${message}\n`;
-  socket.end(
+  guardSocketErrors(socket).end(
     `HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
   );
 }
@@ -289,7 +297,7 @@ function bridgeBrowser(browser, options, activeBrowsers) {
   const upstream = new WebSocket("ws://omp.local/ws", {
     perMessageDeflate: false,
     maxPayload: MAX_FRAME_BYTES,
-    createConnection: () => connectSocket({ path: options.resolvedAppSocket }),
+    createConnection: () => guardSocketErrors(connectSocket({ path: options.resolvedAppSocket })),
   });
 
   const finish = (code = 1011, reason = "gateway connection closed") => {

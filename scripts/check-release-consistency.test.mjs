@@ -17,28 +17,28 @@ function changed(path, replace) {
 }
 
 test("current source tree has one consistent release version", () => {
-  assert.deepEqual(collectReleaseConsistencyErrors(files, "v0.1.17"), []);
+  assert.deepEqual(collectReleaseConsistencyErrors(files, "v0.1.18"), []);
 });
 
 test("rejects a tag that differs from the package version", () => {
   assert.ok(
     collectReleaseConsistencyErrors(files, "v9.9.9").some((error) =>
-      error.includes("release tag v9.9.9 does not match v0.1.17"),
+      error.includes("release tag v9.9.9 does not match v0.1.18"),
     ),
   );
 });
 
 test("rejects workspace, site, README, and runtime version drift", () => {
   const cases = [
-    ["apps/web/package.json", (text) => text.replace('"version": "0.1.17"', '"version": "0.1.3"')],
+    ["apps/web/package.json", (text) => text.replace('"version": "0.1.18"', '"version": "0.1.3"')],
     [
       "apps/site/src/release.ts",
-      (text) => text.replace('RELEASE_TAG = "v0.1.17"', 'RELEASE_TAG = "v0.1.3"'),
+      (text) => text.replace('RELEASE_TAG = "v0.1.18"', 'RELEASE_TAG = "v0.1.3"'),
     ],
-    ["README.md", (text) => text.replace("Download v0.1.17", "Download v0.1.3")],
+    ["README.md", (text) => text.replace("Download v0.1.18", "Download v0.1.3")],
     [
       "apps/desktop/src/target-manager.ts",
-      (text) => text.replace('version: "0.1.17"', 'version: "0.1.3"'),
+      (text) => text.replace('version: "0.1.18"', 'version: "0.1.3"'),
     ],
     [
       "apps/site/src/docs/content.ts",
@@ -105,13 +105,13 @@ test("rejects drift in verified OMP runtime provenance", () => {
   const cases = [
     (text) =>
       text.replace(
-        "264958b23acac16baaf3bf0024129dc1a57f9d14",
+        "6e2f2350cfe9e6f5db691c311333cae33cdb62ba",
         "0000000000000000000000000000000000000000",
       ),
-    (text) => text.replace('"sourceTag": "t4code-16.5.2-appserver-4"', '"sourceTag": "wrong-tag"'),
+    (text) => text.replace('"sourceTag": "t4code-17.0.0-appserver-1"', '"sourceTag": "wrong-tag"'),
     (text) =>
       text.replace(
-        '"upstreamCommit": "7d02778c60f4b5db60f84bedbca79d6e64cb91f5"',
+        '"upstreamCommit": "d5cd24f39a951bfbd50dc8f50bcf095d59694d6c"',
         '"upstreamCommit": "0000000000000000000000000000000000000000"',
       ),
     (text) => text.replace('"complete-session-event-projection"', '"Wrong integration patch"'),
@@ -173,7 +173,7 @@ test("rejects stale README release URLs while allowing historical prose", () => 
   const staleLink = changed("README.md", (text) => `${text}\n[Old release](${oldReleaseUrl})\n`);
   assert.ok(
     collectReleaseConsistencyErrors(staleLink).some((error) =>
-      error.includes("release URL for v0.1.3; expected v0.1.17"),
+      error.includes("release URL for v0.1.3; expected v0.1.18"),
     ),
   );
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);

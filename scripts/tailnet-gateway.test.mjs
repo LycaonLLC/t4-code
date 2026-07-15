@@ -3,6 +3,7 @@ import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises"
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { connect as connectSocket } from "node:net";
 import { test } from "node:test";
 
 import WebSocket, { WebSocketServer } from "ws";
@@ -251,6 +252,48 @@ test("gateway rejects cross-origin sockets and bridges only the web and native a
       assert.equal(await websocketMessage(allowed), `upstream:hello:${origin}`);
       allowed.close();
     }
+  } finally {
+    await running.close();
+  }
+});
+
+test("gateway survives peer resets while rejecting websocket upgrades", async () => {
+  const running = await fixture();
+  try {
+    const request = [
+      "GET /v1/ws HTTP/1.1",
+      `Host: ${running.gateway.host}:${running.gateway.port}`,
+      "Connection: Upgrade",
+      "Upgrade: websocket",
+      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+      "Sec-WebSocket-Version: 13",
+      "Origin: https://attacker.example-tailnet.ts.net",
+      "",
+      "",
+    ].join("\r\n");
+    await Promise.all(
+      Array.from({ length: 32 }, () =>
+        new Promise((resolvePromise, reject) => {
+          const socket = connectSocket({
+            host: running.gateway.host,
+            port: running.gateway.port,
+          });
+          socket.once("error", reject);
+          socket.once("connect", () => {
+            socket.write(request, () => {
+              socket.off("error", reject);
+              socket.on("error", () => {});
+              socket.resetAndDestroy();
+              resolvePromise();
+            });
+          });
+        }),
+      ),
+    );
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+    const healthResponse = await fetch(`${running.url}/healthz`);
+    assert.equal(healthResponse.status, 200);
+    assert.equal((await healthResponse.json()).ok, true);
   } finally {
     await running.close();
   }
