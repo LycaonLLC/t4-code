@@ -159,15 +159,22 @@ export function decideSessionRoute(options: {
   readonly snapshot: DesktopRuntimeSnapshot | null;
 }): SessionRouteDecision {
   const { browserDirect, data, routeSessionId, snapshot } = options;
-  if (routeHostId(routeSessionId) === null) return { kind: "redirect-home" };
   const session = data.sessions.find((entry) => entry.id === routeSessionId);
   const project =
     session === undefined
       ? undefined
       : data.projects.find((entry) => entry.id === session.projectId);
+  // Indexed rows are already authoritative display data. Browser fixtures use
+  // short local ids (for example `sess-stream`) rather than the live
+  // `host/session` address shape, so validating the address before checking
+  // the index made every sample row bounce back home. When a boot override had
+  // also selected that row, HomeRoute immediately sent it back again and the
+  // renderer entered a redirect loop. Only missing routes need host-address
+  // validation for the authoritative-inventory fallback below.
   if (session !== undefined && project !== undefined) {
     return { kind: "present" };
   }
+  if (routeHostId(routeSessionId) === null) return { kind: "redirect-home" };
   if (snapshot === null) return { kind: "not-found" };
   if (!hasAuthoritativeInventory(snapshot, routeSessionId)) {
     return { kind: "pending" };

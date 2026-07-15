@@ -2,7 +2,8 @@
 // app-wire frames (AgentFrame, LiveEventFrame, TerminalFrame, FileFrame,
 // ReviewFrame) — never a second protocol. The wire stays authoritative; this
 // module only names the shapes the five pane families render.
-import type { AgentState } from "@t4-code/protocol";
+import type { ProjectionFreshness } from "@t4-code/client";
+import type { AgentState, DurableEntry } from "@t4-code/protocol";
 
 /**
  * Agent lifecycle as the tree renders it. Wire `AgentState` is an open
@@ -79,6 +80,12 @@ export interface AgentNode {
   readonly contextLimit: number | null;
   /** Stall or failure evidence surfaced verbatim; null when nothing is wrong. */
   readonly evidence: string | null;
+  /** Durable child-session entries delivered by the negotiated agent transcript stream. */
+  readonly transcriptEntries: readonly DurableEntry[];
+  readonly transcriptReceived: boolean;
+  readonly transcriptFreshness: ProjectionFreshness;
+  readonly transcriptHistoryTruncated: boolean;
+  /** Legacy text-only transcript retained for older hosts and fixtures. */
   readonly transcript: readonly AgentTranscriptEntry[];
 }
 

@@ -124,7 +124,7 @@ const install: DocTopic = {
     },
     {
       kind: "p",
-      text: `T4 Code v${RELEASE_VERSION} was verified with OMP ${OMP_RUNTIME_VERSION} integration tag [\`${OMP_RUNTIME_TAG}\`](${OMP_RUNTIME_URL}), commit \`${OMP_RUNTIME_COMMIT}\`. That public integration is based on the [official upstream v${OMP_RUNTIME_VERSION} tag](${OMP_UPSTREAM_URL}) at commit [\`${OMP_UPSTREAM_COMMIT.slice(0, 8)}\`](${OMP_URL}/commit/${OMP_UPSTREAM_COMMIT}). The build bounds snapshots and replay payloads for growing sessions. It also publishes host-wide session updates and keeps rename, archive, restore, and permanent delete under OMP authority. T4 Code vendors \`@oh-my-pi/app-wire\` ${APP_WIRE_VERSION}.`,
+      text: `T4 Code v${RELEASE_VERSION} was verified with OMP ${OMP_RUNTIME_VERSION} integration tag [\`${OMP_RUNTIME_TAG}\`](${OMP_RUNTIME_URL}), commit \`${OMP_RUNTIME_COMMIT}\`. That public integration is based on the [official upstream v${OMP_RUNTIME_VERSION} tag](${OMP_UPSTREAM_URL}) at commit [\`${OMP_UPSTREAM_COMMIT.slice(0, 8)}\`](${OMP_URL}/commit/${OMP_UPSTREAM_COMMIT}). The build preserves sanitized structured tool-result details, streams bounded child-agent transcripts, and authorizes child-transcript image reads through the established session image path. It also publishes host-wide session updates and keeps rename, archive, restore, and permanent delete under OMP authority. T4 Code vendors \`@oh-my-pi/app-wire\` ${APP_WIRE_VERSION}.`,
     },
     {
       kind: "note",

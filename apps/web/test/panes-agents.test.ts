@@ -29,6 +29,10 @@ function node(partial: Partial<AgentNode> & Pick<AgentNode, "id">): AgentNode {
     contextUsed: null,
     contextLimit: null,
     evidence: null,
+    transcriptEntries: [],
+    transcriptReceived: false,
+    transcriptFreshness: "fresh",
+    transcriptHistoryTruncated: false,
     transcript: [],
     ...partial,
   };

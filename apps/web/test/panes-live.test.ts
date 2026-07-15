@@ -19,6 +19,7 @@ import {
   sessionId as brandSessionId,
   PROTOCOL_VERSION,
   type AgentFrame,
+  type AgentTranscriptFrame,
   type AuditFrame,
   type CatalogFrame,
   type FileFrame,
@@ -28,6 +29,7 @@ import {
   type ReviewFrame,
   type SessionEvent,
   type SessionSnapshotFrame,
+  type DurableEntry,
 } from "@t4-code/protocol";
 import type { CommandIntent, CommandResult } from "@t4-code/protocol/desktop-ipc";
 import { describe, expect, it } from "vite-plus/test";
@@ -74,6 +76,35 @@ function eventFrame(seq: number, event: SessionEvent, session = SESSION): LiveEv
     hostId: brandHostId(HOST),
     sessionId: brandSessionId(session),
     event,
+  };
+}
+
+function durableChildEntry(id: string, text: string): DurableEntry {
+  return {
+    id: id as never,
+    parentId: null,
+    hostId: brandHostId(HOST),
+    sessionId: brandSessionId(SESSION),
+    kind: "message",
+    timestamp: "2026-07-15T00:00:00.000Z",
+    data: { role: "assistant", text },
+  };
+}
+
+function agentTranscriptFrame(
+  seq: number,
+  entries: readonly DurableEntry[],
+  epoch = "agent-epoch-1",
+): AgentTranscriptFrame {
+  return {
+    v: PROTOCOL_VERSION,
+    type: "agent.transcript",
+    hostId: brandHostId(HOST),
+    sessionId: brandSessionId(SESSION),
+    agentId: brandAgentId("agent-child"),
+    cursor: { epoch, seq },
+    entries: [...entries],
+    revision: brandRevision(`agent-rev-${seq}`),
   };
 }
 
@@ -330,6 +361,38 @@ describe("live projection populates each family", () => {
     const child = agentMap.agents["agent-child"];
     expect(child?.parentId).toBe("agent-root");
     expect(child?.title).toBe("agent-child");
+  });
+
+  it("hydrates durable child-session content into the matching agent", () => {
+    const fake = new FakeRuntime({ features: ["agent.transcript"] });
+    const first = durableChildEntry("child-entry-1", "I inspected the failing tests.");
+    let projection = project([
+      snapshotFrame("rev-1"),
+      agentFrame("agent-child", { detail: { title: "CI reviewer" } }),
+      agentTranscriptFrame(5, [first]),
+    ]);
+    fake.setProjection(projection);
+    const store = createLiveInspectorStore(fake, VIEW_ID);
+    let child = store.getState().agentMap.agents["agent-child"];
+    expect(child?.transcriptReceived).toBe(true);
+    expect(child?.transcriptEntries).toHaveLength(1);
+    expect(child?.transcriptEntries[0]?.data.text).toBe("I inspected the failing tests.");
+
+    const second = durableChildEntry("child-entry-2", "The focused suite is green.");
+    projection = project([agentTranscriptFrame(6, [second])], projection);
+    fake.setProjection(projection);
+    child = store.getState().agentMap.agents["agent-child"];
+    expect(child?.transcriptEntries.map((entry) => entry.id)).toEqual([
+      "child-entry-1",
+      "child-entry-2",
+    ]);
+
+    const replaced = durableChildEntry("child-entry-2", "Replacement after child restart.");
+    projection = project([agentTranscriptFrame(1, [replaced], "agent-epoch-2")], projection);
+    fake.setProjection(projection);
+    child = store.getState().agentMap.agents["agent-child"];
+    expect(child?.transcriptEntries).toHaveLength(1);
+    expect(child?.transcriptEntries[0]?.data.text).toBe("Replacement after child restart.");
   });
 
   it("activity carries events, audit records, and command results without duplicates", () => {

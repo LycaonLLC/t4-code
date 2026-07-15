@@ -15,6 +15,7 @@ import { FilesPane } from "./FilesPane.tsx";
 import { getInspectorStore } from "./inspector-store.ts";
 import { installLiveInspector } from "./live-inspector.ts";
 import { resolveLiveSession } from "../../platform/live-workspace.ts";
+import { transcriptImageSourceForSession } from "../session-runtime/transcript-images.ts";
 import { ReviewPane } from "./ReviewPane.tsx";
 import { TerminalsPane } from "./TerminalsPane.tsx";
 
@@ -77,8 +78,16 @@ export function PaneContent({ family }: PaneContentProps) {
   const store = sessionId === null ? null : getInspectorStore(sessionId);
   if (sessionId === null || store === null) return <FamilyEmpty family={family} />;
   switch (family) {
-    case "agents":
-      return <AgentsPane api={store} sessionId={sessionId} />;
+    case "agents": {
+      const controller = rendererPlatform.mode === "browser" ? null : desktopRuntime();
+      const address =
+        controller === null ? null : resolveLiveSession(controller.getSnapshot(), sessionId);
+      const imageSource =
+        address === null
+          ? undefined
+          : (transcriptImageSourceForSession(address.hostId, address.sessionId) ?? undefined);
+      return <AgentsPane api={store} imageSource={imageSource} sessionId={sessionId} />;
+    }
     case "activity":
       return <ActivityPane api={store} />;
     case "review":

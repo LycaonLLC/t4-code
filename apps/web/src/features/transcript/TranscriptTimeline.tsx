@@ -13,6 +13,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { useWorkspace, workspaceStore } from "../../state/store-instance.ts";
 import { selectSessionView } from "../../state/workspace-store.ts";
 import type { TranscriptImageSource } from "../session-runtime/transcript-images.ts";
+import type { ToolRenderHost } from "./tool-render/types.ts";
 import { createAnchoredToggle, DisclosureAnchorContext } from "./disclosure-anchor.tsx";
 import type { TranscriptRow } from "./rows.ts";
 import { TranscriptRowContent } from "./TranscriptRows.tsx";
@@ -49,6 +50,7 @@ export interface TranscriptTimelineProps {
   /** Elapsed-label time base from the session runtime snapshot. */
   readonly nowMs: number;
   readonly imageSource: TranscriptImageSource;
+  readonly toolHost?: ToolRenderHost | undefined;
 }
 
 export const TranscriptTimeline = memo(function TranscriptTimeline({
@@ -58,6 +60,7 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
   bottomInset,
   nowMs,
   imageSource,
+  toolHost,
 }: TranscriptTimelineProps) {
   const listRef = useRef<LegendListRef | null>(null);
   // null anchor = the user was following the tail when they left.
@@ -189,10 +192,15 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
   const renderItem = useCallback(
     ({ item }: { item: TranscriptRow }) => (
       <div data-transcript-row className="mx-auto w-full max-w-(--transcript-measure) min-w-0 px-4 sm:px-6">
-        <TranscriptRowContent imageSource={imageSource} nowMs={nowMs} row={item} />
+        <TranscriptRowContent
+          imageSource={imageSource}
+          nowMs={nowMs}
+          row={item}
+          toolHost={toolHost}
+        />
       </div>
     ),
-    [imageSource, nowMs],
+    [imageSource, nowMs, toolHost],
   );
 
   const maintainScrollAtEnd = useMemo(
@@ -334,7 +342,12 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
                   className="mx-auto w-full max-w-(--transcript-measure) min-w-0 shrink-0 px-4 sm:px-6"
                   key={row.id}
                 >
-                  <TranscriptRowContent imageSource={imageSource} nowMs={nowMs} row={row} />
+                  <TranscriptRowContent
+                    imageSource={imageSource}
+                    nowMs={nowMs}
+                    row={row}
+                    toolHost={toolHost}
+                  />
                 </div>
               ))}
             </div>

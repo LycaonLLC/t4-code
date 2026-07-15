@@ -29,6 +29,10 @@ import { useAnchoredDisclosure } from "./disclosure-anchor.tsx";
 import { CopyButton, Markdown } from "./Markdown.tsx";
 import type { ToolCall, TranscriptNotice } from "./projection.ts";
 import { formatElapsed, type TranscriptRow } from "./rows.ts";
+import { adaptToolRender } from "./tool-render/adapter.ts";
+import { resolveToolRenderer } from "./tool-render/registry.ts";
+import type { ToolRenderHost, ToolRenderProps } from "./tool-render/types.ts";
+import "./tool-render/tool-render.css";
 import { TranscriptImages } from "./TranscriptImages.tsx";
 
 // ---------------------------------------------------------------------------
@@ -74,9 +78,7 @@ function ReasoningDisclosure({ reasoning }: { readonly reasoning: string }) {
           "flex min-h-11 cursor-pointer items-center gap-1 rounded-md py-0.5 pr-1.5 text-muted-foreground text-xs outline-none transition-colors duration-(--motion-duration-fast) hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:min-h-6",
           open && "text-foreground",
         )}
-        onClick={(event) =>
-          anchoredToggle(event.currentTarget, () => setOpen((value) => !value))
-        }
+        onClick={(event) => anchoredToggle(event.currentTarget, () => setOpen((value) => !value))}
         type="button"
       >
         <ChevronRight
@@ -151,18 +153,30 @@ function MessageRow({
 // ---------------------------------------------------------------------------
 
 const TOOL_META: Record<string, { readonly label: string; readonly Icon: typeof Terminal }> = {
+  apply_patch: { label: "Patch", Icon: SquarePen },
+  ast_edit: { label: "AST edit", Icon: SquarePen },
+  ast_grep: { label: "AST search", Icon: SearchIcon },
+  await: { label: "Await", Icon: Terminal },
   bash: { label: "Shell", Icon: Terminal },
   edit: { label: "Edit", Icon: SquarePen },
+  fetch: { label: "Fetch", Icon: Globe },
+  find: { label: "Find", Icon: SearchIcon },
+  glob: { label: "Files", Icon: SearchIcon },
+  grep: { label: "Search", Icon: SearchIcon },
+  inspect_image: { label: "Image", Icon: Eye },
+  job: { label: "Job", Icon: Terminal },
+  poll: { label: "Poll", Icon: Terminal },
+  puppeteer: { label: "Browser", Icon: Globe },
   read: { label: "Read", Icon: Eye },
   search: { label: "Search", Icon: SearchIcon },
+  search_tool_bm25: { label: "Tool search", Icon: SearchIcon },
+  ssh: { label: "SSH", Icon: Terminal },
   browser: { label: "Browser", Icon: Globe },
   subagent: { label: "Agent", Icon: Bot },
+  task: { label: "Agent", Icon: Bot },
+  web_search: { label: "Web search", Icon: Globe },
+  write: { label: "Write", Icon: SquarePen },
 };
-
-function resultText(call: ToolCall, key: string): string {
-  const value = call.result?.[key];
-  return typeof value === "string" ? value : "";
-}
 
 function argText(call: ToolCall, key: string): string {
   const value = call.args[key];
@@ -207,79 +221,43 @@ export function toolDetail(call: ToolCall): string {
   return normalized === toolName || normalized === primaryLabel ? "" : detail;
 }
 
-/** Expanded body per known treatment; null falls back to raw JSON. */
-function toolBody(call: ToolCall): { readonly text: string; readonly mono: boolean } | null {
-  switch (call.tool) {
-    case "bash": {
-      const output = resultText(call, "output");
-      return output === "" ? null : { text: output, mono: true };
-    }
-    case "edit": {
-      const diff = resultText(call, "diff");
-      return diff === "" ? null : { text: diff, mono: true };
-    }
-    case "read": {
-      const preview = resultText(call, "preview");
-      return preview === "" ? null : { text: preview, mono: true };
-    }
-    case "search": {
-      const files = call.result?.files;
-      if (!Array.isArray(files)) return null;
-      const matches = call.result?.matches;
-      const head = typeof matches === "number" ? `${matches} matches` : "matches";
-      return { text: `${head}\n${files.filter((f) => typeof f === "string").join("\n")}`, mono: true };
-    }
-    case "browser": {
-      const note = resultText(call, "note");
-      const title = resultText(call, "title");
-      const combined = [title, note].filter((part) => part !== "").join(" — ");
-      return combined === "" ? null : { text: combined, mono: false };
-    }
-    case "subagent": {
-      const summary = resultText(call, "summary");
-      return summary === "" ? null : { text: summary, mono: false };
-    }
-    default:
-      return null;
-  }
-}
-
-function DiffBody({ diff }: { readonly diff: string }) {
-  return (
-    <pre className="overflow-x-auto rounded-md border border-border font-mono text-xs leading-relaxed">
-      {diff.split("\n").map((line, index) => (
-        <div
-          className={cn(
-            "px-2",
-            line.startsWith("+") && "bg-(--diff-added-background)",
-            line.startsWith("-") && "bg-(--diff-removed-background)",
-          )}
-          // biome-ignore lint/suspicious/noArrayIndexKey: static diff lines never reorder
-          key={index}
-        >
-          {line || " "}
-        </div>
-      ))}
-    </pre>
-  );
+function humanizeToolName(name: string): string {
+  return name.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 const ToolCallRow = memo(function ToolCallRow({
   call,
   nowMs,
   imageSource,
+  toolHost,
 }: {
   readonly call: Extract<TranscriptRow, { kind: "tool-group" }>["calls"][number];
   readonly nowMs: number;
   readonly imageSource: TranscriptImageSource;
+  readonly toolHost?: ToolRenderHost | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const anchoredToggle = useAnchoredDisclosure();
-  const meta = TOOL_META[call.tool];
+  const view = adaptToolRender({
+    tool: call.tool,
+    args: call.args,
+    result: call.result,
+    state: call.state,
+    omitInlineImages: call.images.length > 0,
+  });
+  const renderer = resolveToolRenderer(view.name);
+  const Summary = renderer.Summary;
+  const Body = renderer.Body;
+  const renderProps: ToolRenderProps = {
+    name: view.name,
+    args: view.args,
+    result: view.result,
+    running: call.state === "running",
+    ...(toolHost === undefined ? {} : { host: toolHost }),
+  };
+  const meta = TOOL_META[view.name];
   const Icon = meta?.Icon ?? FileJson;
-  const detail = toolDetail(call);
-  const body = toolBody(call);
-  const rawFallback = meta === undefined || (open && body === null);
+  const label = meta?.label ?? humanizeToolName(view.name);
   return (
     <div>
       <button
@@ -288,9 +266,7 @@ const ToolCallRow = memo(function ToolCallRow({
           "flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-0",
           open && "bg-accent/50",
         )}
-        onClick={(event) =>
-          anchoredToggle(event.currentTarget, () => setOpen((value) => !value))
-        }
+        onClick={(event) => anchoredToggle(event.currentTarget, () => setOpen((value) => !value))}
         type="button"
       >
         {call.state === "running" ? (
@@ -301,9 +277,12 @@ const ToolCallRow = memo(function ToolCallRow({
           <Check aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
         )}
         <Icon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="shrink-0 font-medium text-xs">{meta?.label ?? call.tool}</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground text-xs">
-          {detail}
+        <span className="shrink-0 font-medium text-xs">{label}</span>
+        <span
+          className="tv-render tv-summary min-w-0 flex-1 truncate"
+          data-tool-renderer={view.known ? "known" : "generic"}
+        >
+          <Summary {...renderProps} />
         </span>
         {call.state === "running" && (
           <span className="shrink-0 text-muted-foreground text-xs">
@@ -319,7 +298,7 @@ const ToolCallRow = memo(function ToolCallRow({
         />
       </button>
       {call.state === "running" && call.progress.length > 0 && (
-        <pre className="mt-0.5 ml-7 overflow-x-auto whitespace-pre-wrap font-mono text-muted-foreground text-xs leading-relaxed">
+        <pre className="mt-0.5 ml-7 max-w-full overflow-x-auto whitespace-pre-wrap font-mono text-muted-foreground text-xs leading-relaxed [overflow-wrap:anywhere]">
           {call.progress.join("\n")}
         </pre>
       )}
@@ -327,35 +306,17 @@ const ToolCallRow = memo(function ToolCallRow({
         className="mr-1 ml-7"
         images={call.images}
         issue={call.imageIssue}
-        label={`${meta?.label ?? call.tool} result`}
+        label={`${label} result`}
         source={imageSource}
       />
       <AnimatedHeight>
         {open && (
-          <div className="disclosure-content-enter mt-1 mb-1.5 ml-7 space-y-1.5">
-          {Object.keys(call.args).length > 0 && (
-            <pre className="overflow-x-auto rounded-md border border-border bg-(--markdown-codeblock-background) px-2 py-1.5 font-mono text-muted-foreground text-xs">
-              {JSON.stringify(call.args, null, 2)}
-            </pre>
-          )}
-          {body !== null &&
-            (call.tool === "edit" ? (
-              <DiffBody diff={body.text} />
-            ) : (
-              <pre
-                className={cn(
-                  "overflow-x-auto whitespace-pre-wrap rounded-md border border-border px-2 py-1.5 text-xs leading-relaxed",
-                  body.mono ? "font-mono" : "font-sans",
-                )}
-              >
-                {body.text}
-              </pre>
-            ))}
-          {rawFallback && call.result !== null && (
-            <pre className="overflow-x-auto rounded-md border border-border bg-(--markdown-codeblock-background) px-2 py-1.5 font-mono text-muted-foreground text-xs">
-              {JSON.stringify(call.result, null, 2)}
-            </pre>
-          )}
+          <div
+            className="tv-render tv-render-body disclosure-content-enter mt-1 mb-1.5 ml-7"
+            data-tool-renderer={view.known ? "known" : "generic"}
+          >
+            {view.intent !== undefined && <div className="tv-intent">{view.intent}</div>}
+            {Body !== undefined && <Body {...renderProps} />}
           </div>
         )}
       </AnimatedHeight>
@@ -367,15 +328,23 @@ function ToolGroupRow({
   row,
   nowMs,
   imageSource,
+  toolHost,
 }: {
   readonly row: Extract<TranscriptRow, { kind: "tool-group" }>;
   readonly nowMs: number;
   readonly imageSource: TranscriptImageSource;
+  readonly toolHost?: ToolRenderHost | undefined;
 }) {
   return (
     <div className="my-1.5 rounded-lg border border-border/60 px-1 py-1">
       {row.calls.map((call) => (
-        <ToolCallRow call={call} imageSource={imageSource} key={call.callId} nowMs={nowMs} />
+        <ToolCallRow
+          call={call}
+          imageSource={imageSource}
+          key={call.callId}
+          nowMs={nowMs}
+          toolHost={toolHost}
+        />
       ))}
     </div>
   );
@@ -429,7 +398,7 @@ function NoticeRow({ row }: { readonly row: Extract<TranscriptRow, { kind: "noti
   return (
     <div className={cn("flex items-start gap-2 py-2 text-xs", toneClass)} role="note">
       <Icon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-      <span className="min-w-0">{text}</span>
+      <span className="min-w-0 [overflow-wrap:anywhere]">{text}</span>
     </div>
   );
 }
@@ -446,9 +415,7 @@ function UnknownEntryRow({
       <button
         aria-expanded={open}
         className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-muted-foreground text-xs outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-0"
-        onClick={(event) =>
-          anchoredToggle(event.currentTarget, () => setOpen((value) => !value))
-        }
+        onClick={(event) => anchoredToggle(event.currentTarget, () => setOpen((value) => !value))}
         type="button"
       >
         <FileJson aria-hidden="true" className="size-3.5 shrink-0" />
@@ -463,7 +430,7 @@ function UnknownEntryRow({
       </button>
       <AnimatedHeight>
         {open && (
-          <pre className="disclosure-content-enter mt-1 ml-7 overflow-x-auto rounded-md border border-border bg-(--markdown-codeblock-background) px-2 py-1.5 font-mono text-muted-foreground text-xs">
+          <pre className="disclosure-content-enter mt-1 ml-7 max-w-full overflow-x-auto rounded-md border border-border bg-(--markdown-codeblock-background) px-2 py-1.5 font-mono text-muted-foreground text-xs">
             {JSON.stringify(row.data, null, 2)}
           </pre>
         )}
@@ -497,17 +464,19 @@ export const TranscriptRowContent = memo(function TranscriptRowContent({
   row,
   nowMs,
   imageSource,
+  toolHost,
 }: {
   readonly row: TranscriptRow;
   /** Elapsed-label time base from the session runtime snapshot. */
   readonly nowMs: number;
   readonly imageSource: TranscriptImageSource;
+  readonly toolHost?: ToolRenderHost | undefined;
 }) {
   switch (row.kind) {
     case "message":
       return <MessageRow imageSource={imageSource} row={row} />;
     case "tool-group":
-      return <ToolGroupRow imageSource={imageSource} nowMs={nowMs} row={row} />;
+      return <ToolGroupRow imageSource={imageSource} nowMs={nowMs} row={row} toolHost={toolHost} />;
     case "notice":
       return <NoticeRow row={row} />;
     case "unknown-entry":

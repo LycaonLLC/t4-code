@@ -14,9 +14,9 @@
     "package": "omp",
     "version": "16.5.2",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "d7c9ac81a3764085d050d0b7148ac7eee976ddd3",
-    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/d7c9ac81a3764085d050d0b7148ac7eee976ddd3",
-    "sourceTag": "t4code-16.5.2-appserver-1",
+    "sourceCommit": "f9322817981e16bf3f1e3d77684f4269f026aa64",
+    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/f9322817981e16bf3f1e3d77684f4269f026aa64",
+    "sourceTag": "t4code-16.5.2-appserver-2",
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
     "upstreamTag": "v16.5.2",
     "upstreamCommit": "7d02778c60f4b5db60f84bedbca79d6e64cb91f5",
@@ -48,12 +48,16 @@
       "canonical-response-boundaries",
       "managed-rpc-session-entry-projection",
       "tiny-transcript-image-externalization",
-      "atomic-maintenance-drain"
+      "atomic-maintenance-drain",
+      "structured-tool-result-details",
+      "agent-transcript-streaming",
+      "bounded-subagent-rpc-reads",
+      "child-transcript-image-reads"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },
   "desktop": {
     "package": "@t4-code/protocol",
-    "version": "0.1.14"
+    "version": "0.1.15"
   }
 }

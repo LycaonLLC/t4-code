@@ -355,6 +355,44 @@ describe("session route fallback", () => {
     ).toEqual({ kind: "not-found" });
   });
 
+  it("opens an indexed browser fixture whose local id has no host prefix", () => {
+    const data: WorkspaceData = {
+      hosts: [{ id: "fixture-host", name: "Fixture", kind: "local" }],
+      projects: [
+        {
+          id: "fixture-project",
+          name: "Fixture project",
+          path: "Fixture project",
+          hostId: "fixture-host",
+        },
+      ],
+      sessions: [
+        {
+          id: "sess-stream",
+          projectId: "fixture-project",
+          title: "Fixture session",
+          model: "model",
+          status: null,
+          freshness: "live",
+          pendingApprovals: 0,
+          latestTurnCompletedAt: "2026-07-13T02:00:00Z",
+          createdAt: "2026-07-13T01:00:00Z",
+          updatedAt: "2026-07-13T02:00:00Z",
+          lastActivity: "",
+        },
+      ],
+    };
+
+    expect(
+      decideSessionRoute({
+        browserDirect: false,
+        data,
+        routeSessionId: "sess-stream",
+        snapshot: null,
+      }),
+    ).toEqual({ kind: "present" });
+  });
+
   it("redirects malformed session ids without waiting for host inventory", () => {
     for (const routeSessionId of ["missing-delimiter", "host/extra/slash", "host/%E0%A4%A"]) {
       expect(

@@ -1,16 +1,16 @@
-## Verified maintenance and local cutovers
+## Tool-aware transcripts and child agents
 
-T4 Code v0.1.14 includes the Linux host maintainer used for this compatibility pair. It mirrors official OMP `main` without a model call, publishes the product branch and tags as one atomic ref transaction, and independently verifies the workflows, release assets, checksums, and deployed site before a local install becomes eligible.
+T4 Code v0.1.15 gives known tools dedicated transcript views. Patch operations, task lists, child-agent work, file reads, shell commands, searches, and fetched sources show their useful arguments and structured results without exposing raw event payloads.
 
-Local deployment starts only when T4 is closed and the running appserver reports no active work. OMP's identity-bound `drain-if-idle` command checks the current host and epoch together with every tracked activity counter. A busy or changed runtime defers the update. Gateway ingress is the final exposure step. The deployment is accepted only after the installed OMP binary, T4 package, web runtime, loopback health, and exact deployment identity pass verification.
+The Agents pane follows child-agent transcript events as they arrive and hydrates durable transcript records when opened. Child messages, tools, and images use the same rendering path as the main transcript. Subagent RPC reads have byte and record ceilings, so long-running agents remain responsive without unbounded transcript fetches.
 
-Android release CI now checks the universal APK's package name, version, SDK bounds, split metadata, and production signing certificate before publishing it.
+The runtime preserves sanitized structured tool-result details while omitting embedded image bytes from those details. Authorized image digests from child transcripts remain available through the established session image-read path.
 
 ## Runtime compatibility
 
-T4 Code v0.1.14 vendors app-wire 0.5.5 from integration commit [6a87fa64](https://github.com/lyc-aon/oh-my-pi/commit/6a87fa6407ebff20417b4d52885a6bb3091003ea), source tree `a2495fe8781c979184fe7fb9a6d37d8f33bad30f`. Image prompts activate only when the host advertises the additive image capability; the compatibility handshake keeps older appservers available.
+T4 Code v0.1.15 vendors app-wire 0.5.5 from integration commit [6a87fa64](https://github.com/lyc-aon/oh-my-pi/commit/6a87fa6407ebff20417b4d52885a6bb3091003ea), source tree `a2495fe8781c979184fe7fb9a6d37d8f33bad30f`. Image prompts activate only when the host advertises the additive image capability; the compatibility handshake keeps older appservers available.
 
-The matching OMP 16.5.2 runtime is built from [d7c9ac81](https://github.com/lyc-aon/oh-my-pi/commit/d7c9ac81a3764085d050d0b7148ac7eee976ddd3) and tagged [t4code-16.5.2-appserver-1](https://github.com/lyc-aon/oh-my-pi/tree/t4code-16.5.2-appserver-1). It carries forward T4's appserver, lifecycle, image, and session-control integration and adds the identity-bound atomic maintenance drain used by the local deployer.
+The matching OMP 16.5.2 runtime is built from [f9322817](https://github.com/lyc-aon/oh-my-pi/commit/f9322817981e16bf3f1e3d77684f4269f026aa64) and tagged [t4code-16.5.2-appserver-2](https://github.com/lyc-aon/oh-my-pi/tree/t4code-16.5.2-appserver-2). It carries forward T4's appserver, lifecycle, image, session-control, and atomic maintenance integration, then adds bounded child-agent transcript streaming and structured tool-result details.
 
 The integration is based on the official upstream [v16.5.2 tag](https://github.com/can1357/oh-my-pi/tree/v16.5.2), commit [7d02778c](https://github.com/can1357/oh-my-pi/commit/7d02778c60f4b5db60f84bedbca79d6e64cb91f5). Official upstream OMP v16.5.2 has no `appserver` command and cannot host T4 Code.
 

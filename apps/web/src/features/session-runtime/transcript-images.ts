@@ -431,6 +431,21 @@ function unregisterSource(hostId: string, sessionId: string, source: ManagedTran
   if (sources.size === 0) sourcesBySession.delete(key);
 }
 
+/**
+ * Return the newest live image source registered for one authoritative
+ * session. The interface keeps the registry itself private and read-only.
+ */
+export function transcriptImageSourceForSession(
+  hostId: string,
+  sessionId: string,
+): TranscriptImageSource | null {
+  const sources = sourcesBySession.get(sessionKey(hostId, sessionId));
+  if (sources === undefined) return null;
+  let newest: ManagedTranscriptImageSource | null = null;
+  for (const source of sources) newest = source;
+  return newest;
+}
+
 /** Dispose all renderer-owned URLs only after authoritative host deletion. */
 export function disposeTranscriptImagesForSession(hostId: string, sessionId: string): void {
   const key = sessionKey(hostId, sessionId);

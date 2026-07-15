@@ -54,6 +54,7 @@ export type {
   ProjectionFreshness,
   TerminalProjection,
   ResultProjection,
+  AgentTranscriptProjection,
   SessionProjection,
   ProjectionSnapshot,
   SessionIndexMetadata,

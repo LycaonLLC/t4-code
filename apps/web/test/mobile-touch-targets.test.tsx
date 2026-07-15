@@ -141,4 +141,22 @@ describe("phone touch targets", () => {
     expect(css).toContain('input:not([type="checkbox"]):not([type="radio"])');
     expect(css).toContain("min-height: 2.75rem");
   });
+
+  it("keeps tool events and agent-tree rows usable at phone widths", () => {
+    const agents = readFileSync(
+      join(import.meta.dirname, "../src/features/panes/AgentsPane.tsx"),
+      "utf8",
+    );
+    const toolCss = readFileSync(
+      join(import.meta.dirname, "../src/features/transcript/tool-render/tool-render.css"),
+      "utf8",
+    );
+
+    expect(agents).toContain("flex min-h-11 cursor-pointer flex-col justify-center");
+    expect(agents).toContain("sm:min-h-0");
+    expect(toolCss).toContain("@media (max-width: 39.999rem)");
+    expect(toolCss).toContain(".tv-render .tv-agent-link,");
+    expect(toolCss).toContain(".tv-render .tv-image-button,");
+    expect(toolCss).toContain("min-height: 2.75rem");
+  });
 });
