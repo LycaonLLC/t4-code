@@ -108,13 +108,24 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
   const cached = derived.get(snapshot);
   if (cached !== undefined) return cached;
 
+  const indexedSessionCountByHost = new Map<string, number>();
+  for (const ref of snapshot.projection.sessionIndex.values()) {
+    const hostId = String(ref.hostId);
+    indexedSessionCountByHost.set(hostId, (indexedSessionCountByHost.get(hostId) ?? 0) + 1);
+  }
+
   const hosts: WorkspaceHost[] = [];
   for (const [hostId, meta] of snapshot.hosts) {
     const target = snapshot.targets.get(meta.targetId);
+    const inventoryMetadata = snapshot.projection.sessionIndexMetadata.get(hostId);
     hosts.push({
       id: hostId,
       name: target?.label ?? "This machine",
       kind: target?.kind ?? "local",
+      sessionInventoryTruncated:
+        inventoryMetadata === undefined ||
+        inventoryMetadata.truncated ||
+        (indexedSessionCountByHost.get(hostId) ?? 0) < inventoryMetadata.totalCount,
     });
   }
 

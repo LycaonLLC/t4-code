@@ -28,14 +28,22 @@ export function AppShell() {
   const railOverlayOpen = useWorkspace((state) => state.railOverlayOpen);
   const sessionListView = useWorkspace((state) => state.sessionListView);
   const projectExpandedById = useWorkspace((state) => state.projectExpandedById);
+  const dismissedEmptyProjectIds = useWorkspace((state) => state.dismissedEmptyProjectIds);
   const lastVisitedAtBySessionId = useWorkspace((state) => state.lastVisitedAtBySessionId);
   const [railPreviewWidth, setRailPreviewWidth] = useState<number | null>(null);
   const [nowMs] = useState(() => Date.now());
 
   const shellData = useShellData();
   const currentGroups = useMemo(
-    () => buildProjectGroups(shellData, projectExpandedById, lastVisitedAtBySessionId, "current"),
-    [shellData, projectExpandedById, lastVisitedAtBySessionId],
+    () =>
+      buildProjectGroups(
+        shellData,
+        projectExpandedById,
+        lastVisitedAtBySessionId,
+        "current",
+        dismissedEmptyProjectIds,
+      ),
+    [shellData, projectExpandedById, lastVisitedAtBySessionId, dismissedEmptyProjectIds],
   );
   const archivedGroups = useMemo(
     () => buildProjectGroups(shellData, projectExpandedById, lastVisitedAtBySessionId, "archived"),
@@ -44,6 +52,24 @@ export function AppShell() {
   const groups = sessionListView === "archived" ? archivedGroups : currentGroups;
   const currentCount = shellData.sessions.filter((session) => session.archivedAt === undefined).length;
   const archivedCount = shellData.sessions.length - currentCount;
+  const hiddenEmptyProjectIds = useMemo(() => {
+    const currentProjectIds = new Set(
+      shellData.sessions
+        .filter((session) => session.archivedAt === undefined)
+        .map((session) => session.projectId),
+    );
+    const hostById = new Map(shellData.hosts.map((host) => [host.id, host]));
+    return new Set(
+      shellData.projects
+        .filter(
+          (project) =>
+            dismissedEmptyProjectIds[project.id] === true &&
+            !currentProjectIds.has(project.id) &&
+            hostById.get(project.hostId)?.sessionInventoryTruncated !== true,
+        )
+        .map((project) => project.id),
+    );
+  }, [dismissedEmptyProjectIds, shellData]);
 
   // Desktop mode: start the runtime once. StrictMode's doubled effect and
   // HMR remounts are safe — start is idempotent on a global singleton.
@@ -88,6 +114,7 @@ export function AppShell() {
             state.projectExpandedById,
             state.lastVisitedAtBySessionId,
             state.sessionListView,
+            state.dismissedEmptyProjectIds,
           ),
         );
         const sessionId = visible[action.index];
@@ -143,6 +170,7 @@ export function AppShell() {
                     archivedCount={archivedCount}
                     currentCount={currentCount}
                     groups={groups}
+                    hiddenEmptyProjectIds={hiddenEmptyProjectIds}
                     nowMs={nowMs}
                     view={sessionListView}
                   />
@@ -195,6 +223,7 @@ export function AppShell() {
                 archivedCount={archivedCount}
                 currentCount={currentCount}
                 groups={groups}
+                hiddenEmptyProjectIds={hiddenEmptyProjectIds}
                 nowMs={nowMs}
                 view={sessionListView}
               />

@@ -9,7 +9,7 @@
       "sourceBlobSha": "4a97f0542b4c95e96eae835a8d01db56e7156f1a;70d163306cca5b32d32319359c8ecc9a68c3dbf8",
       "targetPath": "apps/web/src/state/workspace-store.ts",
       "classification": "adapted",
-      "checksum": "sha256:496a20af2063a522cc427d7ea6d2155333332a379874baddad7bc28ff3fefc94"
+      "checksum": "sha256:d53e54cc6cf63934c6656c33135ab5d0bb0411ee56ef94aa0439dd57ac71f72f"
     },
     {
       "sourcePath": "apps/web/src/hooks/useTheme.ts",
@@ -51,7 +51,7 @@
       "sourceBlobSha": "4e7614ed55161f50f756184251c80cf9dfb16ea2",
       "targetPath": "apps/web/src/lib/session-tree.ts",
       "classification": "reference-only",
-      "checksum": "sha256:0ac2dc9e00efe5a257eaf4ac0abc7e619453415ac1ab5462d98468cfcf340c37"
+      "checksum": "sha256:7f78fd2e887eb6d8d1b0c2961b4693ca56a97464703a1ee4e3ca936ae6248246"
     }
   ]
 }

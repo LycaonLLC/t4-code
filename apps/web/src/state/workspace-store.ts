@@ -52,6 +52,8 @@ interface PersistedWorkspaceState {
   readonly sessionListView?: SessionListView;
   readonly activeSessionId: string | null;
   readonly projectExpandedById: Record<string, boolean>;
+  /** Empty Current-tab project headers the user explicitly removed. */
+  readonly dismissedEmptyProjectIds?: Record<string, true>;
   readonly lastVisitedAtBySessionId: Record<string, string>;
   readonly sessionViewById: Record<string, SessionViewState>;
 }
@@ -67,6 +69,8 @@ export interface WorkspaceState {
   readonly paletteOpen: boolean;
   readonly activeSessionId: string | null;
   readonly projectExpandedById: Record<string, boolean>;
+  /** View-only dismissals; a current session makes its project visible again. */
+  readonly dismissedEmptyProjectIds: Record<string, true>;
   readonly lastVisitedAtBySessionId: Record<string, string>;
   readonly sessionViewById: Record<string, SessionViewState>;
 }
@@ -83,6 +87,7 @@ export interface WorkspaceActions {
   /** Stamp a visit; timestamps only move forward. */
   markSessionVisited(sessionId: string, visitedAt: string): void;
   setProjectExpanded(projectId: string, expanded: boolean): void;
+  setEmptyProjectDismissed(projectId: string, dismissed: boolean): void;
   setSessionDraft(sessionId: string, draft: string): void;
   setSessionScrollTop(sessionId: string, scrollTop: number | null): void;
   /** Select a family; selecting the active family again closes the pane. */
@@ -104,6 +109,7 @@ const INITIAL_STATE: WorkspaceState = {
   paletteOpen: false,
   activeSessionId: null,
   projectExpandedById: {},
+  dismissedEmptyProjectIds: {},
   lastVisitedAtBySessionId: {},
   sessionViewById: {},
 };
@@ -113,6 +119,15 @@ function sanitizeBooleanRecord(value: unknown): Record<string, boolean> {
   const result: Record<string, boolean> = {};
   for (const [key, entry] of Object.entries(value)) {
     if (typeof entry === "boolean") result[key] = entry;
+  }
+  return result;
+}
+
+function sanitizeTrueRecord(value: unknown): Record<string, true> {
+  if (typeof value !== "object" || value === null) return {};
+  const result: Record<string, true> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry === true) result[key] = true;
   }
   return result;
 }
@@ -174,6 +189,7 @@ export function parsePersistedWorkspace(raw: unknown): WorkspaceState | null {
     sessionListView: parsed.sessionListView === "archived" ? "archived" : "current",
     activeSessionId: typeof parsed.activeSessionId === "string" ? parsed.activeSessionId : null,
     projectExpandedById: sanitizeBooleanRecord(parsed.projectExpandedById),
+    dismissedEmptyProjectIds: sanitizeTrueRecord(parsed.dismissedEmptyProjectIds),
     lastVisitedAtBySessionId: sanitizeTimestampRecord(parsed.lastVisitedAtBySessionId),
     sessionViewById,
   };
@@ -188,6 +204,7 @@ export function toPersistedWorkspace(state: WorkspaceState): PersistedWorkspaceS
     sessionListView: state.sessionListView,
     activeSessionId: state.activeSessionId,
     projectExpandedById: state.projectExpandedById,
+    dismissedEmptyProjectIds: state.dismissedEmptyProjectIds,
     lastVisitedAtBySessionId: state.lastVisitedAtBySessionId,
     sessionViewById: state.sessionViewById,
   };
@@ -276,6 +293,18 @@ export function createWorkspaceStore(options: CreateWorkspaceStoreOptions): Work
       set((state) => ({
         projectExpandedById: { ...state.projectExpandedById, [projectId]: expanded },
       })),
+    setEmptyProjectDismissed: (projectId, dismissed) =>
+      set((state) => {
+        if (dismissed) {
+          return {
+            dismissedEmptyProjectIds: { ...state.dismissedEmptyProjectIds, [projectId]: true },
+          };
+        }
+        if (state.dismissedEmptyProjectIds[projectId] !== true) return state;
+        const dismissedEmptyProjectIds = { ...state.dismissedEmptyProjectIds };
+        delete dismissedEmptyProjectIds[projectId];
+        return { dismissedEmptyProjectIds };
+      }),
     setSessionDraft: (sessionId, draft) =>
       set((state) => updateSessionView(state, sessionId, { draft })),
     setSessionScrollTop: (sessionId, scrollTop) =>

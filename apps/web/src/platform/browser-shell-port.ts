@@ -279,7 +279,7 @@ export function createBrowserShellPort(
       },
       client: {
         name: "T4 Code",
-        version: "0.1.16",
+        version: "0.1.17",
         build: mobilePlatform ?? "browser",
         platform: mobilePlatform ?? (platform === "darwin" ? "darwin" : "linux"),
       },

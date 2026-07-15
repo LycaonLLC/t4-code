@@ -6,7 +6,11 @@
 // visible until the host acknowledges, session selection attaches once,
 // and a reconnect never clears the transcript.
 import { describe, expect, it } from "vite-plus/test";
-import { createDesktopRuntimeController, type DesktopRuntimeController } from "@t4-code/client";
+import {
+  createDesktopRuntimeController,
+  type DesktopRuntimeController,
+  type DesktopRuntimeSnapshot,
+} from "@t4-code/client";
 import {
   catalogId,
   commandId,
@@ -39,6 +43,7 @@ import type { SessionRuntime } from "../src/features/session-runtime/controller.
 import { IMAGE_PROMPTS_UNSUPPORTED_REASON } from "../src/features/session-runtime/intents.ts";
 import { IMAGE_UPLOAD_CHUNK_BYTES } from "../src/features/session-runtime/image-upload.ts";
 import { obtainLiveRuntime } from "../src/features/session-runtime/useSessionRuntime.ts";
+import { buildProjectGroups } from "../src/lib/session-tree.ts";
 import { deriveWorkspaceData, sessionViewId } from "../src/platform/live-workspace.ts";
 import {
   acquireRuntimeController,
@@ -47,7 +52,7 @@ import {
 } from "../src/platform/desktop-runtime.ts";
 import { createMemoryPersistence } from "../src/state/persistence.ts";
 import { createWorkspaceStore, selectSessionView } from "../src/state/workspace-store.ts";
-import { deferred, FakeShell, makeWelcome } from "./fake-shell.ts";
+import { deferred, FakeShell, makeTarget, makeWelcome } from "./fake-shell.ts";
 
 const V = "omp-app/1" as const;
 const HOST = "host-a";
@@ -686,6 +691,91 @@ describe("session lifecycle", () => {
 });
 
 describe("workspace projection safety", () => {
+  it("marks a host inventory partial when indexed refs fall below its advertised total", async () => {
+    const { controller } = await startedRuntime();
+    const base = controller.getSnapshot();
+    const ref: SessionsFrame["sessions"][number] = {
+      hostId: hostId(HOST),
+      sessionId: sessionId(SESSION),
+      project: {
+        projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+        name: "lycaon",
+      },
+      revision: revision("rev-1"),
+      title: "Indexed session",
+      status: "idle",
+      updatedAt: "2026-07-11T10:00:00Z",
+    };
+    const incomplete: DesktopRuntimeSnapshot = {
+      ...base,
+      projection: {
+        ...base.projection,
+        sessionIndex: new Map([[`${HOST}\u0000${SESSION}`, ref]]),
+        sessionIndexMetadata: new Map([[HOST, { totalCount: 2, truncated: false }]]),
+      },
+    };
+
+    expect(deriveWorkspaceData(incomplete).hosts[0]?.sessionInventoryTruncated).toBe(true);
+  });
+
+  it("keeps identical raw project ids isolated by host", async () => {
+    const { controller } = await startedRuntime();
+    const base = controller.getSnapshot();
+    const firstHost = base.hosts.get(HOST);
+    expect(firstHost).toBeDefined();
+    if (firstHost === undefined) return;
+
+    const otherHost = "host-b";
+    const rawProjectId = "/workspace" as SessionsFrame["sessions"][number]["project"]["projectId"];
+    const makeArchivedRef = (
+      host: string,
+      session: string,
+    ): SessionsFrame["sessions"][number] => ({
+      hostId: hostId(host),
+      sessionId: sessionId(session),
+      project: { projectId: rawProjectId, name: "workspace" },
+      revision: revision(`rev-${session}`),
+      title: session,
+      status: "idle",
+      updatedAt: "2026-07-11T10:00:00Z",
+      archivedAt: "2026-07-12T10:00:00Z",
+    });
+    const firstRef = makeArchivedRef(HOST, "session-a");
+    const secondRef = makeArchivedRef(otherHost, "session-b");
+    const crossHost: DesktopRuntimeSnapshot = {
+      ...base,
+      targets: new Map([...base.targets, ["remote", makeTarget("remote", "connected")]]),
+      connections: new Map([...base.connections, ["remote", "connected"]]),
+      targetHosts: new Map([...base.targetHosts, ["remote", otherHost]]),
+      hosts: new Map([
+        ...base.hosts,
+        [otherHost, { ...firstHost, targetId: "remote", hostId: otherHost }],
+      ]),
+      projection: {
+        ...base.projection,
+        sessionIndex: new Map([
+          [`${HOST}\u0000session-a`, firstRef],
+          [`${otherHost}\u0000session-b`, secondRef],
+        ]),
+        sessionIndexMetadata: new Map([
+          [HOST, { totalCount: 1, truncated: false }],
+          [otherHost, { totalCount: 1, truncated: false }],
+        ]),
+      },
+    };
+
+    const data = deriveWorkspaceData(crossHost);
+    expect(data.projects.map((project) => project.id)).toEqual([
+      `${encodeURIComponent(HOST)}/${encodeURIComponent(rawProjectId)}`,
+      `${encodeURIComponent(otherHost)}/${encodeURIComponent(rawProjectId)}`,
+    ]);
+    expect(
+      buildProjectGroups(data, {}, {}, "current", { [data.projects[0]!.id]: true }).map(
+        (group) => group.project.id,
+      ),
+    ).toEqual([data.projects[1]!.id]);
+  });
+
   it("keeps the advertised project name when the newest session omits it", async () => {
     const { shell, controller } = await startedRuntime();
     const project = "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"];

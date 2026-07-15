@@ -33,6 +33,7 @@ export function buildProjectGroups(
   projectExpandedById: Readonly<Record<string, boolean>>,
   lastVisitedAtBySessionId: Readonly<Record<string, string>>,
   view: SessionListView = "current",
+  dismissedEmptyProjectIds: Readonly<Record<string, true>> = {},
 ): ProjectGroup[] {
   const groups: ProjectGroup[] = [];
   for (const project of data.projects) {
@@ -55,9 +56,19 @@ export function buildProjectGroups(
       }));
     // Current is also the project-management view. Keep known projects
     // reachable after their final current session is archived so the user can
-    // immediately create another session in that working folder. Archived is
-    // session-only and should not duplicate empty project headers.
+    // immediately create another session in that working folder, unless they
+    // explicitly removed that empty shortcut. A new current session always
+    // makes the project visible again. Archived is session-only and never
+    // applies the Current-tab dismissal.
     if (sessions.length === 0 && view === "archived") continue;
+    if (
+      sessions.length === 0 &&
+      view === "current" &&
+      host.sessionInventoryTruncated !== true &&
+      dismissedEmptyProjectIds[project.id] === true
+    ) {
+      continue;
+    }
     groups.push({
       project,
       host,

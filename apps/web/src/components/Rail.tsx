@@ -31,6 +31,7 @@ import {
   Plus,
   RotateCcw,
   Trash2,
+  X,
 } from "lucide-react";
 import {
   type FormEvent,
@@ -526,12 +527,28 @@ function SessionRowItem({
   );
 }
 
-function ProjectHeaderRow({ group, allowCreate }: { group: ProjectGroup; allowCreate: boolean }) {
+function ProjectHeaderRow({
+  group,
+  allowCreate,
+  shortcutHidden,
+  onDismiss,
+  onRestore,
+  view,
+}: {
+  group: ProjectGroup;
+  allowCreate: boolean;
+  shortcutHidden: boolean;
+  onDismiss: () => void;
+  onRestore: () => void;
+  view: SessionListView;
+}) {
   const navigate = useNavigate();
   const snapshot = useDesktopRuntimeSnapshot();
   const controller = desktopRuntime();
   const [pending, setPending] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const disclosureRef = useRef<HTMLButtonElement | null>(null);
 
   const address = snapshot !== null ? resolveLiveProject(snapshot, group.project.id) : null;
   const createSupport =
@@ -544,6 +561,9 @@ function ProjectHeaderRow({ group, allowCreate }: { group: ProjectGroup; allowCr
     controller !== null &&
     address !== null &&
     !pending;
+  const emptyCurrentProject = view === "current" && group.sessions.length === 0;
+  const inventoryTruncated = group.host.sessionInventoryTruncated === true;
+  const showProjectMenu = emptyCurrentProject || (view === "archived" && shortcutHidden);
 
   const handleCreate = useCallback(
     async (event: React.MouseEvent) => {
@@ -570,9 +590,11 @@ function ProjectHeaderRow({ group, allowCreate }: { group: ProjectGroup; allowCr
         <button
           aria-expanded={group.expanded}
           className="flex min-h-11 min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 py-1 text-left outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background sm:min-h-0"
+          data-project-disclosure={group.project.id}
           onClick={() =>
             workspaceStore.getState().setProjectExpanded(group.project.id, !group.expanded)
           }
+          ref={disclosureRef}
           type="button"
         >
           <ChevronRight
@@ -630,6 +652,70 @@ function ProjectHeaderRow({ group, allowCreate }: { group: ProjectGroup; allowCr
             </TooltipPopup>
           </Tooltip>
         )}
+        {showProjectMenu && (
+          <Popover.Root onOpenChange={setMenuOpen} open={menuOpen}>
+            <Popover.Trigger
+              aria-label={`Actions for ${group.project.name}`}
+              className="flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:size-6"
+            >
+              <MoreHorizontal aria-hidden="true" className="size-4" />
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Positioner align="end" className="z-50" side="bottom" sideOffset={4}>
+                <Popover.Popup className="max-h-[min(22rem,calc(100dvh-1rem))] w-[min(17rem,calc(100vw-1rem))] overflow-y-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-(--overlay-shadow) outline-none">
+                  <Popover.Title className="truncate px-2 pt-1 pb-1.5 font-medium text-muted-foreground text-xs">
+                    {group.project.name}
+                  </Popover.Title>
+                  {emptyCurrentProject ? (
+                    <button
+                      aria-disabled={inventoryTruncated || pending || undefined}
+                      className={cn(
+                        "flex min-h-11 w-full items-start gap-2 rounded-md px-2 py-2 text-left outline-none transition-colors duration-(--motion-duration-fast) focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8",
+                        inventoryTruncated || pending
+                          ? "cursor-not-allowed text-muted-foreground opacity-64"
+                          : "cursor-pointer hover:bg-accent",
+                      )}
+                      onClick={() => {
+                        if (inventoryTruncated || pending) return;
+                        setMenuOpen(false);
+                        onDismiss();
+                      }}
+                      type="button"
+                    >
+                      <X aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+                      <span className="min-w-0">
+                        <span className="block text-sm">Remove shortcut</span>
+                        <span className="block text-muted-foreground text-xs leading-snug">
+                          {inventoryTruncated
+                            ? "This host is showing a partial session list, so this shortcut can't be removed safely."
+                            : "Only changes this T4 Code client. The folder and OMP sessions stay unchanged."}
+                        </span>
+                      </span>
+                    </button>
+                  ) : (
+                    <button
+                      className="flex min-h-11 w-full cursor-pointer items-start gap-2 rounded-md px-2 py-2 text-left outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        onRestore();
+                        requestAnimationFrame(() => disclosureRef.current?.focus());
+                      }}
+                      type="button"
+                    >
+                      <RotateCcw aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+                      <span className="min-w-0">
+                        <span className="block text-sm">Show shortcut</span>
+                        <span className="block text-muted-foreground text-xs leading-snug">
+                          Makes the empty folder shortcut available in this client again.
+                        </span>
+                      </span>
+                    </button>
+                  )}
+                </Popover.Popup>
+              </Popover.Positioner>
+            </Popover.Portal>
+          </Popover.Root>
+        )}
       </div>
       {error !== null && (
         <p className="px-2 pt-0.5 text-destructive-foreground text-xs" role="alert">
@@ -658,12 +744,14 @@ function handleRailKeyDown(event: KeyboardEvent<HTMLElement>) {
 
 export function Rail({
   groups,
+  hiddenEmptyProjectIds,
   nowMs,
   view,
   currentCount,
   archivedCount,
 }: {
   groups: readonly ProjectGroup[];
+  hiddenEmptyProjectIds: ReadonlySet<string>;
   nowMs: number;
   view: SessionListView;
   currentCount: number;
@@ -671,12 +759,35 @@ export function Rail({
 }) {
   const activeSessionId = useWorkspace((state) => state.activeSessionId);
   const [announcement, setAnnouncement] = useState("");
+  const navRef = useRef<HTMLElement | null>(null);
+
+  const dismissProject = (group: ProjectGroup) => {
+    const disclosures = [
+      ...(navRef.current?.querySelectorAll<HTMLElement>("[data-project-disclosure]") ?? []),
+    ];
+    const currentIndex = disclosures.findIndex(
+      (element) => element.dataset.projectDisclosure === group.project.id,
+    );
+    const focusTarget =
+      disclosures[currentIndex + 1] ?? disclosures[currentIndex - 1] ?? navRef.current;
+    workspaceStore.getState().setEmptyProjectDismissed(group.project.id, true);
+    setAnnouncement(
+      `Removed ${group.project.name} from Working folders. The folder and OMP sessions are unchanged.`,
+    );
+    requestAnimationFrame(() => {
+      const target = focusTarget?.isConnected ? focusTarget : navRef.current;
+      target?.focus();
+    });
+  };
+
   let rowIndex = 0;
   return (
     <nav
       aria-label="Working folders and sessions"
-      className="flex h-full min-h-0 flex-col overflow-y-auto px-1.5 py-2"
+      className="flex h-full min-h-0 flex-col overflow-y-auto px-1.5 py-2 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       onKeyDown={handleRailKeyDown}
+      ref={navRef}
+      tabIndex={-1}
     >
       <div className="px-1.5 pb-2">
         <h2 className="font-medium text-foreground text-sm">Working folders</h2>
@@ -694,8 +805,25 @@ export function Rail({
         </p>
       )}
       {groups.map((group) => (
-        <section aria-label={group.project.name} className="mb-1" key={group.project.id}>
-          <ProjectHeaderRow allowCreate={view === "current"} group={group} />
+        <section
+          aria-label={group.project.name}
+          className="mb-1"
+          data-project-id={group.project.id}
+          key={group.project.id}
+        >
+          <ProjectHeaderRow
+            allowCreate={view === "current"}
+            group={group}
+            onDismiss={() => dismissProject(group)}
+            onRestore={() => {
+              workspaceStore.getState().setEmptyProjectDismissed(group.project.id, false);
+              setAnnouncement(
+                `Restored ${group.project.name} to Working folders on this T4 Code client.`,
+              );
+            }}
+            shortcutHidden={hiddenEmptyProjectIds.has(group.project.id)}
+            view={view}
+          />
           {group.expanded && (
             <div className="mt-0.5 flex flex-col gap-px">
               {group.sessions.map((row) => (

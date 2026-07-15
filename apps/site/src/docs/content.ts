@@ -196,11 +196,11 @@ const localSessions: DocTopic = {
     { kind: "h2", id: "local-sessions-folders", text: "What a working folder means" },
     {
       kind: "p",
-      text: "A heading in the left rail is the working directory reported by the sessions beneath it. It is not a separate T4 Code project record. A folder group disappears when it has no Current or Archived sessions to show.",
+      text: "A heading in the left rail is the working directory reported by the sessions beneath it. It is not a separate T4 Code project record. When every session in a folder is archived, its empty shortcut can be removed from Working folders without touching the folder or any OMP session.",
     },
     {
       kind: "note",
-      text: "This release does not independently alias, pin, reorder, or hide working-folder groups. Those controls need a server-owned workspace registry so desktop and phone agree; a browser-only preference would drift between clients.",
+      text: "Removing a shortcut is view state for that T4 Code client, so desktop and phone can differ. Archived sessions remain visible, and their folder menu can restore the shortcut. A new or restored Current session always makes the folder visible. T4 Code still does not alias, pin, reorder, delete, or rename the underlying folder.",
     },
     {
       kind: "h2",

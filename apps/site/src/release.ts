@@ -13,8 +13,8 @@ export const OMP_UPSTREAM_TAG = "v16.5.2";
 export const OMP_UPSTREAM_COMMIT = "7d02778c60f4b5db60f84bedbca79d6e64cb91f5";
 export const OMP_UPSTREAM_URL = `${OMP_URL}/tree/${OMP_UPSTREAM_TAG}`;
 export const APP_WIRE_VERSION = "0.5.5";
-export const RELEASE_TAG = "v0.1.16";
-export const RELEASE_VERSION = "0.1.16";
+export const RELEASE_TAG = "v0.1.17";
+export const RELEASE_VERSION = "0.1.17";
 export const RELEASES_URL = `${REPO_URL}/releases/tag/${RELEASE_TAG}`;
 
 export type Platform = "android" | "linux" | "mac";
@@ -48,11 +48,11 @@ function asset(
 }
 
 export const RELEASE_ASSETS: readonly ReleaseAsset[] = [
-  asset("android", "apk", "universal", "T4-Code-0.1.16-android.apk", "Android APK"),
-  asset("linux", "deb", "x86_64", "T4-Code-0.1.16-linux-amd64.deb", "Linux .deb"),
-  asset("linux", "appimage", "x86_64", "T4-Code-0.1.16-linux-x86_64.AppImage", "Linux AppImage"),
-  asset("mac", "dmg", "arm64", "T4-Code-0.1.16-mac-arm64.dmg", "macOS .dmg"),
-  asset("mac", "zip", "arm64", "T4-Code-0.1.16-mac-arm64.zip", "macOS .zip"),
+  asset("android", "apk", "universal", "T4-Code-0.1.17-android.apk", "Android APK"),
+  asset("linux", "deb", "x86_64", "T4-Code-0.1.17-linux-amd64.deb", "Linux .deb"),
+  asset("linux", "appimage", "x86_64", "T4-Code-0.1.17-linux-x86_64.AppImage", "Linux AppImage"),
+  asset("mac", "dmg", "arm64", "T4-Code-0.1.17-mac-arm64.dmg", "macOS .dmg"),
+  asset("mac", "zip", "arm64", "T4-Code-0.1.17-mac-arm64.zip", "macOS .zip"),
 ];
 
 export function assetsFor(platform: Platform): readonly ReleaseAsset[] {

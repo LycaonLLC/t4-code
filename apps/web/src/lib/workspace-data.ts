@@ -13,6 +13,8 @@ export interface WorkspaceHost {
   readonly id: string;
   readonly name: string;
   readonly kind: "local" | "remote";
+  /** True when the host reported only part of its durable session index. */
+  readonly sessionInventoryTruncated?: boolean;
 }
 
 export interface WorkspaceProject {

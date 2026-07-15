@@ -45,14 +45,16 @@ describe("fixture invariants", () => {
 });
 
 describe("buildProjectGroups", () => {
-  it("keeps known project headers in Current when they have no current sessions", () => {
+  it("dismisses an empty Current header without hiding its archived sessions", () => {
     const project = SHELL_FIXTURE.projects[0];
+    const session = SHELL_FIXTURE.sessions.find((entry) => entry.projectId === project?.id);
     expect(project).toBeDefined();
-    if (project === undefined) return;
+    expect(session).toBeDefined();
+    if (project === undefined || session === undefined) return;
     const data = {
       ...SHELL_FIXTURE,
       projects: [project],
-      sessions: [],
+      sessions: [{ ...session, archivedAt: "2026-07-12T12:00:00Z" }],
     };
 
     const current = buildProjectGroups(data, {}, {}, "current");
@@ -60,7 +62,79 @@ describe("buildProjectGroups", () => {
     expect(current[0]?.project.id).toBe(project.id);
     expect(current[0]?.sessions).toEqual([]);
     expect(current[0]?.groupStatus).toBeNull();
-    expect(buildProjectGroups(data, {}, {}, "archived")).toEqual([]);
+    expect(buildProjectGroups(data, {}, {}, "current", { [project.id]: true })).toEqual([]);
+
+    const archived = buildProjectGroups(data, {}, {}, "archived", { [project.id]: true });
+    expect(archived).toHaveLength(1);
+    expect(archived[0]?.sessions.map((row) => row.session.id)).toEqual([session.id]);
+
+    const truncated = buildProjectGroups(
+      {
+        ...data,
+        hosts: data.hosts.map((host) =>
+          host.id === project.hostId ? { ...host, sessionInventoryTruncated: true } : host,
+        ),
+      },
+      {},
+      {},
+      "current",
+      { [project.id]: true },
+    );
+    expect(truncated).toHaveLength(1);
+  });
+
+  it("shows a dismissed project again as soon as it has a current session", () => {
+    const project = SHELL_FIXTURE.projects[0];
+    const session = SHELL_FIXTURE.sessions.find((entry) => entry.projectId === project?.id);
+    expect(project).toBeDefined();
+    expect(session).toBeDefined();
+    if (project === undefined || session === undefined) return;
+
+    const groups = buildProjectGroups(
+      { ...SHELL_FIXTURE, projects: [project], sessions: [session] },
+      {},
+      {},
+      "current",
+      { [project.id]: true },
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.sessions.map((row) => row.session.id)).toEqual([session.id]);
+    expect(
+      buildProjectGroups(
+        {
+          ...SHELL_FIXTURE,
+          projects: [project],
+          sessions: [{ ...session, archivedAt: "2026-07-12T12:00:00Z" }],
+        },
+        {},
+        {},
+        "current",
+        { [project.id]: true },
+      ),
+    ).toEqual([]);
+  });
+
+  it("dismisses duplicate display names by stable project id", () => {
+    const [first, second] = SHELL_FIXTURE.projects;
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    if (first === undefined || second === undefined) return;
+    const projects = [
+      { ...first, name: "workspace" },
+      { ...second, name: "workspace" },
+    ];
+    const sessions = SHELL_FIXTURE.sessions
+      .filter((session) => session.projectId === first.id || session.projectId === second.id)
+      .map((session) => ({ ...session, archivedAt: "2026-07-12T12:00:00Z" }));
+
+    const groups = buildProjectGroups(
+      { ...SHELL_FIXTURE, projects, sessions },
+      {},
+      {},
+      "current",
+      { [first.id]: true },
+    );
+    expect(groups.map((group) => group.project.id)).toEqual([second.id]);
   });
 
   it("aggregates the highest-priority child status per project", () => {

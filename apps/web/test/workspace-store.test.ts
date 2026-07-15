@@ -115,6 +115,7 @@ describe("persistence", () => {
     first.getState().setSessionDraft("A", "resume me");
     first.getState().setRailWidth(300);
     first.getState().setTheme("dark");
+    first.getState().setEmptyProjectDismissed("host/project", true);
     first.getState().setPaletteOpen(true); // ephemeral, must not persist
 
     const second = createWorkspaceStore({ persistence });
@@ -123,8 +124,50 @@ describe("persistence", () => {
     expect(selectSessionView(state, "A").draft).toBe("resume me");
     expect(state.railWidth).toBe(300);
     expect(state.theme).toBe("dark");
+    expect(state.dismissedEmptyProjectIds).toEqual({ "host/project": true });
     expect(state.paletteOpen).toBe(false);
     expect(state.railOverlayOpen).toBe(false);
+  });
+
+  it("loads a v1 snapshot written before empty-project dismissals existed", () => {
+    const parsed = parsePersistedWorkspace({
+      version: 1,
+      theme: "dark",
+      railWidth: 312,
+      railCollapsed: true,
+      sessionListView: "archived",
+      activeSessionId: "A",
+      projectExpandedById: { project: false },
+      lastVisitedAtBySessionId: { A: "2026-07-11T10:00:00Z" },
+      sessionViewById: {
+        A: {
+          scrollTop: 42,
+          draft: "old draft",
+          paneFamily: "files",
+          paneOpen: true,
+          paneWidth: 400,
+          terminalDrawerOpen: false,
+        },
+      },
+    });
+
+    expect(parsed).toMatchObject({
+      theme: "dark",
+      railWidth: 312,
+      railCollapsed: true,
+      sessionListView: "archived",
+      activeSessionId: "A",
+      projectExpandedById: { project: false },
+      dismissedEmptyProjectIds: {},
+      lastVisitedAtBySessionId: { A: "2026-07-11T10:00:00Z" },
+    });
+    expect(parsed?.sessionViewById.A).toMatchObject({
+      scrollTop: 42,
+      draft: "old draft",
+      paneFamily: "files",
+      paneOpen: true,
+      paneWidth: 400,
+    });
   });
 
   it("rejects wrong versions and non-objects", () => {
@@ -141,6 +184,7 @@ describe("persistence", () => {
       railCollapsed: "yes",
       activeSessionId: 42,
       projectExpandedById: { good: true, bad: "nope" },
+      dismissedEmptyProjectIds: { good: true, falseEntry: false, bad: "yes" },
       lastVisitedAtBySessionId: { good: "2026-07-11T10:00:00Z", bad: "not a date" },
       sessionViewById: {
         good: { paneFamily: "made-up", paneWidth: 5, scrollTop: -3, draft: 9 },
@@ -153,6 +197,7 @@ describe("persistence", () => {
     expect(parsed?.railCollapsed).toBe(false);
     expect(parsed?.activeSessionId).toBeNull();
     expect(parsed?.projectExpandedById).toEqual({ good: true });
+    expect(parsed?.dismissedEmptyProjectIds).toEqual({ good: true });
     expect(parsed?.lastVisitedAtBySessionId).toEqual({ good: "2026-07-11T10:00:00Z" });
     const view = parsed?.sessionViewById["good"];
     expect(view?.paneFamily).toBe("agents");
@@ -169,6 +214,17 @@ describe("persistence", () => {
     const snapshot = toPersistedWorkspace(store.getState()) as unknown as Record<string, unknown>;
     expect("paletteOpen" in snapshot).toBe(false);
     expect("railOverlayOpen" in snapshot).toBe(false);
+  });
+
+  it("can clear an empty-project dismissal without disturbing other projects", () => {
+    const { store } = makeStore();
+    store.getState().setEmptyProjectDismissed("same-name/project-a", true);
+    store.getState().setEmptyProjectDismissed("same-name/project-b", true);
+    store.getState().setEmptyProjectDismissed("same-name/project-a", false);
+
+    expect(store.getState().dismissedEmptyProjectIds).toEqual({
+      "same-name/project-b": true,
+    });
   });
 });
 
