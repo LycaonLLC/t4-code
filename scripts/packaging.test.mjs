@@ -28,7 +28,7 @@ const androidIdentity = JSON.parse(readFileSync(resolve(repoRoot, ".github/andro
 const productionCertificate = "fa58f53c953a078d8db2b633ee8c226cfd2ad3f7220cd55dd03a2e195a81b0ac";
 
 function androidReleaseFixture(overrides = {}) {
-  const packageVersion = overrides.packageVersion ?? "0.1.15";
+  const packageVersion = overrides.packageVersion ?? "0.1.16";
   const versionCode = deriveAndroidVersionCode(packageVersion);
   const contract = structuredClone(androidIdentity);
   Object.assign(contract, overrides.contract);
@@ -90,9 +90,9 @@ test("Android release identity is public, pinned, and wired into the release wor
 
 test("Android versionCode is derived from the package version without a release-specific constant", () => {
   assert.equal(deriveAndroidVersionCode("0.1.13"), 10_013);
-  assert.equal(deriveAndroidVersionCode("0.1.15"), 10_015);
+  assert.equal(deriveAndroidVersionCode("0.1.16"), 10_016);
   assert.equal(deriveAndroidVersionCode("1.2.3456"), 1_023_456);
-  assert.throws(() => deriveAndroidVersionCode("0.1.15-beta.1"), /numeric major\.minor\.patch/u);
+  assert.throws(() => deriveAndroidVersionCode("0.1.16-beta.1"), /numeric major\.minor\.patch/u);
   assert.throws(() => deriveAndroidVersionCode("0.100.0"), /minor version must be at most 99/u);
   assert.throws(() => deriveAndroidVersionCode("0.1.10000"), /patch version must be at most 9999/u);
 });
@@ -100,12 +100,12 @@ test("Android versionCode is derived from the package version without a release-
 test("Android artifact parsers preserve exact package, SDK, split, and certificate identity", () => {
   assert.deepEqual(
     parseAaptBadging(
-      "package: name='com.lycaonsolutions.t4code' versionCode='10015' versionName='0.1.15'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
+      "package: name='com.lycaonsolutions.t4code' versionCode='10016' versionName='0.1.16'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
     ),
     {
       applicationId: "com.lycaonsolutions.t4code",
-      versionCode: 10_015,
-      versionName: "0.1.15",
+      versionCode: 10_016,
+      versionName: "0.1.16",
       minSdkVersion: 24,
       targetSdkVersion: 36,
       splitName: null,
@@ -127,8 +127,8 @@ test("Android artifact parsers preserve exact package, SDK, split, and certifica
 test("Android release inspector accepts the exact production universal APK contract", () => {
   assert.deepEqual(validateAndroidRelease(androidReleaseFixture()), {
     applicationId: "com.lycaonsolutions.t4code",
-    versionName: "0.1.15",
-    versionCode: 10_015,
+    versionName: "0.1.16",
+    versionCode: 10_016,
     minSdkVersion: 24,
     targetSdkVersion: 36,
     signingCertificateSha256: productionCertificate,
@@ -140,42 +140,42 @@ test("Android release inspector fails closed on identity, SDK, split, and signer
     [
       "application id",
       {
-        badgingOutput: "package: name='example.wrong' versionCode='10015' versionName='0.1.15'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
+        badgingOutput: "package: name='example.wrong' versionCode='10016' versionName='0.1.16'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
       },
       /applicationId example\.wrong/u,
     ],
     [
       "version name",
       {
-        badgingOutput: "package: name='com.lycaonsolutions.t4code' versionCode='10015' versionName='0.1.16'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
+        badgingOutput: "package: name='com.lycaonsolutions.t4code' versionCode='10016' versionName='0.1.17'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
       },
-      /versionName 0\.1\.16/u,
+      /versionName 0\.1\.17/u,
     ],
     [
       "version code",
       {
-        badgingOutput: "package: name='com.lycaonsolutions.t4code' versionCode='10014' versionName='0.1.15'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
+        badgingOutput: "package: name='com.lycaonsolutions.t4code' versionCode='10015' versionName='0.1.16'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
       },
-      /versionCode 10014/u,
+      /versionCode 10015/u,
     ],
     [
       "minimum sdk",
       {
-        badgingOutput: "package: name='com.lycaonsolutions.t4code' versionCode='10015' versionName='0.1.15'\nsdkVersion:'23'\ntargetSdkVersion:'36'\n",
+        badgingOutput: "package: name='com.lycaonsolutions.t4code' versionCode='10016' versionName='0.1.16'\nsdkVersion:'23'\ntargetSdkVersion:'36'\n",
       },
       /minSdkVersion 23/u,
     ],
     [
       "target sdk",
       {
-        badgingOutput: "package: name='com.lycaonsolutions.t4code' versionCode='10015' versionName='0.1.15'\nsdkVersion:'24'\ntargetSdkVersion:'35'\n",
+        badgingOutput: "package: name='com.lycaonsolutions.t4code' versionCode='10016' versionName='0.1.16'\nsdkVersion:'24'\ntargetSdkVersion:'35'\n",
       },
       /targetSdkVersion 35/u,
     ],
     [
       "split package",
       {
-        badgingOutput: "package: name='com.lycaonsolutions.t4code' versionCode='10015' versionName='0.1.15' split='config.arm64_v8a'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
+        badgingOutput: "package: name='com.lycaonsolutions.t4code' versionCode='10016' versionName='0.1.16' split='config.arm64_v8a'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
       },
       /standalone/u,
     ],
@@ -191,8 +191,8 @@ test("Android release inspector fails closed on identity, SDK, split, and signer
             {
               type: "SINGLE",
               filters: [{ filterType: "ABI", value: "arm64-v8a" }],
-              versionCode: 10_015,
-              versionName: "0.1.15",
+              versionCode: 10_016,
+              versionName: "0.1.16",
               outputFile: "app-release.apk",
             },
           ],
