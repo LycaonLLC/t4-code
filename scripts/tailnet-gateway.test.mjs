@@ -12,6 +12,7 @@ import {
   cacheControlForStaticPath,
   injectBackendConfig,
   normalizeAllowedOrigin,
+  normalizeDeploymentIdentity,
   normalizeNativeAllowedOrigins,
   optionsFromEnvironment,
   resolveAppSocket,
@@ -20,6 +21,7 @@ import {
 } from "./tailnet-gateway.mjs";
 
 const ALLOWED_ORIGIN = "https://host.example-tailnet.ts.net:8445";
+const DEPLOYMENT_IDENTITY = `sha256:${"b".repeat(64)}`;
 
 function websocketMessage(socket) {
   return new Promise((resolvePromise, reject) => {
@@ -69,6 +71,7 @@ async function fixture(socketTopology = "symlink", gatewayOptions = {}) {
     allowedOrigin: ALLOWED_ORIGIN,
     listenPort: 0,
     label: "Test host </script>",
+    deploymentIdentity: DEPLOYMENT_IDENTITY,
     ...gatewayOptions,
   });
   return {
@@ -112,16 +115,25 @@ test("native origin validation is pinned to Capacitor's Android and iOS defaults
   }
 });
 
+test("deployment identity accepts only an exact immutable SHA-256 token", () => {
+  assert.equal(normalizeDeploymentIdentity(DEPLOYMENT_IDENTITY), DEPLOYMENT_IDENTITY);
+  for (const value of ["latest", `sha256:${"B".repeat(64)}`, `sha256:${"b".repeat(63)}`]) {
+    assert.throws(() => normalizeDeploymentIdentity(value), /exactly 64 lowercase hexadecimal/u);
+  }
+});
+
 test("gateway environment parses the explicit comma-separated native origin set", () => {
   const options = optionsFromEnvironment({
     T4_ALLOWED_ORIGIN: ALLOWED_ORIGIN,
     T4_NATIVE_ALLOWED_ORIGINS: "https://localhost,capacitor://localhost",
+    T4_DEPLOYMENT_IDENTITY: DEPLOYMENT_IDENTITY,
     XDG_RUNTIME_DIR: "/run/user/1000",
   });
   assert.deepEqual(normalizeNativeAllowedOrigins(options.nativeAllowedOrigins), [
     "https://localhost",
     "capacitor://localhost",
   ]);
+  assert.equal(options.deploymentIdentity, DEPLOYMENT_IDENTITY);
 });
 
 test("backend injection is explicit, credential-free, and script-safe", () => {
@@ -206,6 +218,7 @@ test("gateway serves configured app and reports real upstream health", async () 
       upstream: true,
       activeSessions: 0,
       transport: "local-unix",
+      deploymentIdentity: DEPLOYMENT_IDENTITY,
     });
   } finally {
     await running.close();

@@ -48,6 +48,14 @@ function gatewayPort(value) {
   return port;
 }
 
+function deploymentIdentity(value) {
+  const identity = cleanText(value, "deployment identity", 80);
+  if (!/^sha256:[0-9a-f]{64}$/u.test(identity)) {
+    fail("deployment identity must be sha256 followed by exactly 64 lowercase hexadecimal characters");
+  }
+  return identity;
+}
+
 function platformName(platform) {
   if (platform === "linux" || platform === "darwin") return platform;
   fail("the Tailnet gateway service supports Linux systemd and macOS launchd only");
@@ -132,6 +140,7 @@ export function validateServiceConfig(input) {
     nativeAllowedOrigins: normalizeServiceNativeOrigins(input.nativeAllowedOrigins),
     port: gatewayPort(input.port ?? DEFAULT_GATEWAY_PORT),
     label: cleanText(input.label ?? "OMP on this Tailnet host", "host label", 128),
+    deploymentIdentity: deploymentIdentity(input.deploymentIdentity),
   };
   if (input.version !== undefined && input.version !== CONFIG_VERSION) fail("service config version is unsupported");
   return config;
@@ -159,6 +168,7 @@ function gatewayEnvironment(config) {
     T4_WEB_ROOT: config.webRoot,
     T4_APP_SERVER_SOCKET: config.appSocket,
     T4_HOST_LABEL: config.label,
+    T4_DEPLOYMENT_IDENTITY: config.deploymentIdentity,
   };
 }
 
@@ -242,10 +252,20 @@ export function supervisorCommands(action, paths) {
         { argv: ["systemctl", "--user", "enable", unit] },
         { argv: ["systemctl", "--user", "restart", unit] },
       ],
+      "install-deferred": [
+        { argv: ["systemctl", "--user", "daemon-reload"] },
+        { argv: ["systemctl", "--user", "disable", "--now", unit] },
+      ],
       start: [{ argv: ["systemctl", "--user", "enable", "--now", unit] }],
-      stop: [{ argv: ["systemctl", "--user", "stop", unit] }],
-      restart: [{ argv: ["systemctl", "--user", "restart", unit] }],
+      stop: [{ argv: ["systemctl", "--user", "disable", "--now", unit] }],
+      restart: [
+        { argv: ["systemctl", "--user", "enable", unit] },
+        { argv: ["systemctl", "--user", "restart", unit] },
+      ],
       status: [{ argv: ["systemctl", "--user", "is-active", unit], allowFailure: true }],
+      "enablement-status": [
+        { argv: ["systemctl", "--user", "is-enabled", unit], allowFailure: true },
+      ],
       uninstall: [
         { argv: ["systemctl", "--user", "disable", "--now", unit], allowFailure: true },
       ],
@@ -258,20 +278,36 @@ export function supervisorCommands(action, paths) {
   const matrix = {
     install: [
       { argv: ["launchctl", "bootout", target], allowFailure: true },
+      { argv: ["launchctl", "enable", target] },
       { argv: ["launchctl", "bootstrap", paths.domain, paths.definition] },
       { argv: ["launchctl", "kickstart", "-k", target] },
     ],
+    "install-deferred": [
+      { argv: ["launchctl", "disable", target] },
+      { argv: ["launchctl", "bootout", target], allowFailure: true },
+    ],
     start: [
+      { argv: ["launchctl", "enable", target] },
       { argv: ["launchctl", "bootstrap", paths.domain, paths.definition], allowFailure: true },
       { argv: ["launchctl", "kickstart", "-k", target] },
     ],
-    stop: [{ argv: ["launchctl", "bootout", target], allowFailure: true }],
+    stop: [
+      { argv: ["launchctl", "disable", target] },
+      { argv: ["launchctl", "bootout", target], allowFailure: true },
+    ],
     restart: [
+      { argv: ["launchctl", "enable", target] },
       { argv: ["launchctl", "bootstrap", paths.domain, paths.definition], allowFailure: true },
       { argv: ["launchctl", "kickstart", "-k", target] },
     ],
     status: [{ argv: ["launchctl", "print", target], allowFailure: true }],
-    uninstall: [{ argv: ["launchctl", "bootout", target], allowFailure: true }],
+    "enablement-status": [
+      { argv: ["launchctl", "print-disabled", paths.domain], allowFailure: true },
+    ],
+    uninstall: [
+      { argv: ["launchctl", "disable", target] },
+      { argv: ["launchctl", "bootout", target], allowFailure: true },
+    ],
     reload: [],
   };
   if (!(selectedAction in matrix)) fail(`unsupported service action: ${selectedAction}`);
@@ -367,6 +403,42 @@ async function requireRunningSupervisor(paths) {
   }
 }
 
+function supervisorIsDisabled(paths, result) {
+  if (result?.code !== 0 && paths.platform === "darwin") return false;
+  if (paths.platform === "linux") return result?.stdout?.trim() === "disabled";
+  const escapedLabel = SERVICE_LABEL.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(`"${escapedLabel}"\\s*=>\\s*true\\b`, "u").test(result?.stdout ?? "");
+}
+
+function supervisorIsEnabled(paths, result) {
+  if (paths.platform === "linux") return result?.code === 0 && result.stdout.trim() === "enabled";
+  if (result?.code !== 0) return false;
+  const escapedLabel = SERVICE_LABEL.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return !new RegExp(`"${escapedLabel}"\\s*=>\\s*true\\b`, "u").test(result.stdout ?? "");
+}
+
+async function requireDurablyStoppedSupervisor(paths) {
+  const [status, enablement] = await Promise.all([
+    runCommands(supervisorCommands("status", paths)),
+    runCommands(supervisorCommands("enablement-status", paths)),
+  ]);
+  const statusResult = status.at(-1);
+  const enablementResult = enablement.at(-1);
+  if (supervisorIsRunning(paths, statusResult) || !supervisorIsDisabled(paths, enablementResult)) {
+    fail(
+      `gateway supervisor is not durably stopped: ${statusResult?.stderr || statusResult?.stdout || enablementResult?.stderr || enablementResult?.stdout || "no diagnostics"}`,
+    );
+  }
+}
+
+async function requireEnabledSupervisor(paths) {
+  const results = await runCommands(supervisorCommands("enablement-status", paths));
+  const result = results.at(-1);
+  if (!supervisorIsEnabled(paths, result)) {
+    fail(`gateway supervisor is not enabled: ${result?.stderr || result?.stdout || "no diagnostics"}`);
+  }
+}
+
 async function fileExists(path) {
   try {
     return (await lstat(path)).isFile();
@@ -411,12 +483,18 @@ async function health(config) {
     });
     const body = await response.json();
     return {
-      ok: response.ok && body?.ok === true && body?.transport === "local-unix",
+      ok:
+        response.ok &&
+        body?.ok === true &&
+        body?.transport === "local-unix" &&
+        body?.deploymentIdentity === config.deploymentIdentity,
       status: response.status,
       web: body?.web === true,
       upstream: body?.upstream === true,
       transport: typeof body?.transport === "string" ? body.transport : undefined,
       activeSessions: Number.isSafeInteger(body?.activeSessions) ? body.activeSessions : undefined,
+      deploymentIdentity:
+        typeof body?.deploymentIdentity === "string" ? body.deploymentIdentity : undefined,
     };
   } catch (error) {
     return { ok: false, error: sanitizedOutput(error instanceof Error ? error.message : error) };
@@ -455,6 +533,11 @@ export function parseCli(argv) {
     }
     if (!flag?.startsWith("--")) fail(`unexpected argument: ${flag}`);
     const key = flag.slice(2).replaceAll(/-([a-z])/gu, (_match, letter) => letter.toUpperCase());
+    if (flag === "--defer-start") {
+      if (key in options) fail(`${flag} was provided more than once`);
+      options[key] = true;
+      continue;
+    }
     const value = values.shift();
     if (value === undefined || value.startsWith("--")) fail(`${flag} requires a value`);
     if (key in options) fail(`${flag} was provided more than once`);
@@ -466,7 +549,16 @@ export function parseCli(argv) {
 function validateCliOptions(command, options) {
   const allowed =
     command === "install"
-      ? new Set(["help", "origin", "port", "webRoot", "appSocket", "label"])
+      ? new Set([
+          "help",
+          "origin",
+          "port",
+          "webRoot",
+          "appSocket",
+          "label",
+          "deploymentIdentity",
+          "deferStart",
+        ])
       : new Set(["help"]);
   for (const key of Object.keys(options)) {
     if (!allowed.has(key)) fail(`unsupported option for ${command}: --${key}`);
@@ -486,6 +578,9 @@ Install options:
   --web-root PATH       Built T4 web directory (default: apps/web/dist)
   --app-socket PATH     OMP appserver Unix socket
   --label TEXT          Host label shown by T4 Code
+  --deployment-identity SHA256:HEX
+                        Immutable identity for the exact deployed T4/OMP tuple (required)
+  --defer-start         Install the definition durably disabled and stopped
 
 This manages only the loopback gateway service. Configure Tailscale Serve separately.
 `;
@@ -493,6 +588,7 @@ This manages only the loopback gateway service. Configure Tailscale Serve separa
 
 async function install(options, paths) {
   if (options.origin === undefined) fail("install requires --origin");
+  if (options.deploymentIdentity === undefined) fail("install requires --deployment-identity");
   const scriptDirectory = dirname(fileURLToPath(import.meta.url));
   const sourceRoot = resolve(scriptDirectory, "..");
   const config = validateServiceConfig({
@@ -504,14 +600,22 @@ async function install(options, paths) {
     allowedOrigin: options.origin,
     port: options.port ?? DEFAULT_GATEWAY_PORT,
     label: options.label ?? "OMP on this Tailnet host",
+    deploymentIdentity: options.deploymentIdentity,
   });
   await preflight(config);
   if (paths.logs !== undefined) await mkdir(paths.logs, { recursive: true, mode: 0o700 });
   await writeAtomic(paths.config, `${JSON.stringify(config, null, 2)}\n`);
   await writeAtomic(paths.definition, expectedDefinition(config, paths));
+  if (options.deferStart === true) {
+    await runCommands(supervisorCommands("install-deferred", paths));
+    await requireDurablyStoppedSupervisor(paths);
+    console.log(`installed ${SERVICE_LABEL}; start deferred`);
+    return;
+  }
   await runCommands(supervisorCommands("install", paths));
   const result = await waitForHealth(config);
   await requireRunningSupervisor(paths);
+  await requireEnabledSupervisor(paths);
   console.log(`installed ${SERVICE_LABEL}`);
   console.log(`gateway healthy on http://127.0.0.1:${config.port} (${result.activeSessions ?? 0} active sessions)`);
 }
@@ -527,24 +631,29 @@ async function inspect(paths) {
     console.log("health: unavailable");
     throw error;
   }
-  const [definition, supervisor] = await Promise.all([
+  const [definition, supervisor, enablement] = await Promise.all([
     readOptional(paths.definition),
     runCommands(supervisorCommands("status", paths)),
+    runCommands(supervisorCommands("enablement-status", paths)),
   ]);
   const expected = expectedDefinition(config, paths);
   const healthResult = await health(config);
   const supervisorResult = supervisor.at(-1);
+  const enablementResult = enablement.at(-1);
   const supervisorRunning = supervisorIsRunning(paths, supervisorResult);
+  const supervisorEnabled = supervisorIsEnabled(paths, enablementResult);
   const supervisorState = supervisorRunning ? "running" : "stopped or failed";
+  const enablementState = supervisorEnabled ? "enabled" : "disabled or unknown";
   const definitionState = definition === undefined ? "missing" : definition === expected ? "current" : "drifted";
   console.log(`definition: ${definitionState}`);
   console.log(`supervisor: ${supervisorState}`);
+  console.log(`enablement: ${enablementState}`);
   console.log(`health: ${healthResult.ok ? "healthy" : "unhealthy"}`);
   console.log(`local URL: http://127.0.0.1:${config.port}`);
   console.log(`allowed origin: ${config.allowedOrigin}`);
   console.log(`native origins: ${config.nativeAllowedOrigins.join(", ")}`);
   if (supervisorResult?.stderr) console.log(`diagnostics: ${supervisorResult.stderr}`);
-  if (definitionState !== "current" || !supervisorRunning || !healthResult.ok) {
+  if (definitionState !== "current" || !supervisorRunning || !supervisorEnabled || !healthResult.ok) {
     process.exitCode = 1;
   }
 }
@@ -552,6 +661,7 @@ async function inspect(paths) {
 async function lifecycle(action, paths) {
   if (action === "stop") {
     await runCommands(supervisorCommands(action, paths));
+    await requireDurablyStoppedSupervisor(paths);
     console.log(`${SERVICE_LABEL} stopped`);
     return;
   }
@@ -560,11 +670,13 @@ async function lifecycle(action, paths) {
   await runCommands(supervisorCommands(action, paths));
   await waitForHealth(config);
   await requireRunningSupervisor(paths);
+  await requireEnabledSupervisor(paths);
   console.log(`gateway healthy on http://127.0.0.1:${config.port}`);
 }
 
 async function uninstall(paths) {
   await runCommands(supervisorCommands("uninstall", paths));
+  await requireDurablyStoppedSupervisor(paths);
   const definition = await readOptional(paths.definition);
   const config = await readOptional(paths.config);
   if (definition !== undefined) await rm(paths.definition);

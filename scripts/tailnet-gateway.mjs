@@ -86,6 +86,16 @@ export function normalizeNativeAllowedOrigins(value = CAPACITOR_NATIVE_ORIGINS) 
   return [...CAPACITOR_NATIVE_ORIGINS];
 }
 
+export function normalizeDeploymentIdentity(value) {
+  const identity = requiredText(value, "T4_DEPLOYMENT_IDENTITY", 80);
+  if (!/^sha256:[0-9a-f]{64}$/u.test(identity)) {
+    throw new Error(
+      "T4_DEPLOYMENT_IDENTITY must be sha256 followed by exactly 64 lowercase hexadecimal characters",
+    );
+  }
+  return identity;
+}
+
 export function websocketUrlForOrigin(origin) {
   const url = new URL("/v1/ws", normalizeAllowedOrigin(origin));
   url.protocol = "wss:";
@@ -339,6 +349,7 @@ export async function startTailnetGateway(input) {
     allowedOrigin: normalizeAllowedOrigin(input.allowedOrigin),
     nativeAllowedOrigins: normalizeNativeAllowedOrigins(input.nativeAllowedOrigins),
     label: input.label ?? "OMP on this Tailnet host",
+    deploymentIdentity: normalizeDeploymentIdentity(input.deploymentIdentity),
     heartbeatIntervalMs: input.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
   };
   if (!LOOPBACK_HOSTS.has(options.listenHost)) throw new Error("Tailnet gateway must listen on loopback");
@@ -374,6 +385,7 @@ export async function startTailnetGateway(input) {
           upstream,
           activeSessions: activeBrowsers.size,
           transport: "local-unix",
+          deploymentIdentity: options.deploymentIdentity,
         });
         response.setHeader("Cache-Control", "no-store");
         replyText(response, healthy ? 200 : 503, "application/json; charset=utf-8", body, request.method === "HEAD");
@@ -476,6 +488,7 @@ export function optionsFromEnvironment(environment = process.env) {
         ? undefined
         : environment.T4_NATIVE_ALLOWED_ORIGINS.split(","),
     label: environment.T4_HOST_LABEL ?? "OMP on this Tailnet host",
+    deploymentIdentity: environment.T4_DEPLOYMENT_IDENTITY,
   };
 }
 

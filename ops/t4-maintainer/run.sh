@@ -9,26 +9,54 @@ export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.cargo/bin:${PATH:-/usr/local/sbin
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 MAINTAINER_ROOT=${T4_MAINTAINER_ROOT:-"${XDG_DATA_HOME:-$HOME/.local/share}/t4-maintainer"}
-T4_SOURCE_ROOT=${T4_MAINTAINER_T4_SOURCE_ROOT:-$(cd -- "$SCRIPT_DIR/../.." && pwd -P)}
 PROMPT_FILE=${T4_MAINTAINER_PROMPT_FILE:-"$SCRIPT_DIR/prompt.md"}
 STATE_DIR="$MAINTAINER_ROOT/state"
 RUNS_DIR="$MAINTAINER_ROOT/runs"
 WORK_DIR="$MAINTAINER_ROOT/work"
 LOGS_DIR="$MAINTAINER_ROOT/logs"
+DEPLOYMENTS_DIR=${T4_LOCAL_DEPLOYMENTS_DIR:-"$MAINTAINER_ROOT/deployments"}
 LOCK_FILE="$STATE_DIR/maintainer.lock"
 PROCESSED_FILE="$STATE_DIR/processed.json"
+PENDING_FILE="$STATE_DIR/pending.json"
+LOCAL_APPLIED_FILE="$STATE_DIR/local-applied.json"
+BLOCKED_FILE="$STATE_DIR/deployment-blocked.json"
+FORK_SYNC_FILE="$STATE_DIR/fork-main-sync.json"
+ATOMIC_PUBLICATION_STATE_DIR=${T4_MAINTAINER_ATOMIC_STATE_DIR:-"$STATE_DIR/atomic-publication"}
 
 GH=${T4_MAINTAINER_GH:-gh}
 CURL=${T4_MAINTAINER_CURL:-curl}
 JQ=${T4_MAINTAINER_JQ:-jq}
 OMP=${T4_MAINTAINER_OMP:-omp}
+SHA256SUM=${T4_MAINTAINER_SHA256SUM:-sha256sum}
+SYSTEMCTL=${T4_MAINTAINER_SYSTEMCTL:-systemctl}
+DPKG_QUERY=${T4_MAINTAINER_DPKG_QUERY:-dpkg-query}
+DPKG=${T4_MAINTAINER_DPKG:-dpkg}
+GIT=${T4_MAINTAINER_GIT:-git}
+NODE=${T4_MAINTAINER_NODE:-node}
+REALPATH=${T4_MAINTAINER_REALPATH:-realpath}
+SYNC=${T4_MAINTAINER_SYNC:-sync}
+LOCAL_DEPLOY=${T4_MAINTAINER_LOCAL_DEPLOY:-"$SCRIPT_DIR/deploy-local.sh"}
+ATOMIC_PUBLISH=${T4_MAINTAINER_ATOMIC_PUBLISH:-"$SCRIPT_DIR/publish-omp-atomic.sh"}
 VERIFY_ATTEMPTS=${T4_MAINTAINER_VERIFY_ATTEMPTS:-91}
 VERIFY_INTERVAL_SECONDS=${T4_MAINTAINER_VERIFY_INTERVAL_SECONDS:-30}
+FORK_SYNC_ATTEMPTS=${T4_MAINTAINER_FORK_SYNC_ATTEMPTS:-3}
 
 readonly OMP_UPSTREAM_REPOSITORY="can1357/oh-my-pi"
 readonly OMP_INTEGRATION_REPOSITORY="lyc-aon/oh-my-pi"
+readonly OMP_PRODUCT_BRANCH="t4code/main"
+readonly OMP_FORK_WORKFLOW="ci.yml"
+readonly OMP_UPSTREAM_URL="https://github.com/can1357/oh-my-pi.git"
+readonly OMP_INTEGRATION_URL="https://github.com/lyc-aon/oh-my-pi.git"
 readonly T4_REPOSITORY="LycaonLLC/t4-code"
 readonly T4_SITE="https://t4code.net"
+readonly T4_PACKAGE="t4-code"
+readonly OMP_TARGET="${T4_LOCAL_OMP_TARGET:-$HOME/bin/omp}"
+readonly OMP_SERVICE="${T4_LOCAL_OMP_SERVICE:-dev.oh-my-pi.appserver.service}"
+readonly GATEWAY_SERVICE="${T4_LOCAL_GATEWAY_SERVICE:-com.lycaonsolutions.t4code.tailnet-gateway.service}"
+readonly GATEWAY_CONFIG="${T4_LOCAL_GATEWAY_CONFIG:-$HOME/.config/t4-code/tailnet-gateway.json}"
+readonly GATEWAY_UNIT="${T4_LOCAL_GATEWAY_UNIT:-$HOME/.config/systemd/user/$GATEWAY_SERVICE}"
+TAILNET_REACHABILITY_REPORTED=false
+RESUME_PUBLICATION_JSON=null
 
 timestamp() {
   date --utc +'%Y-%m-%dT%H:%M:%SZ'
@@ -52,8 +80,9 @@ require_positive_integer() {
 }
 
 prepare_directories() {
-  mkdir -p -- "$STATE_DIR" "$RUNS_DIR" "$WORK_DIR" "$LOGS_DIR"
-  chmod 700 -- "$MAINTAINER_ROOT" "$STATE_DIR" "$RUNS_DIR" "$WORK_DIR" "$LOGS_DIR"
+  mkdir -p -- "$STATE_DIR" "$RUNS_DIR" "$WORK_DIR" "$LOGS_DIR" "$ATOMIC_PUBLICATION_STATE_DIR"
+  chmod 700 -- "$MAINTAINER_ROOT" "$STATE_DIR" "$RUNS_DIR" "$WORK_DIR" "$LOGS_DIR" \
+    "$ATOMIC_PUBLICATION_STATE_DIR"
 }
 
 acquire_lock() {
@@ -62,6 +91,110 @@ acquire_lock() {
     log "A maintainer run is already active; this timer event is complete."
     exit 0
   fi
+}
+
+durable_replace() {
+  local temporary=$1 target=$2 target_dir
+  target_dir=$(dirname -- "$target")
+  chmod 600 -- "$temporary"
+  "$SYNC" -f "$temporary"
+  mv -f -- "$temporary" "$target"
+  "$SYNC" -f "$target_dir"
+}
+
+durable_remove() {
+  local target=$1 target_dir
+  [[ -e $target ]] || return 0
+  target_dir=$(dirname -- "$target")
+  rm -f -- "$target"
+  "$SYNC" -f "$target_dir"
+}
+
+cleanup_processed_workspace() {
+  local run_id=$1 workspace
+  [[ $run_id != */* && $run_id != *..* && -n $run_id ]] || return 1
+  workspace="$RUNS_DIR/$run_id/workspace"
+  [[ ! -e $workspace || -d $workspace ]] || return 1
+  rm -rf -- "$workspace"
+}
+
+cleanup_durable_processed_workspace() {
+  local run_id
+  [[ -s $PROCESSED_FILE ]] || return 0
+  run_id=$($JQ -er '.runId | strings | select(length > 0)' "$PROCESSED_FILE" 2>/dev/null) \
+    || return 0
+  cleanup_processed_workspace "$run_id"
+}
+
+state_files_are_valid_json() {
+  local state_file
+  for state_file in "$@"; do
+    [[ -s $state_file ]] || continue
+    $JQ -e 'type == "object"' "$state_file" >/dev/null 2>&1 || return 1
+  done
+}
+
+cleanup_unreferenced_local_work() {
+  local local_work reference state_file referenced
+  # The exclusive maintainer lock makes unreferenced pre-cutover build trees
+  # safe to remove. Preserve every rollback directory named by durable state.
+  if ! state_files_are_valid_json "$LOCAL_APPLIED_FILE" "$PROCESSED_FILE" "$BLOCKED_FILE"; then
+    log "WARNING: retained local work because durable maintainer state is not valid JSON."
+    return 0
+  fi
+  while IFS= read -r -d '' local_work; do
+    referenced=false
+    for state_file in "$LOCAL_APPLIED_FILE" "$PROCESSED_FILE" "$BLOCKED_FILE"; do
+      [[ -s $state_file ]] || continue
+      while IFS= read -r reference; do
+        case "$reference/" in
+          "$local_work"/*) referenced=true ;;
+        esac
+      done < <($JQ -r '
+        .localDeployment.rollback.backupDirectory? //
+        .rollback.backupDirectory? //
+        .backupDirectory? // empty
+      ' "$state_file" 2>/dev/null)
+    done
+    [[ $referenced == true ]] && continue
+    case "$local_work" in
+      "$RUNS_DIR"/*/local-work) rm -rf -- "$local_work" ;;
+      *) fail "refusing to remove an unexpected maintainer work path: $local_work" ;;
+    esac
+  done < <(find "$RUNS_DIR" -mindepth 2 -maxdepth 2 -type d -name local-work -print0)
+}
+
+cleanup_unreferenced_deployments() {
+  local deployment reference state_file referenced current_source
+  [[ -d $DEPLOYMENTS_DIR ]] || return 0
+  [[ -s $GATEWAY_CONFIG ]] || return 0
+  if ! state_files_are_valid_json "$LOCAL_APPLIED_FILE" "$PROCESSED_FILE"; then
+    log "WARNING: retained local deployments because durable maintainer state is not valid JSON."
+    return 0
+  fi
+  current_source=$($JQ -er '.sourceRoot | strings | select(startswith("/"))' "$GATEWAY_CONFIG") \
+    || return 0
+  while IFS= read -r -d '' deployment; do
+    referenced=false
+    [[ $deployment == "$current_source" ]] && referenced=true
+    for state_file in "$LOCAL_APPLIED_FILE" "$PROCESSED_FILE"; do
+      [[ -s $state_file ]] || continue
+      while IFS= read -r reference; do
+        [[ $deployment == "$reference" ]] && referenced=true
+      done < <($JQ -r '
+        (
+          .localDeployment.gateway.runtimeSourceRoot?,
+          .localDeployment.gateway.previousSourceRoot?
+        )
+        | select(type == "string" and startswith("/"))
+      ' "$state_file" 2>/dev/null)
+    done
+    [[ $referenced == true ]] && continue
+    case "$deployment" in
+      "$DEPLOYMENTS_DIR"/t4-*) rm -rf -- "$deployment" ;;
+      *) fail "refusing to remove an unexpected T4 deployment path: $deployment" ;;
+    esac
+  done < <(find "$DEPLOYMENTS_DIR" -mindepth 1 -maxdepth 1 -type d -name 't4-*' -print0)
 }
 
 latest_stable_release() {
@@ -77,17 +210,324 @@ latest_stable_release() {
   $JQ -cn --arg tag "$tag" --arg commit "$commit" '{tag: $tag, commit: $commit}'
 }
 
-processed_matches() {
+fork_workflow_state() {
+  $GH api "repos/$OMP_INTEGRATION_REPOSITORY/actions/workflows/$OMP_FORK_WORKFLOW" --jq .state
+}
+
+enable_fork_workflow_and_prove() {
+  $GH api --method PUT "repos/$OMP_INTEGRATION_REPOSITORY/actions/workflows/$OMP_FORK_WORKFLOW/enable" \
+    >/dev/null || return 1
+  [[ $(fork_workflow_state) == active ]]
+}
+
+recover_fork_sync() {
+  [[ -e $FORK_SYNC_FILE ]] || return 0
+  [[ -s $FORK_SYNC_FILE ]] && $JQ -e '
+    .schemaVersion == 1 and .workflow == "ci.yml" and
+    (.startedAt | type == "string")
+  ' "$FORK_SYNC_FILE" >/dev/null 2>&1 \
+    || fail "fork-main recovery state is invalid: $FORK_SYNC_FILE"
+  enable_fork_workflow_and_prove \
+    || fail "fork CI recovery could not prove the workflow active; retaining $FORK_SYNC_FILE and stopping before publication"
+  durable_remove "$FORK_SYNC_FILE"
+  log "Recovered and proved the fork CI workflow active before main synchronization."
+}
+
+write_fork_sync_marker() {
+  local official_commit=$1 fork_commit=$2 temporary
+  temporary=$(mktemp "$STATE_DIR/fork-main-sync.json.XXXXXX")
+  $JQ -n \
+    --arg started_at "$(timestamp)" \
+    --arg workflow "$OMP_FORK_WORKFLOW" \
+    --arg official_commit "$official_commit" \
+    --arg fork_commit "$fork_commit" '
+      {
+        schemaVersion: 1,
+        startedAt: $started_at,
+        workflow: $workflow,
+        officialCommit: $official_commit,
+        previousForkCommit: $fork_commit
+      }
+    ' >"$temporary"
+  durable_replace "$temporary" "$FORK_SYNC_FILE"
+}
+
+fork_main_is_fast_forwardable() {
+  local official_commit=$1 fork_commit=$2 probe fetched_official fetched_fork
+  probe=$(mktemp -d "$WORK_DIR/fork-main-ff.XXXXXX") || return 2
+  if ! $GIT -C "$probe" init --quiet \
+    || ! $GIT -C "$probe" fetch --quiet --no-tags "$OMP_UPSTREAM_URL" \
+      "refs/heads/main:refs/remotes/official/main" \
+    || ! $GIT -C "$probe" fetch --quiet --no-tags "$OMP_INTEGRATION_URL" \
+      "refs/heads/main:refs/remotes/fork/main"; then
+    rm -rf -- "$probe"
+    return 2
+  fi
+  fetched_official=$($GIT -C "$probe" rev-parse refs/remotes/official/main) || {
+    rm -rf -- "$probe"
+    return 2
+  }
+  fetched_fork=$($GIT -C "$probe" rev-parse refs/remotes/fork/main) || {
+    rm -rf -- "$probe"
+    return 2
+  }
+  if [[ $fetched_official != "$official_commit" || $fetched_fork != "$fork_commit" ]]; then
+    rm -rf -- "$probe"
+    return 2
+  fi
+  if ! $GIT -C "$probe" merge-base --is-ancestor \
+    refs/remotes/fork/main refs/remotes/official/main; then
+    rm -rf -- "$probe"
+    return 1
+  fi
+  rm -rf -- "$probe"
+}
+
+sync_fork_main_once() {
+  local official_commit=$1 fork_commit=$2 push_repo snapshot_status
+  if fork_main_is_fast_forwardable "$official_commit" "$fork_commit"; then
+    :
+  else
+    snapshot_status=$?
+    if ((snapshot_status == 1)); then
+      fail "fork main has diverged from official main; refusing synchronization and stopping before Sol"
+    fi
+    return 2
+  fi
+  write_fork_sync_marker "$official_commit" "$fork_commit"
+  if ! $GH api --method PUT \
+    "repos/$OMP_INTEGRATION_REPOSITORY/actions/workflows/$OMP_FORK_WORKFLOW/disable" >/dev/null \
+    || [[ $(fork_workflow_state) != disabled_manually ]]; then
+    enable_fork_workflow_and_prove || true
+    fail "fork CI could not be proven disabled for the bounded main synchronization; retaining recovery state"
+  fi
+  push_repo=$(mktemp -d "$WORK_DIR/fork-main-push.XXXXXX") || {
+    enable_fork_workflow_and_prove || true
+    fail "could not create the fork-main push workspace; retaining recovery state"
+  }
+  if ! $GIT -C "$push_repo" init --quiet \
+    || ! $GIT -C "$push_repo" fetch --quiet --no-tags "$OMP_UPSTREAM_URL" \
+      "refs/heads/main:refs/remotes/official/main" \
+    || [[ $($GIT -C "$push_repo" rev-parse refs/remotes/official/main) != "$official_commit" ]] \
+    || ! $GIT -C "$push_repo" push "$OMP_INTEGRATION_URL" \
+      "$official_commit:refs/heads/main"; then
+    rm -rf -- "$push_repo"
+    enable_fork_workflow_and_prove \
+      || fail "the exact fork-main push was inconclusive and fork CI could not be proven active; retaining recovery state"
+    durable_remove "$FORK_SYNC_FILE"
+    return 2
+  fi
+  rm -rf -- "$push_repo"
+  enable_fork_workflow_and_prove \
+    || fail "fork main was pushed, but fork CI could not be proven active; retaining recovery state and stopping"
+  durable_remove "$FORK_SYNC_FILE"
+}
+
+sync_fork_main() {
+  local attempt official_commit fork_commit sync_status
+  require_positive_integer T4_MAINTAINER_FORK_SYNC_ATTEMPTS "$FORK_SYNC_ATTEMPTS"
+  recover_fork_sync
+  for ((attempt = 1; attempt <= FORK_SYNC_ATTEMPTS; attempt += 1)); do
+    official_commit=$(resolve_public_commit "$OMP_UPSTREAM_REPOSITORY" main) \
+      || fail "official OMP main could not be resolved"
+    fork_commit=$(resolve_public_commit "$OMP_INTEGRATION_REPOSITORY" main) \
+      || fail "fork OMP main could not be resolved"
+    [[ $official_commit =~ ^[0-9a-f]{40}$ && $fork_commit =~ ^[0-9a-f]{40}$ ]] \
+      || fail "official or fork OMP main did not resolve to an exact commit"
+    if [[ $official_commit == "$fork_commit" ]]; then
+      [[ $(fork_workflow_state) == active ]] \
+        || fail "fork main is current, but fork CI is not active; stopping before publication"
+      log "Fork main exactly matches official main at $official_commit and fork CI is active."
+      return 0
+    fi
+    if sync_fork_main_once "$official_commit" "$fork_commit"; then
+      log "Fast-forwarded fork main toward official main at $official_commit without invoking Sol."
+    else
+      sync_status=$?
+      ((sync_status == 2)) \
+        || fail "fork main synchronization stopped with an unexpected status"
+      log "Fork main moved while its exact snapshot was being proved; retrying within the bounded synchronization window."
+    fi
+  done
+  official_commit=$(resolve_public_commit "$OMP_UPSTREAM_REPOSITORY" main) || return 1
+  fork_commit=$(resolve_public_commit "$OMP_INTEGRATION_REPOSITORY" main) || return 1
+  [[ $official_commit == "$fork_commit" && $(fork_workflow_state) == active ]] \
+    || fail "official main moved throughout the bounded synchronization window; retrying on the next timer"
+}
+
+processed_metadata_matches() {
   local target=$1
   [[ -s $PROCESSED_FILE ]] || return 1
   $JQ -e --argjson target "$target" '
-    .upstream.tag == $target.tag and .upstream.commit == $target.commit
+    .upstream.tag == $target.tag and
+    .upstream.commit == $target.commit and
+    .publicVerification == "complete" and
+    .localDeployment.status == "complete" and
+    .localDeployment.gateway.tailnetHealth == "healthy"
   ' "$PROCESSED_FILE" >/dev/null 2>&1
+}
+
+tree_sha256() {
+  local requested_root=$1 boundary=${2:-} root boundary_root relative digest
+  root=$($REALPATH -e -- "$requested_root") || return 1
+  [[ -d $root ]] || return 1
+  if [[ -n $boundary ]]; then
+    boundary_root=$($REALPATH -e -- "$boundary") || return 1
+    [[ -d $boundary_root ]] || return 1
+    case "$root/" in
+      "$boundary_root"/*) ;;
+      *) return 1 ;;
+    esac
+  fi
+  find "$root" -type l -print -quit | grep -q . && return 1
+  find "$root" -type f -print -quit | grep -q . || return 1
+  (
+    cd -- "$root"
+    while IFS= read -r -d '' relative; do
+      digest=$($SHA256SUM "$relative" | awk '{print $1}')
+      printf '%s\0%s\0' "$relative" "$digest"
+    done < <(find . -type f -print0 | LC_ALL=C sort -z)
+  ) | $SHA256SUM | awk '{print $1}'
+}
+
+deployment_identity() {
+  local t4_commit=$1 integration_commit=$2 omp_sha=$3 digest
+  digest=$(printf '%s\0%s\0%s\0' "$t4_commit" "$integration_commit" "$omp_sha" \
+    | $SHA256SUM | awk '{print $1}') || return 1
+  [[ $digest =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf 'sha256:%s\n' "$digest"
+}
+
+tailnet_gateway_is_healthy() {
+  local record_file=${1:-} gateway_origin expected_origin expected_identity tailnet_health
+  [[ -s $GATEWAY_CONFIG ]] || return 1
+  gateway_origin=$($JQ -er '.allowedOrigin | strings | select(test("^https://"))' "$GATEWAY_CONFIG") || return 1
+  expected_identity=$($JQ -er '.deploymentIdentity | select(test("^sha256:[0-9a-f]{64}$"))' "$GATEWAY_CONFIG") \
+    || return 1
+  if [[ -n $record_file ]]; then
+    expected_origin=$($JQ -er '.localDeployment.gateway.allowedOrigin | strings | select(test("^https://"))' "$record_file") \
+      || return 1
+    [[ $gateway_origin == "$expected_origin" ]] || return 1
+    [[ $expected_identity == "$($JQ -er '.localDeployment.gateway.deploymentIdentity | select(test("^sha256:[0-9a-f]{64}$"))' "$record_file")" ]] \
+      || return 1
+  fi
+  tailnet_health=$($CURL -fsS --max-time 10 "${gateway_origin}/healthz" 2>/dev/null) || return 1
+  printf '%s' "$tailnet_health" | $JQ -e --arg identity "$expected_identity" '
+    .ok == true and .web == true and .upstream == true and .transport == "local-unix"
+    and .deploymentIdentity == $identity
+  ' >/dev/null
+}
+
+report_tailnet_unreachable_once() {
+  [[ $TAILNET_REACHABILITY_REPORTED == false ]] || return 0
+  TAILNET_REACHABILITY_REPORTED=true
+  log "Tailnet HTTPS health is temporarily unreachable; exact local deployment state remains valid and will be finalized on a later timer run."
+}
+
+local_state_matches_record() {
+  local record_file=$1
+  local recorded_omp_target recorded_host_id omp_sha omp_service app_pid running_sha omp_status
+  local expected_omp_version t4_version expected_t4_version dpkg_verification
+  local gateway_service runtime_root runtime_commit expected_t4_commit
+  local gateway_port gateway_health gateway_script web_root gateway_origin
+  local gateway_socket gateway_label gateway_node_executable
+  local deployment_identity
+  local gateway_script_sha web_tree_sha ws_tree_sha gateway_config_sha gateway_unit_sha
+  [[ -s $record_file && -f $GATEWAY_CONFIG && ! -L $GATEWAY_CONFIG ]] || return 1
+  [[ -f $GATEWAY_UNIT && ! -L $GATEWAY_UNIT ]] || return 1
+  recorded_omp_target=$($JQ -er '.localDeployment.omp.target | strings | select(startswith("/"))' "$record_file") || return 1
+  omp_sha=$($JQ -er '.localDeployment.omp.installedSha256 | select(test("^[0-9a-f]{64}$"))' "$record_file") || return 1
+  omp_service=$($JQ -er '.localDeployment.omp.service | strings | select(length > 0)' "$record_file") || return 1
+  recorded_host_id=$($JQ -er '.localDeployment.omp.hostId | strings | select(length > 0)' "$record_file") || return 1
+  t4_version=$($JQ -er '.localDeployment.desktop.installedVersion | strings' "$record_file") || return 1
+  gateway_service=$($JQ -er '.localDeployment.gateway.service | strings | select(length > 0)' "$record_file") || return 1
+  runtime_root=$($JQ -er '.localDeployment.gateway.runtimeSourceRoot | strings | select(startswith("/"))' "$record_file") || return 1
+  runtime_commit=$($JQ -er '.localDeployment.gateway.runtimeCommit | select(test("^[0-9a-f]{40}$"))' "$record_file") || return 1
+  gateway_script_sha=$($JQ -er '.localDeployment.gateway.artifacts.gatewayScriptSha256 | select(test("^[0-9a-f]{64}$"))' "$record_file") || return 1
+  web_tree_sha=$($JQ -er '.localDeployment.gateway.artifacts.webTreeSha256 | select(test("^[0-9a-f]{64}$"))' "$record_file") || return 1
+  ws_tree_sha=$($JQ -er '.localDeployment.gateway.artifacts.wsTreeSha256 | select(test("^[0-9a-f]{64}$"))' "$record_file") || return 1
+  gateway_config_sha=$($JQ -er '.localDeployment.gateway.artifacts.configSha256 | select(test("^[0-9a-f]{64}$"))' "$record_file") || return 1
+  gateway_unit_sha=$($JQ -er '.localDeployment.gateway.artifacts.unitSha256 | select(test("^[0-9a-f]{64}$"))' "$record_file") || return 1
+  gateway_origin=$($JQ -er '.localDeployment.gateway.allowedOrigin | strings | select(test("^https://"))' "$record_file") || return 1
+  gateway_port=$($JQ -er '.localDeployment.gateway.port | numbers | select(. >= 1024 and . <= 65535)' "$record_file") || return 1
+  gateway_socket=$($JQ -er '.localDeployment.gateway.appSocket | strings | select(startswith("/"))' "$record_file") || return 1
+  gateway_label=$($JQ -er '.localDeployment.gateway.label | strings | select(length > 0)' "$record_file") || return 1
+  deployment_identity=$($JQ -er '.localDeployment.gateway.deploymentIdentity | select(test("^sha256:[0-9a-f]{64}$"))' "$record_file") || return 1
+  gateway_node_executable=$($JQ -er '.localDeployment.gateway.nodeExecutable | strings | select(startswith("/"))' "$record_file") || return 1
+  expected_omp_version=$($JQ -er '"omp/" + (.upstream.tag | ltrimstr("v"))' "$record_file") || return 1
+  expected_t4_version=$($JQ -er '.t4.version | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' "$record_file") || return 1
+  expected_t4_commit=$($JQ -er '.t4.commit | select(test("^[0-9a-f]{40}$"))' "$record_file") || return 1
+  [[ $(deployment_identity "$expected_t4_commit" \
+    "$($JQ -er '.integration.commit | select(test("^[0-9a-f]{40}$"))' "$record_file")" \
+    "$omp_sha") == "$deployment_identity" ]] || return 1
+
+  [[ $recorded_omp_target == "$OMP_TARGET" && $omp_service == "$OMP_SERVICE" ]] || return 1
+  [[ -f $OMP_TARGET && ! -L $OMP_TARGET && -x $OMP_TARGET ]] || return 1
+  [[ $("$OMP_TARGET" --version 2>/dev/null) == "$expected_omp_version" ]] || return 1
+  [[ $($SHA256SUM "$OMP_TARGET" | awk '{print $1}') == "$omp_sha" ]] || return 1
+  $SYSTEMCTL --user is-active --quiet "$omp_service" || return 1
+  app_pid=$($SYSTEMCTL --user show "$omp_service" --property MainPID --value) || return 1
+  [[ $app_pid =~ ^[1-9][0-9]*$ && -r /proc/$app_pid/exe ]] || return 1
+  running_sha=$($SHA256SUM "/proc/$app_pid/exe" | awk '{print $1}')
+  [[ $running_sha == "$omp_sha" ]] || return 1
+  omp_status=$("$OMP_TARGET" appserver status --json 2>/dev/null) || return 1
+  printf '%s' "$omp_status" | $JQ -e --arg host_id "$recorded_host_id" '
+    .state == "running" and .health.ok == true and .health.hostId == $host_id
+  ' >/dev/null || return 1
+
+  [[ $t4_version == "$expected_t4_version" ]] || return 1
+  [[ $($DPKG_QUERY -W -f='${Status}\t${Version}' "$T4_PACKAGE" 2>/dev/null) == $'install ok installed\t'"$expected_t4_version" ]] || return 1
+  dpkg_verification=$($DPKG -V "$T4_PACKAGE" 2>/dev/null) || return 1
+  [[ -z $dpkg_verification ]] || return 1
+  [[ $gateway_service == "$GATEWAY_SERVICE" ]] || return 1
+  $SYSTEMCTL --user is-active --quiet "$gateway_service" || return 1
+  $SYSTEMCTL --user is-enabled --quiet "$gateway_service" || return 1
+  [[ $($JQ -r '.sourceRoot' "$GATEWAY_CONFIG") == "$runtime_root" ]] || return 1
+  [[ $($JQ -r '.allowedOrigin' "$GATEWAY_CONFIG") == "$gateway_origin" ]] || return 1
+  [[ $($JQ -r '.port' "$GATEWAY_CONFIG") == "$gateway_port" ]] || return 1
+  [[ $($JQ -r '.appSocket' "$GATEWAY_CONFIG") == "$gateway_socket" ]] || return 1
+  [[ $($JQ -r '.label' "$GATEWAY_CONFIG") == "$gateway_label" ]] || return 1
+  [[ $($JQ -r '.deploymentIdentity' "$GATEWAY_CONFIG") == "$deployment_identity" ]] || return 1
+  [[ $($JQ -r '.nodeExecutable' "$GATEWAY_CONFIG") == "$gateway_node_executable" ]] || return 1
+  [[ $($SHA256SUM "$GATEWAY_CONFIG" | awk '{print $1}') == "$gateway_config_sha" ]] || return 1
+  [[ $($SHA256SUM "$GATEWAY_UNIT" | awk '{print $1}') == "$gateway_unit_sha" ]] || return 1
+  [[ $runtime_commit == "$expected_t4_commit" ]] || return 1
+  [[ $($GIT -C "$runtime_root" rev-parse HEAD 2>/dev/null) == "$expected_t4_commit" ]] || return 1
+  $GIT -C "$runtime_root" diff --quiet --exit-code HEAD -- || return 1
+  gateway_script=$($JQ -er '.gatewayScript | strings | select(startswith("/"))' "$GATEWAY_CONFIG") || return 1
+  web_root=$($JQ -er '.webRoot | strings | select(startswith("/"))' "$GATEWAY_CONFIG") || return 1
+  [[ $gateway_script == "$runtime_root/scripts/tailnet-gateway.mjs" ]] || return 1
+  [[ $web_root == "$runtime_root/apps/web/dist" ]] || return 1
+  [[ $($SHA256SUM "$gateway_script" | awk '{print $1}') == "$gateway_script_sha" ]] || return 1
+  [[ $(tree_sha256 "$web_root" "$runtime_root") == "$web_tree_sha" ]] || return 1
+  [[ $(tree_sha256 "$runtime_root/node_modules/ws" "$runtime_root") == "$ws_tree_sha" ]] || return 1
+  "$NODE" "$runtime_root/scripts/tailnet-service.mjs" status >/dev/null 2>&1 || return 1
+  gateway_health=$($CURL -fsS --max-time 5 "http://127.0.0.1:${gateway_port}/healthz" 2>/dev/null) || return 1
+  printf '%s' "$gateway_health" | $JQ -e --arg identity "$deployment_identity" '
+    .ok == true and .web == true and .upstream == true and .transport == "local-unix"
+    and .deploymentIdentity == $identity
+  ' >/dev/null || return 1
+  return 0
+}
+
+local_state_matches_processed() {
+  local_state_matches_record "$PROCESSED_FILE"
+}
+
+processed_matches() {
+  local target=$1
+  processed_metadata_matches "$target" && local_state_matches_processed \
+    && verify_result_once "$PROCESSED_FILE" "$target" true
 }
 
 resolve_public_commit() {
   local repository=$1 ref=$2
   $GH api "repos/$repository/commits/$ref" --jq .sha
+}
+
+resolve_public_tag_object() {
+  local repository=$1 tag=$2
+  $GH api "repos/$repository/git/ref/tags/$tag" --jq .object.sha
 }
 
 release_assets_are_public() {
@@ -100,20 +540,342 @@ release_assets_are_public() {
     "T4-Code-${version}-mac-arm64.dmg"
     "T4-Code-${version}-mac-arm64.zip"
   )
-  local name url
+  local name url manifest_url manifest_digest manifest_file actual_manifest_digest expected_digest asset_digest
+  local manifest_entries release_asset_count
+  release_asset_count=$(printf '%s' "$release_json" | $JQ -er 'select(.assets | length == 6) | .assets | length') || return 1
+  [[ $release_asset_count == "${#expected[@]}" ]] || return 1
+  manifest_url=$(printf '%s' "$release_json" | $JQ -er '
+    .assets[] | select(.name == "SHA256SUMS.txt" and .state == "uploaded" and .size > 0)
+    | .browser_download_url
+  ') || return 1
+  manifest_digest=$(printf '%s' "$release_json" | $JQ -er '
+    .assets[] | select(.name == "SHA256SUMS.txt") | .digest
+    | select(test("^sha256:[0-9a-f]{64}$"))
+  ') || return 1
+  manifest_file=$(mktemp "$STATE_DIR/release-manifest.XXXXXX")
+  $CURL -fsSL --retry 3 --retry-all-errors --max-time 45 "$manifest_url" -o "$manifest_file" || {
+    rm -f -- "$manifest_file"
+    return 1
+  }
+  actual_manifest_digest=$($SHA256SUM "$manifest_file" | awk '{print "sha256:" $1}')
+  [[ $actual_manifest_digest == "$manifest_digest" ]] || {
+    rm -f -- "$manifest_file"
+    return 1
+  }
   for name in "${expected[@]}"; do
     url=$(printf '%s' "$release_json" | $JQ -er --arg name "$name" '
       .assets[]
       | select(.name == $name and .state == "uploaded" and .size > 0)
       | .browser_download_url
-    ') || return 1
-    $CURL -fsSIL --retry 3 --retry-all-errors --max-time 45 "$url" >/dev/null || return 1
+    ') || {
+      rm -f -- "$manifest_file"
+      return 1
+    }
+    $CURL -fsSIL --retry 3 --retry-all-errors --max-time 45 "$url" >/dev/null || {
+      rm -f -- "$manifest_file"
+      return 1
+    }
+    if [[ $name != SHA256SUMS.txt ]]; then
+      expected_digest=$(awk -v name="$name" '$2 == name && $1 ~ /^[0-9a-f]{64}$/ {print $1}' "$manifest_file")
+      [[ $expected_digest != *$'\n'* && $expected_digest =~ ^[0-9a-f]{64}$ ]] || {
+        rm -f -- "$manifest_file"
+        return 1
+      }
+      asset_digest=$(printf '%s' "$release_json" | $JQ -er --arg name "$name" '
+        .assets[] | select(.name == $name) | .digest
+        | select(test("^sha256:[0-9a-f]{64}$"))
+      ') || {
+        rm -f -- "$manifest_file"
+        return 1
+      }
+      [[ $asset_digest == "sha256:$expected_digest" ]] || {
+        rm -f -- "$manifest_file"
+        return 1
+      }
+    fi
   done
+  manifest_entries=$(awk '$1 ~ /^[0-9a-f]{64}$/ && NF == 2 {count += 1} END {print count + 0}' "$manifest_file")
+  rm -f -- "$manifest_file"
+  [[ $manifest_entries == 5 ]]
+}
+
+atomic_publication_receipt_is_valid() {
+  local result_file=$1 integration_tag receipt_file intent_file intent_object embedded
+  local upstream_tag upstream_commit integration_commit
+  local official_tag_object fork_tag_object integration_tag_object
+  integration_tag=$($JQ -er '.integration.tag | strings | select(test("^t4code-[0-9]+\\.[0-9]+\\.[0-9]+-appserver-[1-9][0-9]*$"))' "$result_file") \
+    || return 1
+  upstream_tag=$($JQ -er '.upstream.tag' "$result_file") || return 1
+  upstream_commit=$($JQ -er '.upstream.commit' "$result_file") || return 1
+  integration_commit=$($JQ -er '.integration.commit' "$result_file") || return 1
+  receipt_file="$ATOMIC_PUBLICATION_STATE_DIR/$integration_tag/receipt.json"
+  intent_file="$ATOMIC_PUBLICATION_STATE_DIR/$integration_tag/intent.json"
+  [[ -s $receipt_file && -f $receipt_file && ! -L $receipt_file ]] || return 1
+  [[ -s $intent_file && -f $intent_file && ! -L $intent_file ]] || return 1
+  intent_object=$($GIT hash-object "$intent_file") || return 1
+  [[ $intent_object =~ ^[0-9a-f]{40}$ ]] || return 1
+  $JQ -e \
+    --arg upstream_tag "$upstream_tag" \
+    --arg upstream_commit "$upstream_commit" \
+    --arg integration_tag "$integration_tag" \
+    --arg integration_commit "$integration_commit" \
+    --arg intent_object "$intent_object" '
+      .schemaVersion == 1 and .helperOwned == true and .atomicPush == true and
+      .pushedRefCount == 3 and .productionRemoteIdentity == true and
+      .officialRepository == "can1357/oh-my-pi" and
+      .forkRepository == "lyc-aon/oh-my-pi" and
+      .upstream.tag == $upstream_tag and .upstream.commit == $upstream_commit and
+      (.upstream.tagObject | test("^[0-9a-f]{40}$")) and
+      .product.branch == "t4code/main" and .product.commit == $integration_commit and
+      .integration.tag == $integration_tag and
+      .integration.commit == $integration_commit and
+      (.integration.tagObject | test("^[0-9a-f]{40}$")) and
+      .intentObject == $intent_object
+  ' "$receipt_file" >/dev/null || return 1
+  $JQ -e \
+    --arg upstream_tag "$upstream_tag" \
+    --arg upstream_commit "$upstream_commit" \
+    --arg integration_tag "$integration_tag" \
+    --arg integration_commit "$integration_commit" \
+    --slurpfile receipt "$receipt_file" '
+      def oid: type == "string" and test("^[0-9a-f]{40}$");
+      def oid_or_empty: . == "" or oid;
+      ($receipt[0]) as $r |
+      .schemaVersion == 1 and (.createdAt | type == "string") and
+      .upstream.tag == $upstream_tag and .upstream.commit == $upstream_commit and
+      .integrationTag == $integration_tag and
+      (.before.baseTagObject == "" or .before.baseTagObject == $r.upstream.tagObject) and
+      .before.integrationTagObject == "" and
+      (.before.productCommit | oid_or_empty) and
+      .desired.baseTagObject == $r.upstream.tagObject and
+      .desired.integrationTagObject == $r.integration.tagObject and
+      .desired.productCommit == $integration_commit and
+      .before.productCommit != .desired.productCommit and
+      .atomicRefspecs == [
+        "official-base-tag",
+        "t4code/main",
+        "annotated-integration-tag"
+      ]
+    ' "$intent_file" >/dev/null || return 1
+  official_tag_object=$(resolve_public_tag_object "$OMP_UPSTREAM_REPOSITORY" "$upstream_tag") \
+    || return 1
+  fork_tag_object=$(resolve_public_tag_object "$OMP_INTEGRATION_REPOSITORY" "$upstream_tag") \
+    || return 1
+  integration_tag_object=$(resolve_public_tag_object "$OMP_INTEGRATION_REPOSITORY" "$integration_tag") \
+    || return 1
+  [[ $official_tag_object == "$fork_tag_object" ]] || return 1
+  [[ $($JQ -r '.upstream.tagObject' "$receipt_file") == "$official_tag_object" ]] || return 1
+  [[ $($JQ -r '.integration.tagObject' "$receipt_file") == "$integration_tag_object" ]] || return 1
+  if $JQ -e 'has("atomicPublication")' "$result_file" >/dev/null; then
+    embedded=$($JQ -cS '.atomicPublication' "$result_file") || return 1
+    [[ $embedded == "$($JQ -cS . "$receipt_file")" ]] || return 1
+  fi
+}
+
+attach_atomic_publication_receipt() {
+  local result_file=$1 integration_tag receipt_file temporary
+  atomic_publication_receipt_is_valid "$result_file" || return 1
+  $JQ -e 'has("atomicPublication")' "$result_file" >/dev/null && return 0
+  integration_tag=$($JQ -r '.integration.tag' "$result_file")
+  receipt_file="$ATOMIC_PUBLICATION_STATE_DIR/$integration_tag/receipt.json"
+  temporary=$(mktemp "$(dirname -- "$result_file")/.result-with-atomic.XXXXXX")
+  $JQ --slurpfile receipt "$receipt_file" '.atomicPublication = $receipt[0]' \
+    "$result_file" >"$temporary"
+  durable_replace "$temporary" "$result_file"
+}
+
+omp_publication_workflow_succeeded() {
+  local integration_commit=$1 runs
+  runs=$($GH api \
+    "repos/$OMP_INTEGRATION_REPOSITORY/actions/workflows/$OMP_FORK_WORKFLOW/runs?head_sha=$integration_commit&event=push&branch=$OMP_PRODUCT_BRANCH&status=success&per_page=100") \
+    || return 1
+  printf '%s' "$runs" | $JQ -e \
+    --arg commit "$integration_commit" \
+    --arg branch "$OMP_PRODUCT_BRANCH" '
+      any(.workflow_runs[];
+        .name == "CI" and .path == ".github/workflows/ci.yml" and
+        .head_sha == $commit and .event == "push" and
+        .head_branch == $branch and .status == "completed" and
+        .conclusion == "success")
+    ' >/dev/null
+}
+
+canonical_omp_release() {
+  local release_json=$1 integration_tag=$2 expected_url expected_download_prefix expected_names allow_mock
+  expected_url="https://github.com/$OMP_INTEGRATION_REPOSITORY/releases/tag/$integration_tag"
+  expected_download_prefix="https://github.com/$OMP_INTEGRATION_REPOSITORY/releases/download/$integration_tag/"
+  expected_names=$($JQ -cn '[
+    "omp-linux-x64",
+    "omp-linux-arm64",
+    "omp-darwin-x64",
+    "omp-darwin-arm64",
+    "omp-windows-x64.exe"
+  ]')
+  if [[ ${T4_MAINTAINER_TEST_MODE:-0} == 1 ]]; then allow_mock=true; else allow_mock=false; fi
+  printf '%s' "$release_json" | $JQ -ceS \
+    --arg tag "$integration_tag" \
+    --arg url "$expected_url" \
+    --arg download_prefix "$expected_download_prefix" \
+    --argjson expected "$expected_names" \
+    --argjson allow_mock "$allow_mock" '
+      select(.tag_name == $tag and .html_url == $url and
+        .draft == false and .prerelease == false) |
+      select((.assets | type) == "array" and (.assets | length) == 5) |
+      select((.assets | map(.name) | sort) == ($expected | sort)) |
+      select(all(.assets[];
+        .state == "uploaded" and
+        (.size | type == "number" and . > 0 and . == floor) and
+        (.digest | type == "string" and test("^sha256:[0-9a-f]{64}$")) and
+        (.browser_download_url | type == "string") and
+        ((.browser_download_url | startswith($download_prefix)) or
+          ($allow_mock and (.browser_download_url | startswith("mock://")))))) |
+      {
+        tagName:.tag_name,
+        htmlUrl:.html_url,
+        assets:(.assets | sort_by(.name) | map({
+          name, state, size, digest, browserDownloadUrl:.browser_download_url
+        }))
+      }
+    '
+}
+
+verify_omp_release_assets() {
+  local result_file=$1 release_json=$2 integration_tag=$3 allow_stored_proof=${4:-false}
+  local canonical fingerprint stored
+  local download_dir asset name url expected_digest actual_digest temporary
+  canonical=$(canonical_omp_release "$release_json" "$integration_tag") || return 1
+  fingerprint=$(printf '%s' "$canonical" | $SHA256SUM | awk '{print "sha256:" $1}')
+  [[ $fingerprint =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  if [[ $allow_stored_proof == true ]] \
+    && stored=$($JQ -ce '.publicProof.ompRelease' "$result_file" 2>/dev/null); then
+    printf '%s' "$stored" | $JQ -e \
+      --arg fingerprint "$fingerprint" \
+      --argjson canonical "$canonical" '
+        .fingerprint == $fingerprint and .canonical == $canonical
+      ' >/dev/null || return 1
+    while IFS= read -r url; do
+      $CURL -fsSIL --retry 3 --retry-all-errors --max-time 45 "$url" >/dev/null \
+        || return 1
+    done < <(printf '%s' "$canonical" | $JQ -r '.assets[].browserDownloadUrl')
+    return 0
+  fi
+
+  download_dir=$(mktemp -d "$STATE_DIR/omp-release-assets.XXXXXX") || return 1
+  while IFS= read -r asset; do
+    name=$(printf '%s' "$asset" | $JQ -r '.name')
+    url=$(printf '%s' "$asset" | $JQ -r '.browserDownloadUrl')
+    expected_digest=$(printf '%s' "$asset" | $JQ -r '.digest')
+    $CURL -fsSL --retry 3 --retry-all-errors --max-time 180 "$url" \
+      -o "$download_dir/$name" || {
+        rm -rf -- "$download_dir"
+        return 1
+      }
+    actual_digest=$($SHA256SUM "$download_dir/$name" | awk '{print "sha256:" $1}')
+    [[ $actual_digest == "$expected_digest" ]] || {
+      rm -rf -- "$download_dir"
+      return 1
+    }
+  done < <(printf '%s' "$canonical" | $JQ -c '.assets[]')
+  rm -rf -- "$download_dir"
+  temporary=$(mktemp "$(dirname -- "$result_file")/.result-with-public-proof.XXXXXX")
+  $JQ \
+    --arg verified_at "$(timestamp)" \
+    --arg fingerprint "$fingerprint" \
+    --argjson canonical "$canonical" '
+      .publicProof.ompRelease = {
+        verifiedAt:$verified_at,
+        fingerprint:$fingerprint,
+        canonical:$canonical
+      }
+    ' "$result_file" >"$temporary"
+  durable_replace "$temporary" "$result_file"
+}
+
+tagged_t4_metadata_matches() {
+  local result_file=$1 t4_tag package_json matrix
+  t4_tag=$($JQ -r '.t4.tag' "$result_file")
+  package_json=$($GH api -H 'Accept: application/vnd.github.raw+json' "repos/$T4_REPOSITORY/contents/package.json?ref=$t4_tag") || return 1
+  matrix=$($GH api -H 'Accept: application/vnd.github.raw+json' "repos/$T4_REPOSITORY/contents/compat/omp-app-matrix.json?ref=$t4_tag") || return 1
+  $JQ -e --argjson publication "$(<"$result_file")" '
+    .version == $publication.t4.version
+  ' <<<"$package_json" >/dev/null || return 1
+  $JQ -e --argjson publication "$(<"$result_file")" '
+    .desktop.version == $publication.t4.version and
+    .verifiedRuntime.upstreamTag == $publication.upstream.tag and
+    .verifiedRuntime.upstreamCommit == $publication.upstream.commit and
+    .verifiedRuntime.sourceTag == $publication.integration.tag and
+    .verifiedRuntime.sourceCommit == $publication.integration.commit
+  ' <<<"$matrix" >/dev/null
+}
+
+publication_workflows_succeeded() {
+  local commit=$1 t4_tag=$2 runs
+  runs=$($GH api "repos/$T4_REPOSITORY/actions/runs?head_sha=$commit&per_page=100") || return 1
+  printf '%s' "$runs" | $JQ -e --arg tag "$t4_tag" --arg commit "$commit" '
+    any(.workflow_runs[]; .name == "CI" and .path == ".github/workflows/ci.yml" and .head_sha == $commit and .event == "push" and .status == "completed" and .conclusion == "success") and
+    any(.workflow_runs[]; .name == "Release app builds" and .path == ".github/workflows/release.yml" and .head_sha == $commit and .event == "push" and .head_branch == $tag and .status == "completed" and .conclusion == "success") and
+    any(.workflow_runs[]; .name == "Deploy project site" and .path == ".github/workflows/deploy-site.yml" and .head_sha == $commit and .event == "workflow_dispatch" and .head_branch == "main" and .status == "completed" and .conclusion == "success")
+  ' >/dev/null
+}
+
+publication_workflows_active_or_recent() {
+  local commit=$1 t4_tag=$2 runs cutoff
+  cutoff=$(($(date +%s) - 21600))
+  runs=$($GH api "repos/$T4_REPOSITORY/actions/runs?head_sha=$commit&per_page=100") || return 1
+  printf '%s' "$runs" | $JQ -e --arg tag "$t4_tag" --arg commit "$commit" --argjson cutoff "$cutoff" '
+    def relevant:
+      (.name == "CI" and .path == ".github/workflows/ci.yml" and .head_sha == $commit and .event == "push") or
+      (.name == "Release app builds" and .path == ".github/workflows/release.yml" and .head_sha == $commit and .event == "push" and .head_branch == $tag) or
+      (.name == "Deploy project site" and .path == ".github/workflows/deploy-site.yml" and .head_sha == $commit and .event == "workflow_dispatch" and .head_branch == "main");
+    any(.workflow_runs[]; relevant and .status != "completed") or
+    (
+      any(.workflow_runs[]; .name == "CI" and .path == ".github/workflows/ci.yml" and .head_sha == $commit and .event == "push" and .conclusion == "success") and
+      any(.workflow_runs[]; .name == "Release app builds" and .path == ".github/workflows/release.yml" and .head_sha == $commit and .event == "push" and .head_branch == $tag and .conclusion == "success") and
+      any(.workflow_runs[]; .name == "Deploy project site" and .path == ".github/workflows/deploy-site.yml" and .head_sha == $commit and .event == "workflow_dispatch" and .head_branch == "main" and .conclusion == "success") and
+      any(.workflow_runs[]; relevant and .conclusion == "success" and ((.updated_at | fromdateiso8601) >= $cutoff))
+    )
+  ' >/dev/null
+}
+
+integration_descends_from_upstream() {
+  local upstream_commit=$1 integration_commit=$2 comparison
+  comparison=$($GH api "repos/$OMP_INTEGRATION_REPOSITORY/compare/$upstream_commit...$integration_commit") || return 1
+  printf '%s' "$comparison" | $JQ -e --arg upstream "$upstream_commit" --arg integration "$integration_commit" '
+    .base_commit.sha == $upstream and
+    .merge_base_commit.sha == $upstream and
+    ((.status == "ahead" and .ahead_by > 0) or
+     (.status == "identical" and $integration == $upstream))
+  ' >/dev/null
+}
+
+integration_is_reachable_from_product_branch() {
+  local integration_commit=$1 comparison
+  comparison=$($GH api "repos/$OMP_INTEGRATION_REPOSITORY/compare/$integration_commit...$OMP_PRODUCT_BRANCH") || return 1
+  printf '%s' "$comparison" | $JQ -e --arg integration "$integration_commit" '
+    .base_commit.sha == $integration and
+    .merge_base_commit.sha == $integration and
+    (.status == "ahead" or .status == "identical")
+  ' >/dev/null
+}
+
+t4_commit_is_reachable_from_main() {
+  local commit=$1 comparison
+  comparison=$($GH api "repos/$T4_REPOSITORY/compare/$commit...main") || return 1
+  printf '%s' "$comparison" | $JQ -e --arg commit "$commit" '
+    .merge_base_commit.sha == $commit and (.status == "ahead" or .status == "identical")
+  ' >/dev/null
 }
 
 site_has_release() {
   local t4_tag=$1 integration_tag=$2 version=$3
-  local cache_bust index docs site_assets asset bundle_file
+  local cache_bust index docs site_assets asset bundle_file release_asset
+  local -a release_assets=(
+    "T4-Code-${version}-android.apk"
+    "T4-Code-${version}-linux-amd64.deb"
+    "T4-Code-${version}-linux-x86_64.AppImage"
+    "T4-Code-${version}-mac-arm64.dmg"
+    "T4-Code-${version}-mac-arm64.zip"
+  )
   cache_bust=$(date +%s)
   index=$($CURL -fsSL --retry 3 --retry-all-errors --max-time 45 "$T4_SITE/?maintainer=$cache_bust") || return 1
   docs=$($CURL -fsSL --retry 3 --retry-all-errors --max-time 45 "$T4_SITE/docs/?maintainer=$cache_bust") || return 1
@@ -134,19 +896,25 @@ site_has_release() {
     rm -f -- "$bundle_file"
     return 1
   }
-  grep -Fq -- "T4-Code-${version}-linux-amd64.deb" "$bundle_file" || {
-    rm -f -- "$bundle_file"
-    return 1
-  }
+  for release_asset in "${release_assets[@]}"; do
+    grep -Fq -- "$release_asset" "$bundle_file" || {
+      rm -f -- "$bundle_file"
+      return 1
+    }
+  done
   rm -f -- "$bundle_file"
 }
 
 verify_result_once() {
-  local result_file=$1 target=$2
+  local result_file=$1 target=$2 allow_stored_proof=${3:-false}
   local upstream_tag upstream_commit integration_tag integration_commit
   local t4_version t4_tag t4_commit release_url site_url site_tag
-  local actual_integration_commit actual_t4_commit release_json expected_release_url
+  local actual_upstream_commit actual_integration_commit actual_t4_commit release_json expected_release_url
+  local omp_release_json
+  local official_main_commit fork_main_commit official_base_tag_object fork_base_tag_object
+  local fork_base_commit
 
+  atomic_publication_receipt_is_valid "$result_file" || return 1
   $JQ -e '
     (.upstream.tag | type == "string") and
     (.upstream.commit | test("^[0-9a-f]{40}$")) and
@@ -179,10 +947,34 @@ verify_result_once() {
   expected_release_url="https://github.com/$T4_REPOSITORY/releases/tag/$t4_tag"
   [[ $release_url == "$expected_release_url" ]] || return 1
 
+  actual_upstream_commit=$(resolve_public_commit "$OMP_UPSTREAM_REPOSITORY" "$upstream_tag") || return 1
+  [[ $actual_upstream_commit == "$upstream_commit" ]] || return 1
+  official_base_tag_object=$(resolve_public_tag_object "$OMP_UPSTREAM_REPOSITORY" "$upstream_tag") \
+    || return 1
+  fork_base_tag_object=$(resolve_public_tag_object "$OMP_INTEGRATION_REPOSITORY" "$upstream_tag") \
+    || return 1
+  [[ $official_base_tag_object =~ ^[0-9a-f]{40}$ \
+    && $fork_base_tag_object == "$official_base_tag_object" ]] || return 1
+  fork_base_commit=$(resolve_public_commit "$OMP_INTEGRATION_REPOSITORY" "$upstream_tag") || return 1
+  [[ $fork_base_commit == "$upstream_commit" ]] || return 1
+  official_main_commit=$(resolve_public_commit "$OMP_UPSTREAM_REPOSITORY" main) || return 1
+  fork_main_commit=$(resolve_public_commit "$OMP_INTEGRATION_REPOSITORY" main) || return 1
+  [[ $official_main_commit =~ ^[0-9a-f]{40}$ && $fork_main_commit == "$official_main_commit" ]] \
+    || return 1
   actual_integration_commit=$(resolve_public_commit "$OMP_INTEGRATION_REPOSITORY" "$integration_tag") || return 1
   [[ $actual_integration_commit == "$integration_commit" ]] || return 1
+  integration_descends_from_upstream "$upstream_commit" "$integration_commit" || return 1
+  integration_is_reachable_from_product_branch "$integration_commit" || return 1
+  omp_publication_workflow_succeeded "$integration_commit" || return 1
+  omp_release_json=$($GH api "repos/$OMP_INTEGRATION_REPOSITORY/releases/tags/$integration_tag") \
+    || return 1
+  verify_omp_release_assets "$result_file" "$omp_release_json" "$integration_tag" \
+    "$allow_stored_proof" || return 1
   actual_t4_commit=$(resolve_public_commit "$T4_REPOSITORY" "$t4_tag") || return 1
   [[ $actual_t4_commit == "$t4_commit" ]] || return 1
+  t4_commit_is_reachable_from_main "$t4_commit" || return 1
+  tagged_t4_metadata_matches "$result_file" || return 1
+  publication_workflows_succeeded "$t4_commit" "$t4_tag" || return 1
 
   release_json=$($GH api "repos/$T4_REPOSITORY/releases/tags/$t4_tag") || return 1
   printf '%s' "$release_json" | $JQ -e --arg tag "$t4_tag" --arg url "$expected_release_url" '
@@ -193,14 +985,32 @@ verify_result_once() {
 }
 
 verify_result() {
-  local result_file=$1 target=$2 attempt
+  local result_file=$1 target=$2 allow_stored_proof=${3:-false} attempt retry_stored_proof temporary
   [[ -s $result_file ]] || fail "the maintainer result file is missing"
+  retry_stored_proof=$allow_stored_proof
+  if [[ $allow_stored_proof != true ]] \
+    && $JQ -e '.publicProof? | type == "object" and has("ompRelease")' \
+      "$result_file" >/dev/null 2>&1; then
+    temporary=$(mktemp "$(dirname -- "$result_file")/.result-without-untrusted-proof.XXXXXX")
+    $JQ '
+      del(.publicProof.ompRelease)
+      | if .publicProof == {} then del(.publicProof) else . end
+    ' "$result_file" >"$temporary"
+    durable_replace "$temporary" "$result_file"
+  fi
+  attach_atomic_publication_receipt "$result_file" \
+    || fail "the publication lacks a matching wrapper-owned three-ref atomic OMP receipt"
   require_positive_integer T4_MAINTAINER_VERIFY_ATTEMPTS "$VERIFY_ATTEMPTS"
   require_positive_integer T4_MAINTAINER_VERIFY_INTERVAL_SECONDS "$VERIFY_INTERVAL_SECONDS"
   for ((attempt = 1; attempt <= VERIFY_ATTEMPTS; attempt += 1)); do
-    if verify_result_once "$result_file" "$target"; then
+    if verify_result_once "$result_file" "$target" "$retry_stored_proof"; then
       log "Public GitHub release assets and t4code.net match the maintainer result."
       return 0
+    fi
+    if [[ $retry_stored_proof != true ]] \
+      && $JQ -e '.publicProof.ompRelease.fingerprint | test("^sha256:[0-9a-f]{64}$")' \
+        "$result_file" >/dev/null 2>&1; then
+      retry_stored_proof=true
     fi
     if ((attempt < VERIFY_ATTEMPTS)); then
       log "Public release verification is still converging (${attempt}/${VERIFY_ATTEMPTS}); checking again in ${VERIFY_INTERVAL_SECONDS}s."
@@ -210,37 +1020,258 @@ verify_result() {
   fail "public release verification did not converge"
 }
 
-record_processed() {
+record_pending() {
   local result_file=$1 run_id=$2 temporary
-  temporary=$(mktemp "$STATE_DIR/processed.json.XXXXXX")
-  $JQ --arg processed_at "$(timestamp)" --arg run_id "$run_id" '
-    . + {processedAt: $processed_at, runId: $run_id, publicVerification: "complete"}
-  ' "$result_file" >"$temporary"
-  chmod 600 "$temporary"
-  mv -f -- "$temporary" "$PROCESSED_FILE"
+  temporary=$(mktemp "$STATE_DIR/pending.json.XXXXXX")
+  $JQ -n \
+    --arg public_verified_at "$(timestamp)" \
+    --arg run_id "$run_id" \
+    --slurpfile publication "$result_file" \
+    '{
+      schemaVersion: 1,
+      publicVerifiedAt: $public_verified_at,
+      publicationRunId: $run_id,
+      publication: $publication[0]
+    }' >"$temporary"
+  durable_replace "$temporary" "$PENDING_FILE"
 }
 
-adopt_current_public_release() {
-  local target matrix package_version t4_tag t4_commit result_file run_id
-  [[ -r "$T4_SOURCE_ROOT/compat/omp-app-matrix.json" ]] || fail "T4 compatibility matrix is unavailable at $T4_SOURCE_ROOT"
-  [[ -r "$T4_SOURCE_ROOT/package.json" ]] || fail "T4 package metadata is unavailable at $T4_SOURCE_ROOT"
+clear_pending() {
+  durable_remove "$PENDING_FILE"
+}
 
+clear_local_applied() {
+  durable_remove "$LOCAL_APPLIED_FILE"
+}
+
+requeue_processed_publication() {
+  local target repair_id run_dir result_file
+  [[ -s $PROCESSED_FILE ]] || return 0
   target=$(latest_stable_release)
-  matrix=$(<"$T4_SOURCE_ROOT/compat/omp-app-matrix.json")
-  package_version=$($JQ -er '.version | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' "$T4_SOURCE_ROOT/package.json")
+  processed_metadata_matches "$target" || return 0
+  local_state_matches_processed && return 0
+
+  repair_id="repair-$(date --utc +%Y%m%dT%H%M%SZ)-$$"
+  run_dir="$RUNS_DIR/$repair_id"
+  result_file="$run_dir/result.json"
+  mkdir -p -- "$run_dir"
+  chmod 700 -- "$run_dir"
+  $JQ 'del(.processedAt, .runId, .publicVerification, .localDeployment)' "$PROCESSED_FILE" >"$result_file"
+  verify_result "$result_file" "$target" true
+  record_pending "$result_file" "$repair_id"
+  log "Local T4 deployment drifted; queued the exact verified publication for repair without invoking Sol."
+}
+
+finish_verified_processed_noop() {
+  local target upstream_tag upstream_commit
+  target=$(latest_stable_release)
+  processed_metadata_matches "$target" || return 1
+  local_state_matches_processed || return 1
+  verify_result "$PROCESSED_FILE" "$target" true
+  upstream_tag=$($JQ -r '.tag' <<<"$target")
+  upstream_commit=$($JQ -r '.commit' <<<"$target")
+  log "Latest stable official OMP release $upstream_tag ($upstream_commit) remains publicly and locally verified."
+  return 0
+}
+
+record_local_applied() {
+  local result_file=$1 run_id=$2 local_receipt=$3 temporary
+  temporary=$(mktemp "$STATE_DIR/local-applied.json.XXXXXX")
+  $JQ \
+    --arg local_applied_at "$(timestamp)" \
+    --arg run_id "$run_id" \
+    --slurpfile local_deployment "$local_receipt" '
+      . + {
+        localAppliedAt: $local_applied_at,
+        runId: $run_id,
+        publicVerification: "complete",
+        localDeployment: $local_deployment[0]
+      }
+    ' "$result_file" >"$temporary"
+  durable_replace "$temporary" "$LOCAL_APPLIED_FILE"
+}
+
+local_applied_matches_pending() {
+  [[ -s $LOCAL_APPLIED_FILE ]] || return 1
+  $JQ -e --slurpfile applied "$LOCAL_APPLIED_FILE" '
+    .publication.upstream == $applied[0].upstream and
+    .publication.integration == $applied[0].integration and
+    .publication.t4 == $applied[0].t4 and
+    .publicationRunId == $applied[0].runId and
+    $applied[0].publicVerification == "complete" and
+    $applied[0].localDeployment.status == "complete" and
+    $applied[0].localDeployment.gateway.tailnetHealth == "pending"
+  ' "$PENDING_FILE" >/dev/null 2>&1
+}
+
+finalize_local_applied() {
+  local run_id temporary
+  run_id=$($JQ -er '.runId | strings | select(length > 0)' "$LOCAL_APPLIED_FILE")
+  temporary=$(mktemp "$STATE_DIR/processed.json.XXXXXX")
+  $JQ --arg processed_at "$(timestamp)" '
+    del(.localAppliedAt)
+    | .processedAt = $processed_at
+    | .localDeployment.gateway.tailnetHealth = "healthy"
+  ' "$LOCAL_APPLIED_FILE" >"$temporary"
+  durable_replace "$temporary" "$PROCESSED_FILE"
+  clear_local_applied
+  clear_pending
+  cleanup_processed_workspace "$run_id" \
+    || log "WARNING: processed state is durable, but its successful Sol workspace could not be removed."
+}
+
+pending_publication_is_valid() {
+  $JQ -e '
+    .schemaVersion == 1 and
+    (.publicVerifiedAt | type == "string") and
+    (.publicationRunId | type == "string" and length > 0) and
+    (.publication | type == "object") and
+    (.publication.upstream.tag | type == "string") and
+    (.publication.upstream.commit | test("^[0-9a-f]{40}$"))
+  ' "$PENDING_FILE" >/dev/null
+}
+
+local_receipt_is_valid() {
+  local receipt_file=$1 result_file=$2 expected_identity recorded_identity
+  $JQ -e --slurpfile publication "$result_file" '
+    .schemaVersion == 1 and
+    .status == "complete" and
+    .upstream == $publication[0].upstream and
+    .integration == $publication[0].integration and
+    .t4 == $publication[0].t4 and
+    (.omp.installedSha256 | test("^[0-9a-f]{64}$")) and
+    (.omp.runningExecutableSha256 | test("^[0-9a-f]{64}$")) and
+    .omp.installedSha256 == .omp.runningExecutableSha256 and
+    .omp.version == ("omp/" + ($publication[0].upstream.tag | ltrimstr("v"))) and
+    (.desktop.debSha256 | test("^[0-9a-f]{64}$")) and
+    .desktop.installedVersion == $publication[0].t4.version and
+    .desktop.dpkgVerification == "clean" and
+    .omp.health == "healthy" and
+    (.omp.hostId | type == "string" and length > 0) and
+    (.omp.epoch | type == "string" and length > 0) and
+    .gateway.activeState == "active" and
+    .gateway.health == "healthy" and
+    .gateway.helperStatus == "healthy" and
+    .gateway.loopbackHealth == "healthy" and
+    .gateway.tailnetHealth == "pending" and
+    (.gateway.allowedOrigin | type == "string" and test("^https://")) and
+    (.gateway.port | type == "number" and . >= 1024 and . <= 65535) and
+    (.gateway.appSocket | type == "string" and startswith("/")) and
+    (.gateway.label | type == "string" and length > 0) and
+    (.gateway.nodeExecutable | type == "string" and startswith("/")) and
+    .gateway.runtimeCommit == $publication[0].t4.commit and
+    (.gateway.deploymentIdentity | test("^sha256:[0-9a-f]{64}$")) and
+    (.gateway.artifacts.gatewayScriptSha256 | test("^[0-9a-f]{64}$")) and
+    (.gateway.artifacts.webTreeSha256 | test("^[0-9a-f]{64}$")) and
+    (.gateway.artifacts.wsTreeSha256 | test("^[0-9a-f]{64}$")) and
+    (.gateway.artifacts.configSha256 | test("^[0-9a-f]{64}$")) and
+    (.gateway.artifacts.unitSha256 | test("^[0-9a-f]{64}$")) and
+    .rollback.available == true
+  ' "$receipt_file" >/dev/null || return 1
+  expected_identity=$(deployment_identity \
+    "$($JQ -r '.t4.commit' "$result_file")" \
+    "$($JQ -r '.integration.commit' "$result_file")" \
+    "$($JQ -r '.omp.installedSha256' "$receipt_file")") || return 1
+  recorded_identity=$($JQ -r '.gateway.deploymentIdentity' "$receipt_file") || return 1
+  [[ $recorded_identity == "$expected_identity" ]]
+}
+
+deploy_pending_publication() {
+  local retry_id run_dir result_file receipt_file target publication_run_id staged_result
+  [[ -s $PENDING_FILE ]] || return 0
+  pending_publication_is_valid || fail "pending publication state is invalid: $PENDING_FILE"
+  staged_result="$WORK_DIR/pending-publication.json"
+  $JQ '.publication' "$PENDING_FILE" >"$staged_result"
+  publication_run_id=$($JQ -r '.publicationRunId' "$PENDING_FILE")
+  target=$($JQ -c '.publication.upstream' "$PENDING_FILE")
+
+  # Re-resolve official and integration tags, public assets, workflows, and the
+  # site on every retry, including Tailnet-only convergence after local apply.
+  verify_result "$staged_result" "$target" true
+
+  if [[ -s $PROCESSED_FILE ]] && $JQ -e --slurpfile processed "$PROCESSED_FILE" '
+    .publication.upstream == $processed[0].upstream and
+    .publication.integration == $processed[0].integration and
+    .publication.t4 == $processed[0].t4 and
+    $processed[0].publicVerification == "complete" and
+    $processed[0].localDeployment.status == "complete"
+  ' "$PENDING_FILE" >/dev/null 2>&1 && local_state_matches_processed; then
+    clear_local_applied
+    clear_pending
+    rm -f -- "$staged_result"
+    cleanup_processed_workspace "$publication_run_id" \
+      || log "WARNING: processed state is durable, but its successful Sol workspace could not be removed."
+    log "Cleared a pending publication that was already fully processed."
+    return 0
+  fi
+
+  if [[ -e $LOCAL_APPLIED_FILE ]]; then
+    local_applied_matches_pending \
+      || fail "local-applied state does not match the pending publication: $LOCAL_APPLIED_FILE"
+    if local_state_matches_record "$LOCAL_APPLIED_FILE"; then
+      if tailnet_gateway_is_healthy "$LOCAL_APPLIED_FILE"; then
+        finalize_local_applied
+        log "Tailnet HTTPS proof converged; processed state is now durable."
+      else
+        report_tailnet_unreachable_once
+      fi
+      rm -f -- "$staged_result"
+      return 0
+    fi
+    log "Locally applied T4 state drifted before Tailnet proof; redeploying the exact pending publication."
+    clear_local_applied
+  fi
+
+  retry_id="local-$(date --utc +%Y%m%dT%H%M%SZ)-$$"
+  run_dir="$RUNS_DIR/$retry_id"
+  result_file="$run_dir/result.json"
+  receipt_file="$run_dir/local-deployment.json"
+  mkdir -p -- "$run_dir/local-work"
+  chmod 700 -- "$run_dir" "$run_dir/local-work"
+  $JQ '.' "$staged_result" >"$result_file"
+  rm -f -- "$staged_result"
+  log "Deploying publicly verified T4 $($JQ -r '.t4.tag' "$result_file") to this workstation."
+  "$LOCAL_DEPLOY" "$result_file" "$receipt_file" "$run_dir/local-work" 9>&-
+  [[ -s $receipt_file ]] || fail "local deployment completed without a receipt"
+  local_receipt_is_valid "$receipt_file" "$result_file" || fail "local deployment receipt is invalid"
+  record_local_applied "$result_file" "$publication_run_id" "$receipt_file"
+  local_state_matches_record "$LOCAL_APPLIED_FILE" \
+    || fail "local deployment receipt did not independently match the live workstation"
+  if tailnet_gateway_is_healthy "$LOCAL_APPLIED_FILE"; then
+    finalize_local_applied
+    log "Local deployment and Tailnet HTTPS proof are complete for $($JQ -r '.t4.tag' "$result_file"); processed state is now durable."
+  else
+    report_tailnet_unreachable_once
+  fi
+}
+
+public_metadata_is_compatible() {
+  local matrix=$1 target=$2 package_version=$3
   $JQ -e --argjson target "$target" --arg version "$package_version" '
     .verifiedRuntime.upstreamTag == $target.tag and
     .verifiedRuntime.upstreamCommit == $target.commit and
     .desktop.version == $version and
     (.verifiedRuntime.sourceTag | test("^t4code-" + ($target.tag | ltrimstr("v")) + "-appserver-[1-9][0-9]*$")) and
     (.verifiedRuntime.sourceCommit | test("^[0-9a-f]{40}$"))
-  ' <<<"$matrix" >/dev/null || fail "the public T4 compatibility matrix does not match the latest stable official OMP release"
+  ' <<<"$matrix" >/dev/null
+}
 
-  t4_tag="v$package_version"
-  t4_commit=$(resolve_public_commit "$T4_REPOSITORY" "$t4_tag")
-  [[ $t4_commit =~ ^[0-9a-f]{40}$ ]] || fail "the public T4 tag did not resolve to a commit"
+adopt_publication() {
+  local target=$1 matrix=$2 package_version=$3 t4_tag=$4 t4_commit=$5 source_label=$6
+  local result_file run_id run_dir upstream_tag
+  upstream_tag=$($JQ -r '.tag' <<<"$target")
+  if processed_matches "$target" && $JQ -e --arg tag "$t4_tag" --arg commit "$t4_commit" '
+    .t4.tag == $tag and .t4.commit == $commit
+  ' "$PROCESSED_FILE" >/dev/null; then
+    log "$source_label $t4_tag and its exact local deployment are already fully processed."
+    return 0
+  fi
+
   run_id="adopt-${t4_tag}-$(date --utc +%Y%m%dT%H%M%SZ)"
-  result_file=$(mktemp "$STATE_DIR/adopt-result.XXXXXX.json")
+  run_dir="$RUNS_DIR/$run_id"
+  result_file="$run_dir/result.json"
+  mkdir -p -- "$run_dir"
+  chmod 700 -- "$run_dir"
   $JQ -n \
     --argjson upstream "$target" \
     --arg integration_tag "$($JQ -r '.verifiedRuntime.sourceTag' <<<"$matrix")" \
@@ -249,28 +1280,121 @@ adopt_current_public_release() {
     --arg t4_tag "$t4_tag" \
     --arg t4_commit "$t4_commit" \
     --arg release_url "https://github.com/$T4_REPOSITORY/releases/tag/$t4_tag" \
-    --arg site_url "$T4_SITE" \
-    '{
-      upstream: $upstream,
-      integration: {tag: $integration_tag, commit: $integration_commit},
-      t4: {version: $version, tag: $t4_tag, commit: $t4_commit},
-      release: {url: $release_url},
-      site: {url: $site_url, releaseTag: $t4_tag}
-    }' >"$result_file"
+    --arg site_url "$T4_SITE" '
+      {
+        upstream: $upstream,
+        integration: {tag: $integration_tag, commit: $integration_commit},
+        t4: {version: $version, tag: $t4_tag, commit: $t4_commit},
+        release: {url: $release_url},
+        site: {url: $site_url, releaseTag: $t4_tag}
+      }
+    ' >"$result_file"
   verify_result "$result_file" "$target"
-  record_processed "$result_file" "$run_id"
-  rm -f -- "$result_file"
-  log "Adopted the already-public $t4_tag release for official OMP $($JQ -r '.tag' <<<"$target")."
+  record_pending "$result_file" "$run_id"
+  deploy_pending_publication
+  if [[ -s $PENDING_FILE ]]; then
+    log "$source_label $t4_tag is locally applied and awaits independent Tailnet HTTPS proof."
+  else
+    log "Adopted $source_label $t4_tag for official OMP $upstream_tag."
+  fi
+}
+
+adopt_current_public_release() {
+  local allow_incompatible=${1:-false}
+  local target release_json matrix package_json package_version t4_tag t4_commit
+  local tagged_commit tagged_matrix tagged_version main_commit
+
+  target=$(latest_stable_release)
+
+  # Inspect main before the latest release. A compatible main commit means a
+  # publication is already in flight; wait for its immutable public surfaces
+  # instead of asking Sol to start a duplicate compatibility release.
+  package_json=$($GH api -H 'Accept: application/vnd.github.raw+json' "repos/$T4_REPOSITORY/contents/package.json?ref=main")
+  matrix=$($GH api -H 'Accept: application/vnd.github.raw+json' "repos/$T4_REPOSITORY/contents/compat/omp-app-matrix.json?ref=main")
+  package_version=$(printf '%s' "$package_json" | $JQ -er '.version | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))') \
+    || fail "T4 main has an invalid package version"
+  if public_metadata_is_compatible "$matrix" "$target" "$package_version"; then
+    t4_tag="v$package_version"
+    main_commit=$(resolve_public_commit "$T4_REPOSITORY" main)
+    [[ $main_commit =~ ^[0-9a-f]{40}$ ]] || fail "T4 main did not resolve to a commit"
+    if tagged_commit=$(resolve_public_commit "$T4_REPOSITORY" "$t4_tag" 2>/dev/null); then
+      [[ $tagged_commit =~ ^[0-9a-f]{40}$ ]] || fail "the in-flight T4 tag did not resolve to a commit"
+      package_json=$($GH api -H 'Accept: application/vnd.github.raw+json' "repos/$T4_REPOSITORY/contents/package.json?ref=$t4_tag")
+      tagged_matrix=$($GH api -H 'Accept: application/vnd.github.raw+json' "repos/$T4_REPOSITORY/contents/compat/omp-app-matrix.json?ref=$t4_tag")
+      tagged_version=$(printf '%s' "$package_json" | $JQ -er '.version | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))') \
+        || fail "the in-flight T4 tag has an invalid package version"
+      if [[ $tagged_version == "$package_version" ]] \
+        && public_metadata_is_compatible "$tagged_matrix" "$target" "$tagged_version" \
+        && publication_workflows_active_or_recent "$tagged_commit" "$t4_tag"; then
+        log "T4 publication workflows are active or recently successful for $t4_tag; waiting for public convergence."
+        adopt_publication "$target" "$tagged_matrix" "$tagged_version" "$t4_tag" "$tagged_commit" "In-flight"
+        return 0
+      fi
+      RESUME_PUBLICATION_JSON=$($JQ -cn \
+        --arg reason "tagged-publication-terminal-or-stale" \
+        --arg main_commit "$main_commit" \
+        --arg version "$package_version" \
+        --arg tag "$t4_tag" \
+        --argjson matrix "$matrix" '
+          {reason: $reason, mainCommit: $main_commit, version: $version, tag: $tag, matrix: $matrix}
+        ')
+    else
+      RESUME_PUBLICATION_JSON=$($JQ -cn \
+        --arg reason "compatible-main-without-tag" \
+        --arg main_commit "$main_commit" \
+        --arg version "$package_version" \
+        --arg tag "$t4_tag" \
+        --argjson matrix "$matrix" '
+          {reason: $reason, mainCommit: $main_commit, version: $version, tag: $tag, matrix: $matrix}
+        ')
+    fi
+  fi
+
+  if [[ $RESUME_PUBLICATION_JSON != null ]]; then
+    if [[ $allow_incompatible == true ]]; then
+      log "Compatible T4 main work is ready for completion through the positive Sol release workflow."
+      return 0
+    fi
+    fail "compatible T4 main work is ready for publication completion"
+  fi
+
+  release_json=$($GH api "repos/$T4_REPOSITORY/releases/latest")
+  t4_tag=$(printf '%s' "$release_json" | $JQ -er '
+    select(.draft == false and .prerelease == false)
+    | .tag_name
+    | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))
+  ') || fail "the latest public T4 release is not a stable semantic-version tag"
+  package_json=$($GH api -H 'Accept: application/vnd.github.raw+json' "repos/$T4_REPOSITORY/contents/package.json?ref=$t4_tag")
+  matrix=$($GH api -H 'Accept: application/vnd.github.raw+json' "repos/$T4_REPOSITORY/contents/compat/omp-app-matrix.json?ref=$t4_tag")
+  package_version=$(printf '%s' "$package_json" | $JQ -er '.version | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))') \
+    || fail "the latest public T4 package version is invalid"
+  [[ $t4_tag == "v$package_version" ]] || fail "the latest T4 release tag and tagged package version disagree"
+  if public_metadata_is_compatible "$matrix" "$target" "$package_version"; then
+    t4_commit=$(resolve_public_commit "$T4_REPOSITORY" "$t4_tag")
+    [[ $t4_commit =~ ^[0-9a-f]{40}$ ]] || fail "the public T4 tag did not resolve to a commit"
+    if publication_workflows_succeeded "$t4_commit" "$t4_tag" \
+      || publication_workflows_active_or_recent "$t4_commit" "$t4_tag"; then
+      adopt_publication "$target" "$matrix" "$package_version" "$t4_tag" "$t4_commit" "Public"
+      return 0
+    fi
+  fi
+
+  if [[ $allow_incompatible == true ]]; then
+    log "No current or active T4 publication targets $($JQ -r '.tag' <<<"$target"); starting the positive Sol release workflow."
+    return 0
+  fi
+  fail "neither T4 main nor the latest public release matches the latest stable official OMP release"
 }
 
 run_live_maintenance() {
   local target upstream_tag upstream_commit run_id run_dir workspace context_file result_file
-  local omp_status
+  local omp_status release_instruction
 
   target=$(latest_stable_release)
   upstream_tag=$($JQ -r '.tag' <<<"$target")
   upstream_commit=$($JQ -r '.commit' <<<"$target")
-  if processed_matches "$target"; then
+  if processed_metadata_matches "$target" && local_state_matches_processed; then
+    verify_result "$PROCESSED_FILE" "$target" true
     log "Latest stable official OMP release $upstream_tag ($upstream_commit) is already publicly processed."
     return 0
   fi
@@ -289,19 +1413,42 @@ run_live_maintenance() {
     --arg result_file "$result_file" \
     --arg omp_upstream "$OMP_UPSTREAM_REPOSITORY" \
     --arg omp_integration "$OMP_INTEGRATION_REPOSITORY" \
+    --arg omp_product_branch "$OMP_PRODUCT_BRANCH" \
+    --arg atomic_publish_helper "$ATOMIC_PUBLISH" \
+    --arg atomic_state_dir "$ATOMIC_PUBLICATION_STATE_DIR" \
     --arg t4 "$T4_REPOSITORY" \
     --arg site "$T4_SITE" \
+    --argjson resumable_publication "$RESUME_PUBLICATION_JSON" \
     --slurpfile previous <(if [[ -s $PROCESSED_FILE ]]; then cat "$PROCESSED_FILE"; else printf 'null\n'; fi) \
     '{
       detectedAt: $detected_at,
       upstream: $upstream,
-      repositories: {officialOmp: $omp_upstream, integrationOmp: $omp_integration, t4: $t4},
+      repositories: {
+        officialOmp: $omp_upstream,
+        integrationOmp: $omp_integration,
+        integrationProductBranch: $omp_product_branch,
+        t4: $t4
+      },
       site: $site,
+      atomicPublisher: {
+        helper: $atomic_publish_helper,
+        stateDirectory: $atomic_state_dir,
+        requiredRefs: [
+          "exact official base tag",
+          "t4code/main",
+          "annotated integration tag"
+        ]
+      },
       workspace: $workspace,
       resultFile: $result_file,
+      resumablePublication: $resumable_publication,
       previousProcessed: $previous[0]
     }' >"$context_file"
 
+  release_instruction="Publish T4 Code for official OMP $upstream_tag at $upstream_commit. Reuse and complete any compatible main commit, version, or tag already present. Use the wrapper-owned atomic publisher for the OMP base tag, product branch, and annotated integration tag."
+  if [[ $RESUME_PUBLICATION_JSON != null ]]; then
+    release_instruction="Continue and complete the compatible T4 publication for official OMP $upstream_tag at $upstream_commit, reusing its existing main commit, version, and tag where valid."
+  fi
   log "Starting the live T4 publication for official OMP $upstream_tag ($upstream_commit)."
   set +e
   T4_MAINTENANCE_CONTEXT="$context_file" \
@@ -309,6 +1456,10 @@ run_live_maintenance() {
   T4_MAINTENANCE_WORKSPACE="$workspace" \
   T4_MAINTENANCE_UPSTREAM_TAG="$upstream_tag" \
   T4_MAINTENANCE_UPSTREAM_COMMIT="$upstream_commit" \
+  T4_ATOMIC_PUBLISH_HELPER="$ATOMIC_PUBLISH" \
+  T4_ATOMIC_STATE_DIR="$ATOMIC_PUBLICATION_STATE_DIR" \
+  T4_ATOMIC_EXPECTED_UPSTREAM_TAG="$upstream_tag" \
+  T4_ATOMIC_EXPECTED_UPSTREAM_COMMIT="$upstream_commit" \
     "$OMP" \
       --profile t4-maintainer \
       --cwd "$workspace" \
@@ -318,7 +1469,8 @@ run_live_maintenance() {
       --mode json \
       --approval-mode yolo \
       "@$PROMPT_FILE" \
-      "Publish T4 Code for official OMP $upstream_tag at $upstream_commit. The run context is $context_file and the verified result belongs at $result_file." \
+      "$release_instruction The run context is $context_file and the verified result belongs at $result_file." \
+      9>&- \
       >"$run_dir/omp.jsonl" 2>"$run_dir/omp.stderr.log"
   omp_status=$?
   set -e
@@ -327,8 +1479,13 @@ run_live_maintenance() {
   fi
 
   verify_result "$result_file" "$target"
-  record_processed "$result_file" "$run_id"
-  log "Live publication is complete for $upstream_tag; processed state now points to $($JQ -r '.t4.tag' "$result_file")."
+  record_pending "$result_file" "$run_id"
+  deploy_pending_publication
+  if [[ -s $PENDING_FILE ]]; then
+    log "Live publication and exact local deployment are complete for $upstream_tag; independent Tailnet HTTPS proof remains pending."
+  else
+    log "Live publication and local deployment are complete for $upstream_tag; processed state now points to $($JQ -r '.t4.tag' "$result_file")."
+  fi
 }
 
 main() {
@@ -338,18 +1495,67 @@ main() {
   require_command "$CURL"
   require_command "$JQ"
   require_command "$OMP"
+  require_command "$SHA256SUM"
+  require_command "$SYSTEMCTL"
+  require_command "$DPKG_QUERY"
+  require_command "$DPKG"
+  require_command "$GIT"
+  require_command "$NODE"
+  require_command "$REALPATH"
+  require_command "$SYNC"
+  require_command awk
+  require_command dirname
+  require_command find
+  require_command grep
+  require_command rm
+  require_command sed
+  require_command sort
+  require_command "$LOCAL_DEPLOY"
+  require_command "$ATOMIC_PUBLISH"
   [[ -r $PROMPT_FILE ]] || fail "maintainer prompt is unavailable: $PROMPT_FILE"
   acquire_lock
+  sync_fork_main
+  [[ ! -e $BLOCKED_FILE ]] || fail "maintainer is blocked by an unfinished or incompletely rolled-back deployment; reconcile $BLOCKED_FILE before retrying"
+  cleanup_unreferenced_local_work
+  cleanup_unreferenced_deployments
+  cleanup_durable_processed_workspace \
+    || log "WARNING: the previous successful Sol workspace could not be removed."
 
   case ${1:-run} in
     run)
+      deploy_pending_publication
+      if [[ -s $PENDING_FILE ]]; then
+        log "An exact verified publication remains pending; this run will not invoke Sol."
+        return 0
+      fi
+      if finish_verified_processed_noop; then
+        return 0
+      fi
+      requeue_processed_publication
+      deploy_pending_publication
+      if [[ -s $PENDING_FILE ]]; then
+        log "Local repair remains pending; this run will not invoke Sol."
+        return 0
+      fi
+      adopt_current_public_release true
+      if [[ -s $PENDING_FILE ]]; then
+        log "A current or in-flight public release remains pending; this run will not invoke Sol."
+        return 0
+      fi
       run_live_maintenance
       ;;
     --adopt-current)
+      deploy_pending_publication
+      [[ ! -s $PENDING_FILE ]] || return 0
       adopt_current_public_release
       ;;
+    --adopt-current-if-compatible)
+      deploy_pending_publication
+      [[ ! -s $PENDING_FILE ]] || return 0
+      adopt_current_public_release true
+      ;;
     *)
-      fail "usage: $0 [--adopt-current]"
+      fail "usage: $0 [--adopt-current|--adopt-current-if-compatible]"
       ;;
   esac
 }

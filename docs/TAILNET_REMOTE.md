@@ -47,15 +47,32 @@ From the checkout:
 corepack pnpm install --frozen-lockfile
 pnpm build:web
 
+T4_COMMIT=$(git rev-parse HEAD)
+OMP_EXECUTABLE=$(command -v omp)
+DEPLOYMENT_IDENTITY=$(node -e '
+  const crypto = require("node:crypto");
+  const fs = require("node:fs");
+  const [t4Commit, ompExecutable] = process.argv.slice(1);
+  const ompSha = crypto.createHash("sha256")
+    .update(fs.readFileSync(fs.realpathSync(ompExecutable))).digest("hex");
+  const tuple = Buffer.from(`${t4Commit}\0${ompSha}\0`);
+  process.stdout.write(`sha256:${crypto.createHash("sha256").update(tuple).digest("hex")}`);
+' "$T4_COMMIT" "$OMP_EXECUTABLE")
+
 node scripts/tailnet-service.mjs install \
   --origin https://host-name.your-tailnet.ts.net:8445 \
-  --port 4194
+  --port 4194 \
+  --deployment-identity "$DEPLOYMENT_IDENTITY"
 
 tailscale serve --bg --https=8445 http://127.0.0.1:4194
 ```
 
 Use the exact URL you will open, including a non-default port, as `--origin`.
 The gateway rejects a browser WebSocket whose `Origin` does not match it.
+`--deployment-identity` is a non-secret fingerprint of the exact T4 checkout
+and OMP executable served by this manual installation. Recompute it whenever
+either one changes. The automatic maintainer uses the stricter product identity
+derived from the T4 commit, OMP integration commit, and installed OMP SHA-256.
 
 The service installer is idempotent. On Linux it writes and enables
 `com.lycaonsolutions.t4code.tailnet-gateway.service` as a systemd **user**
@@ -68,7 +85,8 @@ If OMP uses a non-default appserver socket, add an absolute path:
 node scripts/tailnet-service.mjs install \
   --origin https://host-name.your-tailnet.ts.net:8445 \
   --port 4194 \
-  --app-socket /absolute/path/to/appserver.sock
+  --app-socket /absolute/path/to/appserver.sock \
+  --deployment-identity "$DEPLOYMENT_IDENTITY"
 ```
 
 ## Verify before relying on it
@@ -82,8 +100,9 @@ tailscale serve status
 ```
 
 `status` exits nonzero if the installed definition drifted, the supervisor is
-not running, the web build is missing, or the gateway cannot reach the OMP
-socket. A healthy response reports `"web":true` and `"upstream":true`.
+not running and durably enabled, the web build is missing, or the gateway
+cannot reach the OMP socket. A healthy response reports `"web":true` and
+`"upstream":true`.
 
 Then, from a different device on the tailnet, open:
 
@@ -158,12 +177,32 @@ node scripts/tailnet-service.mjs start
 node scripts/tailnet-service.mjs restart
 ```
 
+`stop` durably disables the service as well as stopping it. `start` explicitly
+re-enables and starts it. `restart` explicitly re-enables it and replaces the
+running process, so updated definitions and configuration take effect on both
+Linux and macOS. An intentionally stopped gateway stays stopped across login
+or reboot until one of those commands runs.
+
 After pulling a new T4 Code revision in the same checkout:
 
 ```bash
 corepack pnpm install --frozen-lockfile
 pnpm build:web
-node scripts/tailnet-service.mjs restart
+T4_COMMIT=$(git rev-parse HEAD)
+OMP_EXECUTABLE=$(command -v omp)
+DEPLOYMENT_IDENTITY=$(node -e '
+  const crypto = require("node:crypto");
+  const fs = require("node:fs");
+  const [t4Commit, ompExecutable] = process.argv.slice(1);
+  const ompSha = crypto.createHash("sha256")
+    .update(fs.readFileSync(fs.realpathSync(ompExecutable))).digest("hex");
+  const tuple = Buffer.from(`${t4Commit}\0${ompSha}\0`);
+  process.stdout.write(`sha256:${crypto.createHash("sha256").update(tuple).digest("hex")}`);
+' "$T4_COMMIT" "$OMP_EXECUTABLE")
+node scripts/tailnet-service.mjs install \
+  --origin https://host-name.your-tailnet.ts.net:8445 \
+  --port 4194 \
+  --deployment-identity "$DEPLOYMENT_IDENTITY"
 ```
 
 If the checkout or Node executable moved, rerun the full `install` command from

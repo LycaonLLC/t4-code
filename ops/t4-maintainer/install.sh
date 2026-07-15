@@ -21,6 +21,8 @@ fi
 
 mkdir -p -- "$MAINTAINER_ROOT"/{libexec,logs,runs,state,work} "$SYSTEMD_USER_DIR"
 chmod 700 -- "$MAINTAINER_ROOT" "$MAINTAINER_ROOT"/{libexec,logs,runs,state,work}
+exec 9>"$MAINTAINER_ROOT/state/maintainer.lock"
+flock 9
 touch "$MAINTAINER_ROOT/logs/service.log" "$MAINTAINER_ROOT/logs/service.error.log"
 chmod 600 "$MAINTAINER_ROOT/logs/service.log" "$MAINTAINER_ROOT/logs/service.error.log"
 
@@ -74,8 +76,9 @@ else
   ln -s -- "$OMP_AUTH_BROKER_TOKEN_FILE" "$profile_token"
 fi
 
-"$SCRIPT_DIR/run.sh" --adopt-current
 install -m 0700 "$SCRIPT_DIR/run.sh" "$MAINTAINER_ROOT/libexec/run.sh"
+install -m 0700 "$SCRIPT_DIR/deploy-local.sh" "$MAINTAINER_ROOT/libexec/deploy-local.sh"
+install -m 0700 "$SCRIPT_DIR/publish-omp-atomic.sh" "$MAINTAINER_ROOT/libexec/publish-omp-atomic.sh"
 install -m 0600 "$SCRIPT_DIR/prompt.md" "$MAINTAINER_ROOT/libexec/prompt.md"
 
 temporary=$(mktemp -d)
@@ -91,4 +94,10 @@ install -m 0644 "$temporary/$TIMER_NAME" "$SYSTEMD_USER_DIR/$TIMER_NAME"
 
 systemctl --user daemon-reload
 systemctl --user enable --now "$TIMER_NAME"
+flock -u 9
+exec 9>&-
+if ! "$MAINTAINER_ROOT/libexec/run.sh" --adopt-current-if-compatible; then
+  printf 'Current public-release adoption is pending; the enabled maintainer will retry it safely.\n' >&2
+fi
+systemctl --user start --no-block "$SERVICE_NAME"
 printf 'Installed and enabled %s.\n' "$TIMER_NAME"
