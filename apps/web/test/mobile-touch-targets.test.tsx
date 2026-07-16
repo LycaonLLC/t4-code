@@ -150,7 +150,12 @@ describe("phone touch targets", () => {
     expect(session).toContain("flex size-11 shrink-0 cursor-pointer");
     expect(session).toContain("flex min-h-11 w-full cursor-pointer items-center");
     expect(rail).toContain("flex min-h-11 min-w-0 flex-1 items-center");
-    expect(rail).toContain('"size-11 shrink-0 sm:size-6"');
+    // Project-row create actions are labeled `New`, stay 44px on touch, and
+    // announce that the chosen OMP profile owns the session.
+    expect(rail.match(/flex h-11 shrink-0 [^"]*sm:h-6/g)).toHaveLength(2);
+    expect(rail).toContain("choose the OMP profile that will own it");
+    expect(rail).toContain("The OMP profile you choose will own this session.");
+    expect(rail).toContain("aria-label={`New session in ${group.project.name}`}");
     expect(rail).toContain("Actions for ${group.project.name}");
     expect(rail).toContain("Only changes this T4 Code client.");
     expect(rail).toContain("flex size-11 shrink-0 cursor-pointer");

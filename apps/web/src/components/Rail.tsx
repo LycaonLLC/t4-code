@@ -12,7 +12,6 @@ import {
   DialogHeader,
   DialogPopup,
   DialogTitle,
-  IconButton,
   Spinner,
   StatusPill,
   Tooltip,
@@ -24,6 +23,7 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   Archive,
   Cable,
+  ChevronDown,
   ChevronRight,
   CircleStop,
   MoreHorizontal,
@@ -569,8 +569,57 @@ function ProjectHeaderRow({
       : address !== null && snapshot !== null
         ? sessionCreateSupport(snapshot, address)
         : { supported: false, reason: "Connect to this host to create a session" };
+  const projectIsLocal =
+    snapshot !== null &&
+    address !== null &&
+    snapshot.targets.get(address.targetId)?.kind === "local";
+  const configuredLocalProfiles =
+    projectIsLocal && snapshot !== null
+      ? [...snapshot.targets.values()].filter((target) => target.kind === "local")
+      : [];
+  // Every configured local profile that cannot create here right now is still
+  // shown, with why: disconnected profiles say so, connected-but-unsupported
+  // profiles surface the host's reason.
+  const unavailableLocalProfiles =
+    snapshot === null || address === null
+      ? []
+      : configuredLocalProfiles
+          .filter(
+            (profile) =>
+              !createTargets.some((target) => target.address.targetId === profile.targetId),
+          )
+          .map((profile) => {
+            if (snapshot.connections.get(profile.targetId) !== "connected") {
+              return { label: profile.label, reason: "Not connected", targetId: profile.targetId };
+            }
+            const hostId = snapshot.targetHosts.get(profile.targetId);
+            const support =
+              hostId === undefined
+                ? null
+                : sessionCreateSupport(snapshot, {
+                    hostId,
+                    projectId: address.projectId,
+                    targetId: profile.targetId,
+                  });
+            return {
+              label: profile.label,
+              reason: support?.reason ?? "Unavailable",
+              targetId: profile.targetId,
+            };
+          });
   const canCreate = allowCreate && createTargets.length > 0 && controller !== null && !pending;
-  const chooseCreateProfile = requiresProfileChoiceForCreate(createTargets);
+  // Never fall back to an opaque direct create while other configured profiles
+  // exist or nothing can create: the chooser stays, listing each configured
+  // profile as available or unavailable and linking host management.
+  const chooseCreateProfile =
+    requiresProfileChoiceForCreate(createTargets) ||
+    configuredLocalProfiles.length > 1 ||
+    (projectIsLocal && createTargets.length === 0);
+  // The chooser opens whenever it has something to show — even when no target
+  // can create right now, it explains why and links host management. Only the
+  // per-profile create rows are gated on a live connection.
+  const createMenuAvailable =
+    allowCreate && !pending && (canCreate || configuredLocalProfiles.length > 0);
   const emptyCurrentProject = view === "current" && group.sessions.length === 0;
   const inventoryTruncated = group.host.sessionInventoryTruncated === true;
   const showProjectMenu = emptyCurrentProject || (view === "archived" && shortcutHidden);
@@ -647,26 +696,31 @@ function ProjectHeaderRow({
               <TooltipTrigger
                 render={
                   <Popover.Trigger
-                    aria-label={`Choose an OMP profile for a new session in ${group.project.name}`}
-                    className="flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:size-6"
-                    disabled={!canCreate}
+                    aria-label={`New session in ${group.project.name} — choose the OMP profile that will own it`}
+                    className="flex h-11 shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 font-medium text-muted-foreground text-xs outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:h-6 sm:px-1.5"
+                    disabled={!createMenuAvailable}
                   >
                     {pending ? (
                       <Spinner className="size-3" />
                     ) : (
                       <Plus aria-hidden="true" className="size-3" />
                     )}
+                    New
+                    <ChevronDown aria-hidden="true" className="size-3" />
                   </Popover.Trigger>
                 }
               />
-              <TooltipPopup side="right">Choose an OMP profile</TooltipPopup>
+              <TooltipPopup side="right">Choose the OMP profile for a new session</TooltipPopup>
             </Tooltip>
             <Popover.Portal>
               <Popover.Positioner align="end" className="z-50" side="bottom" sideOffset={4}>
                 <Popover.Popup className="w-[min(15rem,calc(100vw-1rem))] rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-(--overlay-shadow) outline-none">
-                  <Popover.Title className="truncate px-2 pt-1 pb-1.5 font-medium text-muted-foreground text-xs">
-                    Start in {group.project.name}
+                  <Popover.Title className="truncate px-2 pt-1 font-medium text-xs">
+                    New session in {group.project.name}
                   </Popover.Title>
+                  <Popover.Description className="px-2 pb-1.5 text-muted-foreground text-xs leading-snug">
+                    The OMP profile you choose will own this session.
+                  </Popover.Description>
                   {createTargets.map((target) => (
                     <button
                       className="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8"
@@ -690,6 +744,48 @@ function ProjectHeaderRow({
                       {target.current && <Badge variant="outline">Current</Badge>}
                     </button>
                   ))}
+                  {createTargets.length === 0 && (
+                    <p className="px-2 py-1.5 text-muted-foreground text-xs leading-snug">
+                      No connected profile can start a session here yet.
+                    </p>
+                  )}
+                  {unavailableLocalProfiles.map((profile) => (
+                    <div
+                      aria-disabled="true"
+                      className="flex min-h-11 w-full items-center gap-2 rounded-md px-2 text-left opacity-64 sm:min-h-8"
+                      key={profile.targetId}
+                    >
+                      <UsersRound
+                        aria-hidden="true"
+                        className="size-4 shrink-0 text-muted-foreground"
+                      />
+                      <span className="flex min-w-0 flex-1 flex-col py-1">
+                        <span className="truncate text-sm">{profile.label}</span>
+                        <span className="truncate text-muted-foreground text-[11px]">
+                          {profile.reason}
+                        </span>
+                      </span>
+                    </div>
+                  ))}
+                  {(unavailableLocalProfiles.length > 0 || createTargets.length === 0) && (
+                    <button
+                      className="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8"
+                      onClick={() => {
+                        setCreateMenuOpen(false);
+                        workspaceStore.getState().setRailOverlayOpen(false);
+                        void navigate({ to: "/hosts" });
+                      }}
+                      type="button"
+                    >
+                      <Cable aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+                      <span className="flex min-w-0 flex-1 flex-col py-1">
+                        <span className="truncate text-sm">Open Hosts</span>
+                        <span className="truncate text-muted-foreground text-[11px]">
+                          Connect a profile to use it here
+                        </span>
+                      </span>
+                    </button>
+                  )}
                 </Popover.Popup>
               </Popover.Positioner>
             </Popover.Portal>
@@ -698,28 +794,31 @@ function ProjectHeaderRow({
           <Tooltip>
             <TooltipTrigger
               render={
-                <IconButton
+                <button
                   aria-disabled={!canCreate}
                   aria-label={`New session in ${group.project.name}`}
                   className={cn(
-                    "size-11 shrink-0 sm:size-6",
-                    !canCreate && "cursor-not-allowed opacity-64",
+                    "flex h-11 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-muted-foreground text-xs outline-none transition-colors duration-(--motion-duration-fast) focus-visible:ring-2 focus-visible:ring-ring sm:h-6 sm:px-1.5",
+                    canCreate
+                      ? "cursor-pointer hover:bg-accent hover:text-foreground"
+                      : "cursor-not-allowed opacity-64",
                   )}
                   onClick={(event) => {
                     event.stopPropagation();
+                    if (!canCreate) return;
                     const target = createTargets[0];
                     if (target !== undefined) void handleCreate(target.address);
                   }}
-                  size="icon-xs"
                   title={createSupport.reason ?? undefined}
-                  variant="ghost"
+                  type="button"
                 >
                   {pending ? (
                     <Spinner className="size-3" />
                   ) : (
                     <Plus aria-hidden="true" className="size-3" />
                   )}
-                </IconButton>
+                  New
+                </button>
               }
             />
             <TooltipPopup side="right">

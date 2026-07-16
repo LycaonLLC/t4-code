@@ -43,6 +43,44 @@ test("Android credentials are encrypted by a registered Keystore plugin", async 
   assert.doesNotMatch(plugin, /putString\([^,]+,\s*deviceToken\)/);
 });
 
+test("Android secure credentials are host-scoped and migrate legacy storage", async () => {
+  const sourceRoot = resolve(
+    mobileRoot,
+    "android/app/src/main/java/com/lycaonsolutions/t4code",
+  );
+  const plugin = await readFile(resolve(sourceRoot, "T4SecureStoragePlugin.java"), "utf8");
+
+  assert.match(plugin, /call\.getString\("hostKey"\)/);
+  assert.match(plugin, /MAX_HOST_KEY_LENGTH/);
+  assert.equal((plugin.match(/String hostKey = call\.getString\("hostKey"\)/g) ?? []).length, 3);
+  assert.equal((plugin.match(/isBoundedText\(hostKey, MAX_HOST_KEY_LENGTH\)/g) ?? []).length, 3);
+  assert.match(plugin, /call\.getBoolean\("migrateLegacy", false\)/);
+  assert.match(plugin, /readCredentials\(hostKey, migrateLegacy\)/);
+  assert.match(plugin, /if \(!migrateLegacy\) return null/);
+  assert.match(plugin, /MessageDigest\.getInstance\("SHA-256"\)/);
+  assert.match(plugin, /PREFERENCE_IV_PREFIX/);
+  assert.match(plugin, /PREFERENCE_PAYLOAD_PREFIX/);
+  assert.match(plugin, /preferenceIv\(hostKey\)/);
+  assert.match(plugin, /preferencePayload\(hostKey\)/);
+  assert.match(plugin, /cipher\.updateAAD\(hostKey\.getBytes\(StandardCharsets\.UTF_8\)\)/);
+  assert.match(plugin, /putString\(preferenceIv\(hostKey\), Base64\.encodeToString/);
+  assert.match(plugin, /putString\(preferencePayload\(hostKey\), Base64\.encodeToString/);
+  assert.match(plugin, /decryptCredentials\(legacyIv, legacyPayload, null\)/);
+  assert.match(plugin, /storeCredentials\(hostKey, credentials\.toString\(\), true\)/);
+  assert.match(plugin, /SharedPreferences\.Editor editor = preferences\(\)\.edit\(\)/);
+  assert.match(plugin, /if \(removeLegacy\)/);
+  assert.match(plugin, /PREFERENCE_IV = "credentials_iv"/);
+  assert.match(plugin, /PREFERENCE_PAYLOAD = "credentials_payload"/);
+  assert.match(plugin, /remove\(PREFERENCE_IV\)/);
+  assert.doesNotMatch(plugin, /storedPreferences\.edit\(\)\s*\.remove\(PREFERENCE_IV\)/);
+  assert.match(plugin, /remove\(PREFERENCE_PAYLOAD\)/);
+  assert.match(plugin, /clearStoredState\(hostKey\)/);
+  assert.doesNotMatch(plugin, /preferences\(\)\.edit\(\)\.clear\(\)/);
+  assert.doesNotMatch(plugin, /keyStore\.deleteEntry\(KEY_ALIAS\)/);
+  assert.doesNotMatch(plugin, /putString\([^)]*deviceToken/);
+  assert.doesNotMatch(plugin, /putString\([^)]*"deviceToken"/);
+});
+
 test("Android foreground resume wakes the browser connection immediately", async () => {
   const activity = await readFile(
     resolve(

@@ -3,12 +3,17 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { MobileConnectionScreen } from "../src/components/MobileConnectionScreen.tsx";
 import {
-  clearNativeMobileConnection,
   MOBILE_BACKEND_STORAGE_KEY,
   parseTailnetBackend,
+  persistNativeMobileCredentials,
   prepareNativeMobileBackend,
   probeMobileBackend,
   readStoredMobileBackend,
+  readStoredMobileBackendDirectory,
+  replaceStoredMobileBackend,
+  removeNativeMobileBackend,
+  selectStoredMobileBackend,
+  type StoredMobileBackendDirectory,
   writeStoredMobileBackend,
 } from "../src/platform/native-mobile.ts";
 
@@ -41,22 +46,56 @@ describe("native mobile connection", () => {
     expect(() => parseTailnetBackend("https://user:pass@host.tailnet.ts.net")).toThrow(/credentials/u);
   });
 
-  it("round-trips only validated nonsecret host configuration", () => {
+  it("migrates the legacy host, retains added hosts, and switches without deleting either", () => {
     const storage = new MemoryStorage();
-    const backend = parseTailnetBackend("https://host.tailnet.ts.net:8445");
-    writeStoredMobileBackend(backend, storage);
-    expect(readStoredMobileBackend(storage)).toEqual(backend);
+    const bunker = parseTailnetBackend("https://bunker.tailnet.ts.net:8445");
+    const laptop = parseTailnetBackend("https://laptop.tailnet.ts.net:8445");
+    storage.setItem("t4-code:mobile-backend:v1", JSON.stringify(bunker));
 
-    storage.setItem(MOBILE_BACKEND_STORAGE_KEY, JSON.stringify({ ...backend, wsUrl: "wss://evil.example/v1/ws" }));
+    expect(readStoredMobileBackendDirectory(storage)).toEqual({
+      version: 2,
+      activeOrigin: bunker.origin,
+      backends: [bunker],
+    });
+    writeStoredMobileBackend(laptop, storage);
+    expect(storage.getItem("t4-code:mobile-backend:v1")).toBeNull();
+    expect(readStoredMobileBackendDirectory(storage)).toEqual({
+      version: 2,
+      activeOrigin: laptop.origin,
+      backends: [bunker, laptop],
+    });
+
+    selectStoredMobileBackend(bunker.origin, storage);
+    expect(readStoredMobileBackend(storage)).toEqual(bunker);
+    expect(readStoredMobileBackendDirectory(storage)?.backends).toEqual([bunker, laptop]);
+
+    storage.setItem(
+      MOBILE_BACKEND_STORAGE_KEY,
+      JSON.stringify({
+        version: 2,
+        activeOrigin: bunker.origin,
+        backends: [{ ...bunker, wsUrl: "wss://evil.example/v1/ws" }],
+      }),
+    );
     expect(() => readStoredMobileBackend(storage)).toThrow(/inconsistent/u);
+    replaceStoredMobileBackend(laptop, storage);
+    expect(readStoredMobileBackendDirectory(storage)).toEqual({
+      version: 2,
+      activeOrigin: laptop.origin,
+      backends: [laptop],
+    });
   });
 
-  it("loads paired credentials from the native security bridge before app boot", async () => {
+  it("loads only the active host credential from the keyed native bridge", async () => {
     const storage = new MemoryStorage();
     const backend = parseTailnetBackend("https://host.tailnet.ts.net:8445");
-    writeStoredMobileBackend(backend, storage);
-    const clearCredentials = () => Promise.resolve();
-    Object.defineProperty(globalThis, "document", { configurable: true, value: { documentElement: { dataset: {} } } });
+    storage.setItem("t4-code:mobile-backend:v1", JSON.stringify(backend));
+    const reads: Array<{ readonly hostKey: string; readonly migrateLegacy?: boolean }> = [];
+    const clears: string[] = [];
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: { documentElement: { dataset: {} } },
+    });
     Object.defineProperty(globalThis, "window", {
       configurable: true,
       value: {
@@ -66,14 +105,23 @@ describe("native mobile connection", () => {
           getPlatform: () => "android",
           Plugins: {
             T4SecureStorage: {
-              getCredentials: () => Promise.resolve({
-                credentials: {
-                  deviceId: "android-device",
-                  deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-                },
-              }),
+              getCredentials: (options: {
+                readonly hostKey: string;
+                readonly migrateLegacy?: boolean;
+              }) => {
+                reads.push(options);
+                return Promise.resolve({
+                  credentials: {
+                    deviceId: "android-device",
+                    deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                  },
+                });
+              },
               setCredentials: () => Promise.resolve(),
-              clearCredentials,
+              clearCredentials: ({ hostKey }: { readonly hostKey: string }) => {
+                clears.push(hostKey);
+                return Promise.resolve();
+              },
             },
           },
         },
@@ -81,14 +129,228 @@ describe("native mobile connection", () => {
     });
 
     await expect(prepareNativeMobileBackend()).resolves.toEqual({ kind: "ready", backend });
+    expect(reads).toEqual([{ hostKey: backend.origin, migrateLegacy: true }]);
+    expect(clears).toEqual([]);
     expect(window.__t4MobileBackend).toEqual({
+      origin: backend.origin,
       wsUrl: backend.wsUrl,
       label: backend.label,
       deviceId: "android-device",
       deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     });
-    await clearNativeMobileConnection();
+    expect(storage.getItem("t4-code:mobile-backend:v1")).toBeNull();
+    expect(readStoredMobileBackendDirectory(storage)?.backends).toEqual([backend]);
+  });
+
+  it("does not rebind global legacy credentials after v2 host repair", async () => {
+    const storage = new MemoryStorage();
+    const backend = parseTailnetBackend("https://repaired.tailnet.ts.net:8445");
+    replaceStoredMobileBackend(backend, storage);
+    const reads: Array<{ readonly hostKey: string; readonly migrateLegacy?: boolean }> = [];
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: { documentElement: { dataset: {} } },
+    });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        localStorage: storage,
+        Capacitor: {
+          isNativePlatform: () => true,
+          getPlatform: () => "android",
+          Plugins: {
+            T4SecureStorage: {
+              getCredentials: (options: {
+                readonly hostKey: string;
+                readonly migrateLegacy?: boolean;
+              }) => {
+                reads.push(options);
+                return Promise.resolve({ credentials: null });
+              },
+              setCredentials: () => Promise.resolve(),
+              clearCredentials: () => Promise.resolve(),
+            },
+          },
+        },
+      },
+    });
+
+    await expect(prepareNativeMobileBackend()).resolves.toEqual({ kind: "ready", backend });
+    expect(reads).toEqual([{ hostKey: backend.origin, migrateLegacy: false }]);
+  });
+
+  it("renders setup instead of rejecting when host storage is unavailable", async () => {
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: { documentElement: { dataset: {} } },
+    });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        localStorage: {
+          getItem: () => {
+            throw new Error("Host storage is unavailable.");
+          },
+        },
+        Capacitor: {
+          isNativePlatform: () => true,
+          getPlatform: () => "android",
+        },
+      },
+    });
+
+    await expect(prepareNativeMobileBackend()).resolves.toEqual({
+      kind: "setup",
+      message: "Host storage is unavailable.",
+    });
+  });
+
+  it("stores and removes credentials for exactly the selected host", async () => {
+    const storage = new MemoryStorage();
+    const bunker = parseTailnetBackend("https://bunker.tailnet.ts.net:8445");
+    const laptop = parseTailnetBackend("https://laptop.tailnet.ts.net:8445");
+    writeStoredMobileBackend(bunker, storage);
+    writeStoredMobileBackend(laptop, storage);
+    selectStoredMobileBackend(bunker.origin, storage);
+
+    const writes: Array<{
+      readonly hostKey: string;
+      readonly deviceId: string;
+      readonly deviceToken: string;
+    }> = [];
+    const clears: string[] = [];
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        localStorage: storage,
+        __t4MobileBackend: { origin: bunker.origin, wsUrl: bunker.wsUrl, label: bunker.label },
+        Capacitor: {
+          isNativePlatform: () => true,
+          getPlatform: () => "android",
+          Plugins: {
+            T4SecureStorage: {
+              getCredentials: () => Promise.resolve({ credentials: null }),
+              setCredentials: (value: {
+                readonly hostKey: string;
+                readonly deviceId: string;
+                readonly deviceToken: string;
+              }) => {
+                writes.push(value);
+                return Promise.resolve();
+              },
+              clearCredentials: ({ hostKey }: { readonly hostKey: string }) => {
+                clears.push(hostKey);
+                return Promise.resolve();
+              },
+            },
+          },
+        },
+      },
+    });
+
+    await persistNativeMobileCredentials({
+      deviceId: "bunker-device",
+      deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    });
+    expect(writes).toEqual([
+      {
+        hostKey: bunker.origin,
+        deviceId: "bunker-device",
+        deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      },
+    ]);
+
+    await removeNativeMobileBackend(laptop.origin, storage);
+    expect(clears).toEqual([laptop.origin]);
+    expect(readStoredMobileBackendDirectory(storage)).toEqual({
+      version: 2,
+      activeOrigin: bunker.origin,
+      backends: [bunker],
+    });
+    expect(window.__t4MobileBackend?.origin).toBe(bunker.origin);
+  });
+
+  it("restores the complete host directory when secure credential removal fails", async () => {
+    const storage = new MemoryStorage();
+    const bunker = parseTailnetBackend("https://bunker.tailnet.ts.net:8445");
+    const laptop = parseTailnetBackend("https://laptop.tailnet.ts.net:8445");
+    writeStoredMobileBackend(bunker, storage);
+    writeStoredMobileBackend(laptop, storage);
+    let directoryDuringClear: StoredMobileBackendDirectory | null = null;
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        localStorage: storage,
+        __t4MobileBackend: { origin: laptop.origin, wsUrl: laptop.wsUrl, label: laptop.label },
+        Capacitor: {
+          isNativePlatform: () => true,
+          getPlatform: () => "android",
+          Plugins: {
+            T4SecureStorage: {
+              getCredentials: () => Promise.resolve({ credentials: null }),
+              setCredentials: () => Promise.resolve(),
+              clearCredentials: () => {
+                directoryDuringClear = readStoredMobileBackendDirectory(storage);
+                return Promise.reject(new Error("secure storage failed"));
+              },
+            },
+          },
+        },
+      },
+    });
+
+    await expect(removeNativeMobileBackend(laptop.origin, storage)).rejects.toThrow(
+      "secure storage failed",
+    );
+    expect(directoryDuringClear).toEqual({
+      version: 2,
+      activeOrigin: bunker.origin,
+      backends: [bunker],
+    });
+    expect(readStoredMobileBackendDirectory(storage)).toEqual({
+      version: 2,
+      activeOrigin: laptop.origin,
+      backends: [bunker, laptop],
+    });
+    expect(window.__t4MobileBackend?.origin).toBe(laptop.origin);
+  });
+
+  it("removing the active host selects a retained host, then removing the last enters setup", async () => {
+    const storage = new MemoryStorage();
+    const bunker = parseTailnetBackend("https://bunker.tailnet.ts.net:8445");
+    const laptop = parseTailnetBackend("https://laptop.tailnet.ts.net:8445");
+    writeStoredMobileBackend(bunker, storage);
+    writeStoredMobileBackend(laptop, storage);
+    const clears: string[] = [];
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        localStorage: storage,
+        __t4MobileBackend: { origin: laptop.origin, wsUrl: laptop.wsUrl, label: laptop.label },
+        Capacitor: {
+          isNativePlatform: () => true,
+          getPlatform: () => "android",
+          Plugins: {
+            T4SecureStorage: {
+              getCredentials: () => Promise.resolve({ credentials: null }),
+              setCredentials: () => Promise.resolve(),
+              clearCredentials: ({ hostKey }: { readonly hostKey: string }) => {
+                clears.push(hostKey);
+                return Promise.resolve();
+              },
+            },
+          },
+        },
+      },
+    });
+
+    await removeNativeMobileBackend(laptop.origin, storage);
+    expect(readStoredMobileBackend(storage)).toEqual(bunker);
+    expect(window.__t4MobileBackend).toBeUndefined();
+    await removeNativeMobileBackend(bunker.origin, storage);
+    expect(readStoredMobileBackendDirectory(storage)).toBeNull();
     expect(storage.getItem(MOBILE_BACKEND_STORAGE_KEY)).toBeNull();
+    expect(clears).toEqual([laptop.origin, bunker.origin]);
   });
 
   it("probes the exact WSS endpoint before saving", async () => {
@@ -111,6 +373,39 @@ describe("native mobile connection", () => {
     const backend = parseTailnetBackend("https://host.tailnet.ts.net:8445");
     await expect(probeMobileBackend(backend, { WebSocketImpl: OpeningSocket as unknown as typeof WebSocket })).resolves.toBeUndefined();
     expect(OpeningSocket.url).toBe(backend.wsUrl);
+  });
+
+  it("aborts an in-flight probe and closes its socket", async () => {
+    class HangingSocket {
+      static instance: HangingSocket | undefined;
+      readonly listeners = new Map<string, Set<() => void>>();
+      closed = false;
+      constructor() {
+        HangingSocket.instance = this;
+      }
+      addEventListener(name: string, listener: () => void): void {
+        const listeners = this.listeners.get(name) ?? new Set();
+        listeners.add(listener);
+        this.listeners.set(name, listeners);
+      }
+      removeEventListener(name: string, listener: () => void): void {
+        this.listeners.get(name)?.delete(listener);
+      }
+      close(): void {
+        this.closed = true;
+      }
+    }
+    const controller = new AbortController();
+    const backend = parseTailnetBackend("https://host.tailnet.ts.net:8445");
+    const probe = probeMobileBackend(backend, {
+      signal: controller.signal,
+      WebSocketImpl: HangingSocket as unknown as typeof WebSocket,
+    });
+
+    controller.abort();
+
+    await expect(probe).rejects.toMatchObject({ name: "AbortError" });
+    expect(HangingSocket.instance?.closed).toBe(true);
   });
 
   it("renders focused first-run instructions instead of fixture sessions", () => {

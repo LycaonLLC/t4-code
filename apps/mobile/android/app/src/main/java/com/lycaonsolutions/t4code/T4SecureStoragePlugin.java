@@ -16,6 +16,7 @@ import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
+import java.security.MessageDigest;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -30,20 +31,31 @@ public final class T4SecureStoragePlugin extends Plugin {
     private static final String PREFERENCES_NAME = "t4_code_secure_storage";
     private static final String PREFERENCE_IV = "credentials_iv";
     private static final String PREFERENCE_PAYLOAD = "credentials_payload";
+    private static final String PREFERENCE_IV_PREFIX = "credentials_iv_";
+    private static final String PREFERENCE_PAYLOAD_PREFIX = "credentials_payload_";
+    private static final char[] HEX_DIGITS = "0123456789abcdef".toCharArray();
     private static final int GCM_TAG_BITS = 128;
+    private static final int MAX_HOST_KEY_LENGTH = 2048;
     private static final int MAX_DEVICE_ID_LENGTH = 256;
     private static final int MAX_DEVICE_TOKEN_LENGTH = 512;
 
     @PluginMethod
     public void getCredentials(PluginCall call) {
+        String hostKey = call.getString("hostKey");
+        if (!isBoundedText(hostKey, MAX_HOST_KEY_LENGTH)) {
+            call.reject("Invalid host key.");
+            return;
+        }
+        boolean migrateLegacy = Boolean.TRUE.equals(call.getBoolean("migrateLegacy", false));
+
         synchronized (this) {
             try {
                 JSObject result = new JSObject();
-                JSObject credentials = readCredentials();
+                JSObject credentials = readCredentials(hostKey, migrateLegacy);
                 result.put("credentials", credentials == null ? JSONObject.NULL : credentials);
                 call.resolve(result);
             } catch (Exception error) {
-                clearStoredStateBestEffort();
+                clearStoredStateBestEffort(hostKey);
                 call.reject("Stored credentials could not be decrypted.");
             }
         }
@@ -51,9 +63,12 @@ public final class T4SecureStoragePlugin extends Plugin {
 
     @PluginMethod
     public void setCredentials(PluginCall call) {
+        String hostKey = call.getString("hostKey");
         String deviceId = call.getString("deviceId");
         String deviceToken = call.getString("deviceToken");
-        if (!isBoundedText(deviceId, MAX_DEVICE_ID_LENGTH) || !isBoundedText(deviceToken, MAX_DEVICE_TOKEN_LENGTH)) {
+        if (!isBoundedText(hostKey, MAX_HOST_KEY_LENGTH)
+            || !isBoundedText(deviceId, MAX_DEVICE_ID_LENGTH)
+            || !isBoundedText(deviceToken, MAX_DEVICE_TOKEN_LENGTH)) {
             call.reject("Invalid device credentials.");
             return;
         }
@@ -63,7 +78,7 @@ public final class T4SecureStoragePlugin extends Plugin {
                 JSObject credentials = new JSObject();
                 credentials.put("deviceId", deviceId);
                 credentials.put("deviceToken", deviceToken);
-                storeCredentials(credentials.toString());
+                storeCredentials(hostKey, credentials.toString());
                 call.resolve();
             } catch (Exception error) {
                 call.reject("Device credentials could not be stored.");
@@ -73,9 +88,15 @@ public final class T4SecureStoragePlugin extends Plugin {
 
     @PluginMethod
     public void clearCredentials(PluginCall call) {
+        String hostKey = call.getString("hostKey");
+        if (!isBoundedText(hostKey, MAX_HOST_KEY_LENGTH)) {
+            call.reject("Invalid host key.");
+            return;
+        }
+
         synchronized (this) {
             try {
-                clearStoredState();
+                clearStoredState(hostKey);
                 call.resolve();
             } catch (Exception error) {
                 call.reject("Device credentials could not be cleared.");
@@ -94,6 +115,25 @@ public final class T4SecureStoragePlugin extends Plugin {
 
     private SharedPreferences preferences() {
         return getContext().getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE);
+    }
+
+    private String preferenceIv(String hostKey) throws Exception {
+        return PREFERENCE_IV_PREFIX + preferenceSuffix(hostKey);
+    }
+
+    private String preferencePayload(String hostKey) throws Exception {
+        return PREFERENCE_PAYLOAD_PREFIX + preferenceSuffix(hostKey);
+    }
+
+    private String preferenceSuffix(String hostKey) throws Exception {
+        byte[] digest = MessageDigest.getInstance("SHA-256")
+            .digest(hostKey.getBytes(StandardCharsets.UTF_8));
+        StringBuilder suffix = new StringBuilder(digest.length * 2);
+        for (byte value : digest) {
+            suffix.append(HEX_DIGITS[(value >>> 4) & 0x0f]);
+            suffix.append(HEX_DIGITS[value & 0x0f]);
+        }
+        return suffix.toString();
     }
 
     private SecretKey getOrCreateKey() throws Exception {
@@ -116,28 +156,57 @@ public final class T4SecureStoragePlugin extends Plugin {
         return generator.generateKey();
     }
 
-    private void storeCredentials(String plaintext) throws Exception {
-        Cipher cipher = Cipher.getInstance(CIPHER_TRANSFORMATION);
-        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey());
-        byte[] ciphertext = cipher.doFinal(plaintext.getBytes(StandardCharsets.UTF_8));
-
-        boolean committed = preferences().edit()
-            .putString(PREFERENCE_IV, Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP))
-            .putString(PREFERENCE_PAYLOAD, Base64.encodeToString(ciphertext, Base64.NO_WRAP))
-            .commit();
-        if (!committed) throw new IllegalStateException("secure preferences commit failed");
+    private void storeCredentials(String hostKey, String plaintext) throws Exception {
+        storeCredentials(hostKey, plaintext, false);
     }
 
-    private JSObject readCredentials() throws Exception {
-        String encodedIv = preferences().getString(PREFERENCE_IV, null);
-        String encodedPayload = preferences().getString(PREFERENCE_PAYLOAD, null);
-        if (encodedIv == null && encodedPayload == null) return null;
-        if (encodedIv == null || encodedPayload == null) throw new IllegalStateException("incomplete secure credential state");
+    private void storeCredentials(String hostKey, String plaintext, boolean removeLegacy) throws Exception {
+        Cipher cipher = Cipher.getInstance(CIPHER_TRANSFORMATION);
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey());
+        cipher.updateAAD(hostKey.getBytes(StandardCharsets.UTF_8));
+        byte[] ciphertext = cipher.doFinal(plaintext.getBytes(StandardCharsets.UTF_8));
 
+        SharedPreferences.Editor editor = preferences().edit()
+            .putString(preferenceIv(hostKey), Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP))
+            .putString(preferencePayload(hostKey), Base64.encodeToString(ciphertext, Base64.NO_WRAP));
+        if (removeLegacy) {
+            editor
+                .remove(PREFERENCE_IV)
+                .remove(PREFERENCE_PAYLOAD);
+        }
+        if (!editor.commit()) throw new IllegalStateException("secure preferences commit failed");
+    }
+
+    private JSObject readCredentials(String hostKey, boolean migrateLegacy) throws Exception {
+        SharedPreferences storedPreferences = preferences();
+        String encodedIv = storedPreferences.getString(preferenceIv(hostKey), null);
+        String encodedPayload = storedPreferences.getString(preferencePayload(hostKey), null);
+        if (encodedIv != null || encodedPayload != null) {
+            if (encodedIv == null || encodedPayload == null) {
+                throw new IllegalStateException("incomplete keyed credential state");
+            }
+            return decryptCredentials(encodedIv, encodedPayload, hostKey);
+        }
+        if (!migrateLegacy) return null;
+
+        String legacyIv = storedPreferences.getString(PREFERENCE_IV, null);
+        String legacyPayload = storedPreferences.getString(PREFERENCE_PAYLOAD, null);
+        if (legacyIv == null && legacyPayload == null) return null;
+        if (legacyIv == null || legacyPayload == null) {
+            throw new IllegalStateException("incomplete legacy credential state");
+        }
+
+        JSObject credentials = decryptCredentials(legacyIv, legacyPayload, null);
+        storeCredentials(hostKey, credentials.toString(), true);
+        return credentials;
+    }
+
+    private JSObject decryptCredentials(String encodedIv, String encodedPayload, String hostKey) throws Exception {
         byte[] iv = Base64.decode(encodedIv, Base64.NO_WRAP);
         byte[] ciphertext = Base64.decode(encodedPayload, Base64.NO_WRAP);
         Cipher cipher = Cipher.getInstance(CIPHER_TRANSFORMATION);
         cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), new GCMParameterSpec(GCM_TAG_BITS, iv));
+        if (hostKey != null) cipher.updateAAD(hostKey.getBytes(StandardCharsets.UTF_8));
         String plaintext = new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8);
         JSObject credentials = JSObject.fromJSONObject(new JSONObject(plaintext));
 
@@ -149,18 +218,18 @@ public final class T4SecureStoragePlugin extends Plugin {
         return credentials;
     }
 
-    private void clearStoredState() throws Exception {
-        if (!preferences().edit().clear().commit()) {
+    private void clearStoredState(String hostKey) throws Exception {
+        if (!preferences().edit()
+            .remove(preferenceIv(hostKey))
+            .remove(preferencePayload(hostKey))
+            .commit()) {
             throw new IllegalStateException("secure preferences clear failed");
         }
-        KeyStore keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER);
-        keyStore.load(null);
-        if (keyStore.containsAlias(KEY_ALIAS)) keyStore.deleteEntry(KEY_ALIAS);
     }
 
-    private void clearStoredStateBestEffort() {
+    private void clearStoredStateBestEffort(String hostKey) {
         try {
-            clearStoredState();
+            clearStoredState(hostKey);
         } catch (Exception ignored) {
             // The caller still receives a generic failure; never expose credential details.
         }
