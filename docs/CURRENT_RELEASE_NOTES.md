@@ -1,20 +1,18 @@
-## Named local profiles
+## Session profile chooser
 
-T4 Code v0.1.20 discovers the named OMP profiles on your machine (the `~/.omp/profiles` layout plus the default) and runs a separate appserver for each one. Every profile is its own local host with its own socket, service registration, and log directory. The Hosts screen starts, stops, or restarts a profile and can mark it to start with T4; the default profile keeps starting automatically.
+T4 Code v0.1.21 makes profile ownership explicit when you create a session. The visible **New** action becomes **New ▾** when several local OMP profile targets are configured. Its chooser lists the current and other connected profiles, configured profiles that are offline as **Not connected**, and an **Open Hosts** shortcut to start them. The profile you pick owns the session; with one eligible target, **New** creates directly there. Nothing switches silently.
 
-## Host-aware settings and account visibility
+## Android saved hosts
 
-Settings carry an explicit host selector, and each connected host keeps its own staged drafts. For hosts that grant `broker.read`, a one-sentence status line reports where that host's accounts come from: local files, a connected broker endpoint, or a missing token. The line never includes credentials, and hosts that cannot answer are labeled unsupported instead of guessed at.
+The Android app now manages saved hosts instead of remembering a single address. It keeps up to 16 saved Tailnet gateway addresses, stored as plain HTTPS origins with no secrets inside. Switch, add, and remove are separate actions.
 
-A per-host Usage screen reads provider limits, usage windows, and reset times through `usage.read`. Reports show their age and are labeled stale after five minutes. Provider-specific metadata and raw payloads are dropped before anything reaches the screen.
+Adding a host probes the address first and saves only on success. Back or Escape cancels a probe in flight, and a probe that finishes after you cancel cannot save. Removing a host deletes exactly that entry and rolls back its metadata; pairing credentials stay scoped to each host in the Android Keystore, so removing one host never touches another's credentials. Existing installs migrate their saved address into the list automatically.
 
-## Semantic session controls and continuity
-
-The thinking menu lists Off, Auto, and only the concrete effort levels the current model supports, in the order the host reports them. Off floors to the provider's minimum on models that cannot disable reasoning, and fast mode is offered only when the model supports it. A control change from a second client converges everywhere as host-confirmed state, and reconnects resume the session without duplicate output.
+Each saved host is one remote appserver serving one OMP profile. Android does not list multiple profiles behind a single saved address; running several profiles side by side remains a desktop feature, one local appserver per profile.
 
 ## Runtime provenance
 
-T4 Code v0.1.20 vendors app-wire 0.5.7 from integration commit [ee1b794f](https://github.com/lyc-aon/oh-my-pi/commit/ee1b794f1d0638b3d6797c5220e5eafe69d693db), source tree `421e29e6ed9203113345906e2d24c042949d0f61`. The client contract remains `omp-app/1`.
+T4 Code v0.1.21 vendors app-wire 0.5.7 from integration commit [ee1b794f](https://github.com/lyc-aon/oh-my-pi/commit/ee1b794f1d0638b3d6797c5220e5eafe69d693db), source tree `421e29e6ed9203113345906e2d24c042949d0f61`. The client contract remains `omp-app/1`.
 
 The matching OMP 17.0.0 runtime is built from the same commit [ee1b794f](https://github.com/lyc-aon/oh-my-pi/commit/ee1b794f1d0638b3d6797c5220e5eafe69d693db) and tagged [t4code-17.0.0-appserver-4](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.0-appserver-4). This revision scopes each appserver to its OMP profile, adds host-scoped usage and broker-status commands, reports semantic thinking and fast state, and bounds project catalog resolution. Fork CI requires the release commit to descend from the exact official base.
 

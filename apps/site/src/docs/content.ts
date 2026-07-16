@@ -200,6 +200,10 @@ const localSessions: DocTopic = {
     },
     {
       kind: "p",
+      text: "On desktop, the visible **New** action becomes **New ▾** when several local OMP profile targets are configured. Its chooser lists the current and other connected profiles, configured profiles that are offline as **Not connected**, and an **Open Hosts** shortcut to start them. The profile you pick owns the session; with one eligible target, **New** creates directly there.",
+    },
+    {
+      kind: "p",
       text: "New session references retain the project name OMP reports. The rail does not replace that name with an opaque project ID while the new session is attaching.",
     },
     { kind: "h2", id: "local-sessions-folders", text: "What a working folder means" },
@@ -277,11 +281,24 @@ const remotePairing: DocTopic = {
     },
     {
       kind: "p",
-      text: `The v${RELEASE_VERSION} mobile test went through the Tailnet \`.ts.net\` HTTPS URL in a 320 × 568 touch browser. It reached connected state, created a session, selected a model, sent a prompt, received the reply, and kept exactly two durable transcript rows through five reloads. Follow the [Tailnet setup guide](${REPO_URL}/blob/${RELEASE_TAG}/docs/TAILNET_REMOTE.md) to install the source-hosted gateway.`,
+      text: `The mobile release test goes through the Tailnet \`.ts.net\` HTTPS URL in a 320 × 568 touch browser: connected state, a created session, a selected model, a prompt and its reply, and exactly two durable transcript rows kept through five reloads. Follow the [Tailnet setup guide](${REPO_URL}/blob/${RELEASE_TAG}/docs/TAILNET_REMOTE.md) to install the source-hosted gateway.`,
     },
     {
       kind: "p",
       text: "The gateway pings each browser WebSocket every 30 seconds. A half-open tunnel that does not pong is terminated and removed from the active-session count within 60 seconds; responsive sessions stay connected.",
+    },
+    { kind: "h2", id: "remote-pairing-android-hosts", text: "Saved hosts on Android" },
+    {
+      kind: "p",
+      text: "The Android app keeps up to 16 saved Tailnet gateway addresses, stored as plain HTTPS origins with no secrets inside. Switch, add, and remove are separate actions in the host list, and installs that already had a saved address migrate it into the list automatically.",
+    },
+    {
+      kind: "p",
+      text: "Adding a host probes the address first and saves only on success. Back or Escape cancels a probe in flight, and a probe that finishes after you cancel cannot save. Removing a host deletes exactly that entry; pairing credentials stay scoped to each host in the Android Keystore, so removing one host never touches another's credentials.",
+    },
+    {
+      kind: "p",
+      text: "Each saved host is one remote app server serving one OMP profile. Android does not list multiple profiles behind a single saved address; running several profiles side by side is a desktop feature, one local app server per profile.",
     },
   ],
 };
