@@ -1,13 +1,23 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
+import { decodeServerFrame } from "@t4-code/protocol";
 
 import {
   adaptToolRender,
   type ToolRenderInput,
 } from "../src/features/transcript/tool-render/adapter.ts";
 import { resolveToolRenderer } from "../src/features/transcript/tool-render/registry.ts";
-import { DiffBlock, Output, ResultImages } from "../src/features/transcript/tool-render/parts.tsx";
+import {
+  boundToolTextForDisplay,
+  DiffBlock,
+  MAX_TOOL_TEXT_RENDER_CHARS,
+  MAX_TOOL_TEXT_RENDER_LINES,
+  Output,
+  ResultImages,
+} from "../src/features/transcript/tool-render/parts.tsx";
 import type { ToolRenderProps } from "../src/features/transcript/tool-render/types.ts";
+import { initialProjection, reduceTranscript } from "../src/features/transcript/projection.ts";
+import { deriveTranscriptRows } from "../src/features/transcript/rows.ts";
 
 function renderTool(
   input: Omit<ToolRenderInput, "state"> & { readonly state?: ToolRenderInput["state"] },
@@ -194,6 +204,385 @@ describe("OMP semantic tool renderers", () => {
     });
     expect(durable.body).toContain("durable output");
     expect(durable.view.result?.details).toMatchObject({ exitCode: 0 });
+    expect(durable.view.result?.details).not.toHaveProperty("output");
+  });
+
+  it("unwraps appserver-1 v17 xdev frames and accepts appserver-2 semantic frames", () => {
+    const wrapped = renderTool({
+      tool: "write",
+      args: {
+        path: "xd://generate_image",
+        content: JSON.stringify({ subject: "A geometric fox", aspect_ratio: "16:9" }),
+      },
+      result: {
+        content: [{ type: "text", text: "generated" }],
+        details: {
+          xdev: {
+            tool: "generate_image",
+            mode: "execute",
+            args: { subject: "A geometric fox", aspect_ratio: "16:9" },
+            inner: { provider: "test-provider", model: "image-model" },
+          },
+        },
+      },
+    });
+
+    expect(wrapped.view).toMatchObject({
+      name: "generate_image",
+      args: { subject: "A geometric fox", aspect_ratio: "16:9" },
+      known: true,
+      result: { details: { provider: "test-provider", model: "image-model" } },
+    });
+    expect(wrapped.view.result?.details).not.toHaveProperty("xdev");
+    expect(wrapped.summary).toContain("A geometric fox");
+    expect(wrapped.body).toContain("test-provider");
+
+    const ownedImage = adaptToolRender({
+      tool: "write",
+      args: {
+        path: "xd://generate_image",
+        content: JSON.stringify({ subject: "A geometric fox" }),
+      },
+      result: {
+        content: [{ type: "text", text: "generated" }],
+        details: {
+          xdev: {
+            tool: "generate_image",
+            mode: "execute",
+            args: { subject: "A geometric fox" },
+            inner: {
+              provider: "test-provider",
+              images: [{ type: "image", mimeType: "image/png", data: "legacy-inline-bytes" }],
+            },
+          },
+        },
+      },
+      state: "ok",
+      omitInlineImages: true,
+    });
+    expect(ownedImage.result?.details).toEqual({ provider: "test-provider" });
+    expect(JSON.stringify(ownedImage)).not.toContain("legacy-inline-bytes");
+
+    const normalized = renderTool({
+      tool: "hub",
+      args: { op: "send", to: "ReviewAgent", message: "Please verify the fix." },
+      result: {
+        content: [{ type: "text", text: "delivered" }],
+        details: { op: "send", receipts: [{ to: "ReviewAgent", outcome: "woken" }] },
+      },
+    });
+    expect(normalized.view.known).toBe(true);
+    expect(normalized.summary).toContain("send");
+    expect(normalized.summary).toContain("ReviewAgent");
+    expect(normalized.body).toContain("woken");
+  });
+
+  it("consumes an appserver-2 xdev image entry with separate managed metadata", () => {
+    const frame = decodeServerFrame({
+      v: "omp-app/1",
+      type: "snapshot",
+      cursor: { epoch: "epoch", seq: 0 },
+      revision: "r-appserver-2-xdev-fixture",
+      hostId: "host",
+      sessionId: "session",
+      entries: [
+        {
+          id: "xdev-image-tool",
+          parentId: null,
+          hostId: "host",
+          sessionId: "session",
+          kind: "tool-use",
+          timestamp: "2026-07-15T20:03:00Z",
+          data: {
+            toolCallId: "xdev-call",
+            tool: "generate_image",
+            title: "generate_image",
+            args: { subject: "A geometric fox", aspect_ratio: "16:9" },
+            ok: true,
+            result: {
+              output: "generated image",
+              content: [{ type: "text", text: "generated image" }],
+              details: { provider: "test-provider", model: "image-model" },
+              isError: false,
+            },
+            images: [{ sha256: "c".repeat(64), mimeType: "image/png" }],
+          },
+        },
+      ],
+    });
+    if (frame.type !== "snapshot") throw new Error("expected appserver snapshot fixture");
+    const [row] = deriveTranscriptRows(reduceTranscript(initialProjection(), frame));
+    if (row?.kind !== "tool-group") throw new Error("expected appserver tool group");
+    const [call] = row.calls;
+    if (!call) throw new Error("expected appserver tool call");
+
+    expect(call.images).toEqual([
+      {
+        entryId: "xdev-image-tool",
+        sha256: "c".repeat(64),
+        mimeType: "image/png",
+      },
+    ]);
+    const view = adaptToolRender({
+      tool: call.tool,
+      args: call.args,
+      result: call.result,
+      state: call.state,
+      omitInlineImages: call.images.length > 0,
+    });
+    expect(view).toMatchObject({
+      name: "generate_image",
+      args: { subject: "A geometric fox", aspect_ratio: "16:9" },
+      known: true,
+      result: { details: { provider: "test-provider", model: "image-model" } },
+    });
+    expect(JSON.stringify(view)).not.toContain('"xdev"');
+  });
+
+  it("uses call-only xdev semantics while running but rejects settled mismatches", () => {
+    const running = adaptToolRender({
+      tool: "write",
+      args: { path: "xd://hub", content: JSON.stringify({ op: "list" }) },
+      result: null,
+      state: "running",
+    });
+    expect(running).toMatchObject({ name: "hub", args: { op: "list" }, known: true });
+
+    const mismatch = adaptToolRender({
+      tool: "write",
+      args: { path: "xd://hub", content: JSON.stringify({ op: "list" }) },
+      result: {
+        content: [{ type: "text", text: "unexpected" }],
+        details: {
+          xdev: {
+            tool: "generate_image",
+            mode: "execute",
+            args: { subject: "spoof" },
+            inner: {},
+          },
+        },
+      },
+      state: "ok",
+    });
+    expect(mismatch.name).toBe("write");
+    expect(mismatch.args).toMatchObject({ path: "xd://hub" });
+    expect(mismatch.result?.details).toHaveProperty("xdev");
+
+    const oversizedMultibyte = adaptToolRender({
+      tool: "write",
+      args: {
+        path: "xd://hub",
+        content: JSON.stringify({ op: "send", message: "🦊".repeat(40_000) }),
+      },
+      result: null,
+      state: "running",
+    });
+    expect(oversizedMultibyte.name).toBe("write");
+  });
+
+  it("renders v17 plain-text xdev devices as bounded semantic cards", () => {
+    const resolve = renderTool({
+      tool: "write",
+      args: { path: "xd://resolve", content: " Apply the preview. " },
+      result: null,
+      state: "running",
+    });
+    expect(resolve.view).toMatchObject({
+      name: "resolve",
+      args: { reason: "Apply the preview." },
+      known: true,
+    });
+    expect(resolve.summary).toContain("apply");
+    expect(resolve.summary).toContain("Apply the preview.");
+
+    const reject = renderTool({
+      tool: "write",
+      args: { path: "xd://reject", content: " Discard this change. " },
+      result: {
+        content: [{ type: "text", text: "rejected" }],
+        details: {
+          xdev: {
+            tool: "reject",
+            mode: "execute",
+            args: { reason: "Discard this change." },
+            inner: { action: "discard" },
+          },
+        },
+      },
+    });
+    expect(reject.view).toMatchObject({
+      name: "reject",
+      args: { reason: "Discard this change." },
+      known: true,
+    });
+    expect(reject.summary).toContain("discard");
+    expect(reject.body).toContain("proposed → rejected");
+    expect(reject.body).toContain("Discard this change.");
+
+    const propose = renderTool({
+      tool: "write",
+      args: { path: "xd://propose", content: " session-lifecycle-plan " },
+      result: null,
+      state: "running",
+    });
+    expect(propose.view).toMatchObject({
+      name: "propose",
+      args: { title: "session-lifecycle-plan" },
+      known: true,
+    });
+    expect(propose.summary).toContain("plan");
+    expect(propose.summary).toContain("session-lifecycle-plan");
+
+    const reportIssue = renderTool({
+      tool: "write",
+      args: { path: "xd://report_issue", content: " write lost the final line " },
+      result: null,
+      state: "running",
+    });
+    expect(reportIssue.view).toMatchObject({
+      name: "report_issue",
+      args: { report: "write lost the final line" },
+      known: true,
+    });
+    expect(reportIssue.summary).toContain("write lost the final line");
+    expect(reportIssue.body).toContain("write lost the final line");
+  });
+
+  it("keeps plain-text xdev normalization exact and correlation-safe", () => {
+    const mismatch = adaptToolRender({
+      tool: "write",
+      args: { path: "xd://resolve", content: "Apply the preview." },
+      result: {
+        content: [{ type: "text", text: "unexpected" }],
+        details: {
+          xdev: {
+            tool: "reject",
+            mode: "execute",
+            args: { reason: "Discard this change." },
+            inner: {},
+          },
+        },
+      },
+      state: "ok",
+    });
+    expect(mismatch.name).toBe("write");
+    expect(mismatch.result?.details).toHaveProperty("xdev");
+
+    const sameToolMismatch = adaptToolRender({
+      tool: "write",
+      args: { path: "xd://resolve", content: "Apply A" },
+      result: {
+        content: [{ type: "text", text: "unexpected" }],
+        details: {
+          xdev: {
+            tool: "resolve",
+            mode: "execute",
+            args: { reason: "Apply B" },
+            inner: { action: "apply" },
+          },
+        },
+      },
+      state: "ok",
+    });
+    expect(sameToolMismatch.name).toBe("write");
+    expect(sameToolMismatch.args).toMatchObject({ path: "xd://resolve", content: "Apply A" });
+    expect(sameToolMismatch.result?.details).toHaveProperty("xdev");
+
+    const strictJsonDevice = adaptToolRender({
+      tool: "write",
+      args: { path: "xd://hub", content: "not-json" },
+      result: null,
+      state: "running",
+    });
+    expect(strictJsonDevice.name).toBe("write");
+
+    const oversizedPlainText = adaptToolRender({
+      tool: "write",
+      args: { path: "xd://resolve", content: "🦊".repeat(40_000) },
+      result: null,
+      state: "running",
+    });
+    expect(oversizedPlainText.name).toBe("write");
+  });
+
+  it("routes hub job and process modes to bounded semantic cards", () => {
+    const jobs = renderTool({
+      tool: "hub",
+      args: { op: "jobs" },
+      result: {
+        content: [],
+        details: {
+          op: "jobs",
+          jobs: [
+            {
+              id: "review",
+              type: "task",
+              status: "completed",
+              label: "Compatibility review",
+              durationMs: 1250,
+              resultText: "No blockers.",
+            },
+          ],
+        },
+      },
+    });
+    expect(jobs.summary).toContain("list");
+    expect(jobs.body).toContain("Compatibility review");
+    expect(jobs.body).toContain("completed");
+
+    const process = renderTool({
+      tool: "hub",
+      args: { op: "start", name: "web", application: "pnpm", args: ["dev"] },
+      result: {
+        content: [{ type: "text", text: "started web" }],
+        details: { op: "start", daemon: { name: "web", state: "running", pid: 4242 } },
+      },
+    });
+    expect(process.summary).toContain("start");
+    expect(process.summary).toContain("web");
+    expect(process.body).toContain("pnpm dev");
+    expect(process.body).toContain("running");
+  });
+
+  it("disambiguates both settled outcomes of a bare hub wait", () => {
+    const message = renderTool({
+      tool: "hub",
+      args: { op: "wait" },
+      result: {
+        content: [{ type: "text", text: "message received" }],
+        details: {
+          op: "wait",
+          waited: { from: "ReviewAgent", body: "The compatibility check is clean." },
+        },
+      },
+    });
+    expect(message.summary).toContain("ReviewAgent");
+    expect(message.summary).toContain("compatibility check is clean");
+    expect(message.body).toContain("The compatibility check is clean.");
+
+    const job = renderTool({
+      tool: "hub",
+      args: { op: "wait" },
+      result: {
+        content: [],
+        details: {
+          op: "wait",
+          jobs: [
+            {
+              id: "review",
+              type: "task",
+              status: "completed",
+              label: "Compatibility review",
+              durationMs: 1250,
+              resultText: "No blockers.",
+            },
+          ],
+        },
+      },
+    });
+    expect(job.summary).toContain("all running jobs");
+    expect(job.body).toContain("Compatibility review");
+    expect(job.body).toContain("completed");
   });
 
   it("keeps malformed known tools semantic and reserves raw JSON for unknown tools", () => {
@@ -275,6 +664,33 @@ describe("OMP semantic tool renderers", () => {
     expect(images).toContain('class="tv-image-button"');
     expect(images).toContain('aria-label="Open tool result image 1"');
     expect(images).toContain('<img alt="" class="tv-img" decoding="async" loading="lazy"');
+  });
+
+  it("keeps huge command and diff previews to a bounded head and tail window", () => {
+    const huge = [
+      "HEAD_SENTINEL",
+      ...Array.from({ length: 99_998 }, (_, index) =>
+        index === 50_000 ? "MIDDLE_SENTINEL" : `test output ${index}`,
+      ),
+      "TAIL_SENTINEL",
+    ].join("\n");
+    const bounded = boundToolTextForDisplay(huge);
+
+    expect(bounded.truncated).toBe(true);
+    expect(bounded.totalLines).toBe(100_000);
+    expect(bounded.text.length).toBeLessThanOrEqual(MAX_TOOL_TEXT_RENDER_CHARS);
+    expect(bounded.text.split("\n")).toHaveLength(MAX_TOOL_TEXT_RENDER_LINES);
+    expect(bounded.text).toContain("HEAD_SENTINEL");
+    expect(bounded.text).toContain("TAIL_SENTINEL");
+    expect(bounded.text).toContain("output capped");
+    expect(bounded.text).not.toContain("MIDDLE_SENTINEL");
+
+    const output = renderToStaticMarkup(<Output maxLines={12} text={huge} />);
+    const diff = renderToStaticMarkup(<DiffBlock diff={huge} maxLines={40} />);
+    for (const markup of [output, diff]) {
+      expect(markup).toContain("100,000 lines · bounded preview");
+      expect(markup).not.toContain("MIDDLE_SENTINEL");
+    }
   });
 
   it("renders web-search sources as identifiable external links", () => {

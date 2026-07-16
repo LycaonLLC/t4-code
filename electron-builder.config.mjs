@@ -4,6 +4,13 @@ const runtimeExternalDependencies = [
   "node_modules/ws/**/*",
 ];
 
+export const linuxUpdatePublish = {
+  provider: "github",
+  owner: "LycaonLLC",
+  repo: "t4-code",
+  channel: "latest",
+};
+
 /** @type {import("electron-builder").Configuration} */
 const config = {
   appId: "com.lycaonsolutions.t4code",
@@ -30,6 +37,7 @@ const config = {
   linux: {
     category: "Development",
     icon: "apps/desktop/build/icons",
+    publish: [linuxUpdatePublish],
     target: [
       { target: "AppImage", arch: ["x64"] },
       { target: "deb", arch: ["x64"] },
@@ -38,6 +46,10 @@ const config = {
   mac: {
     category: "public.app-category.developer-tools",
     icon: "apps/desktop/build/icon.png",
+    // The public macOS build is intentionally unsigned and unnotarized. Keep
+    // it on the explicit-download path until there is an honest signed update
+    // channel; do not emit latest-mac.yml for electron-updater.
+    publish: [],
     target: [
       { target: "dmg", arch: ["arm64"] },
       { target: "zip", arch: ["arm64"] },

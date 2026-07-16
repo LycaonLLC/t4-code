@@ -27,7 +27,8 @@ describe("transcript disclosures animate", () => {
   });
 
   it("each disclosure body fades in via the shared enter animation", () => {
-    expect([...rows.matchAll(/disclosure-content-enter/g)].length).toBe(3);
+    // Reasoning, tools, unknown entries, and collaboration message bodies.
+    expect([...rows.matchAll(/disclosure-content-enter/g)].length).toBe(4);
   });
 
   it("disclosure chevrons rotate on a motion token", () => {

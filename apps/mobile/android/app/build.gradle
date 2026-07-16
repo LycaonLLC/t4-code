@@ -26,6 +26,9 @@ def hasReleaseSigning = [
 android {
     namespace = "com.lycaonsolutions.t4code"
     compileSdk = rootProject.ext.compileSdkVersion
+    buildFeatures {
+        buildConfig = true
+    }
     defaultConfig {
         applicationId "com.lycaonsolutions.t4code"
         minSdkVersion rootProject.ext.minSdkVersion

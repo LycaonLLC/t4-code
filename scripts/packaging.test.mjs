@@ -68,7 +68,11 @@ test("builder config keeps release contract", () => {
   assert.equal(config.asar, true);
   assert.deepEqual(config.protocols[0].schemes, ["t4-code"]);
   assert.equal(config.linux.category, "Development");
+  assert.deepEqual(config.linux.publish, [
+    { provider: "github", owner: "LycaonLLC", repo: "t4-code", channel: "latest" },
+  ]);
   assert.equal(config.mac.category, "public.app-category.developer-tools");
+  assert.deepEqual(config.mac.publish, []);
   assert.equal(config.artifactName, "T4-Code-${version}-${os}-${arch}.${ext}");
 });
 
@@ -86,6 +90,14 @@ test("Android release identity is public, pinned, and wired into the release wor
   assert.match(releaseWorkflow, /--metadata "\$metadata"/u);
   assert.match(releaseWorkflow, /--aapt "\$build_tools\/aapt"/u);
   assert.match(releaseWorkflow, /--apksigner "\$build_tools\/apksigner"/u);
+  const androidDebugGate = releaseWorkflow.indexOf(
+    "pnpm --filter @t4-code/mobile check:android:debug",
+  );
+  const androidReleaseBuild = releaseWorkflow.indexOf(
+    "pnpm --filter @t4-code/mobile build:android:release",
+  );
+  assert.ok(androidDebugGate >= 0, "release workflow must run the Android debug verification gate");
+  assert.ok(androidDebugGate < androidReleaseBuild, "Android verification must precede the signed build");
 });
 
 test("Android versionCode is derived from the package version without a release-specific constant", () => {

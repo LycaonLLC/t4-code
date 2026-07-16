@@ -12,6 +12,9 @@ import { VersionedRemoteTargetRegistry, DeviceCredentialStore } from "./remote-r
 import { LocalTargetManager, type TargetManagerOptions } from "./target-manager.ts";
 import { parsePairDeepLink, PendingPairQueue, type PendingPair } from "./deep-link.ts";
 import { createAppserverServiceManager, discoverOmpExecutable, OmpAppserverCompatibilityError, probeOmpAppserver, NodeServiceFileSystem } from "./service.ts";
+import { createElectronUpdateController } from "./electron-update-controller.ts";
+import { installApplicationMenu, type ApplicationMenuOptions } from "./menu.ts";
+import { DesktopUpdateController } from "./update-controller.ts";
 
 export function appserverLogsDirectory(
   homeDirectory: string,
@@ -39,6 +42,8 @@ export interface DesktopLifecycleOptions {
   readonly probeAppserver?: (executable: string) => Promise<boolean>;
   readonly createServiceManager?: (options: Parameters<typeof createAppserverServiceManager>[0]) => ServiceManager;
   readonly createTargetManager?: (options: TargetManagerOptions) => LocalTargetManager;
+  readonly createUpdateController?: () => DesktopUpdateController;
+  readonly installMenu?: (options: ApplicationMenuOptions) => void;
 }
 
 class ServiceRecoveryCancelledError extends Error {
@@ -62,13 +67,18 @@ export class DesktopLifecycle {
   private readonly serviceFactory: (options: Parameters<typeof createAppserverServiceManager>[0]) => ServiceManager;
   private readonly appserverProbe: (executable: string) => Promise<boolean>;
   private readonly targetManagerFactory: (options: TargetManagerOptions) => LocalTargetManager;
+  private readonly updateControllerFactory: () => DesktopUpdateController;
+  private readonly menuInstaller: (options: ApplicationMenuOptions) => void;
   private mainWindow: BrowserWindow | undefined;
   private ipc: DesktopIpcRegistry | undefined;
   private manager: LocalTargetManager | undefined;
   private serviceManager: ServiceManager | undefined;
   private serviceAvailabilityIssue: ServiceAvailabilityIssue | undefined;
   private serviceRecoveryPromise: Promise<ServiceManager | undefined> | undefined;
+  private updateController: DesktopUpdateController | undefined;
+  private pendingUpdateOpen = false;
   private rendererLoaded = false;
+  private updateRendererReady = false;
   private startupPromise: Promise<void> | undefined;
   private stopPromise: Promise<void> | undefined;
   private startupServiceError: unknown;
@@ -92,6 +102,8 @@ export class DesktopLifecycle {
     this.appserverProbe = options.probeAppserver ?? ((executable) => probeOmpAppserver(executable));
     this.serviceFactory = options.createServiceManager ?? createAppserverServiceManager;
     this.targetManagerFactory = options.createTargetManager ?? ((managerOptions) => new LocalTargetManager(managerOptions));
+    this.updateControllerFactory = options.createUpdateController ?? createElectronUpdateController;
+    this.menuInstaller = options.installMenu ?? installApplicationMenu;
   }
   async start(): Promise<void> {
     if (this.startupPromise !== undefined) return this.startupPromise;
@@ -130,6 +142,8 @@ export class DesktopLifecycle {
     });
     await this.electronApp.whenReady();
     if (process.platform === "darwin") this.electronApp.setAsDefaultProtocolClient("t4-code");
+    this.updateController = this.updateControllerFactory();
+    this.menuInstaller({ onOpenUpdates: () => this.openUpdatesFromMenu() });
     const identity = this.identityFactory();
     const remoteRegistry = this.remoteRegistryFactory();
     const credentials = this.credentialsFactory();
@@ -170,6 +184,8 @@ export class DesktopLifecycle {
     this.ipc?.uninstall();
     this.ipc = undefined;
     this.mainWindow = undefined;
+    this.updateController?.dispose();
+    this.updateController = undefined;
     const manager = this.manager;
     this.manager = undefined;
     const recovery = this.serviceRecoveryPromise;
@@ -298,6 +314,7 @@ export class DesktopLifecycle {
 
   private bindWindow(handle: DesktopWindowHandle): void {
     this.rendererLoaded = false;
+    this.updateRendererReady = false;
     const manager = this.manager;
     if (manager === undefined) return;
     this.mainWindow = handle.window;
@@ -310,8 +327,13 @@ export class DesktopLifecycle {
       acquireServiceManager: () => this.acquireServiceManager(),
       getServiceAvailabilityIssue: () => this.serviceAvailabilityIssue,
       drainPairLinks: () => this.pendingPairs.drain(),
+      drainPendingUpdateOpen: () => this.markUpdateRendererReady(),
+      ...(this.updateController === undefined ? {} : { updateController: this.updateController }),
     });
     this.ipc.install();
+    handle.window.webContents.on("did-start-loading", () => {
+      this.updateRendererReady = false;
+    });
     handle.window.webContents.once("did-finish-load", () => {
       this.rendererLoaded = true;
       if (this.startupServiceError !== undefined) {
@@ -320,14 +342,34 @@ export class DesktopLifecycle {
       }
       const links = this.pendingPairs.drain();
       for (const link of links) this.ipc?.emitPairLink(link);
+      this.updateController?.schedulePassiveCheck();
     });
     handle.window.on("closed", () => {
       if (this.mainWindow === handle.window) {
         this.mainWindow = undefined;
         this.rendererLoaded = false;
+        this.updateRendererReady = false;
         this.ipc?.uninstall();
         this.ipc = undefined;
       }
     });
+  }
+
+  private openUpdatesFromMenu(): void {
+    if (this.stopping) return;
+    if (this.mainWindow === undefined && this.manager !== undefined) {
+      this.bindWindow(this.windowFactory());
+    }
+    this.mainWindow?.show();
+    this.mainWindow?.focus();
+    if (this.updateRendererReady) this.ipc?.emitOpenUpdateSettings();
+    else this.pendingUpdateOpen = true;
+  }
+
+  private markUpdateRendererReady(): boolean {
+    this.updateRendererReady = true;
+    const openSettings = this.pendingUpdateOpen;
+    this.pendingUpdateOpen = false;
+    return openSettings;
   }
 }

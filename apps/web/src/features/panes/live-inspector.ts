@@ -140,10 +140,7 @@ export function deriveActionAvailability(
   };
 }
 
-function sameAvailability(
-  a: InspectorActionAvailability,
-  b: InspectorActionAvailability,
-): boolean {
+function sameAvailability(a: InspectorActionAvailability, b: InspectorActionAvailability): boolean {
   const pairs: ReadonlyArray<readonly [PaneActionAvailability, PaneActionAvailability]> = [
     [a.agentSteer, b.agentSteer],
     [a.agentCancel, b.agentCancel],
@@ -151,7 +148,9 @@ function sameAvailability(
     [a.reviewApply, b.reviewApply],
     [a.reviewDiscard, b.reviewDiscard],
   ];
-  return pairs.every(([left, right]) => left.enabled === right.enabled && left.reason === right.reason);
+  return pairs.every(
+    ([left, right]) => left.enabled === right.enabled && left.reason === right.reason,
+  );
 }
 
 interface LiveSessionAddress {
@@ -247,7 +246,9 @@ export function createLiveInspectorStore(
     performControl(scope) {
       if (scope.action !== "cancel") return;
       const snapshot = runtime.getSnapshot();
-      if (!commandAvailability(snapshot, address.targetId, address.hostId, "agent.cancel").enabled) {
+      if (
+        !commandAvailability(snapshot, address.targetId, address.hostId, "agent.cancel").enabled
+      ) {
         return;
       }
       void sendCommand("agent.cancel", { agentId: scope.agentId }, true).catch(() => {
@@ -257,7 +258,9 @@ export function createLiveInspectorStore(
     performReview(action, path) {
       if (action !== "apply") return;
       const snapshot = runtime.getSnapshot();
-      if (!commandAvailability(snapshot, address.targetId, address.hostId, "review.apply").enabled) {
+      if (
+        !commandAvailability(snapshot, address.targetId, address.hostId, "review.apply").enabled
+      ) {
         return;
       }
       const reviewId = reviewIdByPath.get(path);
@@ -282,7 +285,12 @@ export function createLiveInspectorStore(
     },
     loadDir(path) {
       const snapshot = runtime.getSnapshot();
-      const listable = commandAvailability(snapshot, address.targetId, address.hostId, "files.list");
+      const listable = commandAvailability(
+        snapshot,
+        address.targetId,
+        address.hostId,
+        "files.list",
+      );
       if (listable.enabled) {
         void sendCommand("files.list", path === "" ? {} : { path }, false)
           .then((result) => {
@@ -312,7 +320,12 @@ export function createLiveInspectorStore(
         resolvePreview(api, { kind: "offline", path });
         return;
       }
-      const readable = commandAvailability(snapshot, address.targetId, address.hostId, "files.read");
+      const readable = commandAvailability(
+        snapshot,
+        address.targetId,
+        address.hostId,
+        "files.read",
+      );
       if (readable.enabled) {
         void sendCommand("files.read", { path }, false)
           .then((result) => {
@@ -470,6 +483,8 @@ function emptyProjection(): SessionProjection {
     confirmations: new Map(),
     results: new Map(),
     freshness: "cached",
+    transcriptEventArrivalOrdinal: 0,
+    contextMaintenanceEventArrivalOrdinal: 0,
     entryIds: new Set(),
   };
 }

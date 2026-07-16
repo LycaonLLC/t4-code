@@ -54,7 +54,7 @@ test("maintainer shell entrypoints remain syntactically valid", async () => {
   }
 });
 
-test("installer and validator ship both deterministic wrapper helpers", async () => {
+test("installer and validator ship every deterministic verification helper", async () => {
   const [installer, validator] = await Promise.all([source("install.sh"), source("validate.sh")]);
   assert.match(
     installer,
@@ -63,6 +63,10 @@ test("installer and validator ship both deterministic wrapper helpers", async ()
   assert.match(
     installer,
     /install -m 0700 "\$SCRIPT_DIR\/publish-omp-atomic\.sh" "\$MAINTAINER_ROOT\/libexec\/publish-omp-atomic\.sh"/u,
+  );
+  assert.match(
+    installer,
+    /install -m 0600 "\$SCRIPT_DIR\/\.\.\/\.\.\/scripts\/inspect-linux-update\.mjs"/u,
   );
   assert.match(
     validator,
@@ -75,6 +79,10 @@ test("installer and validator ship both deterministic wrapper helpers", async ()
   assert.match(
     validator,
     /install -m 0700 "\$SCRIPT_DIR\/publish-omp-atomic\.sh" "\$runtime_root\/libexec\/publish-omp-atomic\.sh"/u,
+  );
+  assert.match(
+    validator,
+    /install -m 0600 "\$SCRIPT_DIR\/\.\.\/\.\.\/scripts\/inspect-linux-update\.mjs"/u,
   );
 });
 
@@ -219,6 +227,8 @@ test("public verification requires exact GitHub provenance despite admin bypass 
       'omp_publication_workflow_succeeded "$integration_commit"',
       'verify_omp_release_assets "$result_file" "$omp_release_json" "$integration_tag"',
       'release_assets_are_public "$release_json" "$t4_version"',
+      'site_release_manifest_matches "$release_json" "$t4_version"',
+      'verify_live_linux_update "$result_file" "$release_json" "$t4_version"',
     ],
     "public publication verification",
   );
@@ -290,6 +300,7 @@ test("public verification requires exact GitHub provenance despite admin bypass 
       '.path == ".github/workflows/release.yml"',
       '.name == "Deploy project site"',
       '.path == ".github/workflows/deploy-site.yml"',
+      ".head_branch == $tag",
       '.status == "completed"',
       '.conclusion == "success"',
     ],
@@ -304,6 +315,7 @@ test("public verification requires exact GitHub provenance despite admin bypass 
     "linux-x86_64.AppImage",
     "mac-arm64.dmg",
     "mac-arm64.zip",
+    "latest-linux.yml",
   ]) {
     assert.ok(assets.includes(name), `release asset contract is missing: ${name}`);
   }
@@ -313,12 +325,70 @@ test("public verification requires exact GitHub provenance despite admin bypass 
       ".digest",
       'actual_manifest_digest=$($SHA256SUM "$manifest_file"',
       'asset_digest == "sha256:$expected_digest"',
-      "manifest_entries == 5",
+      "manifest_entries == 6",
     ],
     "release checksum verification",
   );
   assert.match(assets, /\.assets\s*\|\s*length/u);
-  assert.match(assets, /\.assets\s*\|\s*length\s*==\s*6/u);
+  assert.match(assets, /\.assets\s*\|\s*length\s*==\s*7/u);
+
+  const linuxUpdate = shellFunction(runner, "verify_live_linux_update");
+  assertIncludesAll(
+    linuxUpdate,
+    [
+      'canonical_linux_update_assets "$release_json" "$version"',
+      'download_exact_release_asset "$url" "$download_dir/$name" "$size"',
+      'actual_digest=$($SHA256SUM "$download_dir/$name"',
+      '"$NODE" "$LINUX_UPDATE_INSPECTOR"',
+      '--metadata "$metadata_path"',
+      '--artifact "$deb_path"',
+      '--artifact "$appimage_path"',
+      ".publicProof.t4LinuxUpdate",
+    ],
+    "live Linux updater verification",
+  );
+  const boundedDownload = shellFunction(runner, "download_exact_release_asset");
+  assertIncludesAll(
+    boundedDownload,
+    [
+      "ulimit -c 0",
+      "ulimit -f",
+      "--proto '=https'",
+      "--proto-redir '=https'",
+      "--max-redirs 5",
+      "--connect-timeout 15",
+      '--max-time "$maximum_seconds"',
+      '--max-filesize "$expected_size"',
+      "wc -c",
+    ],
+    "bounded Linux updater download",
+  );
+
+  const siteManifest = shellFunction(runner, "site_release_manifest_matches");
+  assertIncludesAll(
+    siteManifest,
+    [
+      "$T4_SITE/releases/latest.json?maintainer=$cache_bust",
+      "SHA256SUMS.txt",
+      "latest-linux.yml",
+      ".schemaVersion == 1",
+      '.channel == "stable"',
+      ".publishedAt == $release.published_at",
+      ".releaseUrl == $release.html_url",
+      "(.assets | type == \"array\" and length == 5)",
+      "$published.size == $actual.size",
+      "$published.browser_download_url == $actual.url",
+      '$published.digest == "sha256:\\($actual.sha256)"',
+      "$checksums[$wanted.name] == $actual.sha256",
+      "($checksums | keys | sort)",
+    ],
+    "deployed stable-release manifest verification",
+  );
+  assertOrdered(publicVerification, [
+    'release_assets_are_public "$release_json" "$t4_version"',
+    'site_release_manifest_matches "$release_json" "$t4_version"',
+    'site_has_release "$t4_tag" "$integration_tag" "$t4_version"',
+  ]);
 });
 
 test("pending publication is atomic and gates local deployment before processed state", async () => {

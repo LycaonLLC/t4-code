@@ -19,10 +19,12 @@ import { createLiveSessionRuntime } from "./live-runtime.ts";
 const RUNTIME_LRU_LIMIT = 8;
 const runtimeCache = new Map<string, SessionRuntime>();
 
-/** QA/screenshot switch: `?transcript=stress|gap` pins a scripted variant. */
+/** QA/screenshot switch: pin a scripted transcript variant. */
 export function parseTranscriptVariant(search: string): TranscriptVariant {
   const value = new URLSearchParams(search).get("transcript");
-  return value === "stress" || value === "gap" ? value : "default";
+  return value === "stress" || value === "gap" || value === "compaction"
+    ? value
+    : "default";
 }
 
 function rememberRuntime(

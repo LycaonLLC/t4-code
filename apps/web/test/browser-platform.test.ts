@@ -10,6 +10,23 @@ const originalDocument = globalThis.document;
 const originalWindow = globalThis.window;
 const originalWebSocket = globalThis.WebSocket;
 
+class FakeLifecycleTarget {
+  visibilityState: DocumentVisibilityState = "visible";
+  private readonly listeners = new Map<string, Set<EventListener>>();
+  addEventListener(type: string, listener: EventListener): void {
+    const listeners = this.listeners.get(type) ?? new Set<EventListener>();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
+  }
+  removeEventListener(type: string, listener: EventListener): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+  dispatch(type: string): void {
+    const event = { type } as Event;
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  }
+}
+
 function setBrowserLocation(search: string): void {
   Object.defineProperty(globalThis, "window", {
     configurable: true,
@@ -99,6 +116,40 @@ describe("browser platform boundary", () => {
     expect(shell.serviceInspect).toBeUndefined();
     expect(shell.serviceStart).toBeUndefined();
     expect(shell.serviceStop).toBeUndefined();
+  });
+
+  it("wires coalesced lifecycle wakes to the active client and removes them on disconnect", async () => {
+    setBackendScript(JSON.stringify({ wsUrl: "wss://omp.example/v1/ws" }));
+    const windowTarget = new FakeLifecycleTarget();
+    const documentTarget = new FakeLifecycleTarget();
+    let wakes = 0;
+    const fakeClient = {
+      state: "ready",
+      connect: async () => undefined,
+      close: async () => undefined,
+      wake: () => {
+        wakes += 1;
+      },
+      onFrame: () => () => undefined,
+      onState: () => () => undefined,
+      onError: () => () => undefined,
+    };
+    const shell = createBrowserShellPort({
+      clientFactory: () => fakeClient as unknown as OmpClient,
+      lifecycle: { windowTarget, documentTarget },
+    });
+    if (shell === null) return;
+
+    await shell.bootstrap();
+    windowTarget.dispatch("online");
+    windowTarget.dispatch("pageshow");
+    await Promise.resolve();
+    expect(wakes).toBe(1);
+
+    await shell.disconnect({ targetId: "remote" });
+    windowTarget.dispatch("online");
+    await Promise.resolve();
+    expect(wakes).toBe(1);
   });
 
   it("bounds transport URLs and cleans listeners on close", () => {

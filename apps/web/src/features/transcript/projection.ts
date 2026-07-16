@@ -26,6 +26,20 @@ import type {
   SessionEvent,
   SessionSnapshotFrame,
 } from "@t4-code/protocol";
+import {
+  MAX_RETAINED_LIVE_MESSAGE_BYTES,
+  MAX_RETAINED_LIVE_MESSAGES,
+  MAX_RETAINED_PROGRESS_LINE_BYTES,
+  MAX_RETAINED_TOOL_CALLS,
+  MAX_RETAINED_TOOL_VALUE_BYTES,
+  MAX_RETAINED_TRANSCRIPT_BYTES,
+  MAX_RETAINED_TRANSCRIPT_ENTRIES,
+  MAX_RETAINED_TRANSCRIPT_ENTRY_BYTES,
+  appendRetainedDurableEntry,
+  retainDurableEntries,
+  retainedText,
+  sanitizeRetainedRecord,
+} from "@t4-code/client";
 
 import {
   sessionEventSpec,
@@ -33,6 +47,15 @@ import {
 } from "../session-runtime/session-event-vocabulary.ts";
 
 export type { Cursor, DurableEntry } from "@t4-code/protocol";
+
+export const MAX_ACCEPTED_PROMPT_ATTACHMENTS = 8;
+export const MAX_ACCEPTED_PENDING_PROMPTS = 16;
+
+export function boundedAttachmentCount(value: unknown, fallback = 0): number {
+  return Number.isSafeInteger(value) && Number(value) >= 0
+    ? Math.min(Number(value), MAX_ACCEPTED_PROMPT_ATTACHMENTS)
+    : fallback;
+}
 
 /** Health of the sequenced session stream feeding this projection. */
 export type StreamPhase =
@@ -49,7 +72,18 @@ export interface LiveMessage {
   readonly text: string;
   /** Full accumulated reasoning text, when the model is thinking aloud. */
   readonly reasoning: string;
+  /** Bounded metadata only; image bytes never enter transient session state. */
+  readonly attachmentCount: number;
   readonly startedAt: string;
+}
+
+/** Authoritative accepted prompt mirrored in SessionRef.liveState across attach. */
+export interface PendingPrompt {
+  readonly entryId: string;
+  readonly text: string;
+  /** Bounded metadata only; image bytes remain in the attachment transport. */
+  readonly attachmentCount: number;
+  readonly at: string;
 }
 
 export type ToolCallState = "running" | "ok" | "error";
@@ -101,6 +135,13 @@ export interface PlanProposal {
   readonly proposedAt: string;
 }
 
+/** Context preparation that can run before the host emits `turn.start`. */
+export interface ContextMaintenanceActivity {
+  /** Null when activity was restored from a session ref without its start event. */
+  readonly startedAt: string | null;
+  readonly reason: string;
+}
+
 export type TranscriptNotice =
   | {
       readonly kind: "error";
@@ -108,6 +149,8 @@ export type TranscriptNotice =
       readonly message: string;
       readonly retryable: boolean;
       readonly at: string;
+      /** Local turn generation that produced this transient error. */
+      readonly turnGeneration?: number;
     }
   | {
       readonly kind: "retry";
@@ -122,6 +165,11 @@ export type TranscriptNotice =
       readonly summary: string;
       readonly droppedEntries: number;
       readonly at: string;
+    }
+  | {
+      readonly kind: "history-truncated";
+      readonly id: string;
+      readonly message: string;
     }
   | {
       readonly kind: "gap";
@@ -142,12 +190,18 @@ export interface TranscriptProjection {
   readonly revision: Revision | null;
   /** Durable, settled transcript in arrival order; deduped by entry id. */
   readonly entries: readonly DurableEntry[];
+  /** True when older complete entries no longer fit the retained history budget. */
+  readonly historyTruncated: boolean;
   /** Live streaming messages by entry id (usually zero or one). */
   readonly liveMessages: ReadonlyMap<string, LiveMessage>;
   /** Tool calls of the running turn, in start order, keyed by call id. */
   readonly toolCalls: ReadonlyMap<string, ToolCall>;
   /** Whether a turn is currently running (turn.start seen, no turn.end). */
   readonly turnActive: boolean;
+  /** Pre-turn context preparation bracketed by compaction.start/end. */
+  readonly contextMaintenance: ContextMaintenanceActivity | null;
+  /** Monotonic local identity incremented by every accepted turn.start. */
+  readonly turnGeneration: number;
   readonly turnStartedAt: string | null;
   readonly approval: ApprovalRequest | null;
   readonly ask: AskRequest | null;
@@ -165,9 +219,12 @@ export function initialProjection(): TranscriptProjection {
     cursor: null,
     revision: null,
     entries: [],
+    historyTruncated: false,
     liveMessages: new Map(),
     toolCalls: new Map(),
     turnActive: false,
+    contextMaintenance: null,
+    turnGeneration: 0,
     turnStartedAt: null,
     approval: null,
     ask: null,
@@ -175,6 +232,11 @@ export function initialProjection(): TranscriptProjection {
     notices: [],
     phase: "idle",
   };
+}
+
+/** Activity directly proven by this session's sequenced transcript stream. */
+export function transcriptIsActive(projection: TranscriptProjection): boolean {
+  return projection.turnActive || projection.contextMaintenance !== null;
 }
 
 // ---------------------------------------------------------------------------
@@ -199,6 +261,25 @@ function withoutRecoveryNotices(notices: readonly TranscriptNotice[]): readonly 
     : notices;
 }
 
+function withoutSupersededErrorNotices(
+  notices: readonly TranscriptNotice[],
+  completedGeneration: number,
+): readonly TranscriptNotice[] {
+  return notices.some(
+    (notice) =>
+      notice.kind === "error" &&
+      notice.turnGeneration !== undefined &&
+      notice.turnGeneration < completedGeneration,
+  )
+    ? notices.filter(
+        (notice) =>
+          notice.kind !== "error" ||
+          notice.turnGeneration === undefined ||
+          notice.turnGeneration >= completedGeneration,
+      )
+    : notices;
+}
+
 /** Contiguity decision for a sequenced frame against the current cursor. */
 function classifySequence(
   cursor: Cursor | null,
@@ -215,20 +296,26 @@ function installSnapshot(
   projection: TranscriptProjection,
   frame: SessionSnapshotFrame,
 ): TranscriptProjection {
-  const seen = new Set<string>();
-  const entries: DurableEntry[] = [];
-  for (const entry of frame.entries) {
-    if (seen.has(entry.id)) continue;
-    seen.add(entry.id);
-    entries.push(entry);
-  }
-  // Live buffers already settled by the snapshot are dropped; a snapshot is
-  // authoritative through its cursor.
-  let liveMessages = projection.liveMessages;
+  const epochChanged = projection.cursor !== null && projection.cursor.epoch !== frame.cursor.epoch;
+  const recovering = projection.phase === "paused" || projection.phase === "resyncing";
+  const retained = retainDurableEntries(frame.entries, {
+    maxEntries: MAX_RETAINED_TRANSCRIPT_ENTRIES,
+    maxBytes: MAX_RETAINED_TRANSCRIPT_BYTES,
+    maxEntryBytes: MAX_RETAINED_TRANSCRIPT_ENTRY_BYTES,
+  });
+  const seen = new Set(retained.entries.map((entry) => String(entry.id)));
+  // A gap recovery snapshot replaces all volatile stream state. Settlement
+  // correlation may have fallen outside replay retention and both user and
+  // assistant transient ids can differ from their durable ids. Truly pending
+  // prompts/activity are restored from authoritative SessionRef state.
+  const resetVolatile = epochChanged || recovering;
+  let liveMessages = resetVolatile ? new Map<string, LiveMessage>() : projection.liveMessages;
   if (liveMessages.size > 0) {
     const survivors = new Map<string, LiveMessage>();
     for (const [id, message] of liveMessages) {
-      if (!seen.has(id)) survivors.set(id, message);
+      if (!seen.has(id)) {
+        survivors.set(id, message);
+      }
     }
     liveMessages = survivors;
   }
@@ -236,13 +323,59 @@ function installSnapshot(
     ...projection,
     cursor: frame.cursor,
     revision: frame.revision,
-    entries,
+    entries: retained.entries,
+    historyTruncated: retained.truncated,
     liveMessages,
+    ...(resetVolatile
+      ? {
+          toolCalls: new Map<string, ToolCall>(),
+          turnActive: false,
+          contextMaintenance: null,
+          turnStartedAt: null,
+          approval: null,
+          ask: null,
+          plan: null,
+        }
+      : {}),
     // A snapshot is authoritative through its cursor and completes the
     // current recovery episode. Gap notices are transient stream state, not
     // durable transcript history, so none may remain pinned after catch-up.
     notices: withoutRecoveryNotices(projection.notices),
     phase: "active",
+  };
+}
+
+/**
+ * Settle volatile turn state when the host's session index authoritatively
+ * reports that no work is running. Durable entries and current attention
+ * requests are preserved; callers may clear an older transient error only
+ * when they observed a later turn start before this authoritative settlement.
+ */
+export function settleTranscriptTurn(
+  projection: TranscriptProjection,
+  options: { readonly supersedeTransientErrors?: boolean } = {},
+): TranscriptProjection {
+  const notices = options.supersedeTransientErrors
+    ? withoutSupersededErrorNotices(projection.notices, projection.turnGeneration)
+    : projection.notices;
+  if (
+    !projection.turnActive &&
+    projection.contextMaintenance === null &&
+    projection.turnStartedAt === null &&
+    projection.liveMessages.size === 0 &&
+    projection.toolCalls.size === 0 &&
+    notices === projection.notices
+  ) {
+    return projection;
+  }
+  return {
+    ...projection,
+    turnActive: false,
+    contextMaintenance: null,
+    turnStartedAt: null,
+    liveMessages: new Map(),
+    toolCalls: new Map(),
+    notices,
   };
 }
 
@@ -259,11 +392,19 @@ function applyEntry(
     next.delete(entry.id);
     liveMessages = next;
   }
+  const retained = already
+    ? { entries: projection.entries, truncated: false }
+    : appendRetainedDurableEntry(projection.entries, entry, {
+        maxEntries: MAX_RETAINED_TRANSCRIPT_ENTRIES,
+        maxBytes: MAX_RETAINED_TRANSCRIPT_BYTES,
+        maxEntryBytes: MAX_RETAINED_TRANSCRIPT_ENTRY_BYTES,
+      });
   return {
     ...projection,
     cursor: frame.cursor,
     revision: frame.revision,
-    entries: already ? projection.entries : [...projection.entries, entry],
+    entries: retained.entries,
+    historyTruncated: projection.historyTruncated || retained.truncated,
     liveMessages,
   };
 }
@@ -291,8 +432,30 @@ export function plainRecord(value: unknown): Record<string, unknown> {
   return {};
 }
 
+function setInsertionBounded<K, V>(
+  source: ReadonlyMap<K, V>,
+  key: K,
+  value: V,
+  max: number,
+): ReadonlyMap<K, V> {
+  const next = new Map(source);
+  // Map#set preserves the original insertion position for an existing key.
+  // Only a genuinely new item belongs at the tail and can evict the oldest.
+  next.set(key, value);
+  while (next.size > max) {
+    const oldest = next.keys().next().value;
+    if (oldest === undefined) break;
+    next.delete(oldest);
+  }
+  return next;
+}
+
+function boundedEventText(value: unknown, maxBytes: number, fallback = ""): string {
+  return retainedText(str(value, fallback), maxBytes);
+}
+
 function eventTimestamp(event: SessionEvent): string {
-  return str(event.at, new Date(0).toISOString());
+  return retainedText(str(event.at, new Date(0).toISOString()), 256);
 }
 
 function applyMessageEvent(
@@ -307,8 +470,7 @@ function applyMessageEvent(
   const previous = projection.liveMessages.get(entryId);
   const incomingText = str(event.text);
   const incomingReasoning = str(event.reasoning);
-  const next = new Map(projection.liveMessages);
-  next.set(entryId, {
+  const message: LiveMessage = {
     entryId,
     role:
       event.role === "user"
@@ -318,14 +480,33 @@ function applyMessageEvent(
           : (previous?.role ?? "assistant"),
     text:
       mode === "delta"
-        ? `${previous?.text ?? ""}${incomingText}`
-        : str(event.text, previous?.text ?? ""),
+        ? retainedText(
+            `${previous?.text ?? ""}${incomingText}`,
+            Math.floor((MAX_RETAINED_LIVE_MESSAGE_BYTES * 3) / 4),
+          )
+        : retainedText(
+            str(event.text, previous?.text ?? ""),
+            Math.floor((MAX_RETAINED_LIVE_MESSAGE_BYTES * 3) / 4),
+          ),
     reasoning:
       mode === "delta"
-        ? `${previous?.reasoning ?? ""}${incomingReasoning}`
-        : str(event.reasoning, previous?.reasoning ?? ""),
+        ? retainedText(
+            `${previous?.reasoning ?? ""}${incomingReasoning}`,
+            Math.floor(MAX_RETAINED_LIVE_MESSAGE_BYTES / 4),
+          )
+        : retainedText(
+            str(event.reasoning, previous?.reasoning ?? ""),
+            Math.floor(MAX_RETAINED_LIVE_MESSAGE_BYTES / 4),
+          ),
+    attachmentCount: boundedAttachmentCount(event.attachmentCount, previous?.attachmentCount ?? 0),
     startedAt: previous?.startedAt ?? eventTimestamp(event),
-  });
+  };
+  const next = setInsertionBounded(
+    projection.liveMessages,
+    entryId,
+    message,
+    MAX_RETAINED_LIVE_MESSAGES,
+  );
   return { ...projection, liveMessages: next };
 }
 
@@ -344,11 +525,29 @@ function applyMessageSettled(
 
   const live = projection.liveMessages.get(transientEntryId);
   if (live === undefined) return projection;
+  const durableAlreadySettled = projection.entries.some((entry) => entry.id === entryId);
+  const next = new Map<string, LiveMessage>();
+  for (const [id, message] of projection.liveMessages) {
+    if (id === transientEntryId) {
+      if (!durableAlreadySettled) next.set(entryId, { ...live, entryId });
+    } else if (id !== entryId) {
+      next.set(id, message);
+    }
+  }
+  return { ...projection, liveMessages: next };
+}
+
+/** Remove an accepted transient prompt that failed before durable persistence. */
+function applyMessageDiscarded(
+  projection: TranscriptProjection,
+  event: SessionEvent,
+): TranscriptProjection {
+  const transientEntryId = str(event.transientEntryId, str(event.entryId));
+  if (transientEntryId === "" || !projection.liveMessages.has(transientEntryId)) {
+    return projection;
+  }
   const next = new Map(projection.liveMessages);
   next.delete(transientEntryId);
-  if (!projection.entries.some((entry) => entry.id === entryId)) {
-    next.set(entryId, { ...live, entryId });
-  }
   return { ...projection, liveMessages: next };
 }
 
@@ -359,35 +558,48 @@ function applyToolEvent(
 ): TranscriptProjection {
   const callId = str(event.callId);
   if (callId === "") return projection;
-  const calls = new Map(projection.toolCalls);
+  let calls = projection.toolCalls;
   const existing = calls.get(callId);
   if (kind === "start") {
-    calls.set(callId, {
+    calls = setInsertionBounded(
+      calls,
       callId,
-      tool: str(event.tool, "tool"),
-      title: str(event.title, str(event.tool, "tool")),
-      args: plainRecord(event.args),
-      state: "running",
-      startedAt: eventTimestamp(event),
-      progress: [],
-      result: null,
-      endedAt: null,
-    });
+      {
+        callId,
+        tool: boundedEventText(event.tool, 4 * 1024, "tool"),
+        title: boundedEventText(event.title, 8 * 1024, str(event.tool, "tool")),
+        args: sanitizeRetainedRecord(event.args, Math.floor(MAX_RETAINED_TOOL_VALUE_BYTES / 4)),
+        state: "running",
+        startedAt: eventTimestamp(event),
+        progress: [],
+        result: null,
+        endedAt: null,
+      },
+      MAX_RETAINED_TOOL_CALLS,
+    );
   } else if (kind === "progress") {
     if (existing === undefined) return projection;
-    const line = str(event.note, str(event.chunk));
+    const line = boundedEventText(event.note, MAX_RETAINED_PROGRESS_LINE_BYTES, str(event.chunk));
     const progress =
       line === "" ? existing.progress : [...existing.progress, line].slice(-MAX_PROGRESS_LINES);
-    calls.set(callId, { ...existing, progress });
+    calls = setInsertionBounded(calls, callId, { ...existing, progress }, MAX_RETAINED_TOOL_CALLS);
   } else {
     // tool.result
     if (existing === undefined) return projection;
-    calls.set(callId, {
-      ...existing,
-      state: kind === "error" || event.ok === false ? "error" : "ok",
-      result: plainRecord(event.result),
-      endedAt: eventTimestamp(event),
-    });
+    calls = setInsertionBounded(
+      calls,
+      callId,
+      {
+        ...existing,
+        state: kind === "error" || event.ok === false ? "error" : "ok",
+        result: sanitizeRetainedRecord(
+          event.result,
+          Math.floor((MAX_RETAINED_TOOL_VALUE_BYTES * 3) / 4),
+        ),
+        endedAt: eventTimestamp(event),
+      },
+      MAX_RETAINED_TOOL_CALLS,
+    );
   }
   return { ...projection, toolCalls: calls };
 }
@@ -409,6 +621,10 @@ function applyEvent(projection: TranscriptProjection, frame: LiveEventFrame): Tr
       return {
         ...base,
         turnActive: true,
+        // A real turn proves any pre-prompt context preparation completed,
+        // even if its terminal event was lost during replay or reconnect.
+        contextMaintenance: null,
+        turnGeneration: base.turnGeneration + 1,
         turnStartedAt: eventTimestamp(event),
         toolCalls: new Map(),
         approval: null,
@@ -416,13 +632,37 @@ function applyEvent(projection: TranscriptProjection, frame: LiveEventFrame): Tr
         plan: null,
       };
     case "turn-end":
-    case "agent-end":
       return {
         ...base,
         turnActive: false,
+        contextMaintenance: null,
         approval: null,
         ask: null,
         liveMessages: new Map(),
+        // Appserver may emit turn.error followed by turn.end for one failed
+        // turn. Preserve that generation's error; only older turns are done.
+        notices: withoutSupersededErrorNotices(base.notices, base.turnGeneration),
+      };
+    case "agent-end":
+      // An uncorrelated agent.end can belong to an older prompt. Once a newer
+      // accepted user prompt is visible, this event alone cannot prove which
+      // lifecycle ended; turn.end or the authoritative session ref settles it.
+      if ([...base.liveMessages.values()].some((message) => message.role === "user")) {
+        return base;
+      }
+      return {
+        ...base,
+        turnActive: false,
+        contextMaintenance: null,
+        approval: null,
+        ask: null,
+        liveMessages: new Map(),
+        // Failed/cancelled endings keep their explanation. A completed ending
+        // only supersedes errors owned by an earlier turn generation.
+        notices:
+          event.status === "completed"
+            ? withoutSupersededErrorNotices(base.notices, base.turnGeneration)
+            : base.notices,
       };
     case "message-delta":
       return applyMessageEvent(base, event, "delta");
@@ -430,6 +670,8 @@ function applyEvent(projection: TranscriptProjection, frame: LiveEventFrame): Tr
       return applyMessageEvent(base, event, "update");
     case "message-settled":
       return applyMessageSettled(base, event);
+    case "message-discarded":
+      return applyMessageDiscarded(base, event);
     case "tool-start":
       return applyToolEvent(base, event, "start");
     case "tool-progress":
@@ -442,11 +684,11 @@ function applyEvent(projection: TranscriptProjection, frame: LiveEventFrame): Tr
       return {
         ...base,
         approval: {
-          approvalId: str(event.approvalId),
-          title: str(event.title, "Approval needed"),
-          message: str(event.message),
-          command: str(event.command),
-          args: plainRecord(event.args),
+          approvalId: boundedEventText(event.approvalId, 512),
+          title: boundedEventText(event.title, 8 * 1024, "Approval needed"),
+          message: boundedEventText(event.message, 32 * 1024),
+          command: boundedEventText(event.command, 8 * 1024),
+          args: sanitizeRetainedRecord(event.args, 32 * 1024),
           requestedAt: eventTimestamp(event),
           expiresAt: typeof event.expiresAt === "string" ? event.expiresAt : null,
         },
@@ -457,20 +699,20 @@ function applyEvent(projection: TranscriptProjection, frame: LiveEventFrame): Tr
         ? { ...base, approval: null }
         : base;
     case "ask-request": {
-      const rawOptions = Array.isArray(event.options) ? event.options : [];
+      const rawOptions = Array.isArray(event.options) ? event.options.slice(0, 64) : [];
       const options: AskOption[] = rawOptions.map((raw, index) => {
         const option = plainRecord(raw);
         return {
-          id: str(option.id, `option-${index + 1}`),
-          label: str(option.label, `Option ${index + 1}`),
-          detail: typeof option.detail === "string" ? option.detail : null,
+          id: boundedEventText(option.id, 512, `option-${index + 1}`),
+          label: boundedEventText(option.label, 4 * 1024, `Option ${index + 1}`),
+          detail: typeof option.detail === "string" ? retainedText(option.detail, 8 * 1024) : null,
         };
       });
       return {
         ...base,
         ask: {
-          askId: str(event.askId),
-          question: str(event.question),
+          askId: boundedEventText(event.askId, 512),
+          question: boundedEventText(event.question, 32 * 1024),
           options,
           multiple: event.multiple === true,
           allowText: event.allowText === true,
@@ -486,9 +728,9 @@ function applyEvent(projection: TranscriptProjection, frame: LiveEventFrame): Tr
       return {
         ...base,
         plan: {
-          planId: str(event.planId),
-          title: str(event.title, "Proposed plan"),
-          body: str(event.body),
+          planId: boundedEventText(event.planId, 512),
+          title: boundedEventText(event.title, 8 * 1024, "Proposed plan"),
+          body: boundedEventText(event.body, MAX_RETAINED_LIVE_MESSAGE_BYTES),
           proposedAt: eventTimestamp(event),
         },
       };
@@ -499,17 +741,21 @@ function applyEvent(projection: TranscriptProjection, frame: LiveEventFrame): Tr
     case "turn-error":
       return {
         ...base,
-        turnActive: false,
-        liveMessages: new Map(),
+        // `turn.error` is diagnostic, not sufficient terminal proof. A stale
+        // prompt_result may report an older prompt's failure after a newer
+        // accepted prompt/turn is already visible. Only turn.end, agent.end,
+        // or an authoritative idle ref may settle volatile activity.
         notices: pushNotice(base.notices, {
           kind: "error",
           id: noticeId("error"),
-          message: str(
+          message: boundedEventText(
             event.message,
+            32 * 1024,
             str(event.detail, str(event.title, "The turn stopped with an error.")),
           ),
           retryable: event.retryable === true,
           at: eventTimestamp(event),
+          turnGeneration: base.turnGeneration,
         }),
       };
     case "turn-retry":
@@ -519,7 +765,7 @@ function applyEvent(projection: TranscriptProjection, frame: LiveEventFrame): Tr
           kind: "retry",
           id: noticeId("retry"),
           attempt: typeof event.attempt === "number" ? event.attempt : 1,
-          reason: str(event.reason, str(event.detail, "Transient failure")),
+          reason: boundedEventText(event.reason, 16 * 1024, str(event.detail, "Transient failure")),
           at: eventTimestamp(event),
         }),
       };
@@ -529,17 +775,114 @@ function applyEvent(projection: TranscriptProjection, frame: LiveEventFrame): Tr
         notices: pushNotice(base.notices, {
           kind: "compaction",
           id: noticeId("compaction"),
-          summary: str(event.summary, str(event.detail, "Older context was compacted.")),
+          summary: boundedEventText(
+            event.summary,
+            32 * 1024,
+            str(event.detail, "Older context was compacted."),
+          ),
           droppedEntries: typeof event.droppedEntries === "number" ? event.droppedEntries : 0,
           at: eventTimestamp(event),
         }),
       };
+    case "compaction-start":
+      return {
+        ...base,
+        contextMaintenance: {
+          startedAt: eventTimestamp(event),
+          reason: boundedEventText(
+            event.reason,
+            8 * 1024,
+            str(event.action, "Preparing this session's context"),
+          ),
+        },
+      };
+    case "compaction-end":
+      return { ...base, contextMaintenance: null };
     case "inspect-only":
     case undefined:
       // SessionEvent leaf types are additive. Activity retains the raw event;
       // the transcript only needs to keep sequence continuity here.
       return base;
   }
+}
+
+/**
+ * Rebuild event-derived state from the bounded warm projection held by the
+ * desktop controller. Durable entry frames are stored separately, so gaps in
+ * event sequence numbers are expected here. Validate the entire retained
+ * suffix before applying any of it, preserve its causal order, and restore the
+ * authoritative warm cursor after the semantic fold.
+ */
+export interface RetainedTranscriptEventBaseline {
+  readonly cursor: Cursor;
+  readonly hostId: string;
+  readonly sessionId: string;
+}
+
+export function retainedTranscriptEventsAreValid(
+  projection: TranscriptProjection,
+  frames: readonly LiveEventFrame[],
+  baseline: RetainedTranscriptEventBaseline,
+): boolean {
+  const cursor = projection.cursor;
+  if (
+    cursor === null ||
+    cursor.epoch !== baseline.cursor.epoch ||
+    cursor.seq !== baseline.cursor.seq ||
+    baseline.cursor.epoch.length === 0 ||
+    !Number.isSafeInteger(baseline.cursor.seq) ||
+    baseline.cursor.seq < 0
+  ) {
+    return false;
+  }
+
+  let previousSeq = -1;
+  for (const frame of frames) {
+    const raw = frame as unknown as Record<string, unknown>;
+    const event = raw.event;
+    const frameCursor = raw.cursor;
+    if (
+      raw.type !== "event" ||
+      raw.hostId !== baseline.hostId ||
+      raw.sessionId !== baseline.sessionId ||
+      event === null ||
+      typeof event !== "object" ||
+      Array.isArray(event) ||
+      typeof (event as Record<string, unknown>).type !== "string" ||
+      frameCursor === null ||
+      typeof frameCursor !== "object" ||
+      Array.isArray(frameCursor)
+    ) {
+      return false;
+    }
+    const retainedCursor = frameCursor as Record<string, unknown>;
+    const seq = retainedCursor.seq;
+    if (
+      retainedCursor.epoch !== baseline.cursor.epoch ||
+      typeof seq !== "number" ||
+      !Number.isSafeInteger(seq) ||
+      seq < 0 ||
+      seq <= previousSeq ||
+      seq > baseline.cursor.seq
+    ) {
+      return false;
+    }
+    previousSeq = seq;
+  }
+  return true;
+}
+
+export function replayRetainedTranscriptEvents(
+  projection: TranscriptProjection,
+  frames: readonly LiveEventFrame[],
+  baseline: RetainedTranscriptEventBaseline,
+): TranscriptProjection {
+  if (!retainedTranscriptEventsAreValid(projection, frames, baseline)) return projection;
+
+  if (frames.length === 0) return projection;
+  let replayed = projection;
+  for (const frame of frames) replayed = applyEvent(replayed, frame);
+  return { ...replayed, cursor: baseline.cursor };
 }
 
 function applyGap(projection: TranscriptProjection, frame: GapFrame): TranscriptProjection {

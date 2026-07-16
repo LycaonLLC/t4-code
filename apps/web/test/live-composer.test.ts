@@ -7,7 +7,11 @@
 // and a reconnect never clears the transcript.
 import { describe, expect, it } from "vite-plus/test";
 import {
+  ProjectionStore,
+  applyPublicFrame,
   createDesktopRuntimeController,
+  createProjectionSnapshot,
+  encodeProjectionCache,
   type DesktopRuntimeController,
   type DesktopRuntimeSnapshot,
 } from "@t4-code/client";
@@ -22,6 +26,7 @@ import {
   type CatalogFrame,
   type CatalogItem,
   type DurableEntry,
+  type DurableEntryFrame,
   type LiveEventFrame,
   type SessionSnapshotFrame,
   type SessionsFrame,
@@ -43,6 +48,7 @@ import type { SessionRuntime } from "../src/features/session-runtime/controller.
 import { IMAGE_PROMPTS_UNSUPPORTED_REASON } from "../src/features/session-runtime/intents.ts";
 import { IMAGE_UPLOAD_CHUNK_BYTES } from "../src/features/session-runtime/image-upload.ts";
 import { obtainLiveRuntime } from "../src/features/session-runtime/useSessionRuntime.ts";
+import { deriveAttention, deriveTranscriptRows } from "../src/features/transcript/rows.ts";
 import { buildProjectGroups } from "../src/lib/session-tree.ts";
 import { deriveWorkspaceData, sessionViewId } from "../src/platform/live-workspace.ts";
 import {
@@ -93,6 +99,45 @@ function turnStart(seq: number): LiveEventFrame {
   };
 }
 
+function turnError(seq: number, message: string): LiveEventFrame {
+  return {
+    v: V,
+    type: "event",
+    cursor: { epoch: "epoch-1", seq },
+    hostId: hostId(HOST),
+    sessionId: sessionId(SESSION),
+    event: {
+      type: "turn.error",
+      message,
+      retryable: true,
+      at: "2026-07-11T10:00:02Z",
+    },
+  };
+}
+
+function eventFrame(seq: number, event: LiveEventFrame["event"]): LiveEventFrame {
+  return {
+    v: V,
+    type: "event",
+    cursor: { epoch: "epoch-1", seq },
+    hostId: hostId(HOST),
+    sessionId: sessionId(SESSION),
+    event,
+  };
+}
+
+function durableEntryFrame(seq: number, value: DurableEntry): DurableEntryFrame {
+  return {
+    v: V,
+    type: "entry",
+    cursor: { epoch: "epoch-1", seq },
+    revision: revision(`rev-${seq}`),
+    hostId: hostId(HOST),
+    sessionId: sessionId(SESSION),
+    entry: value,
+  };
+}
+
 function commandItem(name: string, capabilities?: readonly string[]): CatalogItem {
   return {
     id: catalogId(`cmd-${name}`),
@@ -105,6 +150,81 @@ function commandItem(name: string, capabilities?: readonly string[]): CatalogIte
 
 function catalogFrame(rev: string, items: CatalogItem[]): CatalogFrame {
   return { v: V, type: "catalog", hostId: hostId(HOST), revision: revision(rev), items };
+}
+
+function pendingPromptSessionsFrame(
+  entryIdValue: string,
+  text: string,
+  attachmentCount = 0,
+): SessionsFrame {
+  return {
+    v: V,
+    type: "sessions",
+    cursor: { epoch: "session-index-1", seq: 1 },
+    sessions: [
+      {
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        project: {
+          projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+        },
+        revision: revision("rev-pending"),
+        title: "Session",
+        status: "active",
+        updatedAt: "2026-07-11T10:00:00Z",
+        liveState: {
+          pendingPrompt: {
+            entryId: entryIdValue,
+            text,
+            attachmentCount,
+            at: "2026-07-11T10:00:01Z",
+          },
+        },
+      },
+    ],
+    totalCount: 1,
+    truncated: false,
+  };
+}
+
+function pendingPromptsSessionsFrame(
+  prompts: readonly {
+    readonly entryId: string;
+    readonly text: string;
+    readonly attachmentCount?: number;
+    readonly at?: string;
+  }[],
+  seq = 1,
+  status: "active" | "idle" = prompts.length > 0 ? "active" : "idle",
+): SessionsFrame {
+  return {
+    v: V,
+    type: "sessions",
+    cursor: { epoch: "session-index-1", seq },
+    sessions: [
+      {
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        project: {
+          projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+        },
+        revision: revision(`rev-pending-${seq}`),
+        title: "Session",
+        status,
+        updatedAt: `2026-07-11T10:00:${String(seq).padStart(2, "0")}Z`,
+        liveState: {
+          pendingPrompts: prompts.map((prompt, index) => ({
+            entryId: prompt.entryId,
+            text: prompt.text,
+            attachmentCount: prompt.attachmentCount ?? 0,
+            at: prompt.at ?? `2026-07-11T10:01:${String(index).padStart(2, "0")}Z`,
+          })),
+        },
+      },
+    ],
+    totalCount: 1,
+    truncated: false,
+  };
 }
 
 interface ControllerSetup {
@@ -557,6 +677,1430 @@ describe("confirmations", () => {
   });
 });
 describe("session lifecycle", () => {
+  it("recovers one pending prompt across attach, reconnect, and runtime recreation", async () => {
+    const { shell, controller } = await startedController();
+    const pendingRef = pendingPromptSessionsFrame("prompt:request-attach", "keep going");
+    shell.emitFrame({ targetId: "local", frame: pendingRef });
+
+    let runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    let snapshot = runtime.getSnapshot();
+    expect(snapshot.pendingPrompts).toEqual([
+      {
+        entryId: "prompt:request-attach",
+        text: "keep going",
+        attachmentCount: 0,
+        at: "2026-07-11T10:00:01Z",
+      },
+    ]);
+    let rows = deriveTranscriptRows(snapshot.projection, {
+      pendingPrompts: snapshot.pendingPrompts,
+      sessionActive: snapshot.sessionActive,
+    });
+    expect(rows.filter((row) => row.id === "prompt:request-attach")).toHaveLength(1);
+    expect(rows.find((row) => row.kind === "working")).toMatchObject({
+      activity: "working",
+      startedAt: null,
+    });
+
+    shell.emitState({ targetId: "local", state: "disconnected" });
+    expect(runtime.getSnapshot().pendingPrompts[0]?.entryId).toBe("prompt:request-attach");
+    shell.emitState({ targetId: "local", state: "connected" });
+    expect(runtime.getSnapshot().pendingPrompts[0]?.entryId).toBe("prompt:request-attach");
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "gap",
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        from: { epoch: "epoch-1", seq: 1 },
+        to: { epoch: "epoch-1", seq: 2 },
+        reason: "replay_budget_exceeded",
+      },
+    });
+    shell.emitFrame({ targetId: "local", frame: snapshotFrame(2, []) });
+    snapshot = runtime.getSnapshot();
+    rows = deriveTranscriptRows(snapshot.projection, {
+      pendingPrompts: snapshot.pendingPrompts,
+      sessionActive: snapshot.sessionActive,
+    });
+    expect(rows.filter((row) => row.id === "prompt:request-attach")).toHaveLength(1);
+
+    runtime.dispose();
+    runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    expect(runtime.getSnapshot().pendingPrompts[0]?.entryId).toBe("prompt:request-attach");
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "event",
+        cursor: { epoch: "epoch-1", seq: 2 },
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        event: {
+          type: "message.update",
+          entryId: "prompt:request-attach",
+          role: "user",
+          text: "keep going",
+          at: "2026-07-11T10:00:01Z",
+        },
+      },
+    });
+    snapshot = runtime.getSnapshot();
+    rows = deriveTranscriptRows(snapshot.projection, {
+      pendingPrompts: snapshot.pendingPrompts,
+      sessionActive: snapshot.sessionActive,
+    });
+    expect(rows.filter((row) => row.id === "prompt:request-attach")).toHaveLength(1);
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "event",
+        cursor: { epoch: "epoch-1", seq: 3 },
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        event: {
+          type: "message.settled",
+          transientEntryId: "prompt:request-attach",
+          entryId: "durable-user-attach",
+        },
+      },
+    });
+    expect(runtime.getSnapshot().pendingPrompts).toEqual([]);
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "entry",
+        cursor: { epoch: "epoch-1", seq: 4 },
+        revision: revision("rev-user-attached"),
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        entry: {
+          ...entry("durable-user-attach", "keep going"),
+          data: { role: "user", text: "keep going" },
+        },
+      },
+    });
+    snapshot = runtime.getSnapshot();
+    rows = deriveTranscriptRows(snapshot.projection, {
+      pendingPrompts: snapshot.pendingPrompts,
+      sessionActive: snapshot.sessionActive,
+    });
+    expect(rows.filter((row) => row.kind === "message" && row.role === "user")).toHaveLength(1);
+
+    // The ref delta may lag the transcript settlement. A recreated runtime
+    // recovers the retained settlement marker and must not resurrect it.
+    runtime.dispose();
+    runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    snapshot = runtime.getSnapshot();
+    expect(snapshot.pendingPrompts).toEqual([]);
+    rows = deriveTranscriptRows(snapshot.projection, {
+      pendingPrompts: snapshot.pendingPrompts,
+      sessionActive: snapshot.sessionActive,
+    });
+    expect(rows.filter((row) => row.kind === "message" && row.role === "user")).toHaveLength(1);
+    runtime.dispose();
+  });
+
+  it("keeps accepted steer and multiple follow-ups visible across reconnect and retirement", async () => {
+    const { shell, controller } = await startedController();
+    let runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+
+    shell.emitFrame({ targetId: "local", frame: turnStart(2) });
+    expect(runtime.getSnapshot().sessionActive).toBe(true);
+
+    await runtime.submitPrompt({ kind: "steer", text: "steer now" });
+    await runtime.submitPrompt({ kind: "followUp", text: "follow one" });
+    await runtime.submitPrompt({ kind: "followUp", text: "follow two" });
+    expect(
+      shell.commands.filter((request) => request.intent.command === "session.steer"),
+    ).toHaveLength(1);
+    expect(
+      shell.commands.filter((request) => request.intent.command === "session.followUp"),
+    ).toHaveLength(2);
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: pendingPromptsSessionsFrame([
+        { entryId: "prompt:steer", text: "steer now" },
+        { entryId: "prompt:follow-1", text: "follow one" },
+        { entryId: "prompt:follow-2", text: "follow two" },
+      ]),
+    });
+    let snapshot = runtime.getSnapshot();
+    expect(snapshot.pendingPrompts.map((prompt) => prompt.entryId)).toEqual([
+      "prompt:steer",
+      "prompt:follow-1",
+      "prompt:follow-2",
+    ]);
+    let rows = deriveTranscriptRows(snapshot.projection, {
+      pendingPrompts: snapshot.pendingPrompts,
+      sessionActive: snapshot.sessionActive,
+    });
+    expect(
+      rows.filter((row) => row.kind === "message" && row.role === "user").map((row) => row.id),
+    ).toEqual(["prompt:steer", "prompt:follow-1", "prompt:follow-2"]);
+    expect(rows.find((row) => row.kind === "working")).toMatchObject({
+      activity: "working",
+      startedAt: "2026-07-11T10:00:01Z",
+    });
+
+    shell.emitState({ targetId: "local", state: "disconnected" });
+    shell.emitState({ targetId: "local", state: "connected" });
+    expect(runtime.getSnapshot().pendingPrompts).toHaveLength(3);
+
+    runtime.dispose();
+    runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    expect(runtime.getSnapshot().pendingPrompts).toHaveLength(3);
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "event",
+        cursor: { epoch: "epoch-1", seq: 3 },
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        event: {
+          type: "message.update",
+          entryId: "prompt:steer",
+          role: "user",
+          text: "steer now",
+          at: "2026-07-11T10:01:00Z",
+        },
+      },
+    });
+    snapshot = runtime.getSnapshot();
+    rows = deriveTranscriptRows(snapshot.projection, {
+      pendingPrompts: snapshot.pendingPrompts,
+      sessionActive: snapshot.sessionActive,
+    });
+    expect(rows.filter((row) => row.id === "prompt:steer")).toHaveLength(1);
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "event",
+        cursor: { epoch: "epoch-1", seq: 4 },
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        event: {
+          type: "message.settled",
+          transientEntryId: "prompt:follow-1",
+          entryId: "durable-follow-1",
+        },
+      },
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "event",
+        cursor: { epoch: "epoch-1", seq: 5 },
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        event: {
+          type: "message.discarded",
+          transientEntryId: "prompt:follow-2",
+          reason: "prompt_failed",
+          at: "2026-07-11T10:01:03Z",
+        },
+      },
+    });
+    expect(runtime.getSnapshot().pendingPrompts.map((prompt) => prompt.entryId)).toEqual([
+      "prompt:steer",
+    ]);
+
+    runtime.dispose();
+    runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    snapshot = runtime.getSnapshot();
+    expect(snapshot.pendingPrompts.map((prompt) => prompt.entryId)).toEqual(["prompt:steer"]);
+    rows = deriveTranscriptRows(snapshot.projection, {
+      pendingPrompts: snapshot.pendingPrompts,
+      sessionActive: snapshot.sessionActive,
+    });
+    expect(rows.filter((row) => row.kind === "message" && row.role === "user")).toHaveLength(1);
+    runtime.dispose();
+  });
+
+  it("settles only prompt A and preserves newer prompt B through reconnect bootstrap", async () => {
+    const { shell, controller } = await startedController();
+    shell.emitFrame({
+      targetId: "local",
+      frame: pendingPromptsSessionsFrame(
+        [
+          { entryId: "prompt:a", text: "prompt A" },
+          { entryId: "prompt:b", text: "prompt B" },
+        ],
+        1,
+        "idle",
+      ),
+    });
+    let runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    expect(runtime.getSnapshot().sessionActive).toBe(true);
+
+    shell.emitFrame({ targetId: "local", frame: turnStart(2) });
+    for (const [seq, entryIdValue, text] of [
+      [3, "prompt:a", "prompt A"],
+      [4, "prompt:b", "prompt B"],
+    ] as const) {
+      shell.emitFrame({
+        targetId: "local",
+        frame: {
+          v: V,
+          type: "event",
+          cursor: { epoch: "epoch-1", seq },
+          hostId: hostId(HOST),
+          sessionId: sessionId(SESSION),
+          event: {
+            type: "message.update",
+            entryId: entryIdValue,
+            role: "user",
+            text,
+            at: `2026-07-11T10:02:0${seq}Z`,
+          },
+        },
+      });
+    }
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "event",
+        cursor: { epoch: "epoch-1", seq: 5 },
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        event: {
+          type: "message.settled",
+          transientEntryId: "prompt:a",
+          entryId: "durable-a",
+        },
+      },
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "entry",
+        cursor: { epoch: "epoch-1", seq: 6 },
+        revision: revision("rev-durable-a"),
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        entry: {
+          ...entry("durable-a", "prompt A"),
+          data: { role: "user", text: "prompt A" },
+        },
+      },
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: pendingPromptsSessionsFrame([{ entryId: "prompt:b", text: "prompt B" }], 2, "idle"),
+    });
+
+    let snapshot = runtime.getSnapshot();
+    expect(snapshot.pendingPrompts.map((prompt) => prompt.entryId)).toEqual(["prompt:b"]);
+    expect(snapshot.projection.turnActive).toBe(true);
+    expect(snapshot.projection.liveMessages.has("prompt:b")).toBe(true);
+    expect(snapshot.sessionActive).toBe(true);
+
+    shell.emitState({ targetId: "local", state: "disconnected" });
+    shell.emitState({ targetId: "local", state: "connected" });
+    snapshot = runtime.getSnapshot();
+    expect(snapshot.projection.turnActive).toBe(true);
+    expect(snapshot.projection.liveMessages.has("prompt:b")).toBe(true);
+    expect(snapshot.link).toBe("cached");
+    expect(snapshot.sessionActive).toBe(false);
+
+    runtime.dispose();
+    runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    snapshot = runtime.getSnapshot();
+    expect(snapshot.pendingPrompts.map((prompt) => prompt.entryId)).toEqual(["prompt:b"]);
+    expect(snapshot.link).toBe("cached");
+    expect(snapshot.sessionActive).toBe(false);
+    expect(
+      deriveTranscriptRows(snapshot.projection, {
+        pendingPrompts: snapshot.pendingPrompts,
+        sessionActive: snapshot.sessionActive,
+      }).filter((row) => row.id === "prompt:b"),
+    ).toHaveLength(1);
+
+    shell.emitFrame({ targetId: "local", frame: makeWelcome(HOST, ["sessions.prompt"]) });
+    shell.emitFrame({
+      targetId: "local",
+      frame: pendingPromptsSessionsFrame([{ entryId: "prompt:b", text: "prompt B" }], 3, "idle"),
+    });
+    expect(runtime.getSnapshot()).toMatchObject({ link: "live", sessionActive: true });
+    runtime.dispose();
+  });
+
+  it("treats a present empty pendingPrompts list as authoritative over legacy singular state", async () => {
+    const { shell, controller } = await startedController();
+    const legacy = pendingPromptSessionsFrame("prompt:legacy-stale", "stale");
+    const legacySession = legacy.sessions[0];
+    if (legacySession === undefined) throw new Error("pending prompt fixture missing session");
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        ...legacy,
+        sessions: [
+          {
+            ...legacySession,
+            liveState: { ...legacySession.liveState, pendingPrompts: [] },
+          },
+        ],
+      },
+    });
+
+    const runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    expect(runtime.getSnapshot().pendingPrompts).toEqual([]);
+    runtime.dispose();
+  });
+
+  it("does not resurrect a discarded pending prompt from a lagging session ref", async () => {
+    const { shell, controller } = await startedController();
+    shell.emitFrame({
+      targetId: "local",
+      frame: pendingPromptSessionsFrame("prompt:request-discard", "", 2),
+    });
+    let runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    let snapshot = runtime.getSnapshot();
+    expect(snapshot.pendingPrompts).toEqual([
+      expect.objectContaining({
+        entryId: "prompt:request-discard",
+        text: "",
+        attachmentCount: 2,
+      }),
+    ]);
+    expect(
+      deriveTranscriptRows(snapshot.projection, {
+        pendingPrompts: snapshot.pendingPrompts,
+        sessionActive: snapshot.sessionActive,
+      }).find((row) => row.id === "prompt:request-discard"),
+    ).toMatchObject({ kind: "message", text: "2 images attached" });
+
+    shell.emitState({ targetId: "local", state: "disconnected" });
+    shell.emitState({ targetId: "local", state: "connected" });
+    snapshot = runtime.getSnapshot();
+    expect(snapshot.pendingPrompts[0]?.attachmentCount).toBe(2);
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "event",
+        cursor: { epoch: "epoch-1", seq: 2 },
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        event: {
+          type: "message.discarded",
+          transientEntryId: "prompt:request-discard",
+          reason: "prompt_failed",
+          at: "2026-07-11T10:00:02Z",
+        },
+      },
+    });
+    expect(runtime.getSnapshot().pendingPrompts).toEqual([]);
+
+    runtime.dispose();
+    runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    expect(runtime.getSnapshot().pendingPrompts).toEqual([]);
+    runtime.dispose();
+  });
+
+  it("allows a later user message to reuse an earlier retired pending prompt id", async () => {
+    const { shell, controller } = await startedController();
+    shell.emitFrame({
+      targetId: "local",
+      frame: pendingPromptSessionsFrame("prompt:request-reused", "new prompt"),
+    });
+    let runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: eventFrame(2, {
+        type: "message.discarded",
+        transientEntryId: "prompt:request-reused",
+        reason: "prompt_failed",
+        at: "2026-07-11T10:00:02Z",
+      }),
+    });
+    expect(runtime.getSnapshot().pendingPrompts).toEqual([]);
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: eventFrame(3, {
+        type: "message.update",
+        entryId: "prompt:request-reused",
+        role: "user",
+        text: "new prompt",
+      }),
+    });
+    expect(runtime.getSnapshot().pendingPrompts.map((prompt) => prompt.entryId)).toEqual([
+      "prompt:request-reused",
+    ]);
+
+    runtime.dispose();
+    runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    expect(runtime.getSnapshot().pendingPrompts.map((prompt) => prompt.entryId)).toEqual([
+      "prompt:request-reused",
+    ]);
+    runtime.dispose();
+  });
+
+  it("does not let rejected duplicate or gapped events rewrite pending prompt retirement", async () => {
+    const { shell, controller } = await startedController();
+    shell.emitFrame({
+      targetId: "local",
+      frame: pendingPromptSessionsFrame("prompt:request-retired", "old prompt"),
+    });
+    const runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: eventFrame(2, {
+        type: "message.discarded",
+        transientEntryId: "prompt:request-retired",
+        reason: "prompt_failed",
+      }),
+    });
+    expect(runtime.getSnapshot().pendingPrompts).toEqual([]);
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: eventFrame(2, {
+        type: "message.update",
+        entryId: "prompt:request-retired",
+        role: "user",
+        text: "stale duplicate",
+      }),
+    });
+    expect(runtime.getSnapshot().pendingPrompts).toEqual([]);
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: eventFrame(4, {
+        type: "message.update",
+        entryId: "prompt:request-retired",
+        role: "user",
+        text: "past a gap",
+      }),
+    });
+    expect(runtime.getSnapshot().pendingPrompts).toEqual([]);
+    expect(runtime.getSnapshot().projection.phase).toBe("paused");
+    runtime.dispose();
+  });
+
+  it("does not resurrect a legacy entryId discard from warm retained events", async () => {
+    const { shell, controller } = await startedController();
+    shell.emitFrame({
+      targetId: "local",
+      frame: pendingPromptSessionsFrame("prompt:request-legacy-discard", "do the thing"),
+    });
+    let runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    expect(runtime.getSnapshot().pendingPrompts[0]?.entryId).toBe("prompt:request-legacy-discard");
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "event",
+        cursor: { epoch: "epoch-1", seq: 2 },
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        event: {
+          type: "message.discarded",
+          entryId: "prompt:request-legacy-discard",
+          reason: "prompt_failed",
+          at: "2026-07-11T10:00:02Z",
+        },
+      },
+    });
+    expect(runtime.getSnapshot().pendingPrompts).toEqual([]);
+
+    runtime.dispose();
+    runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    expect(runtime.getSnapshot().pendingPrompts).toEqual([]);
+    runtime.dispose();
+  });
+
+  it("does not count a lagging retired pending ref as active after settle or discard", async () => {
+    for (const retirement of ["settled", "discarded"] as const) {
+      const { shell, controller } = await startedController();
+      shell.emitFrame({
+        targetId: "local",
+        frame: pendingPromptsSessionsFrame(
+          [{ entryId: `prompt:${retirement}`, text: retirement }],
+          1,
+          "idle",
+        ),
+      });
+      let runtime = createLiveSessionRuntime({
+        controller,
+        targetId: "local",
+        hostId: HOST,
+        sessionId: SESSION,
+      });
+      expect(runtime.getSnapshot().sessionActive).toBe(true);
+
+      shell.emitFrame({
+        targetId: "local",
+        frame: {
+          v: V,
+          type: "event",
+          cursor: { epoch: "epoch-1", seq: 2 },
+          hostId: hostId(HOST),
+          sessionId: sessionId(SESSION),
+          event:
+            retirement === "settled"
+              ? {
+                  type: "message.settled",
+                  transientEntryId: "prompt:settled",
+                  entryId: "durable:settled",
+                }
+              : {
+                  type: "message.discarded",
+                  transientEntryId: "prompt:discarded",
+                  reason: "prompt_failed",
+                  at: "2026-07-11T10:00:02Z",
+                },
+        },
+      });
+
+      let snapshot = runtime.getSnapshot();
+      expect(snapshot.pendingPrompts).toEqual([]);
+      expect(snapshot.sessionActive).toBe(false);
+      expect(
+        deriveTranscriptRows(snapshot.projection, {
+          pendingPrompts: snapshot.pendingPrompts,
+          sessionActive: snapshot.sessionActive,
+        }).some((row) => row.kind === "working"),
+      ).toBe(false);
+
+      runtime.dispose();
+      runtime = createLiveSessionRuntime({
+        controller,
+        targetId: "local",
+        hostId: HOST,
+        sessionId: SESSION,
+      });
+      snapshot = runtime.getSnapshot();
+      expect(snapshot.pendingPrompts).toEqual([]);
+      expect(snapshot.sessionActive).toBe(false);
+      runtime.dispose();
+    }
+  });
+
+  it("uses active ref and pre-turn compaction as one visible activity state", async () => {
+    const { shell, runtime } = await startedRuntime();
+    const indexed = (seq: number, status: "active" | "idle"): SessionsFrame => ({
+      v: V,
+      type: "sessions",
+      cursor: { epoch: "session-index-1", seq },
+      sessions: [
+        {
+          hostId: hostId(HOST),
+          sessionId: sessionId(SESSION),
+          project: {
+            projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+          },
+          revision: revision(`rev-${status}-${seq}`),
+          title: "Session",
+          status,
+          updatedAt: `2026-07-11T10:00:0${seq}Z`,
+        },
+      ],
+      totalCount: 1,
+      truncated: false,
+    });
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: catalogFrame("rev-2", [
+        commandItem("session.cancel"),
+        commandItem("compact"),
+        commandItem("retry"),
+      ]),
+    });
+    shell.emitFrame({ targetId: "local", frame: indexed(1, "active") });
+
+    let snapshot = runtime.getSnapshot();
+    expect(snapshot.projection.turnActive).toBe(false);
+    expect(snapshot.sessionActive).toBe(true);
+    expect(snapshot.canCancel).toBe(true);
+    expect(
+      deriveTranscriptRows(snapshot.projection, {
+        sessionActive: snapshot.sessionActive,
+      }).find((row) => row.kind === "working"),
+    ).toMatchObject({ activity: "working", startedAt: null });
+    expect(
+      snapshot.slashCommands?.find((command) => command.name === "/compact")?.disabledReason,
+    ).toBe("Wait for the turn to finish");
+    expect(
+      snapshot.slashCommands?.find((command) => command.name === "/retry")?.disabledReason,
+    ).toBe("A turn is already running");
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "event",
+        cursor: { epoch: "epoch-1", seq: 2 },
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        event: {
+          type: "compaction.start",
+          reason: "pending_prompt_size",
+          at: "2026-07-11T10:00:02Z",
+        },
+      },
+    });
+    snapshot = runtime.getSnapshot();
+    expect(snapshot.sessionActive).toBe(true);
+    expect(snapshot.projection.contextMaintenance?.reason).toBe("pending_prompt_size");
+    expect(
+      deriveTranscriptRows(snapshot.projection, {
+        sessionActive: snapshot.sessionActive,
+      }).find((row) => row.kind === "working"),
+    ).toMatchObject({ activity: "preparing-context" });
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "event",
+        cursor: { epoch: "epoch-1", seq: 3 },
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        event: {
+          type: "message.update",
+          entryId: "prompt:request-9",
+          role: "user",
+          text: "keep going",
+          at: "2026-07-11T10:00:03Z",
+        },
+      },
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "event",
+        cursor: { epoch: "epoch-1", seq: 4 },
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        event: {
+          type: "message.settled",
+          transientEntryId: "prompt:request-9",
+          entryId: "durable-user-9",
+        },
+      },
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "entry",
+        cursor: { epoch: "epoch-1", seq: 5 },
+        revision: revision("rev-user-settled"),
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        entry: {
+          ...entry("durable-user-9", "keep going"),
+          data: { role: "user", text: "keep going" },
+        },
+      },
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "event",
+        cursor: { epoch: "epoch-1", seq: 6 },
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        event: { type: "compaction.end", at: "2026-07-11T10:00:06Z" },
+      },
+    });
+
+    snapshot = runtime.getSnapshot();
+    expect(snapshot.projection.contextMaintenance).toBeNull();
+    expect(snapshot.sessionActive).toBe(true);
+    shell.emitFrame({ targetId: "local", frame: indexed(2, "idle") });
+
+    snapshot = runtime.getSnapshot();
+    expect(snapshot.sessionActive).toBe(false);
+    const rows = deriveTranscriptRows(snapshot.projection, {
+      sessionActive: snapshot.sessionActive,
+    });
+    expect(rows.filter((row) => row.kind === "message" && row.role === "user")).toHaveLength(1);
+    expect(rows.some((row) => row.kind === "working")).toBe(false);
+  });
+
+  it("orders restored compaction truth against only lifecycle-changing events", async () => {
+    const { shell, runtime } = await startedRuntime();
+    const compactingRef = (indexSeq: number, refRevision: string): SessionsFrame =>
+      ({
+        v: V,
+        type: "sessions",
+        cursor: { epoch: "session-index-1", seq: indexSeq },
+        sessions: [
+          {
+            hostId: hostId(HOST),
+            sessionId: sessionId(SESSION),
+            project: {
+              projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+            },
+            revision: revision(refRevision),
+            title: "Session",
+            status: "idle",
+            updatedAt: "2026-07-11T10:00:01Z",
+            liveState: { isCompacting: true },
+          },
+        ],
+        totalCount: 1,
+        truncated: false,
+      });
+    shell.emitFrame({
+      targetId: "local",
+      frame: compactingRef(0, "rev-restored-compaction"),
+    });
+
+    let snapshot = runtime.getSnapshot();
+    expect(snapshot.sessionActive).toBe(true);
+    expect(snapshot.projection.contextMaintenance).toEqual({
+      startedAt: null,
+      reason: "Restored from current session state",
+    });
+    expect(
+      deriveTranscriptRows(snapshot.projection, {
+        pendingPrompts: snapshot.pendingPrompts,
+        sessionActive: snapshot.sessionActive,
+      }).find((row) => row.kind === "working"),
+    ).toMatchObject({ activity: "preparing-context", startedAt: null });
+
+    // Activity-inspector-only traffic is newer than the ref, but does not
+    // contradict its missed compaction-start lifecycle truth.
+    shell.emitFrame({
+      targetId: "local",
+      frame: eventFrame(2, { type: "agent.event", detail: "still compacting" }),
+    });
+    expect(runtime.getSnapshot().projection.contextMaintenance).toMatchObject({
+      reason: "Restored from current session state",
+    });
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: eventFrame(3, { type: "compaction.end", at: "2026-07-11T10:00:03Z" }),
+    });
+    expect(runtime.getSnapshot().projection.contextMaintenance).toBeNull();
+
+    // A genuinely newer compacting ref can restore the missed start again.
+    shell.emitFrame({
+      targetId: "local",
+      frame: compactingRef(0, "rev-restored-compaction-again"),
+    });
+    expect(runtime.getSnapshot().projection.contextMaintenance).toMatchObject({
+      reason: "Restored from current session state",
+    });
+
+    // turn.start unconditionally closes context maintenance, so the older
+    // compacting ref cannot synthesize it back into the projection.
+    shell.emitFrame({ targetId: "local", frame: turnStart(4) });
+    snapshot = runtime.getSnapshot();
+    expect(snapshot.projection.turnActive).toBe(true);
+    expect(snapshot.projection.contextMaintenance).toBeNull();
+  });
+
+  it("does not let an older idle ref erase newer warm transcript activity", async () => {
+    const { shell, controller } = await startedController();
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "sessions",
+        cursor: { epoch: "session-index-1", seq: 1 },
+        sessions: [
+          {
+            hostId: hostId(HOST),
+            sessionId: sessionId(SESSION),
+            project: {
+              projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+            },
+            revision: revision("rev-before-current-work"),
+            title: "Session",
+            status: "idle",
+            updatedAt: "2026-07-11T10:00:01Z",
+            liveState: { isCompacting: false },
+          },
+        ],
+        totalCount: 1,
+        truncated: false,
+      },
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: eventFrame(2, {
+        type: "compaction.start",
+        reason: "manual",
+        action: "context-full",
+        at: "2026-07-11T10:00:02Z",
+      }),
+    });
+
+    let runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    expect(runtime.getSnapshot()).toMatchObject({
+      link: "live",
+      sessionActive: true,
+      projection: {
+        contextMaintenance: {
+          startedAt: "2026-07-11T10:00:02Z",
+          reason: "manual",
+        },
+      },
+    });
+    runtime.dispose();
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: eventFrame(3, { type: "compaction.end", at: "2026-07-11T10:00:03Z" }),
+    });
+    shell.emitFrame({ targetId: "local", frame: turnStart(4) });
+    shell.emitFrame({
+      targetId: "local",
+      frame: eventFrame(5, {
+        type: "message.update",
+        entryId: "assistant:current",
+        role: "assistant",
+        text: "Current output",
+      }),
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: eventFrame(6, {
+        type: "tool.start",
+        callId: "tool-current",
+        tool: "read",
+        title: "Read current file",
+      }),
+    });
+    runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    expect(runtime.getSnapshot()).toMatchObject({
+      link: "live",
+      sessionActive: true,
+      projection: {
+        turnActive: true,
+        contextMaintenance: null,
+      },
+    });
+    expect(runtime.getSnapshot().projection.liveMessages.has("assistant:current")).toBe(true);
+    expect(runtime.getSnapshot().projection.toolCalls.has("tool-current")).toBe(true);
+    runtime.dispose();
+  });
+
+  it("settles every volatile warm activity field when a newer complete ref is idle", async () => {
+    const { shell, controller } = await startedController();
+    shell.emitFrame({ targetId: "local", frame: turnStart(2) });
+    shell.emitFrame({
+      targetId: "local",
+      frame: eventFrame(3, {
+        type: "message.update",
+        entryId: "assistant:stale",
+        role: "assistant",
+        text: "Stale output",
+      }),
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: eventFrame(4, {
+        type: "tool.start",
+        callId: "tool-stale",
+        tool: "read",
+        title: "Read stale file",
+      }),
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: eventFrame(5, {
+        type: "compaction.start",
+        reason: "manual",
+        at: "2026-07-11T10:00:05Z",
+      }),
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "sessions",
+        cursor: { epoch: "session-index-1", seq: 1 },
+        sessions: [
+          {
+            hostId: hostId(HOST),
+            sessionId: sessionId(SESSION),
+            project: {
+              projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+            },
+            revision: revision("rev-after-stale-work"),
+            title: "Session",
+            status: "idle",
+            updatedAt: "2026-07-11T10:00:06Z",
+            liveState: { isCompacting: false },
+          },
+        ],
+        totalCount: 1,
+        truncated: false,
+      },
+    });
+
+    const runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    const snapshot = runtime.getSnapshot();
+    expect(snapshot.sessionActive).toBe(false);
+    expect(snapshot.projection).toMatchObject({
+      turnActive: false,
+      turnStartedAt: null,
+      contextMaintenance: null,
+    });
+    expect(snapshot.projection.liveMessages.size).toBe(0);
+    expect(snapshot.projection.toolCalls.size).toBe(0);
+    runtime.dispose();
+  });
+
+  it("settles mounted activity when idle ref truth stays false across newer work", async () => {
+    const { shell, runtime } = await startedRuntime();
+    const idle = (seq: number): SessionsFrame => ({
+      v: V,
+      type: "sessions",
+      cursor: { epoch: "session-index-1", seq },
+      sessions: [
+        {
+          hostId: hostId(HOST),
+          sessionId: sessionId(SESSION),
+          project: {
+            projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+          },
+          revision: revision(`rev-idle-${seq}`),
+          title: "Session",
+          status: "idle",
+          updatedAt: `2026-07-11T10:00:0${seq}Z`,
+          liveState: { isCompacting: false },
+        },
+      ],
+      totalCount: 1,
+      truncated: false,
+    });
+
+    shell.emitFrame({ targetId: "local", frame: idle(0) });
+    expect(runtime.getSnapshot().sessionActive).toBe(false);
+    shell.emitFrame({ targetId: "local", frame: turnStart(2) });
+    expect(runtime.getSnapshot().projection.turnActive).toBe(true);
+
+    // The boolean remains idle -> idle; receive order is what proves that the
+    // second complete ref supersedes the intervening turn event.
+    shell.emitFrame({ targetId: "local", frame: idle(0) });
+    expect(runtime.getSnapshot().projection.turnActive).toBe(false);
+    expect(runtime.getSnapshot().sessionActive).toBe(false);
+  });
+
+  it("settles mounted activity when the first complete inventory is idle", async () => {
+    const { shell, runtime } = await startedRuntime();
+    shell.emitFrame({ targetId: "local", frame: turnStart(2) });
+    expect(runtime.getSnapshot().projection.turnActive).toBe(true);
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "sessions",
+        cursor: { epoch: "session-index-1", seq: 0 },
+        sessions: [
+          {
+            hostId: hostId(HOST),
+            sessionId: sessionId(SESSION),
+            project: {
+              projectId:
+                "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+            },
+            revision: revision("rev-first-idle"),
+            title: "Session",
+            status: "idle",
+            updatedAt: "2026-07-11T10:00:03Z",
+          },
+        ],
+        totalCount: 1,
+        truncated: false,
+      },
+    });
+
+    expect(runtime.getSnapshot().projection.turnActive).toBe(false);
+    expect(runtime.getSnapshot().sessionActive).toBe(false);
+  });
+
+  it("settles cached activity after a newly received complete idle inventory", async () => {
+    let warm = applyPublicFrame(createProjectionSnapshot(), snapshotFrame(1, []));
+    warm = applyPublicFrame(warm, turnStart(2));
+    warm = applyPublicFrame(
+      warm,
+      eventFrame(3, {
+        type: "compaction.start",
+        reason: "manual",
+        at: "2026-07-11T10:00:03Z",
+      }),
+    );
+    const projection = new ProjectionStore({
+      cacheStore: {
+        load: () => encodeProjectionCache(warm),
+        save: () => undefined,
+      },
+    });
+    await projection.hydrated;
+    const shell = new FakeShell();
+    const controller = createDesktopRuntimeController({ shell, projection });
+    await controller.start();
+    shell.emitFrame({ targetId: "local", frame: makeWelcome(HOST, ["sessions.prompt"]) });
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "sessions",
+        cursor: { epoch: "session-index-1", seq: 1 },
+        sessions: [
+          {
+            hostId: hostId(HOST),
+            sessionId: sessionId(SESSION),
+            project: {
+              projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+            },
+            revision: revision("rev-live-idle"),
+            title: "Session",
+            status: "idle",
+            updatedAt: "2026-07-11T10:00:04Z",
+            liveState: { isCompacting: false },
+          },
+        ],
+        totalCount: 1,
+        truncated: false,
+      },
+    });
+
+    const runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    expect(runtime.getSnapshot().sessionActive).toBe(false);
+    expect(runtime.getSnapshot().projection).toMatchObject({
+      turnActive: false,
+      contextMaintenance: null,
+    });
+    runtime.dispose();
+    await controller.stop();
+  });
+
+  it("keeps cached activity until the new connection supplies a complete inventory", async () => {
+    let warm = applyPublicFrame(createProjectionSnapshot(), snapshotFrame(1, []));
+    warm = applyPublicFrame(warm, turnStart(2));
+    warm = applyPublicFrame(warm, {
+      v: V,
+      type: "sessions",
+      cursor: { epoch: "session-index-1", seq: 0 },
+      sessions: [
+        {
+          hostId: hostId(HOST),
+          sessionId: sessionId(SESSION),
+          project: {
+            projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+          },
+          revision: revision("rev-cached-idle"),
+          title: "Session",
+          status: "idle",
+          updatedAt: "2026-07-11T10:00:03Z",
+        },
+      ],
+      totalCount: 1,
+      truncated: false,
+    });
+    const projection = new ProjectionStore({
+      cacheStore: {
+        load: () => encodeProjectionCache(warm),
+        save: () => undefined,
+      },
+    });
+    await projection.hydrated;
+    expect(projection.getSnapshot().sessionIndexMetadata.has(HOST)).toBe(true);
+
+    const shell = new FakeShell();
+    const controller = createDesktopRuntimeController({ shell, projection });
+    await controller.start();
+    // The cold connection has no host binding yet. Its cached count remains
+    // renderable, but completeness is invalidated before "connected" reaches
+    // any session runtime.
+    expect(controller.getSnapshot().projection.sessionIndexMetadata.has(HOST)).toBe(false);
+    const runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    expect(runtime.getSnapshot()).toMatchObject({
+      link: "cached",
+      projection: { turnActive: true },
+    });
+
+    shell.emitFrame({ targetId: "local", frame: makeWelcome(HOST, ["sessions.prompt"]) });
+    expect(runtime.getSnapshot().projection.turnActive).toBe(true);
+    expect(controller.getSnapshot().projection.sessionIndexMetadata.has(HOST)).toBe(false);
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "sessions",
+        cursor: { epoch: "session-index-1", seq: 0 },
+        sessions: [
+          {
+            hostId: hostId(HOST),
+            sessionId: sessionId(SESSION),
+            project: {
+              projectId:
+                "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+            },
+            revision: revision("rev-live-idle"),
+            title: "Session",
+            status: "idle",
+            updatedAt: "2026-07-11T10:00:04Z",
+          },
+        ],
+        totalCount: 1,
+        truncated: false,
+      },
+    });
+    expect(runtime.getSnapshot().projection.turnActive).toBe(false);
+
+    runtime.dispose();
+    await controller.stop();
+  });
+
+  it("keeps stale transcript activity visible as history but not as offline work", async () => {
+    const { shell, runtime } = await startedRuntime();
+    shell.emitFrame({ targetId: "local", frame: turnStart(2) });
+    expect(runtime.getSnapshot().sessionActive).toBe(true);
+
+    shell.emitState({ targetId: "local", state: "disconnected" });
+    const snapshot = runtime.getSnapshot();
+    expect(snapshot.link).toBe("offline");
+    expect(snapshot.projection.turnActive).toBe(true);
+    expect(snapshot.sessionActive).toBe(false);
+    expect(
+      deriveTranscriptRows(snapshot.projection, {
+        pendingPrompts: snapshot.pendingPrompts,
+        sessionActive: snapshot.sessionActive,
+      }).some((row) => row.kind === "working"),
+    ).toBe(false);
+  });
+
+  it("keeps same-epoch reconnect state cached until a complete inventory arrives", async () => {
+    const { shell, controller, runtime } = await startedRuntime();
+    shell.emitFrame({
+      targetId: "local",
+      frame: catalogFrame("rev-reconnect-catalog", [commandItem("session.cancel")]),
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: pendingPromptsSessionsFrame(
+        [{ entryId: "prompt:before-sleep", text: "keep going" }],
+        1,
+        "active",
+      ),
+    });
+    expect(runtime.getSnapshot()).toMatchObject({
+      link: "live",
+      sessionActive: true,
+      canPrompt: true,
+      canCancel: true,
+    });
+
+    // The same-epoch welcome deliberately invalidates inventory completeness.
+    // Retained refs remain useful history, but cannot prove current activity or
+    // enable commands until the full sessions frame is back.
+    shell.emitFrame({
+      targetId: "local",
+      frame: makeWelcome(HOST, ["sessions.prompt"]),
+    });
+    expect(runtime.getSnapshot()).toMatchObject({
+      link: "cached",
+      sessionActive: false,
+      canPrompt: false,
+      canCancel: false,
+    });
+    expect(deriveWorkspaceData(controller.getSnapshot()).sessions[0]).toMatchObject({
+      freshness: "cached",
+      status: null,
+    });
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: pendingPromptsSessionsFrame(
+        [{ entryId: "prompt:before-sleep", text: "keep going" }],
+        2,
+        "active",
+      ),
+    });
+    expect(runtime.getSnapshot()).toMatchObject({
+      link: "live",
+      sessionActive: true,
+      canPrompt: true,
+      canCancel: true,
+    });
+    expect(deriveWorkspaceData(controller.getSnapshot()).sessions[0]).toMatchObject({
+      freshness: "live",
+      status: "working",
+    });
+  });
+
+  it("uses queued host work for the same Working and Cancel truth as management", async () => {
+    const { shell, runtime } = await startedRuntime();
+    shell.emitFrame({
+      targetId: "local",
+      frame: catalogFrame("rev-queued-work", [commandItem("session.cancel")]),
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "sessions",
+        cursor: { epoch: "session-index-1", seq: 1 },
+        sessions: [
+          {
+            hostId: hostId(HOST),
+            sessionId: sessionId(SESSION),
+            project: {
+              projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+            },
+            revision: revision("rev-queued-work"),
+            title: "Session",
+            status: "idle",
+            updatedAt: "2026-07-11T10:00:01Z",
+            liveState: { queuedMessageCount: 1 },
+          },
+        ],
+        totalCount: 1,
+        truncated: false,
+      },
+    });
+
+    const snapshot = runtime.getSnapshot();
+    expect(snapshot.projection.turnActive).toBe(false);
+    expect(snapshot.pendingPrompts).toEqual([]);
+    expect(snapshot.sessionActive).toBe(true);
+    expect(snapshot.canCancel).toBe(true);
+    expect(
+      deriveTranscriptRows(snapshot.projection, {
+        pendingPrompts: snapshot.pendingPrompts,
+        sessionActive: snapshot.sessionActive,
+      }).find((row) => row.kind === "working"),
+    ).toMatchObject({ activity: "working", startedAt: null });
+  });
+
   it("disables prompting when the authoritative session ref is closed", async () => {
     const { shell, runtime } = await startedRuntime();
     const sessions: SessionsFrame = {
@@ -582,6 +2126,144 @@ describe("session lifecycle", () => {
     expect(runtime.getSnapshot().canPrompt).toBe(false);
   });
 
+  it("settles stale turn UI when the authoritative session ref becomes idle", async () => {
+    const { shell, runtime } = await startedRuntime();
+    shell.emitFrame({ targetId: "local", frame: snapshotFrame(1, []) });
+    shell.emitFrame({ targetId: "local", frame: turnStart(2) });
+    expect(runtime.getSnapshot().projection.turnActive).toBe(true);
+
+    const indexed = (seq: number, status: "active" | "idle"): SessionsFrame => ({
+      v: V,
+      type: "sessions",
+      cursor: { epoch: "epoch-1", seq },
+      sessions: [
+        {
+          hostId: hostId(HOST),
+          sessionId: sessionId(SESSION),
+          project: {
+            projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+          },
+          revision: revision(`rev-${status}`),
+          title: "Session",
+          status,
+          updatedAt: `2026-07-11T10:00:0${seq}Z`,
+        },
+      ],
+    });
+    shell.emitFrame({ targetId: "local", frame: indexed(1, "active") });
+    expect(runtime.getSnapshot().projection.turnActive).toBe(true);
+    shell.emitFrame({ targetId: "local", frame: indexed(2, "idle") });
+
+    expect(runtime.getSnapshot().projection.turnActive).toBe(false);
+    expect(runtime.getSnapshot().projection.liveMessages.size).toBe(0);
+    expect(runtime.getSnapshot().canPrompt).toBe(true);
+  });
+
+  it("clears an old error only after a later turn is authoritatively settled", async () => {
+    const { shell, runtime } = await startedRuntime();
+    const indexed = (seq: number, status: "active" | "idle"): SessionsFrame => ({
+      v: V,
+      type: "sessions",
+      cursor: { epoch: "epoch-1", seq },
+      sessions: [
+        {
+          hostId: hostId(HOST),
+          sessionId: sessionId(SESSION),
+          project: {
+            projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+          },
+          revision: revision(`rev-${status}-${seq}`),
+          title: "Session",
+          status,
+          updatedAt: `2026-07-11T10:00:0${seq}Z`,
+        },
+      ],
+      totalCount: 1,
+      truncated: false,
+    });
+
+    shell.emitFrame({ targetId: "local", frame: turnStart(2) });
+    shell.emitFrame({ targetId: "local", frame: indexed(1, "active") });
+    shell.emitFrame({ targetId: "local", frame: turnError(3, "first turn failed") });
+    shell.emitFrame({ targetId: "local", frame: indexed(2, "idle") });
+
+    // Idle belongs to the failed turn itself, so it settles volatile state but
+    // must not erase the error that explains that failure.
+    expect(deriveAttention(runtime.getSnapshot().projection).error?.message).toBe(
+      "first turn failed",
+    );
+
+    // A later turn starts, but its terminal event is missed across reconnect.
+    // The complete index still proves active -> idle and safely settles it.
+    shell.emitFrame({ targetId: "local", frame: turnStart(4) });
+    shell.emitFrame({ targetId: "local", frame: indexed(3, "active") });
+    shell.emitState({ targetId: "local", state: "disconnected" });
+    shell.emitState({ targetId: "local", state: "connected" });
+    shell.emitFrame({ targetId: "local", frame: indexed(4, "idle") });
+
+    expect(runtime.getSnapshot().projection.turnActive).toBe(false);
+    expect(deriveAttention(runtime.getSnapshot().projection).error).toBeNull();
+    expect(runtime.getSnapshot().projection.notices.some((notice) => notice.kind === "error")).toBe(
+      false,
+    );
+  });
+
+  it("does not settle a turn from a truncated inventory after reconnect", async () => {
+    const { shell, runtime } = await startedRuntime();
+    shell.emitFrame({ targetId: "local", frame: snapshotFrame(1, []) });
+    shell.emitFrame({ targetId: "local", frame: turnStart(2) });
+
+    const session = (status: "active" | "idle"): SessionsFrame["sessions"][number] => ({
+      hostId: hostId(HOST),
+      sessionId: sessionId(SESSION),
+      project: {
+        projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+      },
+      revision: revision(`rev-${status}`),
+      title: "Session",
+      status,
+      updatedAt: "2026-07-11T10:00:04Z",
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "sessions",
+        cursor: { epoch: "epoch-1", seq: 1 },
+        sessions: [session("active")],
+        totalCount: 1,
+        truncated: false,
+      },
+    });
+    shell.emitState({ targetId: "local", state: "disconnected" });
+    shell.emitState({ targetId: "local", state: "connected" });
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "sessions",
+        cursor: { epoch: "epoch-2", seq: 1 },
+        sessions: [session("idle")],
+        totalCount: 2,
+        truncated: true,
+      },
+    });
+    expect(runtime.getSnapshot().projection.turnActive).toBe(true);
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "sessions",
+        cursor: { epoch: "epoch-2", seq: 2 },
+        sessions: [session("idle")],
+        totalCount: 1,
+        truncated: false,
+      },
+    });
+    expect(runtime.getSnapshot().projection.turnActive).toBe(false);
+  });
+
   it("selecting the same session twice attaches exactly once", async () => {
     const { shell, controller } = await startedController();
     const cache = new Map<string, SessionRuntime>();
@@ -592,6 +2274,205 @@ describe("session lifecycle", () => {
     expect(again).toBe(first);
     await Promise.resolve();
     expect(shell.commandCount("session.attach")).toBe(1);
+  });
+
+  it("rebuilds retained ask, approval, and plan state across runtime recreation", async () => {
+    const { shell, controller, runtime } = await startedRuntime();
+    shell.emitFrame({
+      targetId: "local",
+      frame: eventFrame(2, {
+        type: "ask.request",
+        askId: "warm-ask",
+        question: "Which path?",
+        options: [{ id: "one", label: "One" }],
+      }),
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: durableEntryFrame(3, entry("between-events", "Durable event gap")),
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: eventFrame(4, {
+        type: "approval.request",
+        approvalId: "warm-approval",
+        title: "Approval",
+        message: "Continue?",
+      }),
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: eventFrame(5, {
+        type: "plan.ready",
+        planId: "warm-plan",
+        title: "Plan",
+        body: "1. Continue",
+      }),
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: eventFrame(6, { type: "ask.resolved", askId: "warm-ask" }),
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: snapshotFrame(6, [entry("between-events", "Durable event gap")]),
+    });
+    runtime.dispose();
+
+    const recreated = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    expect(recreated.getSnapshot().projection.ask).toBeNull();
+    expect(recreated.getSnapshot().projection.approval?.approvalId).toBe("warm-approval");
+    expect(recreated.getSnapshot().projection.plan?.planId).toBe("warm-plan");
+    expect(
+      shell.commands.findLast((request) => request.intent.command === "session.attach")?.intent
+        .args,
+    ).toEqual({ cursor: { epoch: "epoch-1", seq: 6 } });
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: eventFrame(7, { type: "approval.resolved", approvalId: "warm-approval" }),
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: eventFrame(8, { type: "plan.resolved", planId: "warm-plan" }),
+    });
+    recreated.dispose();
+    const settled = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    expect(settled.getSnapshot().projection.approval).toBeNull();
+    expect(settled.getSnapshot().projection.ask).toBeNull();
+    expect(settled.getSnapshot().projection.plan).toBeNull();
+    settled.dispose();
+  });
+
+  it("subscribes before attach so synchronous replay frames reach the transcript", async () => {
+    class SynchronousReplayShell extends FakeShell {
+      private replayed = false;
+
+      override async command(request: CommandRequest): Promise<CommandResult> {
+        const result = super.command(request);
+        if (request.intent.command === "session.attach" && !this.replayed) {
+          this.replayed = true;
+          this.emitFrame({
+            targetId: request.targetId,
+            frame: eventFrame(2, {
+              type: "ask.request",
+              askId: "attach-replay-ask",
+              question: "Replay reached the renderer?",
+              options: [],
+            }),
+          });
+        }
+        return result;
+      }
+    }
+
+    const shell = new SynchronousReplayShell();
+    const controller = createDesktopRuntimeController({ shell });
+    await controller.start();
+    shell.emitFrame({
+      targetId: "local",
+      frame: makeWelcome(HOST, ["sessions.prompt"]),
+    });
+    shell.emitFrame({ targetId: "local", frame: snapshotFrame(1, []) });
+    const runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+
+    expect(runtime.getSnapshot().projection.ask?.askId).toBe("attach-replay-ask");
+    expect(runtime.getSnapshot().projection.cursor).toEqual({ epoch: "epoch-1", seq: 2 });
+
+    runtime.dispose();
+    await controller.stop();
+  });
+
+  it("keeps cached controls gated until an exact-head attach acknowledgement", async () => {
+    let warm = applyPublicFrame(createProjectionSnapshot(), snapshotFrame(1, []));
+    warm = applyPublicFrame(
+      warm,
+      eventFrame(2, {
+        type: "ask.request",
+        askId: "cached-ask",
+        question: "Still pending?",
+        options: [],
+      }),
+    );
+    const cache = encodeProjectionCache(warm);
+    const projection = new ProjectionStore({
+      cacheStore: {
+        load: () => cache,
+        save: () => undefined,
+      },
+    });
+    await projection.hydrated;
+    const shell = new FakeShell();
+    const controller = createDesktopRuntimeController({ shell, projection });
+    await controller.start();
+    shell.emitFrame({
+      targetId: "local",
+      frame: makeWelcome(HOST, ["sessions.prompt"]),
+    });
+    const runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+
+    expect(runtime.getSnapshot().link).toBe("cached");
+    expect(runtime.getSnapshot().canPrompt).toBe(false);
+    expect(runtime.getSnapshot().canCancel).toBe(false);
+    expect(runtime.getSnapshot().projection.ask?.askId).toBe("cached-ask");
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "response",
+        requestId: "attach-ahead" as never,
+        commandId: "attach-ahead-command" as never,
+        command: "session.attach",
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        ok: true,
+        result: { attached: true, cursor: { epoch: "epoch-1", seq: 3 } },
+      },
+    });
+    expect(runtime.getSnapshot().link).toBe("cached");
+    expect(runtime.getSnapshot().canPrompt).toBe(false);
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "response",
+        requestId: "attach-exact" as never,
+        commandId: "attach-exact-command" as never,
+        command: "session.attach",
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        ok: true,
+        result: { attached: true, cursor: { epoch: "epoch-1", seq: 2 } },
+      },
+    });
+    expect(runtime.getSnapshot().link).toBe("live");
+    expect(runtime.getSnapshot().canPrompt).toBe(true);
+    expect(runtime.getSnapshot().projection.ask?.askId).toBe("cached-ask");
+
+    runtime.dispose();
+    await controller.stop();
   });
 
   it("waits for connection before attaching and ignores repeated connected notifications", async () => {
@@ -627,6 +2508,10 @@ describe("session lifecycle", () => {
     await Promise.resolve();
     shell.emitState({ targetId: "local", state: "connected" });
     expect(shell.commandCount("session.attach")).toBe(2);
+    const reconnectAttach = shell.commands.filter(
+      (request) => request.intent.command === "session.attach",
+    )[1];
+    expect(reconnectAttach?.intent.args).toEqual({ cursor: { epoch: "epoch-1", seq: 1 } });
     shell.emitState({ targetId: "local", state: "connected" });
     await Promise.resolve();
     expect(shell.commandCount("session.attach")).toBe(2);
@@ -691,6 +2576,108 @@ describe("session lifecycle", () => {
 });
 
 describe("workspace projection safety", () => {
+  it("gives cached and offline freshness precedence over stale working refs", async () => {
+    const { shell, controller } = await startedRuntime();
+    shell.emitFrame({
+      targetId: "local",
+      frame: pendingPromptsSessionsFrame(
+        [{ entryId: "prompt:stale-workspace", text: "keep going" }],
+        1,
+        "active",
+      ),
+    });
+    expect(deriveWorkspaceData(controller.getSnapshot()).sessions[0]).toMatchObject({
+      freshness: "live",
+      latestTurnCompletedAt: null,
+      status: "working",
+    });
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: V,
+        type: "gap",
+        hostId: hostId(HOST),
+        sessionId: sessionId(SESSION),
+        from: { epoch: "epoch-1", seq: 1 },
+        to: { epoch: "epoch-1", seq: 2 },
+        reason: "replay_budget_exceeded",
+      },
+    });
+    const cached = deriveWorkspaceData(controller.getSnapshot());
+    expect(cached.sessions[0]).toMatchObject({
+      freshness: "cached",
+      latestTurnCompletedAt: null,
+      status: null,
+    });
+    expect(
+      buildProjectGroups(cached, {}, { [sessionViewId(HOST, SESSION)]: "2026-07-10T10:00:00Z" })[0]
+        ?.sessions[0]?.unread,
+    ).toBe(false);
+
+    shell.emitState({ targetId: "local", state: "disconnected" });
+    const offline = deriveWorkspaceData(controller.getSnapshot());
+    expect(offline.sessions[0]).toMatchObject({
+      freshness: "offline",
+      latestTurnCompletedAt: null,
+      status: null,
+    });
+    expect(
+      buildProjectGroups(offline, {}, { [sessionViewId(HOST, SESSION)]: "2026-07-10T10:00:00Z" })[0]
+        ?.sessions[0]?.unread,
+    ).toBe(false);
+  });
+
+  it("shows idle refs with pending, queued, or compacting host work as working", async () => {
+    const { shell, controller } = await startedRuntime();
+    const liveStates = [
+      {
+        pendingPrompts: [
+          {
+            entryId: "prompt:workspace",
+            text: "keep going",
+            attachmentCount: 0,
+            at: "2026-07-11T10:00:01Z",
+          },
+        ],
+      },
+      { queuedMessageCount: 1 },
+      { isCompacting: true },
+    ] as const;
+
+    for (const [index, liveState] of liveStates.entries()) {
+      shell.emitFrame({
+        targetId: "local",
+        frame: {
+          v: V,
+          type: "sessions",
+          cursor: { epoch: "session-index-1", seq: index + 1 },
+          sessions: [
+            {
+              hostId: hostId(HOST),
+              sessionId: sessionId(SESSION),
+              project: {
+                projectId: "project-1" as SessionsFrame["sessions"][number]["project"]["projectId"],
+              },
+              revision: revision(`rev-workspace-${index}`),
+              title: "Session",
+              status: "idle",
+              updatedAt: `2026-07-11T10:00:0${index + 1}Z`,
+              liveState,
+            },
+          ],
+          totalCount: 1,
+          truncated: false,
+        },
+      });
+
+      expect(deriveWorkspaceData(controller.getSnapshot()).sessions[0]).toMatchObject({
+        status: "working",
+        latestTurnCompletedAt: null,
+      });
+    }
+  });
+
   it("marks a host inventory partial when indexed refs fall below its advertised total", async () => {
     const { controller } = await startedRuntime();
     const base = controller.getSnapshot();
@@ -727,10 +2714,7 @@ describe("workspace projection safety", () => {
 
     const otherHost = "host-b";
     const rawProjectId = "/workspace" as SessionsFrame["sessions"][number]["project"]["projectId"];
-    const makeArchivedRef = (
-      host: string,
-      session: string,
-    ): SessionsFrame["sessions"][number] => ({
+    const makeArchivedRef = (host: string, session: string): SessionsFrame["sessions"][number] => ({
       hostId: hostId(host),
       sessionId: sessionId(session),
       project: { projectId: rawProjectId, name: "workspace" },
@@ -860,6 +2844,39 @@ describe("window runtime slot", () => {
     expect(shell.bootstrapCalls).toBe(1);
     expect(shell.connectCalls).toBe(1);
     await first.stop();
+  });
+
+  it("retains one live controller across a persisted pagehide/pageshow", async () => {
+    class FakePageLifecycleTarget {
+      private readonly listeners = new Map<string, Set<EventListener>>();
+      addEventListener(type: "pagehide" | "pageshow", listener: EventListener): void {
+        const listeners = this.listeners.get(type) ?? new Set<EventListener>();
+        listeners.add(listener);
+        this.listeners.set(type, listeners);
+      }
+      removeEventListener(type: "pagehide" | "pageshow", listener: EventListener): void {
+        this.listeners.get(type)?.delete(listener);
+      }
+      dispatch(type: "pagehide" | "pageshow", persisted: boolean): void {
+        const event = { type, persisted } as unknown as Event;
+        for (const listener of this.listeners.get(type) ?? []) listener(event);
+      }
+    }
+
+    const shell = new FakeShell();
+    const holder: RuntimeSlotHolder = {};
+    const pageTarget = new FakePageLifecycleTarget();
+    const first = acquireRuntimeController(shell, holder);
+    startRuntimeController(shell, holder, pageTarget);
+    await first.start();
+
+    pageTarget.dispatch("pagehide", true);
+    pageTarget.dispatch("pageshow", true);
+    expect(acquireRuntimeController(shell, holder)).toBe(first);
+    expect(first.getSnapshot().startState).toBe("started");
+
+    pageTarget.dispatch("pagehide", false);
+    expect(acquireRuntimeController(shell, holder)).not.toBe(first);
   });
 });
 describe("authoritative live runtime protocol", () => {

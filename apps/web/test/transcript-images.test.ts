@@ -8,7 +8,7 @@ import {
   type SessionSnapshotFrame,
 } from "@t4-code/protocol";
 import type { CommandRequest, CommandResult } from "@t4-code/protocol/desktop-ipc";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { createFixtureSessionRuntime } from "../src/features/session-runtime/controller.ts";
 import { createLiveSessionRuntime } from "../src/features/session-runtime/live-runtime.ts";
@@ -22,6 +22,7 @@ import {
   TRANSCRIPT_IMAGE_DECODE_ERROR,
   TRANSCRIPT_IMAGE_INTEGRITY_ERROR,
   TRANSCRIPT_IMAGE_MAX_CHUNKS,
+  TRANSCRIPT_IMAGE_PAUSED_REASON,
   TRANSCRIPT_IMAGE_PROTOCOL_ERROR,
   type TranscriptImageCommandResult,
   type TranscriptImageSnapshot,
@@ -336,6 +337,289 @@ describe("bounded transcript image source", () => {
     releaseSecond();
     source.dispose();
     expect(revoked).toEqual(["blob:verified"]);
+  });
+
+  it("reversibly evicts ready bytes on pause while retains and listeners remain active", async () => {
+    const bytes = pngBytes(32, 41);
+    const image = await reference(bytes, { entryId: "pause-ready" });
+    const revoked: string[] = [];
+    let reads = 0;
+    const source = createTranscriptImageSource({
+      availability: { available: true },
+      readChunk: async (nextImage, offset) => {
+        reads += 1;
+        return responseFor(bytes, nextImage, offset);
+      },
+      createObjectUrl: () => `blob:pause-ready-${reads}`,
+      revokeObjectUrl: (url) => revoked.push(url),
+    });
+    let notifications = 0;
+    const unsubscribe = source.subscribe(image, () => {
+      notifications += 1;
+    });
+    const release = source.retain(image);
+    const first = await waitForStatus(source, image, "ready");
+
+    expect(first).toMatchObject({ status: "ready", url: "blob:pause-ready-1" });
+    expect((source as unknown as { readonly residentBytes: number }).residentBytes).toBe(
+      bytes.byteLength,
+    );
+
+    source.pause();
+    source.pause();
+
+    expect(source.getSnapshot(image)).toEqual({
+      status: "unavailable",
+      reason: TRANSCRIPT_IMAGE_PAUSED_REASON,
+    });
+    expect(revoked).toEqual(["blob:pause-ready-1"]);
+    expect((source as unknown as { readonly residentBytes: number }).residentBytes).toBe(0);
+    const pausedNotifications = notifications;
+
+    source.resume();
+    source.resume();
+
+    expect(await waitForStatus(source, image, "ready")).toMatchObject({
+      status: "ready",
+      url: "blob:pause-ready-2",
+    });
+    expect(reads).toBe(2);
+    expect(notifications).toBeGreaterThan(pausedNotifications);
+
+    release();
+    unsubscribe();
+    source.dispose();
+    expect(revoked).toEqual(["blob:pause-ready-1", "blob:pause-ready-2"]);
+  });
+
+  it("cancels a non-abortable paused load and never commits its stale response after resume", async () => {
+    const bytes = pngBytes(32, 42);
+    const image = await reference(bytes, { entryId: "pause-race" });
+    const firstResult = deferred<TranscriptImageCommandResult>();
+    const created: string[] = [];
+    const revoked: string[] = [];
+    let reads = 0;
+    let firstCancelled = false;
+    const source = createTranscriptImageSource({
+      availability: { available: true },
+      maxConcurrentLoads: 1,
+      readChunk: async (nextImage, offset, signal) => {
+        reads += 1;
+        if (reads === 1) {
+          signal.onCancel(() => {
+            firstCancelled = true;
+          });
+          // Match the desktop command path: cancellation cannot abort the
+          // already-issued RPC, so its eventual response must be discarded.
+          return firstResult.promise;
+        }
+        return responseFor(bytes, nextImage, offset);
+      },
+      createObjectUrl: () => {
+        const url = `blob:pause-race-${created.length + 1}`;
+        created.push(url);
+        return url;
+      },
+      revokeObjectUrl: (url) => revoked.push(url),
+    });
+    const release = source.retain(image);
+    expect(reads).toBe(1);
+
+    source.pause();
+    source.resume();
+    expect(firstCancelled).toBe(true);
+    expect(created).toEqual([]);
+
+    firstResult.resolve(responseFor(bytes, image, 0));
+    expect(await waitForStatus(source, image, "ready")).toMatchObject({
+      status: "ready",
+      url: "blob:pause-race-1",
+    });
+    expect(reads).toBe(2);
+    expect(created).toEqual(["blob:pause-race-1"]);
+
+    source.pause();
+    source.dispose();
+    release();
+    expect(revoked).toEqual(["blob:pause-race-1"]);
+    expect((source as unknown as { readonly entries: Map<unknown, unknown> }).entries.size).toBe(0);
+    expect((source as unknown as { readonly residentBytes: number }).residentBytes).toBe(0);
+    expect((source as unknown as { readonly reservedBytes: number }).reservedBytes).toBe(0);
+  });
+
+  it("drops accumulated segments immediately across eight paused runtimes with stalled RPCs", async () => {
+    const runtimeCount = 8;
+    const loadsPerRuntime = 4;
+    const declaredSize = 16 * 1024 * 1024;
+    const firstChunk = pngBytes(TRANSCRIPT_IMAGE_CHUNK_BYTES, 44);
+    const encodedFirstChunk = base64(firstChunk);
+    const gates = new Map<string, ReturnType<typeof deferred<TranscriptImageCommandResult>>>();
+    const stalled = new Set<string>();
+    let urlsCreated = 0;
+    const sources = Array.from({ length: runtimeCount }, (_, runtimeIndex) =>
+      createTranscriptImageSource({
+        availability: { available: true },
+        maxConcurrentLoads: loadsPerRuntime,
+        readChunk: (image, offset) => {
+          if (offset === 0) {
+            return Promise.resolve({
+              accepted: true,
+              result: {
+                sha256: image.sha256,
+                mimeType: image.mimeType,
+                size: declaredSize,
+                offset: 0,
+                nextOffset: TRANSCRIPT_IMAGE_CHUNK_BYTES,
+                complete: false,
+                content: encodedFirstChunk,
+              },
+            });
+          }
+          stalled.add(image.entryId);
+          const gate = deferred<TranscriptImageCommandResult>();
+          gates.set(image.entryId, gate);
+          return gate.promise;
+        },
+        createObjectUrl: () => {
+          urlsCreated += 1;
+          return `blob:stalled-${runtimeIndex}-${urlsCreated}`;
+        },
+      }),
+    );
+    const references = sources.map((_, runtimeIndex) =>
+      Array.from({ length: loadsPerRuntime }, (_, loadIndex): TranscriptImageReference => ({
+        entryId: `stalled-${runtimeIndex}-${loadIndex}`,
+        sha256: `${runtimeIndex.toString(16)}${loadIndex.toString(16)}`.padEnd(64, "a"),
+        mimeType: "image/png",
+      })),
+    );
+    const releases = sources.map((source, runtimeIndex) =>
+      references[runtimeIndex]!.map((image) => source.retain(image)),
+    );
+    type DebugSource = {
+      readonly activeLoads: number;
+      readonly bufferedBytes: number;
+      readonly materializedBytes: number;
+      readonly reservedBytes: number;
+      readonly entries: Map<string, { readonly accumulator: unknown }>;
+    };
+    const debug = (source: (typeof sources)[number]) => source as unknown as DebugSource;
+    const sum = (
+      field: "activeLoads" | "bufferedBytes" | "materializedBytes" | "reservedBytes",
+    ) =>
+      sources.reduce((total, source) => total + debug(source)[field], 0);
+
+    await vi.waitFor(() => expect(stalled.size).toBe(runtimeCount * loadsPerRuntime));
+
+    // The old implementation had already allocated all 512 MiB represented
+    // by these reservations. Segment accumulation holds only the 8 MiB that
+    // actually arrived before the host calls stalled.
+    expect(sum("reservedBytes")).toBe(runtimeCount * loadsPerRuntime * declaredSize);
+    expect(sum("bufferedBytes")).toBe(
+      runtimeCount * loadsPerRuntime * TRANSCRIPT_IMAGE_CHUNK_BYTES,
+    );
+    expect(sum("materializedBytes")).toBe(0);
+    expect(sum("activeLoads")).toBe(runtimeCount * loadsPerRuntime);
+
+    for (const source of sources) source.pause();
+
+    // The host Promises are deliberately still unresolved. Pausing must drop
+    // actual Uint8Array references and reservation authority synchronously.
+    expect(gates.size).toBe(runtimeCount * loadsPerRuntime);
+    expect(sum("activeLoads")).toBe(runtimeCount * loadsPerRuntime);
+    expect(sum("bufferedBytes")).toBe(0);
+    expect(sum("materializedBytes")).toBe(0);
+    expect(sum("reservedBytes")).toBe(0);
+    for (const source of sources) {
+      for (const entry of debug(source).entries.values()) {
+        expect(entry.accumulator).toBeNull();
+      }
+    }
+    expect(urlsCreated).toBe(0);
+
+    for (const gate of gates.values()) gate.resolve({ accepted: false });
+    await vi.waitFor(() => expect(sum("activeLoads")).toBe(0));
+    for (const runtimeReleases of releases) {
+      for (const release of runtimeReleases) release();
+    }
+    for (const source of sources) source.dispose();
+    expect(urlsCreated).toBe(0);
+  });
+
+  it("globally serializes materialization and cancels paused finalizer waiters", async () => {
+    const runtimeCount = 8;
+    const bytes = pngBytes(TRANSCRIPT_IMAGE_CHUNK_BYTES + 32, 45);
+    const image = await reference(bytes, { entryId: "deferred-digest" });
+    const digestGate = deferred<string>();
+    let digestCalls = 0;
+    const digestSizes: number[] = [];
+    let urlsCreated = 0;
+    const sources = Array.from({ length: runtimeCount }, (_, runtimeIndex) =>
+      createTranscriptImageSource({
+        availability: { available: true },
+        readChunk: async (nextImage, offset) => responseFor(bytes, nextImage, offset),
+        digest: (input) => {
+          digestCalls += 1;
+          digestSizes.push(input.byteLength);
+          return digestGate.promise;
+        },
+        createObjectUrl: () => {
+          urlsCreated += 1;
+          return `blob:deferred-digest-${runtimeIndex}-${urlsCreated}`;
+        },
+      }),
+    );
+    const releases = sources.map((source) => source.retain(image));
+    type DebugSource = {
+      readonly activeLoads: number;
+      readonly bufferedBytes: number;
+      readonly materializedBytes: number;
+      readonly reservedBytes: number;
+    };
+    const debug = (source: (typeof sources)[number]) => source as unknown as DebugSource;
+    const sum = (
+      field: "activeLoads" | "bufferedBytes" | "materializedBytes" | "reservedBytes",
+    ) => sources.reduce((total, source) => total + debug(source)[field], 0);
+    let digestReleased = false;
+    try {
+      await vi.waitFor(() => {
+        expect(digestCalls).toBe(1);
+        expect(sum("materializedBytes")).toBe(bytes.byteLength);
+        expect(sum("bufferedBytes")).toBe((runtimeCount - 1) * bytes.byteLength);
+      });
+
+      // Seven completed downloads wait as clearable segments. Only the global
+      // finalizer owner has a contiguous buffer captured by the stalled digest.
+      expect(digestSizes).toEqual([bytes.byteLength]);
+      expect(sum("reservedBytes")).toBe(runtimeCount * bytes.byteLength);
+      expect(sum("activeLoads")).toBe(runtimeCount);
+      expect(urlsCreated).toBe(0);
+
+      for (const source of sources) source.pause();
+
+      // Paused queue members never materialize. The sole in-flight digest keeps
+      // exactly one authoritative reservation until its Promise unwinds.
+      expect(digestCalls).toBe(1);
+      expect(sum("bufferedBytes")).toBe(0);
+      expect(sum("materializedBytes")).toBe(bytes.byteLength);
+      expect(sum("reservedBytes")).toBe(bytes.byteLength);
+      expect(urlsCreated).toBe(0);
+
+      digestReleased = true;
+      digestGate.resolve(image.sha256);
+      await vi.waitFor(() => expect(sum("activeLoads")).toBe(0));
+      expect(sum("bufferedBytes")).toBe(0);
+      expect(sum("materializedBytes")).toBe(0);
+      expect(sum("reservedBytes")).toBe(0);
+      expect(digestCalls).toBe(1);
+      expect(urlsCreated).toBe(0);
+    } finally {
+      for (const source of sources) source.pause();
+      if (!digestReleased) digestGate.resolve(image.sha256);
+      for (const release of releases) release();
+      await vi.waitFor(() => expect(sum("activeLoads")).toBe(0));
+      for (const source of sources) source.dispose();
+    }
   });
 
   it("refuses digest and MIME magic mismatches before creating a URL", async () => {
@@ -814,5 +1098,79 @@ describe("runtime capability gating", () => {
     release();
     runtime.dispose();
     await controller.stop();
+  });
+
+  it("routes runtime pause and resume through reversible transcript-image eviction", async () => {
+    const bytes = pngBytes(32, 43);
+    const image = await reference(bytes, { entryId: "runtime-pause" });
+    const shell = new FakeShell();
+    shell.command = async (request: CommandRequest): Promise<CommandResult> => {
+      shell.commands.push(request);
+      const result =
+        request.intent.command === "session.image.read"
+          ? responseFor(bytes, image, Number(request.intent.args?.offset)).result
+          : { accepted: true };
+      return {
+        targetId: request.targetId,
+        requestId: `runtime-pause-${shell.commands.length}`,
+        commandId: `runtime-pause-command-${shell.commands.length}`,
+        accepted: true,
+        result,
+      };
+    };
+    const created: string[] = [];
+    const revoked: string[] = [];
+    const createObjectUrl = vi.spyOn(URL, "createObjectURL").mockImplementation(() => {
+      const url = `blob:runtime-pause-${created.length + 1}`;
+      created.push(url);
+      return url;
+    });
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation((url) => {
+      revoked.push(url);
+    });
+    const controller = createDesktopRuntimeController({ shell });
+    try {
+      await controller.start();
+      shell.emitFrame({
+        targetId: "local",
+        frame: makeWelcome(HOST, ["sessions.read"], ["transcript.images"]),
+      });
+      shell.emitFrame({ targetId: "local", frame: snapshot() });
+      const runtime = createLiveSessionRuntime({
+        controller,
+        targetId: "local",
+        hostId: HOST,
+        sessionId: SESSION,
+      });
+      const release = runtime.transcriptImages.retain(image);
+      expect(await waitForStatus(runtime.transcriptImages, image, "ready")).toMatchObject({
+        status: "ready",
+        url: "blob:runtime-pause-1",
+      });
+
+      runtime.pause();
+      runtime.pause();
+      expect(runtime.transcriptImages.getSnapshot(image)).toEqual({
+        status: "unavailable",
+        reason: TRANSCRIPT_IMAGE_PAUSED_REASON,
+      });
+      expect(revoked).toEqual(["blob:runtime-pause-1"]);
+
+      runtime.resume();
+      runtime.resume();
+      expect(await waitForStatus(runtime.transcriptImages, image, "ready")).toMatchObject({
+        status: "ready",
+        url: "blob:runtime-pause-2",
+      });
+      expect(shell.commandCount("session.image.read")).toBe(2);
+
+      release();
+      runtime.dispose();
+      expect(revoked).toEqual(["blob:runtime-pause-1", "blob:runtime-pause-2"]);
+    } finally {
+      await controller.stop();
+      createObjectUrl.mockRestore();
+      revokeObjectUrl.mockRestore();
+    }
   });
 });

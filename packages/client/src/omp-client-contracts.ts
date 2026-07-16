@@ -71,6 +71,8 @@ export interface OmpClientOptions {
   cursorStore?: CursorStore; projection?: ProjectionStore; clock?: Clock; timers?: TimerScheduler; ids?: IdFactory;
   random?: () => number; reconnect?: { baseMs?: number; maxMs?: number; attemptCap?: number };
   heartbeat?: { intervalMs?: number; timeoutMs?: number }; handshakeTimeoutMs?: number; commandTimeoutMs?: number;
+  /** Maximum inbound-idle time before a foreground wake replaces a possibly stale socket. */
+  wakeStaleAfterMs?: number;
   maxPending?: number; privilegedPairResult?: (result: PairOkFrame) => void | Promise<void>;
 }
 export interface OmpStateSnapshot {

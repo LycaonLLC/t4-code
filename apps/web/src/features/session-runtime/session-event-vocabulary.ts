@@ -12,6 +12,7 @@ export type SessionEventProjectionKind =
   | "message-delta"
   | "message-update"
   | "message-settled"
+  | "message-discarded"
   | "tool-start"
   | "tool-progress"
   | "tool-result"
@@ -25,6 +26,8 @@ export type SessionEventProjectionKind =
   | "turn-error"
   | "turn-retry"
   | "compaction"
+  | "compaction-start"
+  | "compaction-end"
   | "inspect-only";
 
 export interface SessionEventSpec {
@@ -43,6 +46,7 @@ export const SESSION_EVENT_VOCABULARY = {
   "message.delta": { activityKind: "system", projection: "message-delta" },
   "message.update": { activityKind: "system", projection: "message-update" },
   "message.settled": { activityKind: "system", projection: "message-settled" },
+  "message.discarded": { activityKind: "system", projection: "message-discarded" },
   "tool.start": { activityKind: "tool", projection: "tool-start" },
   "tool.progress": { activityKind: "tool", projection: "tool-progress" },
   "tool.result": { activityKind: "tool", projection: "tool-result" },
@@ -56,8 +60,8 @@ export const SESSION_EVENT_VOCABULARY = {
   "turn.retry": { activityKind: "system", projection: "turn-retry" },
   "turn.retry.result": { activityKind: "system", projection: "inspect-only" },
   compaction: { activityKind: "system", projection: "compaction" },
-  "compaction.start": { activityKind: "system", projection: "inspect-only" },
-  "compaction.end": { activityKind: "system", projection: "inspect-only" },
+  "compaction.start": { activityKind: "system", projection: "compaction-start" },
+  "compaction.end": { activityKind: "system", projection: "compaction-end" },
 
   // Complete canonical OMP appserver runtime vocabulary. Most lifecycle and
   // support events belong in Activity rather than as transcript rows, but
@@ -109,6 +113,7 @@ export const OMP_APPSERVER_SESSION_EVENT_TYPES = [
   "turn.end",
   "message.update",
   "message.settled",
+  "message.discarded",
   "tool.start",
   "tool.progress",
   "tool.result",

@@ -43,6 +43,80 @@ test("Android credentials are encrypted by a registered Keystore plugin", async 
   assert.doesNotMatch(plugin, /putString\([^,]+,\s*deviceToken\)/);
 });
 
+test("Android foreground resume wakes the browser connection immediately", async () => {
+  const activity = await readFile(
+    resolve(
+      mobileRoot,
+      "android/app/src/main/java/com/lycaonsolutions/t4code/MainActivity.java",
+    ),
+    "utf8",
+  );
+
+  assert.match(activity, /void onResume\(\)/);
+  assert.match(activity, /super\.onResume\(\)/);
+  assert.match(activity, /triggerWindowJSEvent\(APP_RESUME_EVENT\)/);
+  assert.match(activity, /APP_RESUME_EVENT = "t4:native-resume"/);
+});
+
+test("Android updates use a registered native bridge with no renderer-supplied URL", async () => {
+  const sourceRoot = resolve(
+    mobileRoot,
+    "android/app/src/main/java/com/lycaonsolutions/t4code",
+  );
+  const activity = await readFile(resolve(sourceRoot, "MainActivity.java"), "utf8");
+  const fileProvider = await readFile(resolve(sourceRoot, "T4FileProvider.java"), "utf8");
+  const fileStore = await readFile(resolve(sourceRoot, "T4UpdateFileStore.java"), "utf8");
+  const plugin = await readFile(resolve(sourceRoot, "T4UpdatePlugin.java"), "utf8");
+  const verifier = await readFile(resolve(sourceRoot, "T4UpdateVerifier.java"), "utf8");
+  const manifest = await readFile(resolve(mobileRoot, "android/app/src/main/AndroidManifest.xml"), "utf8");
+  const providerPaths = await readFile(
+    resolve(mobileRoot, "android/app/src/main/res/xml/file_paths.xml"),
+    "utf8",
+  );
+
+  assert.match(activity, /registerPlugin\(T4UpdatePlugin\.class\)/);
+  assert.match(plugin, /@CapacitorPlugin\(name = "T4Update"\)/);
+  assert.match(plugin, /https:\/\/t4code\.net\/releases\/latest\.json/);
+  assert.match(verifier, /https:\/\/github\.com\/LycaonLLC\/t4-code\/releases\/download\//);
+  assert.match(plugin, /checkForUpdate\(PluginCall call\)/);
+  assert.match(plugin, /openUpdate\(PluginCall call\)/);
+  assert.match(plugin, /T4UpdateVerifier\.copyExact\(input, output, release\.apkSize, release\.apkSha256\)/);
+  assert.match(plugin, /EXPECTED_PACKAGE_ID = "com\.lycaonsolutions\.t4code"/);
+  assert.match(plugin, /expectedVersion\.equals\(candidate\.versionName\)/);
+  assert.match(plugin, /PackageManager\.GET_SIGNING_CERTIFICATES/);
+  assert.match(plugin, /PackageManager\.GET_SIGNATURES/);
+  assert.match(plugin, /getSigningCertificateHistory\(\)/);
+  assert.match(plugin, /T4UpdateVerifier\.isTrustedSignerTransition\(/);
+  assert.match(plugin, /T4UpdateVerifier\.sameSignerSet\(legacySigners\(installed\), legacySigners\(candidate\)\)/);
+  assert.match(fileStore, /File\.createTempFile\("T4-Code-" \+ version/);
+  assert.match(fileStore, /verified\.setReadOnly\(\)/);
+  assert.match(fileStore, /ACTIVE_OWNERS\.put\(ownershipKey, ownerToken\)/);
+  assert.match(fileStore, /requireOwnership\(\)/);
+  assert.match(plugin, /updateState\.installerOpened\(\)/);
+  assert.match(plugin, /notifyListeners\(STATE_CHANGED_EVENT, state\)/);
+  assert.match(plugin, /result\.put\("revision", updateState\.revision\(\)\)/);
+  assert.match(plugin, /BuildConfig\.APPLICATION_ID/);
+  assert.match(plugin, /BuildConfig\.VERSION_NAME/);
+  assert.match(plugin, /FileProvider\.getUriForFile/);
+  assert.match(plugin, /new Intent\(Intent\.ACTION_VIEW\)/);
+  assert.match(plugin, /Intent\.FLAG_GRANT_READ_URI_PERMISSION/);
+  assert.match(verifier, /count > expectedSize - total/);
+  assert.match(verifier, /total != expectedSize/);
+  assert.match(verifier, /MessageDigest\.getInstance\("SHA-256"\)/);
+  assert.match(manifest, /android\.permission\.REQUEST_INSTALL_PACKAGES/);
+  assert.match(fileProvider, /final class T4FileProvider extends FileProvider/);
+  assert.match(manifest, /android:name="\.T4FileProvider"/);
+  assert.match(providerPaths, /<cache-path name="verified_updates" path="t4-updates\/" \/>/);
+  assert.doesNotMatch(providerPaths, /<external-path/);
+  assert.doesNotMatch(providerPaths, /path="\."/);
+  assert.doesNotMatch(plugin, /call\.getString\("(?:url|uri|path)"\)/);
+  assert.doesNotMatch(plugin, /setInstanceFollowRedirects\(true\)/);
+  assert.doesNotMatch(plugin, /CATEGORY_BROWSABLE/);
+  assert.doesNotMatch(plugin, /android\.content\.pm\.PackageInstaller|PackageInstaller\.Session/);
+  assert.doesNotMatch(plugin, /validatedApkUrl/);
+  assert.doesNotMatch(plugin, /return "0\.0\.0"/);
+});
+
 test("the bundled document restricts connections without constraining the hosted web build", async () => {
   const prepareScript = await readFile(resolve(mobileRoot, "scripts/prepare-web.mjs"), "utf8");
   const hostedIndex = await readFile(resolve(mobileRoot, "../web/index.html"), "utf8");

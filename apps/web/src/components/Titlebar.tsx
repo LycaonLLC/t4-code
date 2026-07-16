@@ -4,7 +4,11 @@
 import { Badge, BrandLockup, IconButton, Tooltip, TooltipPopup, TooltipTrigger } from "@t4-code/ui";
 import { useNavigate } from "@tanstack/react-router";
 import { Command, Moon, PanelLeft, Settings, Sun } from "lucide-react";
+import { useEffect } from "react";
 
+import { updateIsAvailable } from "../features/updates/update-model.ts";
+import { subscribeNativeUpdateSettingsOpen } from "../features/updates/update-navigation.ts";
+import { useAppUpdateState } from "../features/updates/update-store.ts";
 import { rendererPlatform, useWorkspace, workspaceStore } from "../state/store-instance.ts";
 import { resolveTheme } from "../theme/theme.ts";
 import { HostedAppAction } from "./HostedAppAction.tsx";
@@ -42,21 +46,39 @@ function ThemeToggle() {
 
 function SettingsButton() {
   const navigate = useNavigate();
+  const update = useAppUpdateState();
+  const hasUpdate = updateIsAvailable(update.phase);
+
+  useEffect(
+    () => subscribeNativeUpdateSettingsOpen(() => void navigate({ to: "/settings" })),
+    [navigate],
+  );
+
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <IconButton
-            aria-label="Open settings"
+            aria-label={hasUpdate ? "Open settings; T4 Code update available" : "Open settings"}
             className="size-11 sm:size-7"
             onClick={() => void navigate({ to: "/settings" })}
             size="icon-sm"
           >
-            <Settings />
+            <span className="relative">
+              <Settings />
+              {hasUpdate && (
+                <span
+                  aria-hidden="true"
+                  className="absolute -end-1 -top-1 size-1.5 rounded-full bg-primary ring-2 ring-background"
+                />
+              )}
+            </span>
           </IconButton>
         }
       />
-      <TooltipPopup side="bottom">Settings (Ctrl+,)</TooltipPopup>
+      <TooltipPopup side="bottom">
+        {hasUpdate ? "Settings · T4 Code update available" : "Settings (Ctrl+,)"}
+      </TooltipPopup>
     </Tooltip>
   );
 }

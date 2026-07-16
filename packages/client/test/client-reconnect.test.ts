@@ -176,6 +176,280 @@ describe("OmpClient reconnect stability", () => {
     await client.close();
   });
 
+  it("foreground wake skips one pending backoff without opening duplicate transports", async () => {
+    const clock = new FakeClock();
+    const transports = [
+      new FakeTransport({ welcome: welcome() }),
+      new FakeTransport({ welcome: welcome({ resumed: true }) }),
+    ];
+    let factoryCalls = 0;
+    const client = new OmpClient({
+      transport: () => {
+        factoryCalls += 1;
+        return transports[factoryCalls - 1] ?? new FakeTransport();
+      },
+      hostId: HOST,
+      timers: clock,
+      clock,
+      random: () => 0,
+      reconnect: { baseMs: 10_000, maxMs: 10_000, attemptCap: 2 },
+    });
+
+    await client.connect();
+    transports[0]?.drop();
+    expect(client.state).toBe("reconnect-wait");
+    expect(factoryCalls).toBe(1);
+
+    client.wake();
+    client.wake();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(factoryCalls).toBe(2);
+    expect(client.state).toBe("ready");
+    expect(client.snapshot().attempt).toBe(1);
+    await client.close();
+  });
+
+  it("foreground wake revives retry-exhausted transport failure with a fresh bounded budget", async () => {
+    const clock = new FakeClock();
+    const transports = [
+      new FakeTransport({ welcome: welcome() }),
+      new FakeTransport({ welcome: welcome({ resumed: true }) }),
+    ];
+    let factoryCalls = 0;
+    const client = new OmpClient({
+      transport: () => {
+        factoryCalls += 1;
+        return transports[factoryCalls - 1] ?? new FakeTransport();
+      },
+      hostId: HOST,
+      timers: clock,
+      clock,
+      reconnect: { attemptCap: 0 },
+    });
+
+    await client.connect();
+    transports[0]?.drop();
+    expect(client.state).toBe("fatal");
+
+    client.wake();
+    client.wake();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(factoryCalls).toBe(2);
+    expect(client.state).toBe("ready");
+    expect(client.snapshot().attempt).toBe(0);
+    await client.close();
+  });
+
+  it("explicit reconnectNow replaces a fresh socket exactly once", async () => {
+    const first = new FakeTransport({ welcome: welcome() });
+    const second = new FakeTransport({ welcome: welcome({ resumed: true }) });
+    const transports = [first, second];
+    let factoryCalls = 0;
+    const client = new OmpClient({
+      transport: () => {
+        const transport = transports[factoryCalls];
+        factoryCalls += 1;
+        return transport ?? new FakeTransport();
+      },
+      hostId: HOST,
+      reconnect: { baseMs: 10_000, maxMs: 10_000, attemptCap: 2 },
+    });
+
+    await client.connect();
+    client.reconnectNow();
+    client.reconnectNow();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(factoryCalls).toBe(2);
+    expect(client.state).toBe("ready");
+    await client.close();
+  });
+
+  it("does not revive a non-retryable protocol failure on wake", async () => {
+    const transport = new FakeTransport({ welcome: welcome() });
+    let factoryCalls = 0;
+    const client = new OmpClient({
+      transport: () => {
+        factoryCalls += 1;
+        return transport;
+      },
+      hostId: HOST,
+    });
+
+    await client.connect();
+    transport.emit({ v: V, type: "unknown" });
+    expect(client.state).toBe("fatal");
+    client.wake();
+    client.reconnectNow();
+    await Promise.resolve();
+
+    expect(factoryCalls).toBe(1);
+    expect(client.state).toBe("fatal");
+    await client.close();
+  });
+
+  it("replaces only a stale ready socket on wake and preserves replay attachments", async () => {
+    const clock = new FakeClock();
+    const first = new FakeTransport({
+      welcome: welcome(),
+      onSend: (frame, current) => {
+        if (frame.type === "command" && frame.command === "session.attach") {
+          current.emit(responseFor(frame, { attached: true, cursor: { epoch: "epoch-a", seq: 0 } }));
+        }
+      },
+    });
+    const second = new FakeTransport({
+      welcome: welcome({ resumed: true }),
+      onSend: (frame, current) => {
+        if (frame.type === "command" && frame.command === "session.attach") {
+          current.emit(responseFor(frame, { attached: true, cursor: { epoch: "epoch-a", seq: 0 } }));
+        }
+      },
+    });
+    const transports = [first, second];
+    let factoryCalls = 0;
+    const client = new OmpClient({
+      transport: () => {
+        const transport = transports[factoryCalls];
+        factoryCalls += 1;
+        return transport ?? new FakeTransport();
+      },
+      hostId: HOST,
+      timers: clock,
+      clock,
+      random: () => 0,
+      heartbeat: { intervalMs: 100, timeoutMs: 10 },
+      reconnect: { baseMs: 1_000, maxMs: 1_000, attemptCap: 2 },
+      wakeStaleAfterMs: 10,
+    });
+
+    await client.connect();
+    await client.command({ hostId: HOST, sessionId: SESSION, command: "session.attach", args: {} });
+    const pending = client.command({ hostId: HOST, command: "host.list", args: {} });
+    const pendingFailure = expect(pending).rejects.toMatchObject({ code: "outcome_unknown" });
+
+    clock.advanceBy(9);
+    client.wake();
+    await Promise.resolve();
+    expect(factoryCalls).toBe(1);
+    expect(client.state).toBe("ready");
+
+    clock.advanceBy(1);
+    client.wake();
+    client.wake();
+    await pendingFailure;
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(factoryCalls).toBe(2);
+    expect(client.state).toBe("ready");
+    expect(second.sent.map((raw) => decodeClientFrame(raw)).some(
+      (frame) => frame.type === "command" && frame.command === "session.attach",
+    )).toBe(true);
+    await client.close();
+  });
+
+  it("gives a stale ready foreground replacement a fresh bounded budget at the reconnect cap", async () => {
+    const clock = new FakeClock();
+    const first = new FakeTransport({ welcome: welcome() });
+    const second = new FakeTransport({ welcome: welcome({ resumed: true }) });
+    const third = new FakeTransport({ welcome: welcome({ resumed: true }) });
+    const transports = [first, second, third];
+    let factoryCalls = 0;
+    const errors: string[] = [];
+    const client = new OmpClient({
+      transport: () => {
+        const transport = transports[factoryCalls];
+        factoryCalls += 1;
+        return transport ?? new FakeTransport();
+      },
+      hostId: HOST,
+      timers: clock,
+      clock,
+      random: () => 0,
+      heartbeat: { intervalMs: 100_000, timeoutMs: 100 },
+      reconnect: { baseMs: 0, maxMs: 0, attemptCap: 1 },
+      wakeStaleAfterMs: 10,
+    });
+    client.onError((error) => errors.push(error.message));
+
+    await client.connect();
+    first.drop();
+    expect(client.snapshot().attempt).toBe(1);
+    await flushReconnect(clock);
+    expect(client.state).toBe("ready");
+    expect(client.snapshot().attempt).toBe(1);
+
+    clock.advanceBy(10);
+    client.wake();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(factoryCalls).toBe(3);
+    expect(client.state).toBe("ready");
+    expect(client.snapshot().attempt).toBe(1);
+    expect(errors).not.toContain("reconnect attempt limit reached");
+
+    third.drop();
+    expect(client.state).toBe("fatal");
+    expect(client.snapshot().attempt).toBe(1);
+    expect(errors).toContain("reconnect attempt limit reached");
+    expect(factoryCalls).toBe(3);
+    await client.close();
+  });
+
+  it("coalesces repeated stale ready wakes at the reconnect cap into one foreground replacement", async () => {
+    const clock = new FakeClock();
+    const first = new FakeTransport({ welcome: welcome() });
+    const second = new FakeTransport({ welcome: welcome({ resumed: true }) });
+    const third = new FakeTransport({ welcome: welcome({ resumed: true }) });
+    const transports = [first, second, third];
+    let factoryCalls = 0;
+    const client = new OmpClient({
+      transport: () => {
+        const transport = transports[factoryCalls];
+        factoryCalls += 1;
+        return transport ?? new FakeTransport();
+      },
+      hostId: HOST,
+      timers: clock,
+      clock,
+      random: () => 0,
+      heartbeat: { intervalMs: 100_000, timeoutMs: 100 },
+      reconnect: { baseMs: 0, maxMs: 0, attemptCap: 1 },
+      wakeStaleAfterMs: 10,
+    });
+
+    await client.connect();
+    first.drop();
+    await flushReconnect(clock);
+    expect(client.state).toBe("ready");
+    expect(client.snapshot().attempt).toBe(1);
+
+    clock.advanceBy(10);
+    client.wake();
+    client.wake();
+    client.wake();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(factoryCalls).toBe(3);
+    expect(client.state).toBe("ready");
+    expect(client.snapshot().attempt).toBe(1);
+    await client.close();
+  });
+
   it("caps reconnects when every post-welcome attach loses its replay", async () => {
     const clock = new FakeClock();
     const transports: FakeTransport[] = [];

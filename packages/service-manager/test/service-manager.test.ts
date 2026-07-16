@@ -69,12 +69,13 @@ describe("extracted rendering contract", () => {
 });
 
 describe("service-manager definitions", () => {
-  it("renders systemd with exact argv semantics, restart, umask, network ordering and logs", () => {
+  it("renders systemd with exact argv semantics, child OOM isolation, restart, umask, network ordering and logs", () => {
     const definitionPath = "/home/alice/.config/systemd/user/dev.oh-my-pi.appserver.service";
     const content = renderLinuxSystemdDefinition(spec);
     expect(definitionPath).toBe("/home/alice/.config/systemd/user/dev.oh-my-pi.appserver.service");
     expect(content).toContain('ExecStart="/opt/omp/bin/omp" "appserver" "serve"');
     expect(content).toContain("Wants=network-online.target");
+    expect(content).toContain("OOMPolicy=continue");
     expect(content).toContain("Restart=on-failure");
     expect(content).toContain("UMask=0077");
     expect(content).toContain("StandardOutput=append:/home/alice/.omp/logs/appserver.log");

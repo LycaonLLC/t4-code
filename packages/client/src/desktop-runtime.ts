@@ -21,7 +21,7 @@ import {
   type TerminalResizeRequest,
   type TerminalResult,
 } from "@t4-code/protocol/desktop-ipc";
-import { decodeCatalog, decodeSessions, hostId, revision, sessionId, type CatalogFrame, type SettingsFrame, type WelcomeFrame } from "@t4-code/protocol";
+import { decodeCatalog, decodeSessions, hostId, revision, sessionId, type CatalogFrame, type Cursor, type SettingsFrame, type WelcomeFrame } from "@t4-code/protocol";
 import type { Unsubscribe } from "./index.ts";
 import { ProjectionStore, type ProjectionFrame } from "./projection.ts";
 import {
@@ -48,6 +48,10 @@ import { DesktopRuntimeHostState } from "./desktop-runtime-hosts.ts";
 import { boundedText, commandFailure, DEFAULT_MAX_RUNTIME_ERRORS, leasePayload, type DesktopControllerLeaseEntry } from "./desktop-runtime-policy.ts";
 import { bootstrapDesktopHost } from "./desktop-runtime-bootstrap.ts";
 import { PromptLeaseStore } from "./prompt-lease.ts";
+import {
+  sanitizeRetainedTranscriptFrame,
+  type RetainedTranscriptFrame,
+} from "./transcript-retention.ts";
 export { DesktopRuntimeError } from "./desktop-runtime-contracts.ts";
 export type {
   DesktopControllerLease,
@@ -81,6 +85,8 @@ export class DesktopRuntimeController {
   private readonly controllerLeases = new Map<string, DesktopControllerLeaseEntry>();
   private readonly promptLeases: PromptLeaseStore;
   private readonly connectionGenerations = new Map<string, number>();
+  /** Welcome can arrive before the shell's final connected notification. */
+  private readonly welcomedBeforeConnected = new Set<string>();
   private readonly hostState = new DesktopRuntimeHostState();
   private readonly controllerLeaseFallbackTtlMs = 20_000;
   constructor(options: DesktopRuntimeOptions) {
@@ -192,8 +198,8 @@ export class DesktopRuntimeController {
     this.replace({ projection });
     return this.current;
   }
-  async attachSession(targetId: string, hostIdValue: string, sessionIdValue: string): Promise<CommandResult> {
-    const result = await this.command(targetId, { hostId: hostId(hostIdValue), sessionId: sessionId(sessionIdValue), command: "session.attach", args: {} });
+  async attachSession(targetId: string, hostIdValue: string, sessionIdValue: string, cursor?: Cursor): Promise<CommandResult> {
+    const result = await this.command(targetId, { hostId: hostId(hostIdValue), sessionId: sessionId(sessionIdValue), command: "session.attach", args: cursor === undefined ? {} : { cursor } });
     this.activateSession(hostIdValue, sessionIdValue);
     return result;
   }
@@ -494,7 +500,14 @@ export class DesktopRuntimeController {
     }
   }
   private handleFrame(event: RendererServerFrameEvent): void {
-    const frame = freezeClone(event.frame);
+    const incomingFrame = event.frame;
+    const transcriptFrame = this.isRetainedTranscriptFrame(incomingFrame);
+    // Do not deep-clone a potentially large transcript payload before applying
+    // retention. The shared projection consumes the decoded frame directly;
+    // renderer subscribers receive only the bounded immutable copy.
+    const frame = transcriptFrame
+      ? sanitizeRetainedTranscriptFrame(incomingFrame)
+      : freezeClone(incomingFrame);
     if (frame.type === "welcome") {
       if (!this.handleWelcome(event.targetId, frame)) return;
     } else {
@@ -509,9 +522,12 @@ export class DesktopRuntimeController {
         if (frame.type === "catalog") this.replace({ catalogs: mapValue(new Map(this.current.catalogs).set(hostIdValue, frame as CatalogFrame)) });
         else this.replace({ settings: mapValue(new Map(this.current.settings).set(hostIdValue, frame as SettingsFrame)) });
       }
-      this.applyProjection(event.targetId, frame);
+      this.applyProjection(event.targetId, transcriptFrame ? incomingFrame : frame);
     }
     this.notifyFrames({ targetId: event.targetId, frame });
+  }
+  private isRetainedTranscriptFrame(frame: RendererServerFrame): frame is RetainedTranscriptFrame {
+    return frame.type === "snapshot" || frame.type === "entry" || frame.type === "event" || frame.type === "gap" || frame.type === "agent.transcript";
   }
   private handleHostResponse(targetId: string, frame: RendererServerFrame): void {
     if (frame.type !== "response" || !frame.ok || frame.command === undefined) return;
@@ -553,6 +569,13 @@ export class DesktopRuntimeController {
     if (!reconciled.accepted) {
       this.recordError({ targetId, code: "protocol", message: "target host binding changed" });
       return false;
+    }
+    // Do not expose a newly accepted host binding alongside completeness from
+    // the previous transport generation, even for the brief notification
+    // before the welcome frame itself reaches the shared projection.
+    this.projection.invalidateSessionInventory(String(frame.hostId));
+    if (this.current.connections.get(targetId) !== "connected") {
+      this.welcomedBeforeConnected.add(targetId);
     }
     if (reconciled.epochChanged) this.invalidateTargetLeases(targetId);
     this.replace({ targetHosts: reconciled.targetHosts, hosts: reconciled.hosts });
@@ -597,6 +620,7 @@ export class DesktopRuntimeController {
     for (const targetId of reconciled.removedTargetIds) {
       this.invalidateTargetLeases(targetId);
       this.connectionGenerations.delete(targetId);
+      this.welcomedBeforeConnected.delete(targetId);
     }
     this.replace({
       targets: reconciled.targets,
@@ -615,6 +639,17 @@ export class DesktopRuntimeController {
     if (previous !== state) {
       this.connectionGenerations.set(targetId, this.generationFor(targetId) + 1);
       this.invalidateTargetLeases(targetId);
+      const welcomeAlreadyStartedThisGeneration =
+        state === "connected" && this.welcomedBeforeConnected.delete(targetId);
+      if (!welcomeAlreadyStartedThisGeneration) {
+        this.welcomedBeforeConnected.delete(targetId);
+        const boundHost = this.current.targetHosts.get(targetId);
+        // A cold process has no target-to-host binding yet, so every
+        // completeness record came from cache. Once any live binding exists,
+        // an unrelated new target cannot invalidate already connected hosts.
+        if (boundHost !== undefined) this.projection.invalidateSessionInventory(boundHost);
+        else if (this.current.targetHosts.size === 0) this.projection.invalidateSessionInventory();
+      }
     }
     const connections = new Map(this.current.connections).set(targetId, state);
     const existing = this.current.targets.get(targetId);

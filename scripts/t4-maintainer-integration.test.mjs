@@ -26,6 +26,11 @@ const t4Commit = "c".repeat(40);
 const mainCommit = "d".repeat(40);
 const upstreamTagObject = "e".repeat(40);
 const integrationTagObject = "f".repeat(40);
+const mockDebSize = Buffer.byteLength("mock-deb\n");
+const mockAssetSize = Buffer.byteLength("mock-asset\n");
+const mockDebSha512 = createHash("sha512").update("mock-deb\n").digest("base64");
+const mockAssetSha512 = createHash("sha512").update("mock-asset\n").digest("base64");
+const mockDriftSha512 = createHash("sha512").update("drift\n").digest("base64");
 
 const mockDispatcher = String.raw`#!/usr/bin/env bash
 set -euo pipefail
@@ -49,6 +54,39 @@ read_state() {
 
 write_state() {
   printf '%s' "$2" >"$state/$1"
+}
+
+linux_update_metadata() {
+  local version=$1
+  local deb_name="T4-Code-$version-linux-amd64.deb"
+  local appimage_name="T4-Code-$version-linux-x86_64.AppImage"
+  local deb_size=${mockDebSize}
+  local appimage_size=${mockAssetSize}
+  local deb_sha512=${mockDebSha512}
+  local appimage_sha512=${mockAssetSha512}
+  case \${MOCK_LINUX_UPDATE_MODE:-valid} in
+    deb-name) deb_name="T4-Code-$version-linux-renamed.deb" ;;
+    deb-size) deb_size=$((deb_size - 1)) ;;
+    deb-sha512) deb_sha512=${mockDriftSha512} ;;
+    appimage-name) appimage_name="T4-Code-$version-linux-renamed.AppImage" ;;
+    appimage-size) appimage_size=$((appimage_size - 1)) ;;
+    appimage-sha512) appimage_sha512=${mockDriftSha512} ;;
+    compatibility-sha512) ;;
+  esac
+  cat <<YAML
+version: $version
+files:
+  - url: $appimage_name
+    sha512: $appimage_sha512
+    size: $appimage_size
+    blockMapSize: 1
+  - url: $deb_name
+    sha512: $deb_sha512
+    size: $deb_size
+path: $appimage_name
+sha512: $(if [[ \${MOCK_LINUX_UPDATE_MODE:-valid} == compatibility-sha512 ]]; then printf '%s' '${mockDriftSha512}'; else printf '%s' "$appimage_sha512"; fi)
+releaseDate: '2026-07-15T00:00:00Z'
+YAML
 }
 
 case $tool in
@@ -158,7 +196,7 @@ case $tool in
 {"workflow_runs":[
  {"name":"CI","path":"$t4_ci_path","head_sha":"$MOCK_T4_COMMIT","event":"push","head_branch":"main","status":"completed","conclusion":"failure","updated_at":"2020-01-01T00:00:00Z"},
  {"name":"Release app builds","path":"$t4_release_path","head_sha":"$MOCK_T4_COMMIT","event":"push","head_branch":"v1.2.3","status":"completed","conclusion":"failure","updated_at":"2020-01-01T00:00:00Z"},
- {"name":"Deploy project site","path":"$t4_site_path","head_sha":"$MOCK_T4_COMMIT","event":"workflow_dispatch","head_branch":"main","status":"completed","conclusion":"failure","updated_at":"2020-01-01T00:00:00Z"}
+ {"name":"Deploy project site","path":"$t4_site_path","head_sha":"$MOCK_T4_COMMIT","event":"workflow_dispatch","head_branch":"v1.2.3","status":"completed","conclusion":"failure","updated_at":"2020-01-01T00:00:00Z"}
 ]}
 JSON
         elif [[ \${MOCK_WORKFLOWS_ACTIVE:-0} == 1 ]]; then
@@ -166,7 +204,7 @@ JSON
 {"workflow_runs":[
  {"name":"CI","path":"$t4_ci_path","head_sha":"$MOCK_T4_COMMIT","event":"push","head_branch":"main","status":"in_progress","conclusion":null,"updated_at":"$mock_workflow_updated_at"},
  {"name":"Release app builds","path":"$t4_release_path","head_sha":"$MOCK_T4_COMMIT","event":"push","head_branch":"v1.2.3","status":"queued","conclusion":null,"updated_at":"$mock_workflow_updated_at"},
- {"name":"Deploy project site","path":"$t4_site_path","head_sha":"$MOCK_T4_COMMIT","event":"workflow_dispatch","head_branch":"main","status":"queued","conclusion":null,"updated_at":"$mock_workflow_updated_at"}
+ {"name":"Deploy project site","path":"$t4_site_path","head_sha":"$MOCK_T4_COMMIT","event":"workflow_dispatch","head_branch":"v1.2.3","status":"queued","conclusion":null,"updated_at":"$mock_workflow_updated_at"}
 ]}
 JSON
         else
@@ -174,7 +212,7 @@ JSON
 {"workflow_runs":[
  {"name":"CI","path":"$t4_ci_path","head_sha":"$MOCK_T4_COMMIT","event":"push","head_branch":"main","status":"completed","conclusion":"success","updated_at":"$mock_workflow_updated_at"},
  {"name":"Release app builds","path":"$t4_release_path","head_sha":"$MOCK_T4_COMMIT","event":"push","head_branch":"v1.2.3","status":"completed","conclusion":"success","updated_at":"$mock_workflow_updated_at"},
- {"name":"Deploy project site","path":"$t4_site_path","head_sha":"$MOCK_T4_COMMIT","event":"workflow_dispatch","head_branch":"main","status":"completed","conclusion":"success","updated_at":"$mock_workflow_updated_at"}
+ {"name":"Deploy project site","path":"$t4_site_path","head_sha":"$MOCK_T4_COMMIT","event":"workflow_dispatch","head_branch":"v1.2.3","status":"completed","conclusion":"success","updated_at":"$mock_workflow_updated_at"}
 ]}
 JSON
         fi
@@ -264,20 +302,26 @@ JSON
       */releases/tags/*)
         release_tag=\${endpoint##*/}
         release_version=\${release_tag#v}
+        release_prefix="https://github.com/LycaonLLC/t4-code/releases/download/$release_tag"
         deb_digest=$(printf 'mock-deb\n' | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
         asset_digest=$(printf 'mock-asset\n' | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
-        manifest=$(printf '%s  T4-Code-%s-android.apk\n%s  T4-Code-%s-linux-amd64.deb\n%s  T4-Code-%s-linux-x86_64.AppImage\n%s  T4-Code-%s-mac-arm64.dmg\n%s  T4-Code-%s-mac-arm64.zip\n' \
+        metadata=$(linux_update_metadata "$release_version")
+        metadata_digest=$(printf '%s\n' "$metadata" | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
+        metadata_size=$(printf '%s\n' "$metadata" | /usr/bin/wc -c)
+        manifest=$(printf '%s  T4-Code-%s-android.apk\n%s  T4-Code-%s-linux-amd64.deb\n%s  T4-Code-%s-linux-x86_64.AppImage\n%s  T4-Code-%s-mac-arm64.dmg\n%s  T4-Code-%s-mac-arm64.zip\n%s  latest-linux.yml\n' \
           "$asset_digest" "$release_version" "$deb_digest" "$release_version" "$asset_digest" "$release_version" \
-          "$asset_digest" "$release_version" "$asset_digest" "$release_version")
+          "$asset_digest" "$release_version" "$asset_digest" "$release_version" "$metadata_digest")
         manifest_digest=$(printf '%s\n' "$manifest" | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
+        manifest_size=$(printf '%s\n' "$manifest" | /usr/bin/wc -c)
         cat <<JSON
-{"tag_name":"$release_tag","html_url":"https://github.com/LycaonLLC/t4-code/releases/tag/$release_tag","draft":false,"prerelease":false,"assets":[
-  {"name":"SHA256SUMS.txt","state":"uploaded","size":64,"digest":"sha256:$manifest_digest","browser_download_url":"mock://SHA256SUMS-$release_version.txt"},
-  {"name":"T4-Code-$release_version-android.apk","state":"uploaded","size":64,"digest":"sha256:$asset_digest","browser_download_url":"mock://T4-Code-$release_version-android.apk"},
-  {"name":"T4-Code-$release_version-linux-amd64.deb","state":"uploaded","size":64,"digest":"sha256:$deb_digest","browser_download_url":"mock://T4-Code-$release_version-linux-amd64.deb"},
-  {"name":"T4-Code-$release_version-linux-x86_64.AppImage","state":"uploaded","size":64,"digest":"sha256:$asset_digest","browser_download_url":"mock://T4-Code-$release_version-linux-x86_64.AppImage"},
-  {"name":"T4-Code-$release_version-mac-arm64.dmg","state":"uploaded","size":64,"digest":"sha256:$asset_digest","browser_download_url":"mock://T4-Code-$release_version-mac-arm64.dmg"},
-  {"name":"T4-Code-$release_version-mac-arm64.zip","state":"uploaded","size":64,"digest":"sha256:$asset_digest","browser_download_url":"mock://T4-Code-$release_version-mac-arm64.zip"}
+{"tag_name":"$release_tag","html_url":"https://github.com/LycaonLLC/t4-code/releases/tag/$release_tag","published_at":"2026-07-15T00:00:00Z","draft":false,"prerelease":false,"assets":[
+  {"name":"SHA256SUMS.txt","state":"uploaded","size":$manifest_size,"digest":"sha256:$manifest_digest","browser_download_url":"$release_prefix/SHA256SUMS.txt"},
+  {"name":"T4-Code-$release_version-android.apk","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-android.apk"},
+  {"name":"T4-Code-$release_version-linux-amd64.deb","state":"uploaded","size":${mockDebSize},"digest":"sha256:$deb_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-linux-amd64.deb"},
+  {"name":"T4-Code-$release_version-linux-x86_64.AppImage","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-linux-x86_64.AppImage"},
+  {"name":"T4-Code-$release_version-mac-arm64.dmg","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-mac-arm64.dmg"},
+  {"name":"T4-Code-$release_version-mac-arm64.zip","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-mac-arm64.zip"},
+  {"name":"latest-linux.yml","state":"uploaded","size":$metadata_size,"digest":"sha256:$metadata_digest","browser_download_url":"$release_prefix/latest-linux.yml"}
 ]}
 JSON
         ;;
@@ -296,14 +340,52 @@ JSON
     done
     if [[ -n $output ]]; then
       mkdir -p -- "$(dirname -- "$output")"
-      if [[ $url == *SHA256SUMS* ]]; then
+      if [[ $url == https://t4code.net/releases/latest.json* ]]; then
         version=1.2.3
-        [[ $url =~ SHA256SUMS-([0-9]+\.[0-9]+\.[0-9]+)\.txt ]] && version=\${BASH_REMATCH[1]}
+        release_tag=v$version
+        release_url="https://github.com/LycaonLLC/t4-code/releases/tag/$release_tag"
+        release_prefix="https://github.com/LycaonLLC/t4-code/releases/download/$release_tag"
+        published_at=2026-07-15T00:00:00Z
+        schema=1
+        manifest_version=$version
+        manifest_tag=$release_tag
+        deb_size=${mockDebSize}
         deb_digest=$(printf 'mock-deb\n' | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
         asset_digest=$(printf 'mock-asset\n' | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
-        printf '%s  T4-Code-%s-android.apk\n%s  T4-Code-%s-linux-amd64.deb\n%s  T4-Code-%s-linux-x86_64.AppImage\n%s  T4-Code-%s-mac-arm64.dmg\n%s  T4-Code-%s-mac-arm64.zip\n' \
+        apk_digest=$asset_digest
+        apk_url="$release_prefix/T4-Code-$version-android.apk"
+        extra=''
+        case \${MOCK_SITE_MANIFEST_MODE:-valid} in
+          schema) schema=2 ;;
+          version) manifest_version=9.9.9 ;;
+          tag) manifest_tag=v9.9.9 ;;
+          release-url) release_url=https://example.invalid/release ;;
+          extra-asset) extra=',{"platform":"linux","kind":"deb","arch":"x86_64","name":"extra.deb","url":"https://example.invalid/extra.deb","size":${mockAssetSize},"sha256":"'"$asset_digest"'"}' ;;
+          size) deb_size=$((deb_size - 1)) ;;
+          digest) apk_digest=$(printf '%064d' 0) ;;
+          asset-url) apk_url=https://example.invalid/android.apk ;;
+        esac
+        cat >"$output" <<JSON
+{"schemaVersion":$schema,"channel":"stable","version":"$manifest_version","tag":"$manifest_tag","publishedAt":"$published_at","releaseUrl":"$release_url","assets":[
+  {"platform":"android","kind":"apk","arch":"universal","name":"T4-Code-$version-android.apk","url":"$apk_url","size":${mockAssetSize},"sha256":"$apk_digest"},
+  {"platform":"linux","kind":"deb","arch":"x86_64","name":"T4-Code-$version-linux-amd64.deb","url":"$release_prefix/T4-Code-$version-linux-amd64.deb","size":$deb_size,"sha256":"$deb_digest"},
+  {"platform":"linux","kind":"appimage","arch":"x86_64","name":"T4-Code-$version-linux-x86_64.AppImage","url":"$release_prefix/T4-Code-$version-linux-x86_64.AppImage","size":${mockAssetSize},"sha256":"$asset_digest"},
+  {"platform":"mac","kind":"dmg","arch":"arm64","name":"T4-Code-$version-mac-arm64.dmg","url":"$release_prefix/T4-Code-$version-mac-arm64.dmg","size":${mockAssetSize},"sha256":"$asset_digest"},
+  {"platform":"mac","kind":"zip","arch":"arm64","name":"T4-Code-$version-mac-arm64.zip","url":"$release_prefix/T4-Code-$version-mac-arm64.zip","size":${mockAssetSize},"sha256":"$asset_digest"}$extra
+]}
+JSON
+      elif [[ $url == *SHA256SUMS* ]]; then
+        version=1.2.3
+        [[ $url =~ /v([0-9]+\.[0-9]+\.[0-9]+)/SHA256SUMS\.txt ]] && version=\${BASH_REMATCH[1]}
+        deb_digest=$(printf 'mock-deb\n' | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
+        asset_digest=$(printf 'mock-asset\n' | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
+        metadata=$(linux_update_metadata "$version")
+        metadata_digest=$(printf '%s\n' "$metadata" | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
+        printf '%s  T4-Code-%s-android.apk\n%s  T4-Code-%s-linux-amd64.deb\n%s  T4-Code-%s-linux-x86_64.AppImage\n%s  T4-Code-%s-mac-arm64.dmg\n%s  T4-Code-%s-mac-arm64.zip\n%s  latest-linux.yml\n' \
           "$asset_digest" "$version" "$deb_digest" "$version" "$asset_digest" "$version" \
-          "$asset_digest" "$version" "$asset_digest" "$version" >"$output"
+          "$asset_digest" "$version" "$asset_digest" "$version" "$metadata_digest" >"$output"
+      elif [[ $url == *latest-linux.yml ]]; then
+        linux_update_metadata 1.2.3 >"$output"
       elif [[ $url == *linux-amd64.deb ]]; then
         printf 'mock-deb\n' >"$output"
       elif [[ $url == mock://omp-* && \${MOCK_OMP_ASSET_UNREACHABLE:-0} == 1 ]]; then
@@ -327,6 +409,9 @@ JSON
       exit 0
     fi
     if [[ $url == https://* ]]; then
+      if [[ $url == https://github.com/LycaonLLC/t4-code/releases/download/* ]]; then
+        exit 0
+      fi
       if [[ $url == https://t4code.net/*assets/* ]]; then
         printf 'v1.2.3 t4code-1.2.3-appserver-1 T4-Code-1.2.3-android.apk T4-Code-1.2.3-linux-amd64.deb T4-Code-1.2.3-linux-x86_64.AppImage T4-Code-1.2.3-mac-arm64.dmg T4-Code-1.2.3-mac-arm64.zip\n'
         exit 0
@@ -514,6 +599,9 @@ SH
   node)
     script=\${1:-}
     action=\${2:-}
+    if [[ $script == */inspect-linux-update.mjs ]]; then
+      exec "$MOCK_NODE_EXECUTABLE" "$@"
+    fi
     if [[ $script == */scripts/tailnet-service.mjs && $action == install ]]; then
       runtime=$(dirname -- "$(dirname -- "$script")")
       shift 2
@@ -532,7 +620,7 @@ SH
       done
       /usr/bin/jq -n \
         --arg sourceRoot "$runtime" \
-        --arg nodeExecutable /usr/bin/node \
+        --arg nodeExecutable "$MOCK_NODE_EXECUTABLE" \
         --arg gatewayScript "$runtime/scripts/tailnet-gateway.mjs" \
         --arg allowedOrigin "$origin" \
         --argjson port "$port" \
@@ -761,7 +849,7 @@ printf '%s' "$deployment_identity" >"$MOCK_STATE/deployment-identity"
 gateway_script="$MOCK_RUNTIME_ROOT/scripts/tailnet-gateway.mjs"
 web_root="$MOCK_RUNTIME_ROOT/apps/web/dist"
 ws_root="$MOCK_RUNTIME_ROOT/node_modules/ws"
-node_executable=/usr/bin/node
+node_executable="$MOCK_NODE_EXECUTABLE"
 gateway_origin=https://mock.tailnet.ts.net
 gateway_port=4319
 gateway_socket=$(<"$MOCK_STATE/socket-path")
@@ -1119,6 +1207,7 @@ esac
     MOCK_OMP_SERVICE: ompService,
     MOCK_GATEWAY_CONFIG: gatewayConfig,
     MOCK_GATEWAY_UNIT: gatewayUnit,
+    MOCK_NODE_EXECUTABLE: process.execPath,
     MOCK_T4_EXECUTABLE: t4Executable,
     MOCK_T4_WEB_ROOT: t4WebRoot,
     T4_MAINTAINER_ROOT: maintainerRoot,
@@ -1380,6 +1469,7 @@ async function createRunnerFixture(options = {}) {
     ...(options.ompAssetDigestMismatch ? { MOCK_OMP_ASSET_DIGEST_MISMATCH: "1" } : {}),
     ...(options.ompAssetUnreachable ? { MOCK_OMP_ASSET_UNREACHABLE: "1" } : {}),
     ...(options.ompAssetWrongOrigin ? { MOCK_OMP_ASSET_WRONG_ORIGIN: "1" } : {}),
+    ...(options.linuxUpdateMode ? { MOCK_LINUX_UPDATE_MODE: options.linuxUpdateMode } : {}),
     ...(options.productBranchMissing ? { MOCK_PRODUCT_BRANCH_MISSING: "1" } : {}),
   };
 
@@ -1887,6 +1977,21 @@ test("a crash-left transaction marker blocks rerun before staging or mutation", 
   await assertRestored(fixture, { blocked: true });
 });
 
+test("maintainer fixtures resolve Node from the active test runtime", async (t) => {
+  assert.doesNotMatch(`${mockDispatcher}\n${mockLocalDeploy}`, /\/usr\/bin\/node/u);
+  assert.match(mockDispatcher, /\$MOCK_NODE_EXECUTABLE/u);
+
+  const fixture = await createRunnerFixture();
+  t.after(() => fixture.cleanup());
+  const nodeProxy = join(fixture.root, "portable node");
+  await symlink(process.execPath, nodeProxy);
+
+  const result = fixture.runRunner({ MOCK_NODE_EXECUTABLE: nodeProxy });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const gatewayConfig = JSON.parse(await readFile(fixture.gatewayConfig, "utf8"));
+  assert.equal(gatewayConfig.nodeExecutable, nodeProxy);
+});
+
 test("runtime dependency symlinks must remain inside the exact tagged runtime", async (t) => {
   const fixture = await createDeployFixture({ wsEscape: true });
   t.after(() => fixture.cleanup());
@@ -1951,6 +2056,91 @@ test("public verification rejects a changed fork base-tag object", async (t) => 
   assert.match(calls, /repos\/lyc-aon\/oh-my-pi\/git\/ref\/tags\/v1\.2\.3/mu);
   assert.equal(calls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length, 0);
   assert.equal(calls.split("\n").filter((line) => line.startsWith("omp\t")).length, 0);
+});
+
+test("site release-manifest drift blocks public verification and local work", async (t) => {
+  const cases = [
+    ["schema", "schema"],
+    ["version", "version"],
+    ["tag", "tag"],
+    ["release URL", "release-url"],
+    ["asset set", "extra-asset"],
+    ["asset size", "size"],
+    ["asset digest", "digest"],
+    ["asset URL", "asset-url"],
+  ];
+  for (const [name, mode] of cases) {
+    await t.test(name, async (subtest) => {
+      const fixture = await createRunnerFixture();
+      subtest.after(() => fixture.cleanup());
+      const result = fixture.runRunner({ MOCK_SITE_MANIFEST_MODE: mode });
+      assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      const calls = await fixture.callsText();
+      assert.match(calls, /releases\/latest\.json/mu);
+      assert.equal(
+        calls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length,
+        0,
+      );
+      assert.equal(calls.split("\n").filter((line) => line.startsWith("omp\t")).length, 0);
+    });
+  }
+});
+
+test("live Linux updater verification downloads the exact bounded public files", async (t) => {
+  const fixture = await createRunnerFixture({ localDeployFail: true });
+  t.after(() => fixture.cleanup());
+  const result = fixture.runRunner();
+  assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.equal(await pathExists(fixture.pending), true, await fixture.callsText());
+
+  const downloads = (await fixture.callsText())
+    .split("\n")
+    .filter(
+      (line) =>
+        line.startsWith("curl\t") &&
+        line.includes("https://github.com/LycaonLLC/t4-code/releases/download/v1.2.3/") &&
+        line.includes("\t-o\t"),
+    );
+  for (const [name, size] of [
+    ["T4-Code-1.2.3-linux-amd64.deb", mockDebSize],
+    ["T4-Code-1.2.3-linux-x86_64.AppImage", mockAssetSize],
+  ]) {
+    const line = downloads.find((candidate) => candidate.includes(`/${name}\t`));
+    assert.ok(line, downloads.join("\n"));
+    assert.match(line, new RegExp(`\\t--max-filesize\\t${size}(?:\\t|$)`, "u"));
+  }
+  const metadata = downloads.find((line) => line.includes("/latest-linux.yml\t"));
+  assert.ok(metadata, downloads.join("\n"));
+  assert.match(metadata, /\t--max-filesize\t[1-9][0-9]*(?:\t|$)/u);
+  assert.match(await fixture.callsText(), /^node\t.*inspect-linux-update\.mjs\t--version\t1\.2\.3/mu);
+});
+
+test("self-consistent checksum drift in live Linux metadata still blocks deployment", async (t) => {
+  for (const [name, linuxUpdateMode] of [
+    ["deb name", "deb-name"],
+    ["deb size", "deb-size"],
+    ["deb SHA-512", "deb-sha512"],
+    ["AppImage name", "appimage-name"],
+    ["AppImage size", "appimage-size"],
+    ["AppImage SHA-512", "appimage-sha512"],
+    ["compatibility SHA-512", "compatibility-sha512"],
+  ]) {
+    await t.test(name, async (subtest) => {
+      const fixture = await createRunnerFixture({ linuxUpdateMode });
+      subtest.after(() => fixture.cleanup());
+      const result = fixture.runRunner();
+      assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      const calls = await fixture.callsText();
+      assert.match(calls, /latest-linux\.yml\t-o\t/mu);
+      assert.match(calls, /^node\t.*inspect-linux-update\.mjs\t--version\t1\.2\.3/mu);
+      assert.equal(
+        calls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length,
+        0,
+        calls,
+      );
+      assert.equal(calls.split("\n").filter((line) => line.startsWith("omp\t")).length, 0, calls);
+    });
+  }
 });
 
 test("integration tags must remain reachable from the durable fork product branch", async (t) => {

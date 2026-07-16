@@ -1,12 +1,13 @@
 {
   "name": "@t4-code/mobile",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "private": true,
   "type": "module",
   "scripts": {
     "prepare:web": "node ./scripts/prepare-web.mjs",
     "sync:android": "pnpm prepare:web && cap sync android",
     "build:android:debug": "pnpm sync:android && node ./scripts/run-gradle.mjs assembleDebug",
+    "check:android:debug": "pnpm sync:android && node ./scripts/run-gradle.mjs testDebugUnitTest assembleDebug lintDebug",
     "build:android:release": "pnpm sync:android && node ./scripts/run-gradle.mjs assembleRelease",
     "test": "node --test ./scripts/*.test.mjs"
   },

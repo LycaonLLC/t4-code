@@ -17,6 +17,7 @@ import {
   type CatalogItem,
   type ConfirmationChallenge,
   type Revision,
+  type SessionEvent,
   type SessionRef,
   type SessionSnapshotFrame,
 } from "@t4-code/protocol";
@@ -25,6 +26,10 @@ import type { RendererServerFrame } from "@t4-code/protocol/desktop-ipc";
 import {
   initialProjection,
   reduceTranscript,
+  replayRetainedTranscriptEvents,
+  retainedTranscriptEventsAreValid,
+  settleTranscriptTurn,
+  transcriptIsActive,
   type ApprovalRequest,
   type TranscriptFrame,
   type TranscriptProjection,
@@ -39,6 +44,7 @@ import type {
 import { IMAGE_PROMPTS_UNSUPPORTED_REASON, type SessionIntent } from "./intents.ts";
 import { runImagePromptUpload } from "./image-upload.ts";
 import { promptRejectionReason } from "./command-errors.ts";
+import { pendingPromptsFromRef } from "./pending-prompts.ts";
 import {
   createTranscriptImageSource,
   type TranscriptImageAvailability,
@@ -51,6 +57,8 @@ import {
   THINKING_SET_COMMAND,
   type PendingControl,
 } from "./session-controls.ts";
+import { sessionIsWorking } from "./session-management.ts";
+import { hostSessionInventoryIsComplete } from "./session-inventory.ts";
 
 export interface LiveRuntimeOptions {
   readonly controller: DesktopRuntimeController;
@@ -70,18 +78,14 @@ const CONTROL_REJECTED: Record<PendingControl, string> = {
 };
 const CONTROL_UNKNOWN =
   "The connection dropped before the host answered. The control shows the host's last confirmed value.";
+const MAX_RETIRED_PENDING_PROMPTS = 128;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Frame types the transcript reducer accepts; mirrors the subscription. */
-const TRANSCRIPT_FRAME_TYPES: ReadonlySet<string> = new Set([
-  "snapshot",
-  "entry",
-  "event",
-  "gap",
-]);
+const TRANSCRIPT_FRAME_TYPES: ReadonlySet<string> = new Set(["snapshot", "entry", "event", "gap"]);
 
 function isTranscriptFrame(frame: RendererServerFrame): frame is TranscriptFrame {
   return TRANSCRIPT_FRAME_TYPES.has(frame.type);
@@ -101,12 +105,78 @@ function getQueuedFollowUps(ref: SessionRef | undefined): readonly string[] {
   return result;
 }
 
+function retiredPendingPromptId(event: SessionEvent): string | null {
+  if (event.type !== "message.settled" && event.type !== "message.discarded") return null;
+  const candidate =
+    typeof event.transientEntryId === "string"
+      ? event.transientEntryId
+      : event.type === "message.discarded" && typeof event.entryId === "string"
+        ? event.entryId
+        : null;
+  return candidate !== null && candidate.length > 0 && candidate.length <= 512 ? candidate : null;
+}
+
+function activePendingPromptId(event: SessionEvent): string | null {
+  if (
+    (event.type !== "message.update" && event.type !== "message.delta") ||
+    event.role !== "user" ||
+    typeof event.entryId !== "string"
+  ) {
+    return null;
+  }
+  return event.entryId.length > 0 && event.entryId.length <= 512 ? event.entryId : null;
+}
+
+function sessionIsWorkingWithPendingPrompts(
+  ref: SessionRef | undefined,
+  pendingPrompts: ReturnType<typeof pendingPromptsFromRef>,
+): boolean {
+  if (ref === undefined) return false;
+  const liveState = isRecord(ref.liveState) ? ref.liveState : {};
+  return sessionIsWorking({
+    ...ref,
+    // A present plural value is authoritative over any lagging singular
+    // fallback, while every independent queue/stream/compaction signal stays.
+    liveState: { ...liveState, pendingPrompts },
+  } as SessionRef);
+}
+
+function sessionRefIsCompacting(ref: SessionRef | undefined): boolean {
+  if (!isRecord(ref?.liveState)) return false;
+  return ref.liveState.isCompacting === true || ref.liveState.phase === "compacting";
+}
+
+/**
+ * Return working truth only when this connected host has supplied a complete
+ * live inventory. Cached or truncated rows may be useful to render, but they
+ * cannot settle a turn after a disconnect.
+ */
+function authoritativeWorkingState(
+  runtime: DesktopRuntimeSnapshot,
+  targetId: string,
+  hostId: string,
+  projectionKey: string,
+  retiredPendingPromptIds: ReadonlySet<string>,
+): boolean | null {
+  if (runtime.connections.get(targetId) !== "connected") return null;
+  if (runtime.targetHosts.get(targetId) !== hostId) return null;
+  if (!hostSessionInventoryIsComplete(runtime, hostId)) return null;
+  const ref = runtime.projection.sessionIndex.get(projectionKey);
+  if (ref === undefined) return null;
+  const pendingPrompts = pendingPromptsFromRef(ref).filter(
+    (prompt) => !retiredPendingPromptIds.has(prompt.entryId),
+  );
+  return sessionIsWorkingWithPendingPrompts(ref, pendingPrompts);
+}
+
 /** Commands the runtime recognizes as this session's abort affordance. */
 function findCancelCommand(items: readonly CatalogItem[]): CatalogItem | undefined {
   return items.find(
     (item) =>
       item.kind === "command" &&
-      (String(item.id) === "session.cancel" || item.name === "session.cancel" || item.name === "cancel"),
+      (String(item.id) === "session.cancel" ||
+        item.name === "session.cancel" ||
+        item.name === "cancel"),
   );
 }
 
@@ -124,6 +194,22 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   let transcript = initialProjection();
   let snapshot: SessionRuntimeSnapshot | null = null;
   let disposed = false;
+  const retiredPendingPromptIds = new Set<string>();
+  const retirePendingPrompt = (entryId: string) => {
+    if (retiredPendingPromptIds.has(entryId)) return;
+    retiredPendingPromptIds.add(entryId);
+    while (retiredPendingPromptIds.size > MAX_RETIRED_PENDING_PROMPTS) {
+      const oldest = retiredPendingPromptIds.values().next().value;
+      if (oldest === undefined) break;
+      retiredPendingPromptIds.delete(oldest);
+    }
+  };
+  const applyPendingPromptLifecycle = (event: SessionEvent) => {
+    const activeId = activePendingPromptId(event);
+    if (activeId !== null) retiredPendingPromptIds.delete(activeId);
+    const retiredId = retiredPendingPromptId(event);
+    if (retiredId !== null) retirePendingPrompt(retiredId);
+  };
   // Composer control command state: which control awaits the host, and the
   // last failure. Values themselves always come from server state — the
   // label never swaps optimistically.
@@ -190,15 +276,23 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   const warmSession = (runtime: DesktopRuntimeSnapshot): SessionProjection | undefined =>
     runtime.projection.sessions.get(projectionKey);
 
+  const withWarmHistoryTruncation = (
+    projection: TranscriptProjection,
+    runtime: DesktopRuntimeSnapshot,
+  ): TranscriptProjection =>
+    warmSession(runtime)?.historyTruncated === true && !projection.historyTruncated
+      ? { ...projection, historyTruncated: true }
+      : projection;
+
   const notify = () => {
     snapshot = null;
     for (const listener of listeners) listener();
   };
 
-  // Seed from the controller's warm projection: settled entries install as a
-  // synthetic snapshot at the session cursor, so later live frames apply
-  // contiguously. In-flight stream state before attach is not reconstructed
-  // — the next real frame or snapshot brings it.
+  // Seed from the controller's warm projection. Durable entries install at the
+  // authoritative warm cursor; the bounded event suffix is then folded in its
+  // original order to restore requests and other event-derived state. Event
+  // sequence gaps are expected because durable entry frames live separately.
   const warm = warmSession(controller.getSnapshot());
   if (warm !== undefined && warm.cursor !== undefined) {
     const seed: SessionSnapshotFrame = {
@@ -210,7 +304,22 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
       sessionId: wireSessionId,
       entries: [...warm.entries],
     };
-    transcript = reduceTranscript(transcript, seed);
+    transcript = withWarmHistoryTruncation(
+      reduceTranscript(transcript, seed),
+      controller.getSnapshot(),
+    );
+    const baseline = {
+      cursor: warm.cursor,
+      hostId: options.hostId,
+      sessionId: options.sessionId,
+    };
+    const validWarmEvents = retainedTranscriptEventsAreValid(transcript, warm.events, baseline);
+    if (validWarmEvents) {
+      for (const frame of warm.events) applyPendingPromptLifecycle(frame.event);
+    }
+    if (warm.gap === undefined && validWarmEvents) {
+      transcript = replayRetainedTranscriptEvents(transcript, warm.events, baseline);
+    }
   }
 
   const expectedRevision = (): Revision | undefined => {
@@ -230,7 +339,8 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     promptLeaseRevision?: Revision,
   ): Promise<PromptOutcome> => {
     const revisionValue = withRevision ? (revisionOverride ?? expectedRevision()) : undefined;
-    if (withRevision && revisionValue === undefined) return { kind: "unknown", reason: UNKNOWN_REASON };
+    if (withRevision && revisionValue === undefined)
+      return { kind: "unknown", reason: UNKNOWN_REASON };
     try {
       const intentPayload = {
         hostId: wireHostId,
@@ -319,7 +429,11 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     args: Record<string, unknown>,
   ): Promise<PromptOutcome> => {
     const runtime = controller.getSnapshot();
-    const support = commandSupport(runtime.catalogs.get(options.hostId), grantedFor(runtime), command);
+    const support = commandSupport(
+      runtime.catalogs.get(options.hostId),
+      grantedFor(runtime),
+      command,
+    );
     if (!support.supported) {
       const reason = support.reason ?? "Not available on this host";
       controlError = reason;
@@ -407,7 +521,22 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   };
 
   const applyFrame = (frame: TranscriptFrame) => {
-    const next = reduceTranscript(transcript, frame);
+    // Renderer frames are sanitized to their global retention budget before
+    // delivery. Preserve the shared client's smaller/custom retention truth,
+    // which is otherwise not representable on the app-wire snapshot itself.
+    const reduced = reduceTranscript(transcript, frame);
+    // Raw frame subscribers still receive stale/duplicate/gapped events that
+    // the reducer correctly refuses. Only advance prompt retirement state when
+    // the transcript actually accepted this event at its advertised cursor.
+    if (
+      frame.type === "event" &&
+      reduced !== transcript &&
+      reduced.cursor?.epoch === frame.cursor.epoch &&
+      reduced.cursor.seq === frame.cursor.seq
+    ) {
+      applyPendingPromptLifecycle(frame.event);
+    }
+    const next = withWarmHistoryTruncation(reduced, controller.getSnapshot());
     if (next !== transcript) {
       transcript = next;
       notify();
@@ -419,6 +548,27 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   let retryAfterAttach = false;
   let connectionGeneration = 0;
   let previousConnected = controller.getSnapshot().connections.get(targetId) === "connected";
+  const initialAuthoritativeWorking = authoritativeWorkingState(
+    controller.getSnapshot(),
+    targetId,
+    options.hostId,
+    projectionKey,
+    retiredPendingPromptIds,
+  );
+  const initialProjectionSnapshot = controller.getSnapshot().projection;
+  const warmTranscriptEventOrdinal = warm?.transcriptEventArrivalOrdinal ?? 0;
+  const authoritativeRefOrdinal =
+    initialProjectionSnapshot.sessionRefArrivalOrdinals.get(projectionKey) ?? 0;
+  if (
+    initialAuthoritativeWorking === false &&
+    authoritativeRefOrdinal > warmTranscriptEventOrdinal
+  ) {
+    // Transcript and session-index cursors are independent. Settle warm
+    // volatile UI only when this process observed complete idle ref truth
+    // after the last accepted transcript event. This preserves a current
+    // turn/compaction whose active ref delta has not arrived yet.
+    transcript = settleTranscriptTurn(transcript);
+  }
   const attachIfConnected = (runtime: DesktopRuntimeSnapshot) => {
     if (disposed) return;
     const connected = runtime.connections.get(targetId) === "connected";
@@ -442,7 +592,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     const generation = connectionGeneration;
     attached = true;
     void controller
-      .attachSession(targetId, options.hostId, options.sessionId)
+      .attachSession(targetId, options.hostId, options.sessionId, transcript.cursor ?? undefined)
       .then((result) => {
         const current = controller.getSnapshot();
         transcriptImagesAttached = result.accepted === true && generation === connectionGeneration;
@@ -467,9 +617,6 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
         }
       });
   };
-  syncTranscriptImageAvailability(controller.getSnapshot());
-  attachIfConnected(controller.getSnapshot());
-
   const unsubscribeFrames = controller.subscribeFrames(
     {
       targetId,
@@ -481,16 +628,52 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
       types: ["snapshot", "entry", "event", "gap"],
     },
     (event) => {
-      if (isTranscriptFrame(event.frame)) applyFrame(event.frame);
+      if (isTranscriptFrame(event.frame)) {
+        applyFrame(event.frame);
+      }
     },
   );
   // Connection state, catalog, confirmation, and freshness changes all
   // surface through the controller snapshot; re-derive on every change.
   const unsubscribeRuntime = controller.subscribe((runtime) => {
+    const retainedTranscript = withWarmHistoryTruncation(transcript, runtime);
+    if (retainedTranscript !== transcript) transcript = retainedTranscript;
     attachIfConnected(runtime);
+    const authoritativeWorking = authoritativeWorkingState(
+      runtime,
+      targetId,
+      options.hostId,
+      projectionKey,
+      retiredPendingPromptIds,
+    );
+    const warmNow = runtime.projection.sessions.get(projectionKey);
+    const newestTranscriptEventOrdinal = warmNow?.transcriptEventArrivalOrdinal ?? 0;
+    const newestRefOrdinal = runtime.projection.sessionRefArrivalOrdinals.get(projectionKey) ?? 0;
+    if (
+      authoritativeWorking === false &&
+      newestRefOrdinal > newestTranscriptEventOrdinal
+    ) {
+      // Settle on receive order, not a working true -> false edge. A mounted
+      // runtime may miss the active ref entirely (null -> idle) or receive two
+      // idle refs around newer transcript activity (idle -> idle). The newer
+      // complete ref is the proof; stale metadata/ref generations are fenced
+      // by authoritativeWorkingState above.
+      const next = settleTranscriptTurn(transcript, {
+        // turn.error is diagnostic until terminal lifecycle or ref proof.
+        // Generation filtering preserves the current turn's explanation
+        // while allowing this idle proof to retire an older turn's error.
+        supersedeTransientErrors: transcript.turnActive,
+      });
+      if (next !== transcript) transcript = next;
+    }
     syncTranscriptImageAvailability(runtime);
     notify();
   });
+  // Subscribe before issuing attach. OMP may synchronously replay frames as
+  // part of the attach round-trip; no replay frame may land in the gap between
+  // runtime construction and listener registration.
+  syncTranscriptImageAvailability(controller.getSnapshot());
+  attachIfConnected(controller.getSnapshot());
 
   const pendingChallenge = (runtime: DesktopRuntimeSnapshot): PendingChallenge | null => {
     const confirmations = warmSession(runtime)?.confirmations;
@@ -681,31 +864,58 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
         const runtime = controller.getSnapshot();
         const warmNow = warmSession(runtime);
         const connection = runtime.connections.get(targetId);
+        const indexedRef = runtime.projection.sessionIndex.get(projectionKey);
+        const inventoryReady =
+          runtime.targetHosts.get(targetId) === options.hostId &&
+          (indexedRef === undefined || hostSessionInventoryIsComplete(runtime, options.hostId));
         const link: SessionLink =
           connection !== "connected"
             ? "offline"
-            : warmNow !== undefined && warmNow.freshness !== "fresh"
+            : !inventoryReady || (warmNow !== undefined && warmNow.freshness !== "fresh")
               ? "cached"
               : "live";
         const granted = grantedFor(runtime);
         const catalog = runtime.catalogs.get(options.hostId);
+        // Session control truth: warm ref first, session index second.
+        const ref = warmNow?.ref ?? indexedRef;
+        const pendingPrompts = pendingPromptsFromRef(ref).filter(
+          (prompt) => !retiredPendingPromptIds.has(prompt.entryId),
+        );
+        const sessionActive =
+          link === "live" &&
+          (transcriptIsActive(transcript) ||
+            pendingPrompts.length > 0 ||
+            sessionIsWorkingWithPendingPrompts(ref, pendingPrompts));
         const cancelItem = catalog === undefined ? undefined : findCancelCommand(catalog.items);
         const cancelSupported = cancelItem !== undefined && cancelItem.supported !== false;
-        const canCancel = link === "live" && transcript.turnActive && cancelSupported;
+        const canCancel = link === "live" && sessionActive && cancelSupported;
         const cancelDisabledReason = cancelSupported
           ? null
           : catalog === undefined
             ? "Waiting for this host's command list"
             : (cancelItem?.reason ?? "This host does not offer a stop command");
         const challenge = pendingChallenge(runtime);
-        const projection: TranscriptProjection =
+        let projection: TranscriptProjection =
           transcript.approval === null && challenge !== null
             ? { ...transcript, approval: challenge.approval }
             : transcript;
+        if (
+          link === "live" &&
+          projection.contextMaintenance === null &&
+          sessionRefIsCompacting(indexedRef) &&
+          (runtime.projection.sessionRefArrivalOrdinals.get(projectionKey) ?? 0) >
+            (warmNow?.contextMaintenanceEventArrivalOrdinal ?? 0)
+        ) {
+          projection = {
+            ...projection,
+            contextMaintenance: {
+              startedAt: null,
+              reason: "Restored from current session state",
+            },
+          };
+        }
         const contextUsage = runtime.projection.sessionIndex.get(projectionKey)?.contextUsage;
 
-        // Session control truth: warm ref first, session index second.
-        const ref = warmNow?.ref ?? runtime.projection.sessionIndex.get(projectionKey);
         const canPrompt =
           link === "live" && granted.includes("sessions.prompt") && ref?.status !== "closed";
         const queuedFollowUps = getQueuedFollowUps(ref);
@@ -713,6 +923,8 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
         snapshot = {
           projection,
           link,
+          sessionActive,
+          pendingPrompts,
           canPrompt,
           canCancel,
           cancelDisabledReason,
@@ -721,7 +933,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
               ? []
               : slashCommandsFromCatalog(
                   catalog.items,
-                  { link, turnActive: transcript.turnActive },
+                  { link, turnActive: sessionActive },
                   granted,
                 ),
           contextUsedTokens: contextUsage?.used ?? 0,
@@ -750,9 +962,14 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     submitPrompt,
     pause() {
       // Live frames keep applying in the background so switch-back is warm.
+      // Image bytes do not: every inactive runtime releases its object URLs
+      // and cancels reads so the eight-session projection LRU cannot become
+      // eight independent 64 MiB renderer caches.
+      transcriptImages.pause();
     },
     resume() {
       if (disposed) return;
+      transcriptImages.resume();
       // Re-activate this session in the shared projection LRU.
       controller.activateSession(options.hostId, options.sessionId);
     },

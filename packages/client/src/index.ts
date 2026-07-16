@@ -48,6 +48,12 @@ export {
   applyPublicFrame,
   ProjectionStore,
   createProjectionStore,
+  MAX_RETAINED_TERMINALS,
+  MAX_RETAINED_TERMINAL_BYTES,
+  MAX_RETAINED_TERMINAL_BYTES_PER_TERMINAL,
+  MAX_RETAINED_FILES,
+  MAX_RETAINED_FILES_BYTES,
+  MAX_RETAINED_FILE_BYTES,
 } from "./projection.ts";
 export type {
   ProjectionFrame,
@@ -62,10 +68,45 @@ export type {
   ProjectionSubscription,
 } from "./projection.ts";
 export {
+  MAX_RETAINED_TRANSCRIPT_ENTRIES,
+  MAX_RETAINED_TRANSCRIPT_BYTES,
+  MAX_RETAINED_TRANSCRIPT_ENTRY_BYTES,
+  MAX_RETAINED_AGENT_TRANSCRIPTS,
+  MAX_RETAINED_AGENT_TRANSCRIPT_ENTRIES,
+  MAX_RETAINED_AGENT_TRANSCRIPT_BYTES,
+  MAX_RETAINED_SESSION_EVENTS,
+  MAX_RETAINED_SESSION_EVENTS_BYTES,
+  MAX_RETAINED_SESSION_EVENT_BYTES,
+  MAX_RETAINED_LIVE_MESSAGE_BYTES,
+  MAX_RETAINED_LIVE_MESSAGES,
+  MAX_RETAINED_TOOL_CALLS,
+  MAX_RETAINED_TOOL_VALUE_BYTES,
+  MAX_RETAINED_PROGRESS_LINE_BYTES,
+  retainedJsonBytes,
+  retainedText,
+  sanitizeRetainedValue,
+  sanitizeRetainedRecord,
+  sanitizeRetainedDurableEntry,
+  retainDurableEntries,
+  appendRetainedDurableEntry,
+  appendRetainedValue,
+  sanitizeRetainedTranscriptFrame,
+} from "./transcript-retention.ts";
+export type {
+  RetainedDurableEntries,
+  RetainDurableEntryOptions,
+  RetainedTranscriptFrame,
+} from "./transcript-retention.ts";
+export {
   DesktopRuntimeError,
   DesktopRuntimeController,
   createDesktopRuntimeController,
 } from "./desktop-runtime.ts";
+export type {
+  DesktopUpdateOpenEvent,
+  DesktopUpdatePhase,
+  DesktopUpdateState,
+} from "@t4-code/protocol/desktop-ipc";
 export { redactedMessage } from "./desktop-runtime-contracts.ts";
 export type {
   DesktopShellPort,

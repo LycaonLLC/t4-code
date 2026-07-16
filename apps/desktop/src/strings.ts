@@ -24,7 +24,7 @@ export const strings = {
       label: APP_NAME,
       about: `About ${APP_NAME}`,
       settings: 'Settings\u2026',
-      checkForUpdates: 'Check for Updates\u2026',
+      updates: 'Updates\u2026',
       quit: `Quit ${APP_NAME}`,
     },
     file: {

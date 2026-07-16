@@ -18,6 +18,7 @@ import { globRenderer } from "./tools/glob.tsx";
 import { goalRenderer } from "./tools/goal.tsx";
 import { grepRenderer } from "./tools/grep.tsx";
 import { inspectImageRenderer } from "./tools/inspect-image.tsx";
+import { hubRenderer } from "./tools/hub.tsx";
 import { ircRenderer } from "./tools/irc.tsx";
 import { jobRenderer } from "./tools/job.tsx";
 import { lspRenderer } from "./tools/lsp.tsx";
@@ -25,6 +26,7 @@ import { recallRenderer } from "./tools/memory-recall.tsx";
 import { reflectRenderer } from "./tools/memory-reflect.tsx";
 import { retainRenderer } from "./tools/memory-retain.tsx";
 import { readRenderer } from "./tools/read.tsx";
+import { proposeRenderer } from "./tools/propose.tsx";
 import { reportFindingRenderer } from "./tools/report-finding.tsx";
 import { reportToolIssueRenderer } from "./tools/report-tool-issue.tsx";
 import { resolveRenderer } from "./tools/resolve.tsx";
@@ -58,6 +60,7 @@ const RENDERERS: Record<string, ToolRenderer> = {
   github: githubRenderer,
   goal: goalRenderer,
   inspect_image: inspectImageRenderer,
+  hub: hubRenderer,
   irc: ircRenderer,
   job: jobRenderer,
   await: jobRenderer,
@@ -68,8 +71,11 @@ const RENDERERS: Record<string, ToolRenderer> = {
   reflect: reflectRenderer,
   retain: retainRenderer,
   read: readRenderer,
+  propose: proposeRenderer,
   report_finding: reportFindingRenderer,
+  report_issue: reportToolIssueRenderer,
   report_tool_issue: reportToolIssueRenderer,
+  reject: resolveRenderer,
   resolve: resolveRenderer,
   grep: grepRenderer,
   search: grepRenderer,

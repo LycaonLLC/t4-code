@@ -8,6 +8,9 @@ import type {
   ConnectResult,
   DisconnectResult,
   DesktopTarget,
+  DesktopUpdateOpenEvent,
+  DesktopUpdateRendererReadyResult,
+  DesktopUpdateState,
   PairLinkEvent,
   PairRequest,
   PairResult,
@@ -50,6 +53,11 @@ export interface DesktopShellPort {
   readonly serviceStop?: () => Promise<ServiceActionResult>;
   readonly serviceRestart?: () => Promise<ServiceActionResult>;
   readonly serviceUninstall?: () => Promise<ServiceActionResult>;
+  readonly getUpdateState?: () => Promise<DesktopUpdateState>;
+  readonly checkForUpdate?: () => Promise<DesktopUpdateState>;
+  readonly downloadUpdate?: () => Promise<DesktopUpdateState>;
+  readonly restartToUpdate?: () => Promise<DesktopUpdateState>;
+  readonly updateRendererReady?: () => Promise<DesktopUpdateRendererReadyResult>;
   readonly listTargets: () => Promise<TargetListResult>;
   readonly addTarget: (request: TargetAddRequest) => Promise<TargetAddResult>;
   readonly removeTarget: (request: TargetRequest) => Promise<TargetRemoveResult>;
@@ -59,6 +67,8 @@ export interface DesktopShellPort {
   readonly onConnectionState: (listener: (event: ConnectionStateEvent) => void) => () => void;
   readonly onRuntimeError: (listener: (event: RuntimeErrorEvent) => void) => () => void;
   readonly onPairLink?: (listener: (event: PairLinkEvent) => void) => () => void;
+  readonly onUpdateState?: (listener: (state: DesktopUpdateState) => void) => () => void;
+  readonly onOpenUpdateSettings?: (listener: (event: DesktopUpdateOpenEvent) => void) => () => void;
 }
 
 export type DesktopRuntimeStartState = "idle" | "starting" | "started" | "stopped" | "error";

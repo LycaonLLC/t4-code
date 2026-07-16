@@ -183,4 +183,55 @@ describe("desktop IPC lifecycle proof", () => {
     registry.emitPairLink({ hostHint: "host", code: "123456", issuedAt: 1 });
     expect(view.sent).toEqual([]);
   });
+  it("keeps update actions behind exact trusted IPC and emits each state once", async () => {
+    const ipc = new FakeIpc();
+    const { runtime: baseRuntime, view } = makeRuntime();
+    const idle = Object.freeze({ version: 1 as const, currentVersion: "0.1.17", phase: "idle" as const });
+    const available = Object.freeze({ version: 1 as const, currentVersion: "0.1.17", phase: "available" as const, availableVersion: "0.1.18", checkedAt: 123 });
+    let checks = 0;
+    let downloads = 0;
+    let restarts = 0;
+    let pendingUpdateOpen = true;
+    let stateListener: ((state: typeof available) => void) | undefined;
+    const runtime: IpcRuntime = {
+      ...baseRuntime,
+      drainPendingUpdateOpen: () => {
+        const pending = pendingUpdateOpen;
+        pendingUpdateOpen = false;
+        return pending;
+      },
+      updateController: {
+        getState: () => idle,
+        checkForUpdate: async () => { checks += 1; return available; },
+        downloadUpdate: async () => { downloads += 1; return available; },
+        restartToUpdate: () => { restarts += 1; return available; },
+        subscribe: (listener) => {
+          stateListener = listener as (state: typeof available) => void;
+          return () => { stateListener = undefined; };
+        },
+      },
+    };
+    const registry = new DesktopIpcRegistry(runtime, ipc);
+    registry.install();
+    const event = { sender: runtime.window.webContents, senderFrame: runtime.window.webContents.mainFrame };
+
+    expect(await ipc.handlers.get("app:update:get-state")!(event, request("app:update:get-state"))).toEqual(idle);
+    expect(await ipc.handlers.get("app:update:check")!(event, request("app:update:check"))).toEqual(available);
+    expect(await ipc.handlers.get("app:update:download")!(event, request("app:update:download"))).toEqual(available);
+    expect(await ipc.handlers.get("app:update:restart")!(event, request("app:update:restart"))).toEqual(available);
+    expect(await ipc.handlers.get("app:update:renderer-ready")!(event, request("app:update:renderer-ready"))).toEqual({ openSettings: true });
+    expect(await ipc.handlers.get("app:update:renderer-ready")!(event, request("app:update:renderer-ready"))).toEqual({ openSettings: false });
+    expect({ checks, downloads, restarts }).toEqual({ checks: 1, downloads: 1, restarts: 1 });
+    await expect(ipc.handlers.get("app:update:check")!(event, request("app:update:check", { url: "https://attacker.invalid" }))).rejects.toThrow("unknown key");
+    expect(() => ipc.handlers.get("app:update:renderer-ready")!(event, request("app:update:renderer-ready", { openSettings: true }))).toThrow("unknown key");
+
+    stateListener?.(available);
+    registry.emitOpenUpdateSettings();
+    expect(view.sent).toEqual([
+      ["app:update:state", available],
+      ["app:update:open", { source: "menu" }],
+    ]);
+    registry.uninstall();
+    expect(stateListener).toBeUndefined();
+  });
 });
