@@ -13,6 +13,7 @@ import {
   cacheControlForStaticPath,
   injectBackendConfig,
   normalizeAllowedOrigin,
+  normalizeEmbedParentOrigin,
   normalizeDeploymentIdentity,
   normalizeNativeAllowedOrigins,
   optionsFromEnvironment,
@@ -98,6 +99,22 @@ test("origin validation accepts only explicit Tailscale HTTPS origins", () => {
     "https://user@host.example-tailnet.ts.net",
   ]) {
     assert.throws(() => normalizeAllowedOrigin(value), /Tailscale HTTPS origin/u);
+  }
+});
+
+test("embed parent validation accepts one exact secure or loopback origin", () => {
+  assert.equal(normalizeEmbedParentOrigin(undefined), undefined);
+  assert.equal(normalizeEmbedParentOrigin("https://operator.example.com"), "https://operator.example.com");
+  assert.equal(normalizeEmbedParentOrigin("http://127.0.0.1:4400"), "http://127.0.0.1:4400");
+  assert.equal(normalizeEmbedParentOrigin("http://localhost:4500"), "http://localhost:4500");
+  assert.equal(normalizeEmbedParentOrigin("http://[::1]:4400"), "http://[::1]:4400");
+  for (const value of [
+    "http://operator.example.com",
+    "https://operator.example.com/path",
+    "https://user@operator.example.com",
+    "https://operator.example.com?token=nope",
+  ]) {
+    assert.throws(() => normalizeEmbedParentOrigin(value), /exact HTTPS origin or loopback HTTP origin/u);
   }
 });
 
@@ -221,6 +238,34 @@ test("gateway serves configured app and reports real upstream health", async () 
       transport: "local-unix",
       deploymentIdentity: DEPLOYMENT_IDENTITY,
     });
+  } finally {
+    await running.close();
+  }
+});
+
+test("gateway opts into one frame ancestor without weakening socket origin checks", async () => {
+  const embedParentOrigin = "http://127.0.0.1:4500";
+  const running = await fixture("symlink", { embedParentOrigin });
+  try {
+    const response = await fetch(`${running.url}/`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-frame-options"), null);
+    assert.match(
+      response.headers.get("content-security-policy") ?? "",
+      /frame-ancestors http:\/\/127\.0\.0\.1:4500/u,
+    );
+
+    const denied = new WebSocket(`${running.url.replace("http", "ws")}/v1/ws`, {
+      headers: { Origin: embedParentOrigin },
+    });
+    const deniedStatus = await new Promise((resolvePromise, reject) => {
+      denied.once("unexpected-response", (_request, deniedResponse) =>
+        resolvePromise(deniedResponse.statusCode),
+      );
+      denied.once("open", () => reject(new Error("socket opened for the embed parent origin")));
+      denied.once("error", () => {});
+    });
+    assert.equal(deniedStatus, 403);
   } finally {
     await running.close();
   }

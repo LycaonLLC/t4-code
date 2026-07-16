@@ -85,6 +85,29 @@ function normalizeServiceOrigin(value) {
   return url.origin;
 }
 
+function normalizeServiceEmbedOrigin(value) {
+  const text = cleanText(value, "Operator Studio origin", 2_048);
+  let url;
+  try {
+    url = new URL(text);
+  } catch {
+    fail("T4_EMBED_PARENT_ORIGIN must be a valid HTTP(S) origin");
+  }
+  const loopbackHost = ["127.0.0.1", "::1", "[::1]", "localhost"].includes(url.hostname);
+  const allowedProtocol = url.protocol === "https:" || (url.protocol === "http:" && loopbackHost);
+  if (
+    !allowedProtocol ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.pathname !== "/" ||
+    url.search !== "" ||
+    url.hash !== ""
+  ) {
+    fail("T4_EMBED_PARENT_ORIGIN must be an exact HTTPS origin or loopback HTTP origin");
+  }
+  return url.origin;
+}
+
 function normalizeServiceNativeOrigins(value = CAPACITOR_NATIVE_ORIGINS) {
   if (!Array.isArray(value)) fail("native allowed origins must be an array");
   const origins = value.map((origin) => cleanText(origin, "native allowed origin", 128));
@@ -137,6 +160,9 @@ export function validateServiceConfig(input) {
     webRoot: absolutePath(input.webRoot ?? join(sourceRoot, "apps", "web", "dist"), "web root"),
     appSocket: absolutePath(input.appSocket, "OMP appserver socket"),
     allowedOrigin: normalizeServiceOrigin(input.allowedOrigin),
+    ...(input.embedParentOrigin === undefined
+      ? {}
+      : { embedParentOrigin: normalizeServiceEmbedOrigin(input.embedParentOrigin) }),
     nativeAllowedOrigins: normalizeServiceNativeOrigins(input.nativeAllowedOrigins),
     port: gatewayPort(input.port ?? DEFAULT_GATEWAY_PORT),
     label: cleanText(input.label ?? "OMP on this Tailnet host", "host label", 128),
@@ -162,6 +188,9 @@ function escapeXml(value) {
 function gatewayEnvironment(config) {
   return {
     T4_ALLOWED_ORIGIN: config.allowedOrigin,
+    ...(config.embedParentOrigin === undefined
+      ? {}
+      : { T4_EMBED_PARENT_ORIGIN: config.embedParentOrigin }),
     T4_NATIVE_ALLOWED_ORIGINS: config.nativeAllowedOrigins.join(","),
     T4_GATEWAY_HOST: "127.0.0.1",
     T4_GATEWAY_PORT: String(config.port),
@@ -552,6 +581,7 @@ function validateCliOptions(command, options) {
       ? new Set([
           "help",
           "origin",
+          "embedParentOrigin",
           "port",
           "webRoot",
           "appSocket",
@@ -574,6 +604,8 @@ Usage:
 
 Install options:
   --origin URL          Exact Tailscale HTTPS origin (required)
+  --embed-parent-origin URL
+                        Exact Operator Studio origin allowed to frame T4 Code
   --port PORT           Loopback gateway port (default: 4194)
   --web-root PATH       Built T4 web directory (default: apps/web/dist)
   --app-socket PATH     OMP appserver Unix socket
@@ -598,6 +630,7 @@ async function install(options, paths) {
     webRoot: options.webRoot ?? join(sourceRoot, "apps", "web", "dist"),
     appSocket: options.appSocket ?? defaultAppSocket(paths.platform),
     allowedOrigin: options.origin,
+    embedParentOrigin: options.embedParentOrigin,
     port: options.port ?? DEFAULT_GATEWAY_PORT,
     label: options.label ?? "OMP on this Tailnet host",
     deploymentIdentity: options.deploymentIdentity,

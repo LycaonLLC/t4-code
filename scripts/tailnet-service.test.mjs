@@ -24,6 +24,7 @@ const CONFIG = {
   webRoot: "/home/alice/t4-code/apps/web/dist",
   appSocket: "/run/user/1000/omp/appserver.sock",
   allowedOrigin: "https://workstation.example-tailnet.ts.net:8445",
+  embedParentOrigin: "http://127.0.0.1:4400",
   nativeAllowedOrigins: ["https://localhost", "capacitor://localhost"],
   port: DEFAULT_GATEWAY_PORT,
   label: "Alice's workstation",
@@ -38,6 +39,10 @@ test("service config requires an exact Tailnet HTTPS origin and absolute local p
   assert.throws(
     () => validateServiceConfig({ ...CONFIG, allowedOrigin: "https://public.example.com" }),
     /Tailscale HTTPS origin/u,
+  );
+  assert.throws(
+    () => validateServiceConfig({ ...CONFIG, embedParentOrigin: "http://operator.example.com" }),
+    /exact HTTPS origin or loopback HTTP origin/u,
   );
   assert.throws(
     () => validateServiceConfig({ ...CONFIG, nativeAllowedOrigins: ["*"] }),
@@ -66,6 +71,7 @@ test("Linux paths are user-scoped and the systemd unit is shell-free and loopbac
   const unit = renderSystemdUnit({ ...CONFIG, label: 'host "$(touch /tmp/nope)" 100%' });
   assert.match(unit, /ExecStart="\/opt\/node\/bin\/node" "\/home\/alice\/t4-code\/scripts\/tailnet-gateway\.mjs"/u);
   assert.match(unit, /Environment="T4_GATEWAY_HOST=127\.0\.0\.1"/u);
+  assert.match(unit, /Environment="T4_EMBED_PARENT_ORIGIN=http:\/\/127\.0\.0\.1:4400"/u);
   assert.match(
     unit,
     /Environment="T4_NATIVE_ALLOWED_ORIGINS=https:\/\/localhost,capacitor:\/\/localhost"/u,
@@ -116,6 +122,10 @@ test("macOS paths and launch agent preserve argv and environment as XML data", (
   assert.match(plist, /<key>ProgramArguments<\/key>/u);
   assert.match(plist, /<string>\/opt\/node\/bin\/node<\/string>/u);
   assert.match(plist, /<key>T4_GATEWAY_HOST<\/key>\s+<string>127\.0\.0\.1<\/string>/u);
+  assert.match(
+    plist,
+    /<key>T4_EMBED_PARENT_ORIGIN<\/key>\s+<string>http:\/\/127\.0\.0\.1:4400<\/string>/u,
+  );
   assert.match(
     plist,
     /<key>T4_NATIVE_ALLOWED_ORIGINS<\/key>\s+<string>https:\/\/localhost,capacitor:\/\/localhost<\/string>/u,
@@ -215,6 +225,8 @@ test("CLI parser rejects ambiguous values and accepts the documented install sha
       "install",
       "--origin",
       CONFIG.allowedOrigin,
+      "--embed-parent-origin",
+      CONFIG.embedParentOrigin,
       "--port",
       "4194",
       "--label",
@@ -227,6 +239,7 @@ test("CLI parser rejects ambiguous values and accepts the documented install sha
       command: "install",
       options: {
         origin: CONFIG.allowedOrigin,
+        embedParentOrigin: CONFIG.embedParentOrigin,
         port: "4194",
         label: "Workstation",
         deploymentIdentity: CONFIG.deploymentIdentity,

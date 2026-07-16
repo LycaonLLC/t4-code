@@ -79,6 +79,31 @@ The service installer is idempotent. On Linux it writes and enables
 unit. On macOS it installs the matching per-user LaunchAgent. It stores no
 Tailscale key, OMP token, or app password.
 
+### Embed in Operator Studio Client
+
+T4 Code denies framing unless the gateway is installed with one exact parent
+origin. Add the Client URL when installing or reinstalling the service:
+
+```bash
+node scripts/tailnet-service.mjs install \
+  --origin https://host-name.your-tailnet.ts.net:8445 \
+  --embed-parent-origin http://127.0.0.1:4400 \
+  --port 4194 \
+  --deployment-identity "$DEPLOYMENT_IDENTITY"
+```
+
+Then set the matching T4 URL in Operator Studio Client:
+
+```env
+OS_CLIENT_T4_URL=https://host-name.your-tailnet.ts.net:8445/
+```
+
+The embed parent must be an exact HTTPS origin, or loopback HTTP for local
+development. Paths, credentials, query strings, fragments, and wildcards are
+rejected. When the option is absent, the gateway retains
+`frame-ancestors 'none'` and `X-Frame-Options: DENY`. The embed origin is never
+added to the WebSocket allowlist.
+
 If OMP uses a non-default appserver socket, add an absolute path:
 
 ```bash

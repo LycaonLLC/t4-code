@@ -15,6 +15,7 @@ const MAX_PENDING_BYTES = 512 * 1024;
 const DEFAULT_PORT = 4_194;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1"]);
+const EMBED_HTTP_HOSTS = new Set([...LOOPBACK_HOSTS, "[::1]", "localhost"]);
 const OMP_SOCKET_NAME = /^\.appserver-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.sock$/u;
 
 // Capacitor v8 serves bundled assets from these origins when its documented
@@ -65,6 +66,30 @@ export function normalizeAllowedOrigin(value) {
     !url.hostname.endsWith(".ts.net")
   ) {
     throw new Error("T4_ALLOWED_ORIGIN must be a Tailscale HTTPS origin ending in .ts.net");
+  }
+  return url.origin;
+}
+
+export function normalizeEmbedParentOrigin(value) {
+  if (value === undefined || value === "") return undefined;
+  const text = requiredText(value, "T4_EMBED_PARENT_ORIGIN");
+  let url;
+  try {
+    url = new URL(text);
+  } catch {
+    throw new Error("T4_EMBED_PARENT_ORIGIN must be a valid HTTP(S) origin");
+  }
+  const secure = url.protocol === "https:";
+  const loopback = url.protocol === "http:" && EMBED_HTTP_HOSTS.has(url.hostname);
+  if (
+    (!secure && !loopback) ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.pathname !== "/" ||
+    url.search !== "" ||
+    url.hash !== ""
+  ) {
+    throw new Error("T4_EMBED_PARENT_ORIGIN must be an exact HTTPS origin or loopback HTTP origin");
   }
   return url.origin;
 }
@@ -144,7 +169,7 @@ export function safeStaticPath(webRoot, pathname) {
   return candidate === root || candidate.startsWith(`${root}${sep}`) ? candidate : undefined;
 }
 
-function gatewayCsp(allowedOrigin) {
+function gatewayCsp(allowedOrigin, embedParentOrigin) {
   const websocketOrigin = new URL(websocketUrlForOrigin(allowedOrigin)).origin;
   return [
     "default-src 'self'",
@@ -156,17 +181,17 @@ function gatewayCsp(allowedOrigin) {
     "object-src 'none'",
     "base-uri 'none'",
     "frame-src 'none'",
-    "frame-ancestors 'none'",
+    `frame-ancestors ${embedParentOrigin ?? "'none'"}`,
     "form-action 'none'",
   ].join("; ");
 }
 
-function applySecurityHeaders(response, allowedOrigin) {
-  response.setHeader("Content-Security-Policy", gatewayCsp(allowedOrigin));
+function applySecurityHeaders(response, allowedOrigin, embedParentOrigin) {
+  response.setHeader("Content-Security-Policy", gatewayCsp(allowedOrigin, embedParentOrigin));
   response.setHeader("Permissions-Policy", "camera=(), geolocation=(), microphone=(), payment=(), usb=()");
   response.setHeader("Referrer-Policy", "no-referrer");
   response.setHeader("X-Content-Type-Options", "nosniff");
-  response.setHeader("X-Frame-Options", "DENY");
+  if (embedParentOrigin === undefined) response.setHeader("X-Frame-Options", "DENY");
 }
 
 async function rejectSymlinkedParent(path) {
@@ -357,6 +382,7 @@ export async function startTailnetGateway(input) {
     listenHost: input.listenHost ?? "127.0.0.1",
     listenPort: input.listenPort ?? DEFAULT_PORT,
     allowedOrigin: normalizeAllowedOrigin(input.allowedOrigin),
+    embedParentOrigin: normalizeEmbedParentOrigin(input.embedParentOrigin),
     nativeAllowedOrigins: normalizeNativeAllowedOrigins(input.nativeAllowedOrigins),
     label: input.label ?? "OMP on this Tailnet host",
     deploymentIdentity: normalizeDeploymentIdentity(input.deploymentIdentity),
@@ -381,7 +407,7 @@ export async function startTailnetGateway(input) {
   });
   const server = createServer((request, response) => {
     void (async () => {
-      applySecurityHeaders(response, options.allowedOrigin);
+      applySecurityHeaders(response, options.allowedOrigin, options.embedParentOrigin);
       const pathname = requestPath(request.url);
       if (pathname === "/healthz") {
         const [web, resolvedAppSocket] = await Promise.all([
@@ -495,6 +521,7 @@ export function optionsFromEnvironment(environment = process.env) {
     listenHost: environment.T4_GATEWAY_HOST ?? "127.0.0.1",
     listenPort: port,
     allowedOrigin: environment.T4_ALLOWED_ORIGIN,
+    embedParentOrigin: environment.T4_EMBED_PARENT_ORIGIN,
     nativeAllowedOrigins:
       environment.T4_NATIVE_ALLOWED_ORIGINS === undefined
         ? undefined
