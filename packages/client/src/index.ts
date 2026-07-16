@@ -48,6 +48,12 @@ export {
   applyPublicFrame,
   ProjectionStore,
   createProjectionStore,
+  MAX_RETAINED_TERMINALS,
+  MAX_RETAINED_TERMINAL_BYTES,
+  MAX_RETAINED_TERMINAL_BYTES_PER_TERMINAL,
+  MAX_RETAINED_FILES,
+  MAX_RETAINED_FILES_BYTES,
+  MAX_RETAINED_FILE_BYTES,
 } from "./projection.ts";
 export type {
   ProjectionFrame,

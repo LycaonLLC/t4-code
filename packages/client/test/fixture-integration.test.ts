@@ -49,10 +49,17 @@ describe("OmpClient and FixtureWebSocketServer projection boundary", () => {
       // The subscription above proves both live events crossed the real
       // WebSocket boundary. Once the matching durable entry arrives, the
       // projection must retire those transient frames so the response cannot
-      // render twice.
+      // render twice. The settlement correlation marker remains available so
+      // a freshly recreated runtime can suppress a lagging pendingPrompt ref.
       expect(
         projection.snapshot.sessions.get(key)!.events.map((event) => event.event.type),
-      ).toEqual(["agent.start", "turn.start", "turn.end", "agent.end"]);
+      ).toEqual([
+        "agent.start",
+        "turn.start",
+        "message.settled",
+        "turn.end",
+        "agent.end",
+      ]);
       expect(projection.snapshot.sessions.get(key)!.entries).toHaveLength(2);
       expect(JSON.stringify(projection.snapshot)).not.toContain("deviceToken");
       const { promise: reconnected, resolve: resolveReconnect } = Promise.withResolvers<void>();

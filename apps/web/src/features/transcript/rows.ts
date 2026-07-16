@@ -18,6 +18,8 @@ import {
   type ApprovalRequest,
   type AskRequest,
   type DurableEntry,
+  type LiveMessage,
+  type PendingPrompt,
   plainRecord,
   type PlanProposal,
   type ToolCall,
@@ -74,7 +76,9 @@ export type TranscriptRow =
   | {
       readonly id: string;
       readonly kind: "working";
-      readonly startedAt: string;
+      /** Null until a sequenced transcript event supplies a real start time. */
+      readonly startedAt: string | null;
+      readonly activity: "working" | "preparing-context";
     };
 
 export interface TranscriptToolCall extends ToolCall {
@@ -232,7 +236,39 @@ function rowsFromEntries(entries: readonly DurableEntry[]): TranscriptRow[] {
  * the running turn's live tool group and streaming messages, then transient
  * stream notices, then the working indicator.
  */
-export function deriveTranscriptRows(projection: TranscriptProjection): TranscriptRow[] {
+export interface TranscriptRowsOptions {
+  /** Effective activity may also come from the authoritative session ref. */
+  readonly sessionActive?: boolean;
+  /** Accepted prompt fallbacks carried by SessionRef.liveState across attach. */
+  readonly pendingPrompts?: readonly PendingPrompt[];
+}
+
+function acceptedPromptText(text: string, attachmentCount: number): string {
+  if (text !== "" || attachmentCount === 0) return text;
+  return attachmentCount === 1 ? "Image attached" : `${attachmentCount} images attached`;
+}
+
+function liveMessageRow(message: LiveMessage): TranscriptRow {
+  return {
+    id: message.entryId,
+    kind: "message",
+    role: message.role,
+    text:
+      message.role === "user"
+        ? acceptedPromptText(message.text, message.attachmentCount)
+        : message.text,
+    reasoning: message.reasoning,
+    images: [],
+    imageIssue: null,
+    live: true,
+    startedAt: message.startedAt,
+  };
+}
+
+export function deriveTranscriptRows(
+  projection: TranscriptProjection,
+  options: TranscriptRowsOptions = {},
+): TranscriptRow[] {
   const rows = rowsFromEntries(projection.entries);
 
   if (projection.historyTruncated) {
@@ -262,40 +298,103 @@ export function deriveTranscriptRows(projection: TranscriptProjection): Transcri
     });
   }
 
-  for (const message of projection.liveMessages.values()) {
-    rows.push({
-      id: message.entryId,
-      kind: "message",
-      role: message.role,
-      text: message.text,
-      reasoning: message.reasoning,
-      images: [],
-      imageIssue: null,
-      live: true,
-      startedAt: message.startedAt,
+  // SessionRef owns accepted-prompt ordering across reconnects. Build that
+  // ordered block with exact live-row substitutions, then merge it into the
+  // existing live stream by sequenced timestamps. Unrelated assistant/live
+  // rows retain their order and an accepted follow-up does not jump above
+  // assistant output that was already visible before it was accepted.
+  const durableMessageIds = new Set(projection.entries.map((entry) => String(entry.id)));
+  const pendingMessageRows: {
+    readonly prompt: PendingPrompt;
+    readonly row: TranscriptRow;
+  }[] = [];
+  const pendingIndexById = new Map<string, number>();
+  for (const pendingPrompt of options.pendingPrompts ?? []) {
+    if (
+      durableMessageIds.has(pendingPrompt.entryId) ||
+      pendingIndexById.has(pendingPrompt.entryId)
+    ) {
+      continue;
+    }
+    const liveMessage = projection.liveMessages.get(pendingPrompt.entryId);
+    pendingIndexById.set(pendingPrompt.entryId, pendingMessageRows.length);
+    pendingMessageRows.push({
+      prompt: pendingPrompt,
+      row:
+        liveMessage !== undefined
+          ? liveMessageRow(liveMessage)
+          : {
+              id: pendingPrompt.entryId,
+              kind: "message",
+              role: "user",
+              text: acceptedPromptText(pendingPrompt.text, pendingPrompt.attachmentCount),
+              reasoning: "",
+              images: [],
+              imageIssue: null,
+              live: true,
+              startedAt: pendingPrompt.at,
+            },
     });
   }
 
-  // Recovery notices describe current stream health, not durable history.
-  // Old cached projections may predate reducer cleanup, so render at most the
-  // newest gap and never render one after the projection is active again.
-  const visibleGap =
-    projection.phase === "paused" || projection.phase === "resyncing"
-      ? projection.notices.findLast((notice) => notice.kind === "gap")
-      : undefined;
+  let pendingCursor = 0;
+  const emitPendingThrough = (lastIndex: number) => {
+    while (pendingCursor <= lastIndex) {
+      const pending = pendingMessageRows[pendingCursor];
+      if (pending === undefined) break;
+      rows.push(pending.row);
+      pendingCursor += 1;
+    }
+  };
+  for (const message of projection.liveMessages.values()) {
+    if (durableMessageIds.has(message.entryId)) continue;
+    const matchingPendingIndex = pendingIndexById.get(message.entryId);
+    const liveStartedMs = Date.parse(message.startedAt);
+    let pendingThrough = pendingCursor - 1;
+    if (Number.isFinite(liveStartedMs)) {
+      while (pendingThrough + 1 < pendingMessageRows.length) {
+        const nextPending = pendingMessageRows[pendingThrough + 1];
+        if (nextPending === undefined || Date.parse(nextPending.prompt.at) >= liveStartedMs) {
+          break;
+        }
+        pendingThrough += 1;
+      }
+    }
+    if (matchingPendingIndex !== undefined) {
+      pendingThrough = Math.max(pendingThrough, matchingPendingIndex);
+    }
+    emitPendingThrough(pendingThrough);
+    if (matchingPendingIndex !== undefined) continue;
+    rows.push(liveMessageRow(message));
+  }
+  emitPendingThrough(pendingMessageRows.length - 1);
+
+  // Recovery health has one owner: SessionMain's top catch-up banner. A gap
+  // row here would repeat the same warning inside role=log and leave the
+  // interruption looking like durable transcript history.
   for (const notice of projection.notices) {
     // Errors surface in the attention stack above the composer, not inline;
-    // everything else reads as an inline stream notice.
-    if (notice.kind === "error") continue;
-    if (notice.kind === "gap" && notice !== visibleGap) continue;
+    // gaps surface in the transient recovery banner; other notices read as
+    // inline stream provenance.
+    if (notice.kind === "error" || notice.kind === "gap") continue;
     rows.push({ id: `notice-${notice.id}`, kind: "notice", notice });
   }
 
-  if (projection.turnActive && projection.liveMessages.size === 0) {
+  const sessionActive =
+    options.sessionActive ?? (projection.turnActive || projection.contextMaintenance !== null);
+  const assistantStreaming = [...projection.liveMessages.values()].some(
+    (message) => message.role === "assistant",
+  );
+  if (sessionActive && !assistantStreaming) {
     rows.push({
       id: "working",
       kind: "working",
-      startedAt: projection.turnStartedAt ?? new Date(0).toISOString(),
+      startedAt:
+        projection.contextMaintenance?.startedAt ??
+        projection.turnStartedAt ??
+        [...projection.liveMessages.values()].at(-1)?.startedAt ??
+        null,
+      activity: projection.contextMaintenance === null ? "working" : "preparing-context",
     });
   }
 
@@ -460,7 +559,7 @@ function rowsEqual(a: TranscriptRow, b: TranscriptRow): boolean {
     case "unknown-entry":
       return b.kind === "unknown-entry" && a.entryKind === b.entryKind && a.data === b.data;
     case "working":
-      return b.kind === "working" && a.startedAt === b.startedAt;
+      return b.kind === "working" && a.startedAt === b.startedAt && a.activity === b.activity;
   }
 }
 

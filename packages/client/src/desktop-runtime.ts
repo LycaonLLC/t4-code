@@ -21,7 +21,7 @@ import {
   type TerminalResizeRequest,
   type TerminalResult,
 } from "@t4-code/protocol/desktop-ipc";
-import { decodeCatalog, decodeSessions, hostId, revision, sessionId, type CatalogFrame, type SettingsFrame, type WelcomeFrame } from "@t4-code/protocol";
+import { decodeCatalog, decodeSessions, hostId, revision, sessionId, type CatalogFrame, type Cursor, type SettingsFrame, type WelcomeFrame } from "@t4-code/protocol";
 import type { Unsubscribe } from "./index.ts";
 import { ProjectionStore, type ProjectionFrame } from "./projection.ts";
 import {
@@ -85,6 +85,8 @@ export class DesktopRuntimeController {
   private readonly controllerLeases = new Map<string, DesktopControllerLeaseEntry>();
   private readonly promptLeases: PromptLeaseStore;
   private readonly connectionGenerations = new Map<string, number>();
+  /** Welcome can arrive before the shell's final connected notification. */
+  private readonly welcomedBeforeConnected = new Set<string>();
   private readonly hostState = new DesktopRuntimeHostState();
   private readonly controllerLeaseFallbackTtlMs = 20_000;
   constructor(options: DesktopRuntimeOptions) {
@@ -196,8 +198,8 @@ export class DesktopRuntimeController {
     this.replace({ projection });
     return this.current;
   }
-  async attachSession(targetId: string, hostIdValue: string, sessionIdValue: string): Promise<CommandResult> {
-    const result = await this.command(targetId, { hostId: hostId(hostIdValue), sessionId: sessionId(sessionIdValue), command: "session.attach", args: {} });
+  async attachSession(targetId: string, hostIdValue: string, sessionIdValue: string, cursor?: Cursor): Promise<CommandResult> {
+    const result = await this.command(targetId, { hostId: hostId(hostIdValue), sessionId: sessionId(sessionIdValue), command: "session.attach", args: cursor === undefined ? {} : { cursor } });
     this.activateSession(hostIdValue, sessionIdValue);
     return result;
   }
@@ -568,6 +570,13 @@ export class DesktopRuntimeController {
       this.recordError({ targetId, code: "protocol", message: "target host binding changed" });
       return false;
     }
+    // Do not expose a newly accepted host binding alongside completeness from
+    // the previous transport generation, even for the brief notification
+    // before the welcome frame itself reaches the shared projection.
+    this.projection.invalidateSessionInventory(String(frame.hostId));
+    if (this.current.connections.get(targetId) !== "connected") {
+      this.welcomedBeforeConnected.add(targetId);
+    }
     if (reconciled.epochChanged) this.invalidateTargetLeases(targetId);
     this.replace({ targetHosts: reconciled.targetHosts, hosts: reconciled.hosts });
     this.applyProjection(targetId, frame);
@@ -611,6 +620,7 @@ export class DesktopRuntimeController {
     for (const targetId of reconciled.removedTargetIds) {
       this.invalidateTargetLeases(targetId);
       this.connectionGenerations.delete(targetId);
+      this.welcomedBeforeConnected.delete(targetId);
     }
     this.replace({
       targets: reconciled.targets,
@@ -629,6 +639,17 @@ export class DesktopRuntimeController {
     if (previous !== state) {
       this.connectionGenerations.set(targetId, this.generationFor(targetId) + 1);
       this.invalidateTargetLeases(targetId);
+      const welcomeAlreadyStartedThisGeneration =
+        state === "connected" && this.welcomedBeforeConnected.delete(targetId);
+      if (!welcomeAlreadyStartedThisGeneration) {
+        this.welcomedBeforeConnected.delete(targetId);
+        const boundHost = this.current.targetHosts.get(targetId);
+        // A cold process has no target-to-host binding yet, so every
+        // completeness record came from cache. Once any live binding exists,
+        // an unrelated new target cannot invalidate already connected hosts.
+        if (boundHost !== undefined) this.projection.invalidateSessionInventory(boundHost);
+        else if (this.current.targetHosts.size === 0) this.projection.invalidateSessionInventory();
+      }
     }
     const connections = new Map(this.current.connections).set(targetId, state);
     const existing = this.current.targets.get(targetId);

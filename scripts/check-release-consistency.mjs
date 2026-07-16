@@ -27,6 +27,7 @@ export const RELEASE_CONTRACT_PATHS = [
   "scripts/inspect-linux-update.mjs",
   "scripts/read-bounded-response.mjs",
   "scripts/reconcile-release-assets.mjs",
+  "scripts/wait-for-exact-ci.mjs",
   "scripts/wait-for-release-assets.mjs",
   "vendor/app-wire/manifest.json",
 ];
@@ -479,7 +480,17 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   const releaseWorkflow = files.get(".github/workflows/release.yml") ?? "";
   const ciWorkflow = files.get(".github/workflows/ci.yml") ?? "";
   for (const expected of [
+    "core:",
+    "tooling:",
     "android-debug:",
+    "name: verify",
+    "if: ${{ always() }}",
+    "needs: [core, tooling, android-debug]",
+    "test \"$CORE_RESULT\" = success",
+    "test \"$TOOLING_RESULT\" = success",
+    "test \"$ANDROID_RESULT\" = success",
+    "github.event_name == 'pull_request' && github.ref || github.sha",
+    "cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
     "actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9",
     "android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407",
     'sdkmanager --install "platforms;android-36" "build-tools;36.0.0"',
@@ -506,6 +517,11 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     'git merge-base --is-ancestor "$source_sha" refs/remotes/origin/main',
     "ref: ${{ steps.source.outputs.source_sha }}",
     "ref: ${{ needs.verify.outputs.source_sha }}",
+    "ci-authority:",
+    "actions: read",
+    "Require successful exact-SHA main CI",
+    "node scripts/wait-for-exact-ci.mjs",
+    '--commit "$SOURCE_SHA"',
     "Confirm the release tag still resolves to the verified source",
     'test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "$SOURCE_SHA"',
     "build-android:",
@@ -521,7 +537,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     '--apksigner "$build_tools/apksigner"',
     "T4-Code-${VERSION}-android.apk",
     "artifacts/latest-linux.yml",
-    "needs: [verify, build-android, build-linux, build-macos]",
+    "needs: [verify, ci-authority, build-android, build-linux, build-macos]",
     'node scripts/reconcile-release-assets.mjs --mode prepare --version "$VERSION"',
     'node scripts/reconcile-release-assets.mjs --mode verify --version "$VERSION"',
     "needs: [verify, publish]",
@@ -530,6 +546,40 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     '--commit "$SOURCE_SHA"',
   ]) {
     requireText(releaseWorkflow, expected, ".github/workflows/release.yml", errors);
+  }
+  const releaseVerifyStart = releaseWorkflow.indexOf("  verify:");
+  const releaseAuthorityStart = releaseWorkflow.indexOf("  ci-authority:");
+  if (!(releaseVerifyStart >= 0 && releaseAuthorityStart > releaseVerifyStart)) {
+    errors.push(".github/workflows/release.yml must resolve release source before CI authority");
+  } else {
+    const releaseVerify = releaseWorkflow.slice(releaseVerifyStart, releaseAuthorityStart);
+    for (const duplicate of [
+      "pnpm install",
+      "pnpm check",
+      "pnpm test",
+      "pnpm build",
+      "playwright install",
+    ]) {
+      if (releaseVerify.includes(duplicate)) {
+        errors.push(
+          `.github/workflows/release.yml source verification must not repeat exact-SHA CI via ${duplicate}`,
+        );
+      }
+    }
+  }
+  const exactCiWaiter = files.get("scripts/wait-for-exact-ci.mjs") ?? "";
+  for (const expected of [
+    'WORKFLOW = "ci.yml"',
+    'WORKFLOW_NAME = "CI"',
+    'WORKFLOW_PATH = ".github/workflows/ci.yml"',
+    'MAIN_BRANCH = "main"',
+    'run.head_sha === commit',
+    'run.event === "push"',
+    'run.head_branch === MAIN_BRANCH',
+    'status === "completed" && conclusion === "success"',
+    "readBoundedResponseBytes",
+  ]) {
+    requireText(exactCiWaiter, expected, "scripts/wait-for-exact-ci.mjs", errors);
   }
   const builderConfig = files.get("electron-builder.config.mjs") ?? "";
   for (const expected of [

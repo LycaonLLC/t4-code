@@ -71,6 +71,50 @@ function useStableTranscriptRows(rows: ReturnType<typeof deriveTranscriptRows>) 
   }, [rows]);
 }
 
+type SessionActivity = "compacting" | "working" | null;
+
+function activityLabel(activity: SessionActivity): string {
+  if (activity === "compacting") return "Compacting context";
+  if (activity === "working") return "Working";
+  return "";
+}
+
+/**
+ * One stable live region owns session activity announcements. Transcript rows
+ * remain visual-only so the surrounding role=log cannot announce the same
+ * transition a second time.
+ */
+function SessionActivityAnnouncer({ activity }: { readonly activity: SessionActivity }) {
+  const previousRef = useRef<SessionActivity>(activity);
+  const [announcement, setAnnouncement] = useState(() => activityLabel(activity));
+
+  useEffect(() => {
+    const previous = previousRef.current;
+    previousRef.current = activity;
+    if (previous === "compacting" && activity !== "compacting") {
+      setAnnouncement(
+        activity === "working"
+          ? "Context compaction complete. Working"
+          : "Context compaction complete",
+      );
+      return;
+    }
+    setAnnouncement(activityLabel(activity));
+  }, [activity]);
+
+  return (
+    <p
+      aria-atomic="true"
+      aria-live="polite"
+      className="sr-only"
+      data-session-activity-announcer
+      role="status"
+    >
+      {announcement}
+    </p>
+  );
+}
+
 export function SessionMain({ session }: SessionMainProps) {
   const archived = session.archivedAt !== undefined;
   const { snapshot, runtime } = useSessionRuntime(session.id, session.freshness);
@@ -92,7 +136,14 @@ export function SessionMain({ session }: SessionMainProps) {
     [session.id],
   );
 
-  const rawRows = useMemo(() => deriveTranscriptRows(projection), [projection]);
+  const rawRows = useMemo(
+    () =>
+      deriveTranscriptRows(projection, {
+        sessionActive: snapshot.sessionActive,
+        pendingPrompts: snapshot.pendingPrompts,
+      }),
+    [projection, snapshot.pendingPrompts, snapshot.sessionActive],
+  );
   const rows = useStableTranscriptRows(rawRows);
   const attention = useMemo(() => deriveAttention(projection), [projection]);
 
@@ -127,17 +178,28 @@ export function SessionMain({ session }: SessionMainProps) {
   }, []);
 
   const catchingUp = projection.phase === "resyncing" || projection.phase === "paused";
-  const showAttention = shouldShowAttention(attention, revisingPlanId, archived);
+  const sessionActivity: SessionActivity =
+    snapshot.link === "live" && !catchingUp && snapshot.sessionActive
+      ? projection.contextMaintenance === null
+        ? "working"
+        : "compacting"
+      : null;
+  const showAttention = shouldShowAttention(
+    attention,
+    revisingPlanId,
+    archived || snapshot.link !== "live" || catchingUp,
+  );
 
   const retryIntent = useMemo(() => {
     if (attention.error === null || !attention.error.retryable) return null;
     return () => onIntent({ kind: "prompt", text: "/retry", attachments: [] });
   }, [attention.error, onIntent]);
 
-  const empty = rows.length === 0 && !projection.turnActive;
+  const empty = rows.length === 0 && !snapshot.sessionActive;
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
+      <SessionActivityAnnouncer activity={sessionActivity} key={session.id} />
       {catchingUp && (
         <div
           className="flex h-7 shrink-0 items-center justify-center gap-2 border-border/60 border-b bg-secondary text-muted-foreground text-xs"
@@ -170,7 +232,7 @@ export function SessionMain({ session }: SessionMainProps) {
             nowMs={snapshot.nowMs}
             rows={rows}
             sessionId={session.id}
-            streaming={projection.turnActive}
+            streaming={snapshot.sessionActive}
             toolHost={toolHost}
           />
         )}
@@ -216,7 +278,7 @@ export function SessionMain({ session }: SessionMainProps) {
               sessionId={session.id}
               slashCommands={snapshot.slashCommands}
               submitPrompt={submitPrompt}
-              turnActive={projection.turnActive}
+              turnActive={snapshot.sessionActive}
             />
           </div>
         )}

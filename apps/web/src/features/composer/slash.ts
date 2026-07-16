@@ -45,7 +45,8 @@ export function slashCommandsFromCatalog(
   const commands: SlashCommand[] = [];
   for (const item of items) {
     if (item.kind !== "command") continue;
-    const name = `/${item.name.replace(/^\/+/, "")}`;
+    const bareName = item.name.replace(/^\/+/, "");
+    const name = `/${bareName}`;
     const metadata = item.metadata ?? {};
     const rawAliases = Array.isArray(metadata.aliases) ? metadata.aliases : [];
     const aliases = rawAliases
@@ -63,7 +64,11 @@ export function slashCommandsFromCatalog(
           ? missingCapability === "terminal.io"
             ? "Needs terminal access on this host"
             : "Not granted on this host"
-          : null);
+          : context.turnActive && bareName === "compact"
+            ? "Wait for the turn to finish"
+            : context.turnActive && bareName === "retry"
+              ? "A turn is already running"
+              : null);
     commands.push({
       name,
       aliases,
@@ -252,7 +257,8 @@ export function searchSlashCommands(
     if (score !== null) ranked.push({ command, score });
   }
   ranked.sort(
-    (left, right) => left.score - right.score || left.command.name.localeCompare(right.command.name),
+    (left, right) =>
+      left.score - right.score || left.command.name.localeCompare(right.command.name),
   );
   return ranked.map((entry) => entry.command);
 }

@@ -10,7 +10,7 @@ import { FrameFactory } from "./frame-builders.ts";
 import type { SessionIntent } from "./intents.ts";
 import type { ModelChoice } from "./session-controls.ts";
 
-export type TranscriptVariant = "default" | "stress" | "gap";
+export type TranscriptVariant = "default" | "stress" | "gap" | "compaction";
 
 export interface SessionScript {
   readonly link: "live" | "cached" | "offline";
@@ -397,6 +397,28 @@ function scriptFor(sessionKey: string, variant: TranscriptVariant): Omit<Session
       contextWindowTokens: 200_000,
       initialFrames: [snapshot],
       liveSteps: [beforeGap, afterGap],
+      factory,
+    };
+  }
+
+  if (variant === "compaction") {
+    const entries = makeEntries(factory, historySeeds().slice(1, 2));
+    return {
+      link: "live",
+      contextUsedTokens: 119_000,
+      contextWindowTokens: 200_000,
+      initialFrames: [
+        factory.snapshot(entries),
+        factory.event({
+          type: "compaction.start",
+          action: "compact",
+          reason: "pending_prompt_size",
+          at: at(11),
+        }),
+      ],
+      // Keeps the keyed working row mounted while its activity and start time
+      // change, exercising the exact compaction -> turn handoff in the UI.
+      liveSteps: [factory.event({ type: "turn.start", at: at(12) })],
       factory,
     };
   }

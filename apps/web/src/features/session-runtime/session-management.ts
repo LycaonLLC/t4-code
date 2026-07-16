@@ -11,6 +11,7 @@ import type { CommandResult } from "@t4-code/protocol/desktop-ipc";
 import type { LiveProjectAddress, LiveSessionAddress } from "../../platform/live-workspace.ts";
 import { commandSupport } from "./session-controls.ts";
 import { sessionActionRejectionReason } from "./command-errors.ts";
+import { pendingPromptsFromRef } from "./pending-prompts.ts";
 
 export type SessionManagementCommand =
   | "session.rename"
@@ -79,6 +80,7 @@ export function sessionIsClosed(ref: SessionRef | undefined): boolean {
 
 export function sessionIsWorking(ref: SessionRef | undefined): boolean {
   if (ref === undefined) return false;
+  if (pendingPromptsFromRef(ref).length > 0) return true;
   const rawRef = ref as unknown as Record<string, unknown>;
   if (
     ref.status === "active" ||

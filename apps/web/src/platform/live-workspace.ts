@@ -13,6 +13,8 @@ import type {
   WorkspaceSession,
 } from "../lib/workspace-data.ts";
 import { resolveCurrentHostTargetId } from "../lib/host-target.ts";
+import { sessionIsWorking } from "../features/session-runtime/session-management.ts";
+import { hostSessionInventoryIsComplete } from "../features/session-runtime/session-inventory.ts";
 
 /** Composite route id for one live session; unambiguous and URL-safe. */
 export function sessionViewId(hostId: string, sessionId: string): string {
@@ -75,7 +77,10 @@ export function warmSessionProjection(
 }
 
 /** Display name for a project: advertised name, else the id's basename. */
-function projectDisplayName(project: { readonly projectId: string; readonly name?: string }): string {
+function projectDisplayName(project: {
+  readonly projectId: string;
+  readonly name?: string;
+}): string {
   if (project.name !== undefined && project.name !== "") return project.name;
   const id = String(project.projectId);
   const segments = id.split(/[\\/]+/).filter((segment) => segment !== "");
@@ -145,10 +150,7 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
       const name = projectDisplayName(ref.project);
       projects.set(projectId, { id: projectId, name, path: name, hostId });
       if (advertisedProjectName !== null) projectsWithAdvertisedNames.add(projectId);
-    } else if (
-      advertisedProjectName !== null &&
-      !projectsWithAdvertisedNames.has(projectId)
-    ) {
+    } else if (advertisedProjectName !== null && !projectsWithAdvertisedNames.has(projectId)) {
       // A just-created session may omit the optional project name while
       // older refs for the same project still advertise it. Refs are sorted
       // newest-first, so upgrade the id fallback with the first real name and
@@ -164,9 +166,10 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
     const connection = hostConnection(snapshot, hostId);
     const warm = warmSessionProjection(snapshot, hostId, sessionId);
     const offline = connection.state !== "connected";
+    const inventoryReady = hostSessionInventoryIsComplete(snapshot, hostId);
     const freshness = offline
       ? "offline"
-      : warm !== undefined && warm.freshness !== "fresh"
+      : !inventoryReady || (warm !== undefined && warm.freshness !== "fresh")
         ? "cached"
         : "live";
     const pendingApprovals = warm?.confirmations.size ?? (ref.pendingApproval === true ? 1 : 0);
@@ -175,12 +178,20 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
       typeof rawArchivedAt === "string" && Number.isFinite(Date.parse(rawArchivedAt))
         ? rawArchivedAt
         : null;
+    // Ref activity is current only with a fresh connected projection. Cached
+    // and offline rows must surface freshness instead of a stale Working pill.
+    // Last-known activity still prevents inventing a completion timestamp:
+    // losing freshness is not evidence that the turn completed.
+    const lastKnownWorking = sessionIsWorking(ref);
+    const displayWorking = freshness === "live" && lastKnownWorking;
     let status: SessionStatus | null = null;
     if (connection.state === "connecting") status = "connecting";
-    else if (pendingApprovals > 0) status = "pendingApproval";
-    else if (ref.pendingUserInput === true) status = "awaitingInput";
-    else if (ref.proposedPlan !== undefined && ref.proposedPlan !== "") status = "planReady";
-    else if (ref.status === "active") status = "working";
+    else if (freshness === "live") {
+      if (pendingApprovals > 0) status = "pendingApproval";
+      else if (ref.pendingUserInput === true) status = "awaitingInput";
+      else if (ref.proposedPlan !== undefined && ref.proposedPlan !== "") status = "planReady";
+      else if (displayWorking) status = "working";
+    }
     sessions.push({
       id: sessionViewId(hostId, sessionId),
       projectId,
@@ -189,7 +200,7 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
       status,
       freshness,
       pendingApprovals,
-      latestTurnCompletedAt: ref.status === "active" ? null : ref.updatedAt,
+      latestTurnCompletedAt: lastKnownWorking ? null : ref.updatedAt,
       createdAt: ref.updatedAt,
       updatedAt: ref.updatedAt,
       lastActivity: "",

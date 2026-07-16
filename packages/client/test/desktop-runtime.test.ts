@@ -205,6 +205,49 @@ describe("desktop runtime projection", () => {
     });
     expect(runtime.getSnapshot().targetHosts.get("local")).toBe("host-a");
   });
+  it("keeps post-welcome inventory when connected is reported afterward", async () => {
+    const shell = new FakeShell();
+    shell.emitWelcomeOnBootstrap = {
+      targetId: "local",
+      frame: welcome("host-a", [], []),
+    };
+    shell.connectTarget = async (request: TargetRequest): Promise<ConnectResult> => {
+      shell.emitFrame({
+        targetId: request.targetId,
+        frame: {
+          v: "omp-app/1",
+          type: "sessions",
+          hostId: hostId("host-a"),
+          cursor: { epoch: "epoch-1", seq: 0 },
+          sessions: [
+            {
+              hostId: hostId("host-a"),
+              project: { projectId: "project-a" as never },
+              sessionId: sessionId("session-a"),
+              revision: revision("revision-a"),
+              title: "Session A",
+              status: "idle",
+              updatedAt: "2026-07-15T00:00:00Z",
+            },
+          ],
+          totalCount: 1,
+          truncated: false,
+        },
+      });
+      shell.emitState({ targetId: request.targetId, state: "connected" });
+      return { targetId: request.targetId, state: "connected" };
+    };
+    const runtime = createDesktopRuntimeController({ shell });
+    await runtime.start();
+
+    expect(runtime.getSnapshot().projection.sessionIndexMetadata.get("host-a")).toEqual({
+      totalCount: 1,
+      truncated: false,
+    });
+    shell.emitState({ targetId: "local", state: "disconnected" });
+    expect(runtime.getSnapshot().projection.sessionIndexMetadata.has("host-a")).toBe(false);
+    expect(runtime.getSnapshot().projection.sessionIndex.size).toBe(1);
+  });
   it("skips host.watch when session.list is rejected and continues independent bootstrap", async () => {
     const shell = new FakeShell();
     shell.sessionListAccepted = false;

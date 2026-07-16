@@ -16,6 +16,7 @@ import {
   Eye,
   FileJson,
   Globe,
+  LoaderCircle,
   MessageCircle,
   RotateCcw,
   SearchIcon,
@@ -47,8 +48,12 @@ import { TranscriptImages } from "./TranscriptImages.tsx";
  */
 function ElapsedSince({ fromIso, nowMs }: { readonly fromIso: string; readonly nowMs: number }) {
   const textRef = useRef<HTMLSpanElement>(null);
-  const [initialText] = useState(() => formatElapsed(fromIso, nowMs));
+  const initialText = formatElapsed(fromIso, nowMs);
   useEffect(() => {
+    // Runtime notifications can replace either time base while this keyed row
+    // stays mounted. Reflect that render immediately, then keep advancing from
+    // the new baseline after transcript traffic goes quiet.
+    if (textRef.current !== null) textRef.current.textContent = initialText;
     const mountedAt = performance.now();
     const id = setInterval(() => {
       if (textRef.current !== null) {
@@ -56,7 +61,7 @@ function ElapsedSince({ fromIso, nowMs }: { readonly fromIso: string; readonly n
       }
     }, 1000);
     return () => clearInterval(id);
-  }, [fromIso, nowMs]);
+  }, [fromIso, initialText, nowMs]);
   return (
     <span className="tabular-nums" ref={textRef}>
       {initialText}
@@ -576,11 +581,32 @@ function WorkingRow({
   readonly row: Extract<TranscriptRow, { kind: "working" }>;
   readonly nowMs: number;
 }) {
+  const compacting = row.activity === "preparing-context";
   return (
-    <div className="flex items-center gap-2 py-3 text-status-working text-xs">
-      <Spinner className="size-3.5" />
-      <span>
-        Working for <ElapsedSince fromIso={row.startedAt} nowMs={nowMs} />
+    <div
+      className="flex items-center gap-2 py-3 text-status-working text-xs"
+      data-transcript-status={compacting ? "compacting-context" : "working"}
+    >
+      <LoaderCircle
+        aria-hidden="true"
+        className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none"
+      />
+      <span aria-hidden="true">
+        {compacting ? (
+          row.startedAt === null ? (
+            "Compacting context"
+          ) : (
+            <>
+              Compacting context for <ElapsedSince fromIso={row.startedAt} nowMs={nowMs} />
+            </>
+          )
+        ) : row.startedAt === null ? (
+          "Working"
+        ) : (
+          <>
+            Working for <ElapsedSince fromIso={row.startedAt} nowMs={nowMs} />
+          </>
+        )}
       </span>
     </div>
   );

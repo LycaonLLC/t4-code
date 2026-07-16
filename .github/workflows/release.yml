@@ -25,7 +25,7 @@ jobs:
   verify:
     if: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 10
     outputs:
       source_sha: ${{ steps.source.outputs.source_sha }}
       version: ${{ steps.source.outputs.version }}
@@ -42,29 +42,28 @@ jobs:
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
-          MAIN_SHA: ${{ github.sha }}
+          TRUSTED_CONTROL_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          trusted_version=$(node -p "require('./package.json').version")
-          expected_tag="v${trusted_version}"
-          if [[ "$RELEASE_TAG" != "$expected_tag" ]]; then
-            echo "release tag must be the current package tag ${expected_tag}" >&2
-            exit 1
-          fi
           git fetch --force --no-tags origin "refs/heads/main:refs/remotes/origin/main"
           git fetch --force origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
           source_sha=$(git rev-parse "${RELEASE_TAG}^{commit}")
           tag_version=$(git show "${source_sha}:package.json" | jq -er '.version')
-          if [[ "$tag_version" != "$trusted_version" ]]; then
-            echo "release tag package version ${tag_version} does not match trusted source ${trusted_version}" >&2
+          expected_tag="v${tag_version}"
+          if [[ "$RELEASE_TAG" != "$expected_tag" ]]; then
+            echo "release tag ${RELEASE_TAG} does not match its package version ${expected_tag}" >&2
             exit 1
           fi
           if ! git merge-base --is-ancestor "$source_sha" refs/remotes/origin/main; then
             echo "release tag source is not reachable from main" >&2
             exit 1
           fi
-          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$MAIN_SHA" != "$(git rev-parse HEAD)" ]]; then
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$TRUSTED_CONTROL_SHA" != "$(git rev-parse HEAD)" ]]; then
             echo "manual releases must run from the checked-out main commit" >&2
+            exit 1
+          fi
+          if [[ "$EVENT_NAME" == "push" && "$TRUSTED_CONTROL_SHA" != "$source_sha" ]]; then
+            echo "pushed release tag no longer resolves to the triggering commit" >&2
             exit 1
           fi
           printf 'source_sha=%s\nversion=%s\n' "$source_sha" "$tag_version" >> "$GITHUB_OUTPUT"
@@ -75,43 +74,44 @@ jobs:
           ref: ${{ steps.source.outputs.source_sha }}
           persist-credentials: false
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          version: 11.10.0
+          node-version: 24.13.1
+
+      - name: Verify tag, packages, clients, docs, and downloads agree
+        run: node scripts/check-release-consistency.mjs --tag "$RELEASE_TAG"
+
+  ci-authority:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out trusted CI-authority source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # Manual repair must use current trusted release-control code even
+          # when the immutable artifact source predates the CI waiter.
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Install Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24.13.1
-          cache: pnpm
 
-      - name: Verify tag, packages, clients, docs, and downloads agree
-        run: node scripts/check-release-consistency.mjs --tag "$RELEASE_TAG"
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Install browser for end-to-end tests
-        run: pnpm exec playwright install --with-deps chromium
-
-      - name: Check source and types
-        run: pnpm check
-
-      - name: Run tooling regression tests
-        run: pnpm test:tooling
-
-      - name: Run workspace tests
-        run: pnpm test
-
-      - name: Run built-app end-to-end tests
-        run: pnpm test:e2e
-
-      - name: Build all workspaces
-        run: pnpm build
-
-      - name: Check packaging contract
-        run: pnpm test:packaging
+      - name: Require successful exact-SHA main CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+        run: >-
+          node scripts/wait-for-exact-ci.mjs
+          --commit "$SOURCE_SHA"
+          --timeout-ms 2700000
+          --interval-ms 5000
 
   build-linux:
     needs: verify
@@ -332,7 +332,7 @@ jobs:
           retention-days: 7
 
   publish:
-    needs: [verify, build-android, build-linux, build-macos]
+    needs: [verify, ci-authority, build-android, build-linux, build-macos]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

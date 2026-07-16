@@ -23,6 +23,8 @@ export const TRANSCRIPT_IMAGE_CACHE_ERROR =
   "This image cannot fit in the bounded transcript image cache right now.";
 export const TRANSCRIPT_IMAGE_FIXTURE_REASON =
   "Transcript images are available only from a connected OMP host.";
+export const TRANSCRIPT_IMAGE_PAUSED_REASON =
+  "Switch back to this session to reload its transcript images.";
 
 export type TranscriptImageAvailability =
   | { readonly available: true }
@@ -101,6 +103,15 @@ interface CacheEntry {
   url: string | null;
   size: number;
   reservedSize: number;
+  accumulator: TranscriptImageAccumulator | null;
+  /** Full contiguous bytes exist only after the final chunk, during digest/finalization. */
+  materializedSize: number;
+}
+
+interface TranscriptImageAccumulator {
+  readonly expectedSize: number;
+  readonly chunks: Uint8Array[];
+  byteLength: number;
 }
 
 class TranscriptImageFailure extends Error {
@@ -153,6 +164,70 @@ class ManagedTranscriptImageReadSignal implements TranscriptImageReadSignal {
     }
   }
 }
+
+interface TranscriptImageFinalizationWaiter {
+  readonly signal: ManagedTranscriptImageReadSignal;
+  readonly resolve: (release: () => void) => void;
+  readonly reject: (error: TranscriptImageCancelled) => void;
+  removeCancel: () => void;
+}
+
+/**
+ * Cross-session finalization authority. Only one load may materialize its
+ * contiguous digest input at a time, bounding the renderer-wide peak to one
+ * image plus any browser-internal digest/Blob snapshot. Queued loads retain
+ * only received segments, which their session pause can synchronously clear.
+ */
+class TranscriptImageFinalizationGate {
+  private readonly waiters: TranscriptImageFinalizationWaiter[] = [];
+  private held = false;
+
+  acquire(signal: ManagedTranscriptImageReadSignal): Promise<() => void> {
+    if (signal.cancelled) return Promise.reject(new TranscriptImageCancelled());
+    if (!this.held) {
+      this.held = true;
+      return Promise.resolve(this.releaseHandle());
+    }
+    return new Promise((resolve, reject) => {
+      const waiter: TranscriptImageFinalizationWaiter = {
+        signal,
+        resolve,
+        reject,
+        removeCancel: () => undefined,
+      };
+      this.waiters.push(waiter);
+      waiter.removeCancel = signal.onCancel(() => {
+        const index = this.waiters.indexOf(waiter);
+        if (index < 0) return;
+        this.waiters.splice(index, 1);
+        reject(new TranscriptImageCancelled());
+      });
+    });
+  }
+
+  private releaseHandle(): () => void {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.held = false;
+      while (this.waiters.length > 0) {
+        const waiter = this.waiters.shift();
+        if (waiter === undefined) return;
+        waiter.removeCancel();
+        if (waiter.signal.cancelled) {
+          waiter.reject(new TranscriptImageCancelled());
+          continue;
+        }
+        this.held = true;
+        waiter.resolve(this.releaseHandle());
+        return;
+      }
+    };
+  }
+}
+
+const transcriptImageFinalizationGate = new TranscriptImageFinalizationGate();
 
 const LOADING_SNAPSHOT: TranscriptImageSnapshot = Object.freeze({ status: "loading" });
 
@@ -471,10 +546,16 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
   private readonly pendingLoads: CacheEntry[] = [];
   private availability: TranscriptImageAvailability;
   private unavailable: TranscriptImageSnapshot | null;
+  private readonly pausedSnapshot = unavailableSnapshot(TRANSCRIPT_IMAGE_PAUSED_REASON);
+  private paused = false;
   private disposedReason: string | null = null;
   private disposedSnapshot: TranscriptImageSnapshot | null = null;
   private residentBytes = 0;
   private reservedBytes = 0;
+  /** Decoded chunk segments still held by active reads, excluding ready URLs. */
+  private bufferedBytes = 0;
+  /** Completed contiguous buffers held across the asynchronous digest only. */
+  private materializedBytes = 0;
   private activeLoads = 0;
   private clock = 0;
 
@@ -533,15 +614,16 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
         entry.snapshot = null;
       }
       this.notify(entry);
-      if (availability.available && entry.refCount > 0 && entry.state === "idle") {
+      if (!this.paused && availability.available && entry.refCount > 0 && entry.state === "idle") {
         this.start(entry);
       }
     }
-    if (availability.available) this.drainQueue();
+    if (!this.paused && availability.available) this.drainQueue();
   }
 
   getSnapshot(reference: TranscriptImageReference): TranscriptImageSnapshot {
     if (this.disposedSnapshot !== null) return this.disposedSnapshot;
+    if (this.paused) return this.pausedSnapshot;
     const entry = this.entries.get(imageKey(reference));
     if (entry?.state === "ready" && entry.snapshot !== null) return entry.snapshot;
     if (this.unavailable !== null) return this.unavailable;
@@ -603,6 +685,58 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
     this.cleanupUnused(entry);
   }
 
+  /**
+   * Drop renderer-owned bytes while this session is inactive without losing
+   * the source, its subscriptions, or enough metadata to reload on resume.
+   *
+   * React effect cleanup can run before child retain/subscription cleanup and
+   * StrictMode can immediately resume the same runtime, so this boundary is
+   * deliberately idempotent and reversible rather than a partial dispose.
+   */
+  pause(): void {
+    if (this.disposedReason !== null || this.paused) return;
+    this.paused = true;
+    for (const entry of this.entries.values()) {
+      if (entry.state === "queued") this.cancelQueued(entry);
+      if (entry.state === "loading") this.cancelActive(entry);
+      if (entry.state === "waiting") {
+        entry.state = "idle";
+        entry.retryable = false;
+        entry.snapshot = null;
+      }
+      if (entry.state === "ready") {
+        this.releaseReadyUrl(entry);
+        entry.state = "idle";
+        entry.retryable = false;
+        entry.snapshot = null;
+      }
+      this.notify(entry);
+      if (
+        entry.promise === null &&
+        entry.refCount === 0 &&
+        entry.listeners.size === 0 &&
+        entry.state !== "loading"
+      ) {
+        this.releaseReservation(entry);
+        this.entries.delete(entry.key);
+      }
+    }
+    this.pendingLoads.length = 0;
+  }
+
+  /** Reload any still-retained images after a reversible inactive eviction. */
+  resume(): void {
+    if (this.disposedReason !== null || !this.paused) return;
+    this.paused = false;
+    for (const entry of this.entries.values()) {
+      this.notify(entry);
+      if (this.availability.available && entry.refCount > 0 && entry.state === "idle") {
+        this.start(entry);
+      }
+    }
+    if (this.availability.available) this.drainQueue();
+  }
+
   dispose(reason = "Transcript image cache was closed."): void {
     if (this.disposedReason !== null) return;
     this.disposedReason = reason;
@@ -615,6 +749,8 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
       entry.queued = false;
       entry.cancelToken?.cancel();
       entry.cancelToken = null;
+      this.clearAccumulator(entry);
+      this.releaseMaterialized(entry);
       this.releaseReservation(entry);
       this.releaseReadyUrl(entry);
       listeners.push(...entry.listeners);
@@ -623,6 +759,8 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
     this.entries.clear();
     this.residentBytes = 0;
     this.reservedBytes = 0;
+    this.bufferedBytes = 0;
+    this.materializedBytes = 0;
     for (const listener of listeners) listener();
   }
 
@@ -645,6 +783,8 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
       url: null,
       size: 0,
       reservedSize: 0,
+      accumulator: null,
+      materializedSize: 0,
     };
     this.touch(entry);
     this.entries.set(key, entry);
@@ -661,7 +801,7 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
   }
 
   private retryCapacityWaiters(): void {
-    if (this.disposedReason !== null || !this.availability.available) return;
+    if (this.disposedReason !== null || this.paused || !this.availability.available) return;
     for (const entry of this.entries.values()) {
       if (entry.refCount > 0 && entry.state === "waiting") {
         entry.state = "idle";
@@ -675,6 +815,7 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
   private start(entry: CacheEntry): void {
     if (
       this.disposedReason !== null ||
+      this.paused ||
       !this.availability.available ||
       entry.refCount <= 0 ||
       entry.state !== "idle" ||
@@ -693,7 +834,7 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
   }
 
   private drainQueue(): void {
-    if (this.disposedReason !== null || !this.availability.available) return;
+    if (this.disposedReason !== null || this.paused || !this.availability.available) return;
     while (this.activeLoads < this.maxConcurrentLoads && this.pendingLoads.length > 0) {
       const entry = this.pendingLoads.shift();
       if (
@@ -719,6 +860,7 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
         this.cleanupUnused(entry);
         if (
           this.disposedReason === null &&
+          !this.paused &&
           this.availability.available &&
           this.entries.get(entry.key) === entry &&
           entry.refCount > 0 &&
@@ -745,6 +887,12 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
   private cancelActive(entry: CacheEntry): void {
     if (entry.state !== "loading") return;
     entry.cancelToken?.cancel();
+    this.clearAccumulator(entry);
+    // A completed contiguous buffer passed to the async digest cannot be
+    // detached from that Promise. Keep its reservation authoritative until
+    // the digest unwinds; stalled host-RPC segments, however, are gone now.
+    const released = entry.materializedSize === 0 && this.releaseReservation(entry);
+    if (released) this.retryCapacityWaiters();
   }
 
   private cleanupUnused(entry: CacheEntry): void {
@@ -760,17 +908,21 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
       return;
     }
     this.cancelQueued(entry);
-    entry.cancelToken?.cancel();
-    // A live controller command cannot be aborted. Keep any reservation until
-    // load() actually unwinds so cancelled buffers remain part of the bound.
+    this.cancelActive(entry);
+    // A completed buffer in the digest phase remains reserved until load()
+    // unwinds. RPC-phase segments were synchronously dropped by cancelActive.
     const released = entry.promise === null && this.releaseReservation(entry);
     this.entries.delete(entry.key);
     if (released) this.retryCapacityWaiters();
   }
 
   private async load(entry: CacheEntry, signal: ManagedTranscriptImageReadSignal): Promise<void> {
+    let releaseFinalization: (() => void) | null = null;
     try {
-      const bytes = await this.readAll(entry, signal);
+      await this.readAll(entry, signal);
+      releaseFinalization = await transcriptImageFinalizationGate.acquire(signal);
+      this.assertCurrent(entry, signal);
+      const bytes = this.materializeAccumulator(entry, signal);
       const digest = await this.digest(bytes);
       this.assertCurrent(entry, signal);
       if (digest !== entry.reference.sha256) {
@@ -779,7 +931,9 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
       if (sniffTranscriptImageMimeType(bytes) !== entry.reference.mimeType) {
         throw new TranscriptImageFailure(TRANSCRIPT_IMAGE_INTEGRITY_ERROR, false);
       }
-      const blob = new Blob([bytes.slice().buffer as ArrayBuffer], {
+      // `bytes` owns its whole ArrayBuffer; passing it directly avoids the
+      // former explicit full-size `slice()` copy before Blob snapshots input.
+      const blob = new Blob([bytes.buffer as ArrayBuffer], {
         type: entry.reference.mimeType,
       });
       const url = this.createObjectUrl(blob);
@@ -789,6 +943,7 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
         this.safeRevoke(url);
         throw error;
       }
+      this.releaseMaterialized(entry);
       this.commitReservation(entry);
       entry.url = url;
       entry.size = bytes.byteLength;
@@ -804,6 +959,8 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
       this.touch(entry);
       this.notify(entry);
     } catch (error) {
+      this.clearAccumulator(entry);
+      this.releaseMaterialized(entry);
       const released = this.releaseReservation(entry);
       if (this.disposedReason !== null) return;
       if (this.entries.get(entry.key) !== entry) {
@@ -834,17 +991,18 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
       entry.snapshot = Object.freeze({ status: "error", reason: failure.reason });
       this.notify(entry);
       if (released) this.retryCapacityWaiters();
+    } finally {
+      releaseFinalization?.();
     }
   }
 
   private async readAll(
     entry: CacheEntry,
     signal: ManagedTranscriptImageReadSignal,
-  ): Promise<Uint8Array> {
+  ): Promise<void> {
     let offset = 0;
     let chunks = 0;
     let expectedSize: number | undefined;
-    let bytes: Uint8Array | undefined;
     while (true) {
       chunks += 1;
       if (chunks > TRANSCRIPT_IMAGE_MAX_CHUNKS) {
@@ -876,24 +1034,86 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
         offset,
         expectedSize,
       );
-      if (bytes === undefined) {
+      if (entry.accumulator === null) {
         const reservation = this.reserve(entry, chunk.size);
         if (reservation === "too-large") {
           throw new TranscriptImageFailure(TRANSCRIPT_IMAGE_CACHE_ERROR, false);
         }
         if (reservation === "wait") throw new TranscriptImageCapacityWait();
         expectedSize = chunk.size;
-        bytes = new Uint8Array(chunk.size);
+        entry.accumulator = {
+          expectedSize: chunk.size,
+          chunks: [],
+          byteLength: 0,
+        };
       }
-      bytes.set(chunk.bytes, chunk.offset);
+      const accumulator = entry.accumulator;
+      if (
+        accumulator === null ||
+        accumulator.expectedSize !== chunk.size ||
+        accumulator.byteLength !== chunk.offset
+      ) {
+        throw new TranscriptImageFailure(TRANSCRIPT_IMAGE_PROTOCOL_ERROR, false);
+      }
+      accumulator.chunks.push(chunk.bytes);
+      accumulator.byteLength += chunk.bytes.byteLength;
+      this.bufferedBytes += chunk.bytes.byteLength;
       offset = chunk.nextOffset;
-      if (chunk.complete) return bytes;
+      if (chunk.complete) return;
     }
+  }
+
+  /**
+   * Join segments only after the final host response. No full declared-size
+   * buffer is held across the non-abortable chunk RPC awaits above.
+   */
+  private materializeAccumulator(
+    entry: CacheEntry,
+    signal: ManagedTranscriptImageReadSignal,
+  ): Uint8Array {
+    this.assertCurrent(entry, signal);
+    const accumulator = entry.accumulator;
+    if (
+      accumulator === null ||
+      accumulator.byteLength !== accumulator.expectedSize ||
+      accumulator.expectedSize !== entry.reservedSize
+    ) {
+      throw new TranscriptImageFailure(TRANSCRIPT_IMAGE_PROTOCOL_ERROR, false);
+    }
+    const bytes = new Uint8Array(accumulator.expectedSize);
+    let offset = 0;
+    for (const chunk of accumulator.chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    this.clearAccumulator(entry);
+    entry.materializedSize = bytes.byteLength;
+    this.materializedBytes += bytes.byteLength;
+    return bytes;
+  }
+
+  /** Release actual decoded segment references independently of RPC fate. */
+  private clearAccumulator(entry: CacheEntry): boolean {
+    const accumulator = entry.accumulator;
+    if (accumulator === null) return false;
+    this.bufferedBytes = Math.max(0, this.bufferedBytes - accumulator.byteLength);
+    accumulator.chunks.length = 0;
+    accumulator.byteLength = 0;
+    entry.accumulator = null;
+    return true;
+  }
+
+  private releaseMaterialized(entry: CacheEntry): boolean {
+    if (entry.materializedSize <= 0) return false;
+    this.materializedBytes = Math.max(0, this.materializedBytes - entry.materializedSize);
+    entry.materializedSize = 0;
+    return true;
   }
 
   private assertCurrent(entry: CacheEntry, signal: ManagedTranscriptImageReadSignal): void {
     if (
       signal.cancelled ||
+      this.paused ||
       this.disposedReason !== null ||
       this.entries.get(entry.key) !== entry ||
       entry.cancelToken !== signal

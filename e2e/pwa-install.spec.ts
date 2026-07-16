@@ -87,6 +87,13 @@ class BuiltPwaServer {
       return { body: "method not allowed", contentType: "text/plain; charset=utf-8", status: 405 };
     }
     const pathname = decodeURIComponent(new URL(rawUrl, "http://fixture.invalid").pathname);
+    if (pathname === "/fixture") {
+      return {
+        body: await readFile(resolve(WEB_DIST, "index.html"), "utf8"),
+        contentType: MIME_TYPES[".html"]!,
+        status: 200,
+      };
+    }
     if (pathname === "/" || pathname === "/index.html") {
       return {
         body: injectBackend(await readFile(resolve(WEB_DIST, "index.html"), "utf8")),
@@ -214,5 +221,90 @@ test("serves a browser-readable standalone manifest", async ({ page }) => {
     start_url: "./",
     scope: "./",
     display: "standalone",
+  });
+});
+
+test("keeps the compaction lifecycle precise inside a 320px viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.clock.install();
+  await page.goto(
+    `${web.url}fixture?reset=1&session=sess-stream&transcript=compaction#/sessions/sess-stream`,
+    { waitUntil: "domcontentloaded" },
+  );
+
+  // Let the keyed timeline finish its cold-mount handoff without reaching the
+  // fixture's compaction -> turn transition at 700ms.
+  await page.clock.runFor(250);
+  await expect(page.locator("[data-cold-mount-overlay]")).toHaveCount(0);
+
+  const compacting = page.locator('[data-transcript-status="compacting-context"]');
+  await expect(compacting).toHaveCount(1);
+  await expect(compacting).toContainText("Compacting context for 1m 30s");
+
+  const announcer = page.locator("[data-session-activity-announcer]");
+  await expect(announcer).toHaveCount(1);
+  await expect(announcer).toHaveText("Compacting context");
+  await expect(compacting.locator('[role="status"], [aria-live]')).toHaveCount(0);
+
+  const geometry = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    documentScrollWidth: document.documentElement.scrollWidth,
+    bodyScrollWidth: document.body.scrollWidth,
+    statusRight:
+      document
+        .querySelector<HTMLElement>('[data-transcript-status="compacting-context"]')
+        ?.getBoundingClientRect().right ?? Number.POSITIVE_INFINITY,
+  }));
+  expect(geometry).toEqual({
+    clientWidth: 320,
+    documentScrollWidth: 320,
+    bodyScrollWidth: 320,
+    statusRight: expect.any(Number),
+  });
+  expect(geometry.statusRight).toBeLessThanOrEqual(320.5);
+
+  // Capture the first committed text from the same keyed row. The elapsed
+  // child must take the new turn start immediately, not one timer tick later.
+  await page.evaluate(() => {
+    const state: { firstWorkingText: string | null } = { firstWorkingText: null };
+    const capture = () => {
+      const working = document.querySelector<HTMLElement>(
+        '[data-transcript-status="working"]',
+      );
+      if (working !== null && state.firstWorkingText === null) {
+        state.firstWorkingText = working.textContent?.replaceAll(/\s+/gu, " ").trim() ?? "";
+      }
+    };
+    const observer = new MutationObserver(capture);
+    observer.observe(document.body, {
+      attributes: true,
+      characterData: true,
+      childList: true,
+      subtree: true,
+    });
+    Object.assign(globalThis, { __t4CompactionRerender: { observer, state } });
+  });
+  await page.clock.runFor(500);
+
+  const firstWorkingText = await page.evaluate(
+    () =>
+      (
+        globalThis as typeof globalThis & {
+          __t4CompactionRerender: {
+            observer: MutationObserver;
+            state: { firstWorkingText: string | null };
+          };
+        }
+      ).__t4CompactionRerender.state.firstWorkingText,
+  );
+  expect(firstWorkingText).toBe("Working for 30s");
+  await expect(announcer).toHaveText("Context compaction complete. Working");
+
+  await page.evaluate(() => {
+    (
+      globalThis as typeof globalThis & {
+        __t4CompactionRerender: { observer: MutationObserver };
+      }
+    ).__t4CompactionRerender.observer.disconnect();
   });
 });

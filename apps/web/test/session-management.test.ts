@@ -134,9 +134,11 @@ class FakeManagementController {
         sessions: new Map(),
         sessionIndex: this.sessionIndex,
         sessionIndexMetadata: new Map(),
+        sessionRefArrivalOrdinals: new Map(),
         sessionDeltaCursors: new Map(),
         lru: [],
         freshness: "fresh",
+        arrivalOrdinal: 0,
       },
       runtimeErrors: [],
     };
@@ -562,6 +564,33 @@ describe("session management authority helpers", () => {
     expect(fake.commands).toHaveLength(0);
   });
 
+  it("blocks destructive actions for an idle ref with an accepted pending prompt", () => {
+    const pending = {
+      ...ref(),
+      liveState: {
+        phase: "idle",
+        pendingPrompts: [
+          {
+            entryId: "prompt:pending",
+            text: "keep going",
+            attachmentCount: 0,
+            at: "2026-07-13T00:00:01.000Z",
+          },
+        ],
+      },
+    } as SessionRef;
+    const fake = new FakeManagementController(pending);
+    expect(sessionIsWorking(pending)).toBe(true);
+    expect(managementCommandSupport(fake.getSnapshot(), ADDRESS, "session.archive")).toEqual({
+      supported: false,
+      reason: "Terminate the runtime before archiving or deleting it",
+    });
+    expect(managementCommandSupport(fake.getSnapshot(), ADDRESS, "session.delete")).toEqual({
+      supported: false,
+      reason: "Terminate the runtime before archiving or deleting it",
+    });
+  });
+
   it("treats queued, waiting, streaming, and compacting host state as active work", () => {
     for (const candidate of [
       { ...ref(), pendingApproval: true },
@@ -572,9 +601,45 @@ describe("session management authority helpers", () => {
       { ...ref(), liveState: { phase: "awaiting_input" } },
       { ...ref(), liveState: { queuedMessageCount: 1 } },
       { ...ref(), liveState: { queuedMessages: ["next"] } },
+      {
+        ...ref(),
+        liveState: {
+          pendingPrompts: [
+            {
+              entryId: "prompt:plural",
+              text: "plural",
+              attachmentCount: 0,
+              at: "2026-07-13T00:00:01.000Z",
+            },
+          ],
+        },
+      },
+      {
+        ...ref(),
+        liveState: {
+          pendingPrompt: {
+            entryId: "prompt:legacy",
+            text: "legacy",
+            at: "2026-07-13T00:00:01.000Z",
+          },
+        },
+      },
     ]) {
       expect(sessionIsWorking(candidate as SessionRef)).toBe(true);
     }
+    expect(
+      sessionIsWorking({
+        ...ref(),
+        liveState: {
+          pendingPrompts: [],
+          pendingPrompt: {
+            entryId: "prompt:legacy-stale",
+            text: "stale",
+            at: "2026-07-13T00:00:01.000Z",
+          },
+        },
+      } as SessionRef),
+    ).toBe(false);
     expect(sessionIsWorking(ref())).toBe(false);
   });
 });

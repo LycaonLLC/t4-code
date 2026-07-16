@@ -6,6 +6,8 @@
 import {
   initialProjection,
   reduceTranscript,
+  transcriptIsActive,
+  type PendingPrompt,
   type TranscriptFrame,
   type TranscriptProjection,
 } from "../transcript/projection.ts";
@@ -37,6 +39,10 @@ export type SessionLink = "live" | "cached" | "offline";
 export interface SessionRuntimeSnapshot {
   readonly projection: TranscriptProjection;
   readonly link: SessionLink;
+  /** One activity truth for rendering and all composer behavior. */
+  readonly sessionActive: boolean;
+  /** Accepted user prompts recovered from authoritative session-ref state. */
+  readonly pendingPrompts: readonly PendingPrompt[];
   /** Commands this connection may send; gates composer affordances. */
   readonly canPrompt: boolean;
   readonly canCancel: boolean;
@@ -136,7 +142,7 @@ export function createFixtureSessionRuntime(options: FixtureRuntimeOptions): Ses
   };
 
   const drainQueuedFollowUps = () => {
-    if (projection.turnActive || queuedFollowUps.length === 0) return;
+    if (transcriptIsActive(projection) || queuedFollowUps.length === 0) return;
     const [head, ...rest] = queuedFollowUps;
     queuedFollowUps = rest;
     if (head !== undefined) {
@@ -152,7 +158,7 @@ export function createFixtureSessionRuntime(options: FixtureRuntimeOptions): Ses
     timer = setInterval(() => {
       const batch = pendingTicks.shift();
       if (batch !== undefined) applyFrames(batch);
-      if (!projection.turnActive) drainQueuedFollowUps();
+      if (!transcriptIsActive(projection)) drainQueuedFollowUps();
       if (pendingTicks.length === 0 && timer !== null) {
         clearInterval(timer);
         timer = null;
@@ -170,6 +176,7 @@ export function createFixtureSessionRuntime(options: FixtureRuntimeOptions): Ses
     transcriptImages,
     getSnapshot() {
       if (snapshot === null) {
+        const sessionActive = transcriptIsActive(projection);
         const controls: ComposerControlsSnapshot = {
           modelSupported: link === "live",
           modelUnsupportedReason: link === "live" ? null : "This session is read-only right now.",
@@ -177,7 +184,8 @@ export function createFixtureSessionRuntime(options: FixtureRuntimeOptions): Ses
           modelSelectedId: model?.id ?? null,
           modelChoices: script.modelChoices,
           thinkingSupported: link === "live",
-          thinkingUnsupportedReason: link === "live" ? null : "This session is read-only right now.",
+          thinkingUnsupportedReason:
+            link === "live" ? null : "This session is read-only right now.",
           thinking,
           thinkingLevels: THINKING_LEVELS,
           fastSupported: link === "live",
@@ -192,8 +200,10 @@ export function createFixtureSessionRuntime(options: FixtureRuntimeOptions): Ses
         snapshot = {
           projection,
           link,
+          sessionActive,
+          pendingPrompts: [],
           canPrompt: link === "live",
-          canCancel: link === "live" && projection.turnActive,
+          canCancel: link === "live" && sessionActive,
           cancelDisabledReason: null,
           slashCommands: null,
           contextUsedTokens: script.contextUsedTokens,
@@ -237,7 +247,7 @@ export function createFixtureSessionRuntime(options: FixtureRuntimeOptions): Ses
         return;
       }
       if (intent.kind === "followUp") {
-        if (projection.turnActive) {
+        if (transcriptIsActive(projection)) {
           queuedFollowUps = [...queuedFollowUps, intent.text];
           notify();
           return;
@@ -263,6 +273,7 @@ export function createFixtureSessionRuntime(options: FixtureRuntimeOptions): Ses
     },
     pause() {
       paused = true;
+      transcriptImages.pause();
       if (timer !== null) {
         clearInterval(timer);
         timer = null;
@@ -270,6 +281,7 @@ export function createFixtureSessionRuntime(options: FixtureRuntimeOptions): Ses
     },
     resume() {
       paused = false;
+      transcriptImages.resume();
       ensureTimer();
     },
     dispose() {
