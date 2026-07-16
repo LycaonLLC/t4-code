@@ -600,7 +600,7 @@ SH
     script=\${1:-}
     action=\${2:-}
     if [[ $script == */inspect-linux-update.mjs ]]; then
-      exec /usr/bin/node "$@"
+      exec "$MOCK_NODE_EXECUTABLE" "$@"
     fi
     if [[ $script == */scripts/tailnet-service.mjs && $action == install ]]; then
       runtime=$(dirname -- "$(dirname -- "$script")")
@@ -620,7 +620,7 @@ SH
       done
       /usr/bin/jq -n \
         --arg sourceRoot "$runtime" \
-        --arg nodeExecutable /usr/bin/node \
+        --arg nodeExecutable "$MOCK_NODE_EXECUTABLE" \
         --arg gatewayScript "$runtime/scripts/tailnet-gateway.mjs" \
         --arg allowedOrigin "$origin" \
         --argjson port "$port" \
@@ -849,7 +849,7 @@ printf '%s' "$deployment_identity" >"$MOCK_STATE/deployment-identity"
 gateway_script="$MOCK_RUNTIME_ROOT/scripts/tailnet-gateway.mjs"
 web_root="$MOCK_RUNTIME_ROOT/apps/web/dist"
 ws_root="$MOCK_RUNTIME_ROOT/node_modules/ws"
-node_executable=/usr/bin/node
+node_executable="$MOCK_NODE_EXECUTABLE"
 gateway_origin=https://mock.tailnet.ts.net
 gateway_port=4319
 gateway_socket=$(<"$MOCK_STATE/socket-path")
@@ -1207,6 +1207,7 @@ esac
     MOCK_OMP_SERVICE: ompService,
     MOCK_GATEWAY_CONFIG: gatewayConfig,
     MOCK_GATEWAY_UNIT: gatewayUnit,
+    MOCK_NODE_EXECUTABLE: process.execPath,
     MOCK_T4_EXECUTABLE: t4Executable,
     MOCK_T4_WEB_ROOT: t4WebRoot,
     T4_MAINTAINER_ROOT: maintainerRoot,
@@ -1974,6 +1975,21 @@ test("a crash-left transaction marker blocks rerun before staging or mutation", 
   assert.equal(await pathExists(join(fixture.work, "downloads")), false);
   assert.equal(await pathExists(join(fixture.work, "rollback")), false);
   await assertRestored(fixture, { blocked: true });
+});
+
+test("maintainer fixtures resolve Node from the active test runtime", async (t) => {
+  assert.doesNotMatch(`${mockDispatcher}\n${mockLocalDeploy}`, /\/usr\/bin\/node/u);
+  assert.match(mockDispatcher, /\$MOCK_NODE_EXECUTABLE/u);
+
+  const fixture = await createRunnerFixture();
+  t.after(() => fixture.cleanup());
+  const nodeProxy = join(fixture.root, "portable node");
+  await symlink(process.execPath, nodeProxy);
+
+  const result = fixture.runRunner({ MOCK_NODE_EXECUTABLE: nodeProxy });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const gatewayConfig = JSON.parse(await readFile(fixture.gatewayConfig, "utf8"));
+  assert.equal(gatewayConfig.nodeExecutable, nodeProxy);
 });
 
 test("runtime dependency symlinks must remain inside the exact tagged runtime", async (t) => {
