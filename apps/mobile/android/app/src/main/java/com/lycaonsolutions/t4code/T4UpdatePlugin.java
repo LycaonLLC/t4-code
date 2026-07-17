@@ -647,6 +647,7 @@ public final class T4UpdatePlugin extends Plugin {
             throw new IllegalStateException("Required release assets are missing");
         }
         return new ManifestRelease(version, apkUrl, apkSize, apkSha256);
+    }
 
     private String requireJsonString(JSONObject object, String key) throws Exception {
         Object value = object.get(key);
