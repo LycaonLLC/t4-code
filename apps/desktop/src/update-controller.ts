@@ -197,6 +197,19 @@ export function decodeReleaseManifest(value: unknown): ReleaseManifest {
     arch: "x86_64",
     name: `T4-Code-${releaseVersion}-win-x64.msi`,
   } as const;
+  for (const [platform, kind, arch, name] of canonical) {
+    if (
+      assets.filter(
+        (asset) =>
+          asset.platform === platform &&
+          asset.kind === kind &&
+          asset.arch === arch &&
+          asset.name === name,
+      ).length !== 1
+    ) {
+      throw new Error("invalid canonical release assets");
+    }
+  }
   for (const asset of assets) {
     const isCanonical = canonical.some(
       ([platform, kind, arch, name]) =>
@@ -212,19 +225,6 @@ export function decodeReleaseManifest(value: unknown): ReleaseManifest {
       asset.name === allowedExtra.name;
     if (!isCanonical && !isWindowsExtra) {
       throw new Error("unexpected release asset");
-    }
-  }
-  for (const [platform, kind, arch, name] of canonical) {
-    if (
-      assets.filter(
-        (asset) =>
-          asset.platform === platform &&
-          asset.kind === kind &&
-          asset.arch === arch &&
-          asset.name === name,
-      ).length !== 1
-    ) {
-      throw new Error("invalid canonical release assets");
     }
   }
   return Object.freeze({ version: releaseVersion, assets });
