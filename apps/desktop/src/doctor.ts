@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   discoverTailscaleExecutable,
@@ -98,7 +99,7 @@ function requiredText(value: unknown, label: string): string {
 }
 
 export async function readSourceContract(
-  repoRoot = resolve(import.meta.dirname, "../../.."),
+  repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../.."),
 ): Promise<SourceContract> {
   const manifest = record(JSON.parse(await readFile(resolve(repoRoot, "package.json"), "utf8")));
   const matrix = record(
