@@ -594,6 +594,12 @@ public final class T4UpdatePlugin extends Plugin {
         if (!(assetsValue instanceof JSONArray)) throw new IllegalStateException("release assets must be an array");
         JSONArray assets = (JSONArray) assetsValue;
         if (assets.length() != 5) throw new IllegalStateException("invalid release asset count");
+        Set<String> expected = new HashSet<>();
+        expected.add("android:apk:universal");
+        expected.add("linux:deb:x86_64");
+        expected.add("linux:appimage:x86_64");
+        expected.add("mac:dmg:arm64");
+        expected.add("mac:zip:arm64");
         Set<String> identities = new HashSet<>();
         String apkUrl = null;
         Long apkSize = null;
@@ -619,6 +625,9 @@ public final class T4UpdatePlugin extends Plugin {
                 sha256,
                 MAX_ASSET_BYTES
             );
+            if (!expected.contains(identity)) {
+                throw new IllegalStateException("unexpected release asset identity: " + identity);
+            }
             if (!identities.add(identity)) throw new IllegalStateException("duplicate release asset");
             if ("android:apk:universal".equals(identity)) {
                 apkUrl = url;
