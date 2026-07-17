@@ -308,9 +308,9 @@ JSON
         metadata=$(linux_update_metadata "$release_version")
         metadata_digest=$(printf '%s\n' "$metadata" | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
         metadata_size=$(printf '%s\n' "$metadata" | /usr/bin/wc -c)
-        manifest=$(printf '%s  T4-Code-%s-android.apk\n%s  T4-Code-%s-linux-amd64.deb\n%s  T4-Code-%s-linux-x86_64.AppImage\n%s  T4-Code-%s-mac-arm64.dmg\n%s  T4-Code-%s-mac-arm64.zip\n%s  latest-linux.yml\n' \
+        manifest=$(printf '%s  T4-Code-%s-android.apk\n%s  T4-Code-%s-linux-amd64.deb\n%s  T4-Code-%s-linux-x86_64.AppImage\n%s  T4-Code-%s-mac-arm64.dmg\n%s  T4-Code-%s-mac-arm64.zip\n%s  T4-Code-%s-win-x64.msi\n%s  latest-linux.yml\n' \
           "$asset_digest" "$release_version" "$deb_digest" "$release_version" "$asset_digest" "$release_version" \
-          "$asset_digest" "$release_version" "$asset_digest" "$release_version" "$metadata_digest")
+          "$asset_digest" "$release_version" "$asset_digest" "$release_version" "$asset_digest" "$release_version" "$metadata_digest")
         manifest_digest=$(printf '%s\n' "$manifest" | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
         manifest_size=$(printf '%s\n' "$manifest" | /usr/bin/wc -c)
         cat <<JSON
@@ -321,6 +321,7 @@ JSON
   {"name":"T4-Code-$release_version-linux-x86_64.AppImage","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-linux-x86_64.AppImage"},
   {"name":"T4-Code-$release_version-mac-arm64.dmg","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-mac-arm64.dmg"},
   {"name":"T4-Code-$release_version-mac-arm64.zip","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-mac-arm64.zip"},
+  {"name":"T4-Code-$release_version-win-x64.msi","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-win-x64.msi"},
   {"name":"latest-linux.yml","state":"uploaded","size":$metadata_size,"digest":"sha256:$metadata_digest","browser_download_url":"$release_prefix/latest-linux.yml"}
 ]}
 JSON
@@ -371,7 +372,8 @@ JSON
   {"platform":"linux","kind":"deb","arch":"x86_64","name":"T4-Code-$version-linux-amd64.deb","url":"$release_prefix/T4-Code-$version-linux-amd64.deb","size":$deb_size,"sha256":"$deb_digest"},
   {"platform":"linux","kind":"appimage","arch":"x86_64","name":"T4-Code-$version-linux-x86_64.AppImage","url":"$release_prefix/T4-Code-$version-linux-x86_64.AppImage","size":${mockAssetSize},"sha256":"$asset_digest"},
   {"platform":"mac","kind":"dmg","arch":"arm64","name":"T4-Code-$version-mac-arm64.dmg","url":"$release_prefix/T4-Code-$version-mac-arm64.dmg","size":${mockAssetSize},"sha256":"$asset_digest"},
-  {"platform":"mac","kind":"zip","arch":"arm64","name":"T4-Code-$version-mac-arm64.zip","url":"$release_prefix/T4-Code-$version-mac-arm64.zip","size":${mockAssetSize},"sha256":"$asset_digest"}$extra
+  {"platform":"mac","kind":"zip","arch":"arm64","name":"T4-Code-$version-mac-arm64.zip","url":"$release_prefix/T4-Code-$version-mac-arm64.zip","size":${mockAssetSize},"sha256":"$asset_digest"},
+  {"platform":"windows","kind":"msi","arch":"x86_64","name":"T4-Code-$version-win-x64.msi","url":"$release_prefix/T4-Code-$version-win-x64.msi","size":${mockAssetSize},"sha256":"$asset_digest"}$extra
 ]}
 JSON
       elif [[ $url == *SHA256SUMS* ]]; then
@@ -381,9 +383,9 @@ JSON
         asset_digest=$(printf 'mock-asset\n' | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
         metadata=$(linux_update_metadata "$version")
         metadata_digest=$(printf '%s\n' "$metadata" | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
-        printf '%s  T4-Code-%s-android.apk\n%s  T4-Code-%s-linux-amd64.deb\n%s  T4-Code-%s-linux-x86_64.AppImage\n%s  T4-Code-%s-mac-arm64.dmg\n%s  T4-Code-%s-mac-arm64.zip\n%s  latest-linux.yml\n' \
+        printf '%s  T4-Code-%s-android.apk\n%s  T4-Code-%s-linux-amd64.deb\n%s  T4-Code-%s-linux-x86_64.AppImage\n%s  T4-Code-%s-mac-arm64.dmg\n%s  T4-Code-%s-mac-arm64.zip\n%s  T4-Code-%s-win-x64.msi\n%s  latest-linux.yml\n' \
           "$asset_digest" "$version" "$deb_digest" "$version" "$asset_digest" "$version" \
-          "$asset_digest" "$version" "$asset_digest" "$version" "$metadata_digest" >"$output"
+          "$asset_digest" "$version" "$asset_digest" "$version" "$asset_digest" "$version" "$metadata_digest" >"$output"
       elif [[ $url == *latest-linux.yml ]]; then
         linux_update_metadata 1.2.3 >"$output"
       elif [[ $url == *linux-amd64.deb ]]; then
@@ -413,7 +415,7 @@ JSON
         exit 0
       fi
       if [[ $url == https://t4code.net/*assets/* ]]; then
-        printf 'v1.2.3 t4code-1.2.3-appserver-1 T4-Code-1.2.3-android.apk T4-Code-1.2.3-linux-amd64.deb T4-Code-1.2.3-linux-x86_64.AppImage T4-Code-1.2.3-mac-arm64.dmg T4-Code-1.2.3-mac-arm64.zip\n'
+        printf 'v1.2.3 t4code-1.2.3-appserver-1 T4-Code-1.2.3-android.apk T4-Code-1.2.3-linux-amd64.deb T4-Code-1.2.3-linux-x86_64.AppImage T4-Code-1.2.3-mac-arm64.dmg T4-Code-1.2.3-mac-arm64.zip T4-Code-1.2.3-win-x64.msi\n'
         exit 0
       fi
       if [[ $url == https://t4code.net/* ]]; then
@@ -967,8 +969,7 @@ function forgedOmpPublicProof() {
   const digest = createHash("sha256").update("mock-asset\n").digest("hex");
   const canonical = {
     tagName: "t4code-1.2.3-appserver-1",
-    htmlUrl:
-      "https://github.com/lyc-aon/oh-my-pi/releases/tag/t4code-1.2.3-appserver-1",
+    htmlUrl: "https://github.com/lyc-aon/oh-my-pi/releases/tag/t4code-1.2.3-appserver-1",
     assets: [
       "omp-linux-x64",
       "omp-linux-arm64",
@@ -1137,7 +1138,10 @@ esac
   await writeFile(gatewayUnit, "old-unit\n");
   await writeFile(join(state, "package-version"), previousVersion);
   await writeFile(join(state, "active-sessions"), String(options.activeSessions ?? 0));
-  await writeFile(join(state, "gateway-health"), options.gatewayHealthy === false ? "unhealthy" : "healthy");
+  await writeFile(
+    join(state, "gateway-health"),
+    options.gatewayHealthy === false ? "unhealthy" : "healthy",
+  );
   await writeFile(join(state, "tailnet-health"), "healthy");
   await writeFile(join(state, "socket-path"), socket);
   await writeFile(join(state, "app-service"), options.appActive === false ? "inactive" : "active");
@@ -1259,9 +1263,7 @@ esac
     ...(options.drainBusy ? { MOCK_DRAIN_BUSY: "1" } : {}),
     ...(options.drainIdentityMismatch ? { MOCK_DRAIN_IDENTITY_MISMATCH: "1" } : {}),
     ...(options.newAppDrainBusy ? { MOCK_NEW_APP_DRAIN_BUSY: "1" } : {}),
-    ...(options.newAppDrainIdentityMismatch
-      ? { MOCK_NEW_APP_DRAIN_IDENTITY_MISMATCH: "1" }
-      : {}),
+    ...(options.newAppDrainIdentityMismatch ? { MOCK_NEW_APP_DRAIN_IDENTITY_MISMATCH: "1" } : {}),
     ...(options.newAppDrainUnsupported ? { MOCK_NEW_APP_DRAIN_UNSUPPORTED: "1" } : {}),
     ...(options.newAppDrainMalformed ? { MOCK_NEW_APP_DRAIN_MALFORMED: "1" } : {}),
     ...(options.newAppDrainWrongStatus ? { MOCK_NEW_APP_DRAIN_WRONG_STATUS: "1" } : {}),
@@ -1295,9 +1297,7 @@ esac
     ...(options.forkBaseTagMismatch ? { MOCK_FORK_BASE_TAG_MISMATCH: "1" } : {}),
     ...(options.staleLoopbackIdentity ? { MOCK_STALE_LOOPBACK_IDENTITY: "1" } : {}),
     ...(options.staleTailnetIdentity ? { MOCK_STALE_TAILNET_IDENTITY: "1" } : {}),
-    ...(options.gatewayDisableFailAfterFirst
-      ? { MOCK_GATEWAY_DISABLE_FAIL_AFTER_FIRST: "1" }
-      : {}),
+    ...(options.gatewayDisableFailAfterFirst ? { MOCK_GATEWAY_DISABLE_FAIL_AFTER_FIRST: "1" } : {}),
     ...(options.productBranchMissing ? { MOCK_PRODUCT_BRANCH_MISSING: "1" } : {}),
   };
 
@@ -1408,11 +1408,7 @@ async function createRunnerFixture(options = {}) {
         integrationTagObject,
         productCommit: integrationCommit,
       },
-      atomicRefspecs: [
-        "official-base-tag",
-        "t4code/main",
-        "annotated-integration-tag",
-      ],
+      atomicRefspecs: ["official-base-tag", "t4code/main", "annotated-integration-tag"],
     })}\n`,
   );
   const intentHash = spawnSync("/usr/bin/git", ["hash-object", atomicIntentPath], {
@@ -1690,7 +1686,10 @@ test("malformed, unsupported, and false live drain proofs never complete deploym
       if (preservesNewState) {
         const marker = join(fixture.maintainerRoot, "state", "deployment-blocked.json");
         assert.equal(await pathExists(marker), true);
-        assert.equal(JSON.parse(await readFile(marker, "utf8")).status, "rollback-blocked-active-work");
+        assert.equal(
+          JSON.parse(await readFile(marker, "utf8")).status,
+          "rollback-blocked-active-work",
+        );
         assert.notDeepEqual(await readFile(fixture.ompTarget), fixture.initial.omp);
         assert.equal((await readFile(join(fixture.state, "app-service"), "utf8")).trim(), "active");
         assert.equal(
@@ -1725,10 +1724,12 @@ test("gateway installation stays dark until the final exposure step", async (t) 
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   const calls = await fixture.callsText();
   const callLines = calls.split("\n");
-  const installLine = callLines
-    .findIndex((line) => line.startsWith("node\t") && line.includes("\tinstall\t--defer-start"));
-  const startLine = callLines
-    .findIndex((line) => line.startsWith("node\t") && line.endsWith("\tstart"));
+  const installLine = callLines.findIndex(
+    (line) => line.startsWith("node\t") && line.includes("\tinstall\t--defer-start"),
+  );
+  const startLine = callLines.findIndex(
+    (line) => line.startsWith("node\t") && line.endsWith("\tstart"),
+  );
   assert.ok(installLine >= 0, calls);
   assert.ok(startLine > installLine, calls);
   assert.match(calls, /\t--deployment-identity\tsha256:[0-9a-f]{64}(?:\t|\n)/u);
@@ -1753,8 +1754,7 @@ test("busy or identity-changed atomic drain rolls back before package mutation",
       assert.equal(
         calls
           .split("\n")
-          .filter((line) => line.startsWith("apt-get\t") && !line.includes("--simulate"))
-          .length,
+          .filter((line) => line.startsWith("apt-get\t") && !line.includes("--simulate")).length,
         0,
         calls,
       );
@@ -1796,7 +1796,10 @@ test("stopped or unhealthy baseline services are repairable", async (t) => {
       assert.match(receipt.gateway.artifacts.webTreeSha256, /^[0-9a-f]{64}$/u);
       assert.match(receipt.gateway.artifacts.wsTreeSha256, /^[0-9a-f]{64}$/u);
       assert.equal(receipt.gateway.tailnetHealth, "pending");
-      assert.equal((await readFile(join(fixture.state, "package-version"), "utf8")).trim(), "1.2.3");
+      assert.equal(
+        (await readFile(join(fixture.state, "package-version"), "utf8")).trim(),
+        "1.2.3",
+      );
       assert.equal(
         (await readFile(join(fixture.state, "gateway-enablement"), "utf8")).trim(),
         "enabled",
@@ -1870,15 +1873,17 @@ test("every named cutover fault verifies rollback and clears the transaction", a
         (line) => line.startsWith("apt-get\t") && !line.includes("--simulate"),
       );
       for (const call of aptCalls) assert.match(call, /--reinstall/u);
-      if ([
-        "after-desktop-install",
-        "after-gateway-install",
-        "before-gateway-exposure",
-        "after-gateway-start",
-        "after-loopback-health",
-        "before-receipt",
-        "after-receipt-write",
-      ].includes(checkpoint)) {
+      if (
+        [
+          "after-desktop-install",
+          "after-gateway-install",
+          "before-gateway-exposure",
+          "after-gateway-start",
+          "after-loopback-health",
+          "before-receipt",
+          "after-receipt-write",
+        ].includes(checkpoint)
+      ) {
         assert.equal(aptCalls.length, 2, `target and rollback apt calls missing at ${checkpoint}`);
       }
     });
@@ -1903,7 +1908,10 @@ test("post-exposure busy or changed appserver preserves new state behind a durab
       const marker = join(fixture.maintainerRoot, "state", "deployment-blocked.json");
       assert.equal(await pathExists(marker), true);
       assert.equal(JSON.parse(await readFile(marker, "utf8")).status, expectedStatus);
-      assert.equal((await readFile(join(fixture.state, "package-version"), "utf8")).trim(), "1.2.3");
+      assert.equal(
+        (await readFile(join(fixture.state, "package-version"), "utf8")).trim(),
+        "1.2.3",
+      );
       assert.notDeepEqual(await readFile(fixture.ompTarget), fixture.initial.omp);
       assert.notDeepEqual(await readFile(fixture.gatewayConfig), fixture.initial.gatewayConfig);
       assert.notDeepEqual(await readFile(fixture.gatewayUnit), fixture.initial.gatewayUnit);
@@ -1923,10 +1931,7 @@ test("post-exposure busy or changed appserver preserves new state behind a durab
         .split("\n")
         .filter((line) => line.startsWith("apt-get\t") && !line.includes("--simulate"));
       assert.equal(effectiveAptBefore.length, 1, callsBefore);
-      assert.doesNotMatch(
-        callsBefore,
-        /^apt-get\t.*previous-T4-Code-1\.2\.2-linux-amd64\.deb/mu,
-      );
+      assert.doesNotMatch(callsBefore, /^apt-get\t.*previous-T4-Code-1\.2\.2-linux-amd64\.deb/mu);
 
       const second = fixture.run();
       assert.notEqual(second.status, 0, `${second.stdout}\n${second.stderr}`);
@@ -1952,8 +1957,10 @@ test("rollback failure leaves a durable block that prevents a second mutation", 
     callsBefore.split("\n").filter((line) => line.startsWith("apt-get\t")).length,
   );
   assert.equal(
-    callsAfter.split("\n").filter((line) => /^systemctl\t.*(?:stop|start|restart)/u.test(line)).length,
-    callsBefore.split("\n").filter((line) => /^systemctl\t.*(?:stop|start|restart)/u.test(line)).length,
+    callsAfter.split("\n").filter((line) => /^systemctl\t.*(?:stop|start|restart)/u.test(line))
+      .length,
+    callsBefore.split("\n").filter((line) => /^systemctl\t.*(?:stop|start|restart)/u.test(line))
+      .length,
   );
 });
 
@@ -2010,8 +2017,7 @@ test("a divergent fork main is retried and rejected before source staging", asyn
   assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
   const calls = await fixture.callsText();
   assert.equal(
-    calls.split("\n").filter((line) => line.includes("repos/lyc-aon/oh-my-pi/commits/main"))
-      .length,
+    calls.split("\n").filter((line) => line.includes("repos/lyc-aon/oh-my-pi/commits/main")).length,
     2,
     calls,
   );
@@ -2034,8 +2040,7 @@ test("a missing or recreated fork base tag is rejected before source staging", a
       assert.equal(
         calls
           .split("\n")
-          .filter((line) => line.includes("repos/lyc-aon/oh-my-pi/git/ref/tags/v1.2.3"))
-          .length,
+          .filter((line) => line.includes("repos/lyc-aon/oh-my-pi/git/ref/tags/v1.2.3")).length,
         2,
         calls,
       );
@@ -2077,10 +2082,7 @@ test("site release-manifest drift blocks public verification and local work", as
       assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
       const calls = await fixture.callsText();
       assert.match(calls, /releases\/latest\.json/mu);
-      assert.equal(
-        calls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length,
-        0,
-      );
+      assert.equal(calls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length, 0);
       assert.equal(calls.split("\n").filter((line) => line.startsWith("omp\t")).length, 0);
     });
   }
@@ -2112,7 +2114,10 @@ test("live Linux updater verification downloads the exact bounded public files",
   const metadata = downloads.find((line) => line.includes("/latest-linux.yml\t"));
   assert.ok(metadata, downloads.join("\n"));
   assert.match(metadata, /\t--max-filesize\t[1-9][0-9]*(?:\t|$)/u);
-  assert.match(await fixture.callsText(), /^node\t.*inspect-linux-update\.mjs\t--version\t1\.2\.3/mu);
+  assert.match(
+    await fixture.callsText(),
+    /^node\t.*inspect-linux-update\.mjs\t--version\t1\.2\.3/mu,
+  );
 });
 
 test("self-consistent checksum drift in live Linux metadata still blocks deployment", async (t) => {
@@ -2162,10 +2167,7 @@ test("integration tags must remain reachable from the durable fork product branc
     const result = fixture.runRunner();
     assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
     const calls = await fixture.callsText();
-    assert.match(
-      calls,
-      /repos\/lyc-aon\/oh-my-pi\/compare\/b{40}\.\.\.t4code\/main/mu,
-    );
+    assert.match(calls, /repos\/lyc-aon\/oh-my-pi\/compare\/b{40}\.\.\.t4code\/main/mu);
     assert.equal(calls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length, 0);
     assert.equal(calls.split("\n").filter((line) => line.startsWith("omp\t")).length, 0);
   });
@@ -2205,10 +2207,7 @@ test("Tailnet-only convergence retains local apply and never redeploys or invoke
   assert.equal(await pathExists(fixture.processed), false);
   const pendingAfterFirst = await readFile(fixture.pending);
   const appliedAfterFirst = await readFile(fixture.localApplied);
-  assert.equal(
-    JSON.parse(appliedAfterFirst).localDeployment.gateway.tailnetHealth,
-    "pending",
-  );
+  assert.equal(JSON.parse(appliedAfterFirst).localDeployment.gateway.tailnetHealth, "pending");
 
   const callsAfterFirst = await fixture.callsText();
   const second = fixture.runRunner();
@@ -2340,10 +2339,7 @@ test("normal recovery adopts the compatible latest public release before Sol", a
   assert.equal(await pathExists(fixture.processed), false);
   const calls = await fixture.callsText();
   assert.match(calls, /gh\tapi\trepos\/LycaonLLC\/t4-code\/releases\/latest/mu);
-  assert.match(
-    calls,
-    /contents\/compat\/omp-app-matrix\.json\\\?ref=v1\.2\.3/mu,
-  );
+  assert.match(calls, /contents\/compat\/omp-app-matrix\.json\\\?ref=v1\.2\.3/mu);
   assert.equal(
     calls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length,
     1,
@@ -2412,7 +2408,8 @@ test("fresh verification downloads OMP assets once across later convergence retr
   const downloads = (await fixture.callsText())
     .split("\n")
     .filter(
-      (line) => line.startsWith("curl\t") && line.includes("mock://omp-") && line.includes("\t-o\t"),
+      (line) =>
+        line.startsWith("curl\t") && line.includes("mock://omp-") && line.includes("\t-o\t"),
     );
   assert.equal(downloads.length, 5, downloads.join("\n"));
 });
@@ -2442,7 +2439,11 @@ test("same-named noncanonical T4 workflows cannot satisfy publication", async (t
   assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
   const calls = await fixture.callsText();
   assert.equal(calls.split("\n").filter((line) => line.startsWith("omp\t")).length, 1, calls);
-  assert.equal(calls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length, 0, calls);
+  assert.equal(
+    calls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length,
+    0,
+    calls,
+  );
 });
 
 test("an incompatible public matrix falls through nonfatally to Sol", async (t) => {
@@ -2658,7 +2659,10 @@ test("interrupted fork CI re-enable retains recovery state until active proof", 
   assert.equal(await pathExists(marker), true);
   assert.equal(await readFile(join(fixture.state, "fork-workflow"), "utf8"), "disabled_manually");
 
-  const second = fixture.runRunner({ MOCK_FORK_WORKFLOW_ENABLE_FAIL: "0", MOCK_LOCAL_DEPLOY_FAIL: "1" });
+  const second = fixture.runRunner({
+    MOCK_FORK_WORKFLOW_ENABLE_FAIL: "0",
+    MOCK_LOCAL_DEPLOY_FAIL: "1",
+  });
   assert.notEqual(second.status, 0, `${second.stdout}\n${second.stderr}`);
   assert.match(second.stdout, /Recovered fork-main synchronization/u);
   assert.equal(await pathExists(marker), false);
@@ -2865,7 +2869,10 @@ test("processed no-op rechecks public invariants without redownloading OMP binar
   const drift = fixture.runRunner({ MOCK_OMP_ASSET_MISSING: "1" });
   assert.notEqual(drift.status, 0, `${drift.stdout}\n${drift.stderr}`);
   const finalCalls = await fixture.callsText();
-  assert.equal(finalCalls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length, 1);
+  assert.equal(
+    finalCalls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length,
+    1,
+  );
   assert.equal(finalCalls.split("\n").filter((line) => line.startsWith("omp\t")).length, 0);
 });
 
@@ -2889,10 +2896,7 @@ test("default maintenance adopts a newer compatible T4 pair for the same OMP rel
   const callsBefore = await fixture.callsText();
   const second = fixture.runRunner({ MOCK_LOCAL_DEPLOY_FAIL: "1" });
   assert.notEqual(second.status, 0, `${second.stdout}\n${second.stderr}`);
-  assert.match(
-    second.stdout,
-    /newer compatible publication candidate than processed v1\.2\.2/u,
-  );
+  assert.match(second.stdout, /newer compatible publication candidate than processed v1\.2\.2/u);
   assert.equal(await pathExists(fixture.pending), true, await fixture.callsText());
   const pending = JSON.parse(await readFile(fixture.pending, "utf8"));
   assert.equal(pending.publication.upstream.tag, "v1.2.3");
@@ -2918,7 +2922,11 @@ test("active but durably disabled gateway is repaired from processed state witho
   const second = fixture.runRunner();
   assert.equal(second.status, 0, `${second.stdout}\n${second.stderr}`);
   const calls = await fixture.callsText();
-  assert.equal(calls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length, 2, calls);
+  assert.equal(
+    calls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length,
+    2,
+    calls,
+  );
   assert.equal(calls.split("\n").filter((line) => line.startsWith("omp\t")).length, 0, calls);
   assert.equal(await readFile(join(fixture.state, "gateway-enablement"), "utf8"), "enabled");
 });

@@ -36,7 +36,9 @@ function asset(name, id) {
   };
 }
 
-function release(assets = expectedPublishedAssetNames(version).map((name, index) => asset(name, index + 1))) {
+function release(
+  assets = expectedPublishedAssetNames(version).map((name, index) => asset(name, index + 1)),
+) {
   return {
     tag_name: tag,
     html_url: `https://github.com/LycaonLLC/t4-code/releases/tag/${tag}`,
@@ -85,7 +87,8 @@ releaseDate: '2026-07-15T20:00:00Z'
   ]);
   const assets = expectedPublishedAssetNames(version).map((name, index) => {
     const body = bodies.get(name);
-    const size = name === deb ? 100 : name === appImage ? 200 : body ? Buffer.byteLength(body) : 300 + index;
+    const size =
+      name === deb ? 100 : name === appImage ? 200 : body ? Buffer.byteLength(body) : 300 + index;
     const digest = body ? sha256(body) : sha256(name);
     return {
       id: index + 1,
@@ -152,8 +155,11 @@ test("clears every invalid or incomplete asset before a repair publication", asy
     },
   });
 
-  assert.deepEqual(result, { state: "cleared", deleted: 8, publishRequired: true });
-  assert.deepEqual(deleted.sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7, 99]);
+  assert.deepEqual(result, { state: "cleared", deleted: 9, publishRequired: true });
+  assert.deepEqual(
+    deleted.sort((a, b) => a - b),
+    [1, 2, 3, 4, 5, 6, 7, 8, 99],
+  );
 });
 
 test("treats only an exact release lookup 404 as a clean first publication", async () => {
@@ -184,8 +190,11 @@ test("repairs exact-looking assets whose checksum manifest disagrees with GitHub
     fetchImpl: fixtureFetch(fixture, { deleted }),
   });
 
-  assert.deepEqual(result, { state: "cleared", deleted: 7, publishRequired: true });
-  assert.deepEqual(deleted.sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7]);
+  assert.deepEqual(result, { state: "cleared", deleted: 8, publishRequired: true });
+  assert.deepEqual(
+    deleted.sort((a, b) => a - b),
+    [1, 2, 3, 4, 5, 6, 7, 8],
+  );
 });
 
 test("does not delete a healthy-looking release when metadata downloads are temporarily unavailable", async () => {
@@ -229,7 +238,7 @@ test("does not delete a healthy-looking release when downloaded metadata fails i
   assert.deepEqual(deleted, []);
 });
 
-test("verifies the exact seven-asset remote release bundle", async () => {
+test("verifies the exact eight-asset remote release bundle", async () => {
   const fixture = healthyFixture();
   const result = await verifyExactPublishedReleaseAssets({
     version,
@@ -245,9 +254,15 @@ test("rejects extra, missing, mutable-URL, digestless, and empty remote assets",
   const cases = [
     (assets) => assets.push(asset("obsolete-debug.zip", 99)),
     (assets) => assets.pop(),
-    (assets) => { assets[0].browser_download_url = "https://example.invalid/file"; },
-    (assets) => { assets[0].digest = null; },
-    (assets) => { assets[0].size = 0; },
+    (assets) => {
+      assets[0].browser_download_url = "https://example.invalid/file";
+    },
+    (assets) => {
+      assets[0].digest = null;
+    },
+    (assets) => {
+      assets[0].size = 0;
+    },
   ];
   for (const mutate of cases) {
     const assets = fixture.release.assets.map((value) => ({ ...value }));

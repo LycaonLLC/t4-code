@@ -93,27 +93,49 @@ test("builds the small deterministic stable manifest in canonical platform order
   ]);
   assert.equal(manifest.schemaVersion, 1);
   assert.equal(manifest.channel, "stable");
-  assert.deepEqual(manifest.assets.map(({ kind }) => kind), ["apk", "deb", "appimage", "dmg", "zip"]);
-  assert.deepEqual(manifest.assets.map(({ sha256 }) => sha256), packages.map(({ name }) => digest(name)));
+  assert.deepEqual(
+    manifest.assets.map(({ kind }) => kind),
+    ["apk", "deb", "appimage", "dmg", "zip", "msi"],
+  );
+  assert.deepEqual(
+    manifest.assets.map(({ sha256 }) => sha256),
+    packages.map(({ name }) => digest(name)),
+  );
   assert.ok(manifest.assets.every(({ url }) => url.includes(`/releases/download/${tag}/`)));
 });
 
 test("checksum parser requires one exact entry per package and Linux metadata", () => {
   const { checksumsText } = fixture();
   const names = [...packages.map(({ name }) => name), LINUX_UPDATE_METADATA_NAME];
-  assert.equal(parseChecksums(checksumsText, names).size, 6);
-  assert.throws(() => parseChecksums(`${checksumsText}${digest("extra")}  extra.bin\n`, names), /exactly/u);
-  assert.throws(() => parseChecksums(checksumsText.replace("  T4-Code", " *T4-Code"), names), /invalid/u);
+  assert.equal(parseChecksums(checksumsText, names).size, 7);
+  assert.throws(
+    () => parseChecksums(`${checksumsText}${digest("extra")}  extra.bin\n`, names),
+    /exactly/u,
+  );
+  assert.throws(
+    () => parseChecksums(checksumsText.replace("  T4-Code", " *T4-Code"), names),
+    /invalid/u,
+  );
 });
 
 test("fails closed on extra, renamed, draft, mutable-URL, and digest drift", () => {
   const cases = [
     (value) => value.release.assets.push({ ...value.release.assets[0], name: "extra.bin" }),
-    (value) => { value.release.assets[0].name = "renamed.apk"; },
-    (value) => { value.release.draft = true; },
-    (value) => { value.release.assets[0].browser_download_url = "https://example.invalid/file"; },
-    (value) => { value.release.assets[0].digest = `sha256:${"0".repeat(64)}`; },
-    (value) => { value.linuxMetadataText = value.linuxMetadataText.replace(deb, "renamed.deb"); },
+    (value) => {
+      value.release.assets[0].name = "renamed.apk";
+    },
+    (value) => {
+      value.release.draft = true;
+    },
+    (value) => {
+      value.release.assets[0].browser_download_url = "https://example.invalid/file";
+    },
+    (value) => {
+      value.release.assets[0].digest = `sha256:${"0".repeat(64)}`;
+    },
+    (value) => {
+      value.linuxMetadataText = value.linuxMetadataText.replace(deb, "renamed.deb");
+    },
   ];
   for (const mutate of cases) {
     const value = fixture();

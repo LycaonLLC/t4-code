@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { renderInline } from "../inline.tsx";
 import {
   assetsFor,
@@ -45,22 +45,34 @@ const FEATURES: readonly Feature[] = [
   },
 ];
 
+const OTHER_DESKTOP_PLATFORMS: Readonly<Record<DesktopPlatform, readonly DesktopPlatform[]>> = {
+  linux: ["windows", "mac"],
+  mac: ["windows", "linux"],
+  windows: ["linux", "mac"],
+};
+
+function desktopPlatformLabel(platform: DesktopPlatform): string {
+  if (platform === "windows") return "Windows";
+  return platform === "mac" ? "macOS" : "Linux";
+}
+
 function DownloadButtons({ platform }: { platform: DesktopPlatform }) {
   const android = primaryAsset("android");
   const main = primaryAsset(platform);
-  const other: DesktopPlatform = platform === "linux" ? "mac" : "linux";
-  const otherMain = primaryAsset(other);
+  const otherPlatforms = OTHER_DESKTOP_PLATFORMS[platform];
   return (
     <div className="hero-actions">
       <a className="btn btn-primary" href={android.url}>
         Download Android APK
       </a>
       <a className="btn btn-outline" href={main.url}>
-        Download for {platform === "linux" ? "Linux" : "macOS"}
+        Download for {desktopPlatformLabel(platform)}
       </a>
-      <a className="btn btn-outline" href={otherMain.url}>
-        {other === "linux" ? "Linux" : "macOS"} build
-      </a>
+      {otherPlatforms.map((other) => (
+        <a className="btn btn-outline" href={primaryAsset(other).url} key={other}>
+          {desktopPlatformLabel(other)} build
+        </a>
+      ))}
       <a className="btn btn-outline" href={REPO_URL} rel="noopener">
         View source
       </a>
@@ -69,12 +81,10 @@ function DownloadButtons({ platform }: { platform: DesktopPlatform }) {
 }
 
 export function Landing() {
-  // Render Linux first (matches the build host + crawler default), then
-  // correct for macOS visitors after mount. Both buttons are always visible.
-  const [platform, setPlatform] = useState<DesktopPlatform>("linux");
-  useEffect(() => {
-    setPlatform(detectPlatform(navigator.userAgent));
-  }, []);
+  // User agents are immutable for the lifetime of this client render.
+  const [platform] = useState<DesktopPlatform>(() =>
+    typeof navigator === "undefined" ? "linux" : detectPlatform(navigator.userAgent),
+  );
 
   return (
     <>
@@ -112,8 +122,8 @@ export function Landing() {
           </p>
           <DownloadButtons platform={platform} />
           <p className="hero-fineprint">
-            v{RELEASE_VERSION} · Android APK · Linux x86_64 · macOS Apple Silicon · iOS TestFlight
-            coming soon ·{" "}
+            v{RELEASE_VERSION} · Android APK · Windows x64 · Linux x86_64 · macOS Apple Silicon ·
+            iOS TestFlight coming soon ·{" "}
             <a href={RELEASES_URL} rel="noopener">
               all downloads
             </a>
@@ -222,6 +232,17 @@ export function Landing() {
             <h3 className="desktop-install-title">Desktop builds</h3>
             <div className="install-grid">
               <div className="install-card">
+                <h3>Windows</h3>
+                <p className="arch">x64 · MSI</p>
+                <pre className="code">
+                  <code>{`msiexec /i ".\\${primaryAsset("windows").filename}"`}</code>
+                </pre>
+                <p>
+                  The unsigned MSI installs for the current user. Pair this build with an OMP host;
+                  local OMP service management remains available on Linux and macOS.
+                </p>
+              </div>
+              <div className="install-card">
                 <h3>Linux</h3>
                 <p className="arch">x86_64 · .deb or AppImage</p>
                 <pre className="code">
@@ -246,10 +267,10 @@ export function Landing() {
               </div>
             </div>
             <div className="notice notice-spaced" role="note">
-              <strong>Heads up:</strong> the v{RELEASE_VERSION} macOS build is unsigned and not
-              notarized, so macOS warns before first launch. If you would rather not run an unsigned
-              binary, {renderInline(`[build it from source](/docs/#build-from-source)`)}. The whole
-              app is public.
+              <strong>Unsigned desktop builds:</strong> Windows SmartScreen may warn before opening
+              the MSI, and macOS Gatekeeper warns before first launch. Only continue if you trust
+              this repository's release; otherwise,{" "}
+              {renderInline("[build it from source](/docs/#build-from-source)")}.
             </div>
           </div>
         </section>

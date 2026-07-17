@@ -54,7 +54,7 @@ export interface UpdateFetchResponse {
 
 export interface DesktopUpdateControllerOptions {
   readonly currentVersion: string;
-  readonly platform: "linux" | "darwin";
+  readonly platform: "linux" | "darwin" | "win32";
   readonly isPackaged: boolean;
   readonly nativeLinuxPackage?: "appimage" | "deb";
   readonly nativeUpdater: NativeUpdaterPort;
@@ -69,8 +69,8 @@ export interface DesktopUpdateControllerOptions {
 }
 
 interface ReleaseAsset {
-  readonly platform: "android" | "linux" | "mac";
-  readonly kind: "apk" | "deb" | "appimage" | "dmg" | "zip";
+  readonly platform: "android" | "linux" | "mac" | "windows";
+  readonly kind: "apk" | "deb" | "appimage" | "dmg" | "zip" | "msi";
   readonly arch: "universal" | "x86_64" | "arm64";
   readonly name: string;
   readonly url: string;
@@ -123,10 +123,10 @@ function requiredString(value: unknown, name: string, maxLength: number): string
 function releaseAsset(value: unknown, releaseVersion: string): ReleaseAsset {
   const item = record(value, "release asset");
   exact(item, ["platform", "kind", "arch", "name", "url", "size", "sha256"]);
-  if (!["android", "linux", "mac"].includes(item.platform as string)) {
+  if (!["android", "linux", "mac", "windows"].includes(item.platform as string)) {
     throw new Error("invalid release asset platform");
   }
-  if (!["apk", "deb", "appimage", "dmg", "zip"].includes(item.kind as string)) {
+  if (!["apk", "deb", "appimage", "dmg", "zip", "msi"].includes(item.kind as string)) {
     throw new Error("invalid release asset kind");
   }
   if (!["universal", "x86_64", "arm64"].includes(item.arch as string)) {
@@ -178,7 +178,7 @@ export function decodeReleaseManifest(value: unknown): ReleaseManifest {
   }
   const publishedAt = requiredString(root.publishedAt, "publishedAt", 64);
   if (!Number.isFinite(Date.parse(publishedAt))) throw new Error("invalid publishedAt");
-  if (!Array.isArray(root.assets) || root.assets.length !== 5) {
+  if (!Array.isArray(root.assets) || root.assets.length !== 6) {
     throw new Error("invalid release assets");
   }
   const assets = Object.freeze(root.assets.map((asset) => releaseAsset(asset, releaseVersion)));
@@ -190,6 +190,7 @@ export function decodeReleaseManifest(value: unknown): ReleaseManifest {
     ["linux", "appimage", "x86_64", `T4-Code-${releaseVersion}-linux-x86_64.AppImage`],
     ["mac", "dmg", "arm64", `T4-Code-${releaseVersion}-mac-arm64.dmg`],
     ["mac", "zip", "arm64", `T4-Code-${releaseVersion}-mac-arm64.zip`],
+    ["windows", "msi", "x86_64", `T4-Code-${releaseVersion}-win-x64.msi`],
   ] as const;
   for (const [platform, kind, arch, name] of canonical) {
     if (
@@ -260,12 +261,19 @@ function selectedManualAsset(
           arch: "arm64",
           name: `T4-Code-${manifest.version}-mac-arm64.dmg`,
         }
-      : {
-          platform: "linux",
-          kind: "deb",
-          arch: "x86_64",
-          name: `T4-Code-${manifest.version}-linux-amd64.deb`,
-        };
+      : platform === "win32"
+        ? {
+            platform: "windows",
+            kind: "msi",
+            arch: "x86_64",
+            name: `T4-Code-${manifest.version}-win-x64.msi`,
+          }
+        : {
+            platform: "linux",
+            kind: "deb",
+            arch: "x86_64",
+            name: `T4-Code-${manifest.version}-linux-amd64.deb`,
+          };
   const matches = manifest.assets.filter(
     (asset) =>
       asset.platform === expected.platform &&
@@ -301,10 +309,7 @@ export class DesktopUpdateController {
   private disposed = false;
 
   private readonly onNativeError = (error: Error): void => {
-    if (
-      this.disposed ||
-      (this.state.phase !== "downloading" && this.state.phase !== "ready")
-    ) {
+    if (this.disposed || (this.state.phase !== "downloading" && this.state.phase !== "ready")) {
       return;
     }
     this.setState({

@@ -52,11 +52,12 @@ const linuxDeb = primaryAsset("linux");
 const linuxAppImage = assetOfKind("linux", "appimage");
 const macDmg = primaryAsset("mac");
 const macZip = assetOfKind("mac", "zip");
+const windowsMsi = primaryAsset("windows");
 
 const install: DocTopic = {
   id: "install",
   title: "Install",
-  lede: "T4 Code ships for Android, Linux (x86_64), and macOS (Apple Silicon). iOS TestFlight is coming soon.",
+  lede: "T4 Code ships for Android, Windows (x64), Linux (x86_64), and macOS (Apple Silicon). iOS TestFlight is coming soon.",
   blocks: [
     {
       kind: "p",
@@ -75,6 +76,23 @@ const install: DocTopic = {
     {
       kind: "p",
       text: "iOS TestFlight is coming soon. This page will carry the TestFlight link when the build is ready.",
+    },
+    { kind: "h2", id: "install-windows", text: "Windows (x64)" },
+    {
+      kind: "p",
+      text: `Download the [Windows MSI](${windowsMsi.url}) and open it, or install it from a terminal:`,
+    },
+    {
+      kind: "code",
+      code: `msiexec /i ".\\${windowsMsi.filename}"`,
+    },
+    {
+      kind: "note",
+      text: `The v${RELEASE_VERSION} Windows MSI is unsigned. SmartScreen may warn before opening it. Only continue if you trust the release from this repository.`,
+    },
+    {
+      kind: "p",
+      text: "The Windows build connects to a paired OMP host. Local OMP discovery and service management remain available on Linux and macOS.",
     },
     { kind: "h2", id: "install-linux", text: "Linux (x86_64)" },
     { kind: "p", text: "The `.deb` package is the smoothest path on Debian and Ubuntu:" },
@@ -136,11 +154,11 @@ const install: DocTopic = {
 const firstRun: DocTopic = {
   id: "first-run",
   title: "First run",
-  lede: "Desktop builds can manage local Oh My Pi app servers, one per profile. Android connects to the T4 gateway on your computer.",
+  lede: "Linux and macOS builds can manage local Oh My Pi app servers, one per profile. Android and Windows connect to a T4 gateway on an OMP host.",
   blocks: [
     {
       kind: "note",
-      text: "The discovery and service steps below apply to Linux and macOS. On Android, connect Tailscale to the same tailnet as your computer, then enter the gateway's full HTTPS address in T4 Code.",
+      text: "The discovery and service steps below apply to Linux and macOS. On Android or Windows, connect to the same tailnet as the OMP host, then add the gateway's full HTTPS address in T4 Code.",
     },
     { kind: "h2", id: "first-run-discovery", text: "How desktop T4 finds omp" },
     { kind: "p", text: "T4 Code checks these places, in order, and uses the first match:" },
@@ -462,7 +480,7 @@ const settings: DocTopic = {
 const shortcuts: DocTopic = {
   id: "keyboard-shortcuts",
   title: "Keyboard shortcuts",
-  lede: "Everything reachable by mouse is reachable by keyboard. `Cmd` on macOS, `Ctrl` on Linux.",
+  lede: "Everything reachable by mouse is reachable by keyboard. `Cmd` on macOS, `Ctrl` on Linux and Windows.",
   blocks: [
     { kind: "h2", id: "shortcuts-app", text: "App" },
     {

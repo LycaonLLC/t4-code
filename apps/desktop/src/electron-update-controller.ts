@@ -12,7 +12,8 @@ export function createElectronUpdateController(): DesktopUpdateController {
   });
   return new DesktopUpdateController({
     currentVersion: app.getVersion(),
-    platform: process.platform === "darwin" ? "darwin" : "linux",
+    platform:
+      process.platform === "darwin" ? "darwin" : process.platform === "win32" ? "win32" : "linux",
     isPackaged: app.isPackaged,
     ...(nativeLinuxPackage === undefined ? {} : { nativeLinuxPackage }),
     nativeUpdater: autoUpdater as NativeUpdaterPort,

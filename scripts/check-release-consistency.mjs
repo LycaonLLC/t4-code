@@ -47,6 +47,7 @@ export function expectedReleaseAssetNames(version) {
     `T4-Code-${version}-linux-x86_64.AppImage`,
     `T4-Code-${version}-mac-arm64.dmg`,
     `T4-Code-${version}-mac-arm64.zip`,
+    `T4-Code-${version}-win-x64.msi`,
   ];
 }
 
@@ -120,7 +121,9 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     typeof androidIdentity?.certificateBaseline?.assetSha256 !== "string" ||
     !SHA256_PATTERN.test(androidIdentity.certificateBaseline.assetSha256)
   ) {
-    errors.push(`${androidIdentityPath} certificate baseline asset must have a lowercase SHA-256 digest`);
+    errors.push(
+      `${androidIdentityPath} certificate baseline asset must have a lowercase SHA-256 digest`,
+    );
   }
 
   const packagePaths = [...files.keys()]
@@ -142,6 +145,12 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     errors.push(
       "apps/mobile/package.json must run Android JVM tests, debug compilation, and lint in the pre-merge check",
     );
+  }
+  if (
+    rootManifest?.scripts?.["package:windows"] !==
+    "pnpm prepackage && node scripts/run-electron-builder.mjs --win --x64"
+  ) {
+    errors.push("package.json must expose the Windows x64 MSI packaging command");
   }
 
   if (releaseTag !== undefined && releaseTag !== expectedTag) {
@@ -358,7 +367,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     requireText(site, `"${filename}"`, "apps/site/src/release.ts", errors);
   }
   const siteAssetVersions = new Set(
-    [...site.matchAll(/T4-Code-(\d+\.\d+\.\d+)-(?:android|linux|mac)(?:\.|-)/gu)].map(
+    [...site.matchAll(/T4-Code-(\d+\.\d+\.\d+)-(?:android|linux|mac|win)(?:\.|-)/gu)].map(
       (match) => match[1],
     ),
   );
@@ -486,9 +495,9 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "name: verify",
     "if: ${{ always() }}",
     "needs: [core, tooling, android-debug]",
-    "test \"$CORE_RESULT\" = success",
-    "test \"$TOOLING_RESULT\" = success",
-    "test \"$ANDROID_RESULT\" = success",
+    'test "$CORE_RESULT" = success',
+    'test "$TOOLING_RESULT" = success',
+    'test "$ANDROID_RESULT" = success',
     "github.event_name == 'pull_request' && github.ref || github.sha",
     "cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
     "actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9",
@@ -525,6 +534,12 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "Confirm the release tag still resolves to the verified source",
     'test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "$SOURCE_SHA"',
     "build-android:",
+    "build-windows:",
+    "runs-on: windows-2025",
+    "pnpm package:windows",
+    "pnpm inspect:package -- release/*.msi",
+    "SHA256SUMS-windows.txt",
+    "T4-Code-${VERSION}-win-x64.msi",
     "T4_ANDROID_KEYSTORE_BASE64",
     "T4_ANDROID_KEYSTORE_PASSWORD",
     "T4_ANDROID_KEY_ALIAS",
@@ -537,7 +552,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     '--apksigner "$build_tools/apksigner"',
     "T4-Code-${VERSION}-android.apk",
     "artifacts/latest-linux.yml",
-    "needs: [verify, ci-authority, build-android, build-linux, build-macos]",
+    "needs: [verify, ci-authority, build-android, build-linux, build-macos, build-windows]",
     'node scripts/reconcile-release-assets.mjs --mode prepare --version "$VERSION"',
     'node scripts/reconcile-release-assets.mjs --mode verify --version "$VERSION"',
     "needs: [verify, publish]",
@@ -573,9 +588,9 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     'WORKFLOW_NAME = "CI"',
     'WORKFLOW_PATH = ".github/workflows/ci.yml"',
     'MAIN_BRANCH = "main"',
-    'run.head_sha === commit',
+    "run.head_sha === commit",
     'run.event === "push"',
-    'run.head_branch === MAIN_BRANCH',
+    "run.head_branch === MAIN_BRANCH",
     'status === "completed" && conclusion === "success"',
     "readBoundedResponseBytes",
   ]) {
@@ -589,12 +604,14 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     'channel: "latest"',
     "publish: [linuxUpdatePublish]",
     "publish: []",
+    'target: [{ target: "msi", arch: ["x64"] }]',
+    'upgradeCode: "{9638C287-93D5-4483-AEBE-57DBEA156676}"',
   ]) {
     requireText(builderConfig, expected, "electron-builder.config.mjs", errors);
   }
   const manifestGenerator = files.get("scripts/generate-release-manifest.mjs") ?? "";
   for (const expected of [
-    'RELEASE_MANIFEST_SCHEMA_VERSION = 1',
+    "RELEASE_MANIFEST_SCHEMA_VERSION = 1",
     'LINUX_UPDATE_METADATA_NAME = "latest-linux.yml"',
     'channel: "stable"',
     "validateLinuxUpdateMetadata",
@@ -630,8 +647,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   for (const expected of [
     "classifyStableReleasePublication",
-    'response.status === 404',
-    'response.status !== 200',
+    "response.status === 404",
+    "response.status !== 200",
     "readBoundedResponseBytes",
     'state: "not-published"',
   ]) {
@@ -662,9 +679,9 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   for (const expected of [
     "dispatchAndWaitForSiteDeployment",
     "body: { ref: tag, inputs: { release_tag: tag, dispatch_nonce: dispatchNonce } }",
-    'run.head_branch === tag',
-    'run.head_sha === commit',
-    'run.display_title === `Deploy project site ${tag} ${dispatchNonce}`',
+    "run.head_branch === tag",
+    "run.head_sha === commit",
+    "run.display_title === `Deploy project site ${tag} ${dispatchNonce}`",
     'exact.conclusion !== "success"',
   ]) {
     requireText(
@@ -748,7 +765,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   const releaseGate = files.get("docs/RELEASE_GATE.md") ?? "";
   for (const expected of [
     "`testDebugUnitTest`, `assembleDebug`, and `lintDebug`",
-    "exact seven-asset GitHub bundle",
+    "exact eight-asset GitHub bundle",
     "defers only when the exact GitHub release lookup returns HTTP 404",
     "writes `/releases/latest.json`",
     "immutable release tag",
@@ -758,8 +775,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   }
   const maintainerReadme = files.get("ops/t4-maintainer/README.md") ?? "";
   for (const expected of [
-    "exact seven-asset bundle",
-    "whose six entries cover the packages and updater metadata",
+    "exact eight-asset bundle",
+    "whose seven entries cover the packages and updater metadata",
     "https://t4code.net/releases/latest.json",
     "downloads the live `latest-linux.yml`, deb, and AppImage",
     "actual byte sizes and SHA-512",
