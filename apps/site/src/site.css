@@ -514,7 +514,7 @@ pre.code {
   margin: 0.75rem 0;
 }
 
-pre.code code {
+.install-card pre.code code {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
