@@ -266,6 +266,7 @@ public final class T4UpdateVerifierTest {
             { "linux", "appimage", "x86_64", "T4-Code-1.2.3-linux-x86_64.AppImage" },
             { "mac", "dmg", "arm64", "T4-Code-1.2.3-mac-arm64.dmg" },
             { "mac", "zip", "arm64", "T4-Code-1.2.3-mac-arm64.zip" },
+            { "windows", "msi", "x86_64", "T4-Code-1.2.3-win-x64.msi" },
         };
         for (String[] asset : assets) {
             assertEquals(

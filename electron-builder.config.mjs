@@ -23,12 +23,7 @@ const config = {
     output: "release",
   },
   asar: true,
-  files: [
-    "dist-electron/**/*",
-    "package.json",
-    ...runtimeExternalDependencies,
-    "!**/*.map",
-  ],
+  files: ["dist-electron/**/*", "package.json", ...runtimeExternalDependencies, "!**/*.map"],
   extraResources: [
     { from: "apps/web/dist", to: "web" },
     { from: "LICENSE", to: "LICENSE" },
@@ -42,6 +37,21 @@ const config = {
       { target: "AppImage", arch: ["x64"] },
       { target: "deb", arch: ["x64"] },
     ],
+  },
+  win: {
+    icon: "apps/desktop/build/icon.png",
+    // MSI does not support electron-updater. Publish it through the verified
+    // release manifest and keep updates on the explicit-download path.
+    publish: [],
+    target: [{ target: "msi", arch: ["x64"] }],
+  },
+  msi: {
+    oneClick: false,
+    perMachine: false,
+    createDesktopShortcut: true,
+    createStartMenuShortcut: true,
+    runAfterFinish: false,
+    upgradeCode: "{9638C287-93D5-4483-AEBE-57DBEA156676}",
   },
   mac: {
     category: "public.app-category.developer-tools",

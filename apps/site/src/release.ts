@@ -18,9 +18,9 @@ export const RELEASE_VERSION = "0.1.22";
 export const RELEASES_URL = `${REPO_URL}/releases/tag/${RELEASE_TAG}`;
 export const RELEASE_MANIFEST_URL = `${SITE_URL}/releases/latest.json`;
 
-export type Platform = "android" | "linux" | "mac";
+export type Platform = "android" | "linux" | "mac" | "windows";
 export type DesktopPlatform = Exclude<Platform, "android">;
-export type AssetKind = "apk" | "deb" | "appimage" | "dmg" | "zip";
+export type AssetKind = "apk" | "deb" | "appimage" | "dmg" | "zip" | "msi";
 
 export interface ReleaseAsset {
   readonly platform: Platform;
@@ -54,25 +54,34 @@ export const RELEASE_ASSETS: readonly ReleaseAsset[] = [
   asset("linux", "appimage", "x86_64", "T4-Code-0.1.22-linux-x86_64.AppImage", "Linux AppImage"),
   asset("mac", "dmg", "arm64", "T4-Code-0.1.22-mac-arm64.dmg", "macOS .dmg"),
   asset("mac", "zip", "arm64", "T4-Code-0.1.22-mac-arm64.zip", "macOS .zip"),
+  asset("windows", "msi", "x86_64", "T4-Code-0.1.22-win-x64.msi", "Windows MSI"),
 ];
 
 export function assetsFor(platform: Platform): readonly ReleaseAsset[] {
   return RELEASE_ASSETS.filter((a) => a.platform === platform);
 }
 
-/** Preferred single download per platform: APK on Android, .deb on Linux, .dmg on macOS. */
+/** Preferred single download per platform: APK, .deb, .dmg, or MSI. */
 export function primaryAsset(platform: Platform): ReleaseAsset {
-  const kind: AssetKind = platform === "android" ? "apk" : platform === "linux" ? "deb" : "dmg";
+  const kind: AssetKind =
+    platform === "android"
+      ? "apk"
+      : platform === "linux"
+        ? "deb"
+        : platform === "windows"
+          ? "msi"
+          : "dmg";
   const found = RELEASE_ASSETS.find((a) => a.platform === platform && a.kind === kind);
   if (!found) throw new Error(`no ${kind} asset for ${platform}`);
   return found;
 }
 
 /**
- * Detect the visitor's desktop platform from a user-agent string. Anything
- * else falls back to Linux; the Android download is offered separately.
+ * Detect the visitor's desktop platform from a user-agent string. Unknown
+ * platforms fall back to Linux; the Android download is offered separately.
  */
 export function detectPlatform(userAgent: string): DesktopPlatform {
+  if (/windows nt|win64|win32/i.test(userAgent)) return "windows";
   if (/mac os x|macintosh/i.test(userAgent)) return "mac";
   return "linux";
 }

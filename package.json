@@ -16,6 +16,7 @@
     "deploy:site": "node scripts/deploy-site.mjs",
     "prepackage": "pnpm check && pnpm build:web && pnpm build:desktop && node scripts/package-preflight.mjs",
     "package:linux": "pnpm prepackage && node scripts/run-electron-builder.mjs --linux --x64",
+    "package:windows": "pnpm prepackage && node scripts/run-electron-builder.mjs --win --x64",
     "package:mac:unsigned": "node scripts/package-mac-unsigned.mjs",
     "package:dir": "pnpm prepackage && node scripts/run-electron-builder.mjs --linux --x64 --dir",
     "inspect:package": "node scripts/inspect-package.mjs",
@@ -31,6 +32,9 @@
     "test:e2e": "pnpm build:web && pnpm build:site && playwright test",
     "test:protocol": "vp run --filter @t4-code/protocol --filter @t4-code/fixture-server test"
   },
+  "dependencies": {
+    "ws": "^8.18.3"
+  },
   "devDependencies": {
     "@electron/asar": "3.4.1",
     "@playwright/test": "1.61.1",
@@ -39,9 +43,6 @@
     "jiti": "2.7.0",
     "js-yaml": "4.3.0",
     "vite-plus": "catalog:"
-  },
-  "dependencies": {
-    "ws": "^8.18.3"
   },
   "engines": {
     "node": "^24.13.1"

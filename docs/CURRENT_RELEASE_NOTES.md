@@ -39,12 +39,14 @@ The integration is based on the official upstream [v17.0.0 tag](https://github.c
 
 ## Packages
 
-The Android APK is signed and supports Android 7.0 or later. Linux packages target x86_64. macOS packages target Apple Silicon.
+The Android APK is signed and supports Android 7.0 or later. Linux packages target x86_64. macOS packages target Apple Silicon. The Windows MSI targets x86_64.
 
 The macOS build is unsigned and unnotarized. Gatekeeper will block the first launch. After copying T4 Code to Applications, run:
 
 ```sh
 xattr -dr com.apple.quarantine "/Applications/T4 Code.app"
 ```
+
+The Windows MSI is unsigned. Microsoft Defender SmartScreen can warn about an unrecognized app or publisher. The MSI installs for the current user, and the Windows desktop app connects to a paired Linux or macOS OMP host rather than managing a local OMP service.
 
 Verify downloads with `SHA256SUMS.txt`.

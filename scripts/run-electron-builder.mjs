@@ -35,15 +35,26 @@ export function buildElectronBuilderArgs(args, repoRoot) {
   return ["--config", join(repoRoot, "electron-builder.config.mjs"), ...args, "--publish", "never"];
 }
 
+export function buildElectronBuilderInvocation(args, repoRoot, nodeExecutable = process.execPath) {
+  const cli = join(repoRoot, "apps", "desktop", "node_modules", "electron-builder", "cli.js");
+  return {
+    executable: nodeExecutable,
+    args: [cli, ...buildElectronBuilderArgs(args, repoRoot)],
+    cli,
+  };
+}
+
 export function runElectronBuilder(args, repoRoot = resolve(import.meta.dirname, "..")) {
-  const executable = join(repoRoot, "apps", "desktop", "node_modules", ".bin", "electron-builder");
-  if (!existsSync(executable)) {
-    throw new Error(`electron-builder binary not found at ${executable}; run pnpm install --frozen-lockfile`);
+  const invocation = buildElectronBuilderInvocation(args, repoRoot);
+  if (!existsSync(invocation.cli)) {
+    throw new Error(
+      `electron-builder CLI not found at ${invocation.cli}; run pnpm install --frozen-lockfile`,
+    );
   }
   const packagingAssets = collectFiles(join(repoRoot, "apps", "desktop", "build"));
   const result = withPublicReadAccess(packagingAssets, () =>
     withPublicArtifactUmask(() =>
-      spawnSync(executable, buildElectronBuilderArgs(args, repoRoot), {
+      spawnSync(invocation.executable, invocation.args, {
         cwd: repoRoot,
         env: { ...process.env },
         stdio: "inherit",

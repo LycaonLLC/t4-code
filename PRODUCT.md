@@ -6,7 +6,7 @@ product
 
 ## Users
 
-T4 Code is for expert developers and maintainers who run OMP across Linux and macOS workstations. They move between projects, long-lived sessions, subagent trees, terminals, files, and code reviews while work is actively streaming. They need fast situational awareness, exact runtime state, and safe control without losing session context.
+T4 Code is for expert developers and maintainers who run OMP on Linux and macOS hosts and work from Linux, macOS, Windows, and Android clients. They move between projects, long-lived sessions, subagent trees, terminals, files, and code reviews while work is actively streaming. They need fast situational awareness, exact runtime state, and safe control without losing session context.
 
 ## Product Purpose
 

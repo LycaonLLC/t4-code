@@ -26,6 +26,7 @@ export function releasePackageDescriptors(version) {
     { platform: "linux", kind: "appimage", arch: "x86_64", name: names[2] },
     { platform: "mac", kind: "dmg", arch: "arm64", name: names[3] },
     { platform: "mac", kind: "zip", arch: "arm64", name: names[4] },
+    { platform: "windows", kind: "msi", arch: "x86_64", name: names[5] },
   ];
 }
 
@@ -65,7 +66,10 @@ function exactReleaseAssetMap(release, version) {
     throw new Error(`GitHub release must be the published stable ${tag} release`);
   }
   if (release.html_url !== expectedReleaseUrl) throw new Error("GitHub release URL is not exact");
-  if (typeof release.published_at !== "string" || !Number.isFinite(Date.parse(release.published_at))) {
+  if (
+    typeof release.published_at !== "string" ||
+    !Number.isFinite(Date.parse(release.published_at))
+  ) {
     throw new Error("GitHub release published_at must be a timestamp");
   }
   const expectedNames = expectedPublishedAssetNames(version);
@@ -78,7 +82,8 @@ function exactReleaseAssetMap(release, version) {
       throw new Error("GitHub release contains an invalid asset");
     }
     if (assets.has(asset.name)) throw new Error(`GitHub release repeats ${asset.name}`);
-    if (!expectedNames.includes(asset.name)) throw new Error(`GitHub release has unexpected ${asset.name}`);
+    if (!expectedNames.includes(asset.name))
+      throw new Error(`GitHub release has unexpected ${asset.name}`);
     const expectedUrl = `${REPOSITORY_URL}/releases/download/${tag}/${encodeURIComponent(asset.name)}`;
     if (asset.state !== "uploaded" || !Number.isSafeInteger(asset.size) || asset.size <= 0) {
       throw new Error(`${asset.name} must be a non-empty uploaded asset`);
@@ -97,11 +102,19 @@ function exactReleaseAssetMap(release, version) {
   return assets;
 }
 
-export function createStableReleaseManifest({ version, release, checksumsText, linuxMetadataText }) {
+export function createStableReleaseManifest({
+  version,
+  release,
+  checksumsText,
+  linuxMetadataText,
+}) {
   if (!VERSION_PATTERN.test(version)) throw new Error("version must be x.y.z");
   const packageDescriptors = releasePackageDescriptors(version);
   const releaseAssets = exactReleaseAssetMap(release, version);
-  const checksummedNames = [...packageDescriptors.map(({ name }) => name), LINUX_UPDATE_METADATA_NAME];
+  const checksummedNames = [
+    ...packageDescriptors.map(({ name }) => name),
+    LINUX_UPDATE_METADATA_NAME,
+  ];
   const checksums = parseChecksums(checksumsText, checksummedNames);
 
   for (const name of checksummedNames) {
@@ -125,15 +138,17 @@ export function createStableReleaseManifest({ version, release, checksumsText, l
     tag: `v${version}`,
     publishedAt: release.published_at,
     releaseUrl: release.html_url,
-    assets: packageDescriptors.map((descriptor) => {
-      const asset = releaseAssets.get(descriptor.name);
-      return {
-        ...descriptor,
-        url: asset.browser_download_url,
-        size: asset.size,
-        sha256: checksums.get(descriptor.name),
-      };
-    }),
+    assets: packageDescriptors
+      .filter(({ platform }) => platform !== "windows")
+      .map((descriptor) => {
+        const asset = releaseAssets.get(descriptor.name);
+        return {
+          ...descriptor,
+          url: asset.browser_download_url,
+          size: asset.size,
+          sha256: checksums.get(descriptor.name),
+        };
+      }),
   };
 }
 
@@ -147,10 +162,15 @@ async function fetchBytes(url, { token, maxBytes, accept, fetchImpl }) {
     "User-Agent": "t4-code-release-manifest",
   };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetchImpl(url, { headers, redirect: "follow", signal: AbortSignal.timeout(30_000) });
+  const response = await fetchImpl(url, {
+    headers,
+    redirect: "follow",
+    signal: AbortSignal.timeout(30_000),
+  });
   if (!response.ok) throw new Error(`request failed with HTTP ${response.status}`);
   const bytes = await readBoundedResponseBytes(response, { maxBytes, label: "release response" });
-  if (bytes.byteLength === 0 || bytes.byteLength > maxBytes) throw new Error("response size is invalid");
+  if (bytes.byteLength === 0 || bytes.byteLength > maxBytes)
+    throw new Error("response size is invalid");
   return bytes;
 }
 
@@ -211,12 +231,15 @@ function parseArguments(args) {
     else throw new Error(`unknown argument ${flag}`);
   }
   if (!options.version || !options.output) {
-    throw new Error("usage: generate-release-manifest.mjs --version x.y.z --output path/latest.json");
+    throw new Error(
+      "usage: generate-release-manifest.mjs --version x.y.z --output path/latest.json",
+    );
   }
   return options;
 }
 
-const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
+const isMain =
+  process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (isMain) {
   try {
     const options = parseArguments(process.argv.slice(2));

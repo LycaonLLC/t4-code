@@ -1,15 +1,25 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
 import { join, resolve } from "node:path";
 import config from "../electron-builder.config.mjs";
 import { createPackage } from "@electron/asar";
 import { runPreflight, validatePreloadArtifact, validateWebIndex } from "./package-preflight.mjs";
-import { inspectPackage, locateAppRoot } from "./inspect-package.mjs";
+import { inspectPackage, inspectWindowsExecutable, locateAppRoot } from "./inspect-package.mjs";
 import { LINUX_ICON_SIZES, verifyDesktopIcon } from "./desktop-icon-checks.mjs";
 import {
   buildElectronBuilderArgs,
+  buildElectronBuilderInvocation,
   PUBLIC_ARTIFACT_UMASK,
   withPublicArtifactUmask,
   withPublicReadAccess,
@@ -24,7 +34,9 @@ import {
 
 const repoRoot = resolve(import.meta.dirname, "..");
 
-const androidIdentity = JSON.parse(readFileSync(resolve(repoRoot, ".github/android-release-identity.json"), "utf8"));
+const androidIdentity = JSON.parse(
+  readFileSync(resolve(repoRoot, ".github/android-release-identity.json"), "utf8"),
+);
 const productionCertificate = "fa58f53c953a078d8db2b633ee8c226cfd2ad3f7220cd55dd03a2e195a81b0ac";
 
 function androidReleaseFixture(overrides = {}) {
@@ -55,7 +67,8 @@ function androidReleaseFixture(overrides = {}) {
     badgingOutput:
       overrides.badgingOutput ??
       `package: name='${contract.applicationId}' versionCode='${versionCode}' versionName='${packageVersion}' platformBuildVersionName='16' platformBuildVersionCode='36' compileSdkVersion='36' compileSdkVersionCodename='16'\nsdkVersion:'${contract.minSdkVersion}'\ntargetSdkVersion:'${contract.targetSdkVersion}'\n`,
-    manifestTreeOutput: overrides.manifestTreeOutput ?? "E: manifest\n  A: package=\"com.lycaonsolutions.t4code\"\n",
+    manifestTreeOutput:
+      overrides.manifestTreeOutput ?? 'E: manifest\n  A: package="com.lycaonsolutions.t4code"\n',
     signerOutput:
       overrides.signerOutput ??
       `Verifies\nVerified using v1 scheme (JAR signing): false\nVerified using v2 scheme (APK Signature Scheme v2): true\nNumber of signers: 1\nSigner #1 certificate SHA-256 digest: ${productionCertificate}\n`,
@@ -74,6 +87,45 @@ test("builder config keeps release contract", () => {
   assert.equal(config.mac.category, "public.app-category.developer-tools");
   assert.deepEqual(config.mac.publish, []);
   assert.equal(config.artifactName, "T4-Code-${version}-${os}-${arch}.${ext}");
+});
+
+test("builder config keeps the Windows x64 MSI release contract", () => {
+  assert.deepEqual(config.win.target, [{ target: "msi", arch: ["x64"] }]);
+  assert.deepEqual(config.win.publish, []);
+  assert.equal(config.win.icon, "apps/desktop/build/icon.png");
+  assert.deepEqual(config.msi, {
+    oneClick: false,
+    perMachine: false,
+    createDesktopShortcut: true,
+    createStartMenuShortcut: true,
+    runAfterFinish: false,
+    upgradeCode: "{9638C287-93D5-4483-AEBE-57DBEA156676}",
+  });
+  const rootManifest = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8"));
+  assert.equal(
+    rootManifest.scripts["package:windows"],
+    "pnpm prepackage && node scripts/run-electron-builder.mjs --win --x64",
+  );
+});
+
+test("package inspector accepts x64 Windows executables and rejects x86", () => {
+  const scratch = mkdtempSync(join(tmpdir(), "t4-package-pe-"));
+  const executable = join(scratch, "t4-code.exe");
+  const bytes = Buffer.alloc(128);
+  bytes.writeUInt16LE(0x5a4d, 0);
+  bytes.writeUInt32LE(64, 0x3c);
+  bytes.writeUInt32LE(0x0000_4550, 64);
+  try {
+    bytes.writeUInt16LE(0x8664, 68);
+    writeFileSync(executable, bytes);
+    assert.deepEqual(inspectWindowsExecutable(executable), { architecture: "x64" });
+
+    bytes.writeUInt16LE(0x014c, 68);
+    writeFileSync(executable, bytes);
+    assert.throws(() => inspectWindowsExecutable(executable), /not an x64 executable/u);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 });
 
 test("Android release identity is public, pinned, and wired into the release workflow", () => {
@@ -97,7 +149,10 @@ test("Android release identity is public, pinned, and wired into the release wor
     "pnpm --filter @t4-code/mobile build:android:release",
   );
   assert.ok(androidDebugGate >= 0, "release workflow must run the Android debug verification gate");
-  assert.ok(androidDebugGate < androidReleaseBuild, "Android verification must precede the signed build");
+  assert.ok(
+    androidDebugGate < androidReleaseBuild,
+    "Android verification must precede the signed build",
+  );
 });
 
 test("Android versionCode is derived from the package version without a release-specific constant", () => {
@@ -152,46 +207,56 @@ test("Android release inspector fails closed on identity, SDK, split, and signer
     [
       "application id",
       {
-        badgingOutput: "package: name='example.wrong' versionCode='10017' versionName='0.1.17'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
+        badgingOutput:
+          "package: name='example.wrong' versionCode='10017' versionName='0.1.17'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
       },
       /applicationId example\.wrong/u,
     ],
     [
       "version name",
       {
-        badgingOutput: "package: name='com.lycaonsolutions.t4code' versionCode='10017' versionName='0.1.18'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
+        badgingOutput:
+          "package: name='com.lycaonsolutions.t4code' versionCode='10017' versionName='0.1.18'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
       },
       /versionName 0\.1\.18/u,
     ],
     [
       "version code",
       {
-        badgingOutput: "package: name='com.lycaonsolutions.t4code' versionCode='10016' versionName='0.1.17'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
+        badgingOutput:
+          "package: name='com.lycaonsolutions.t4code' versionCode='10016' versionName='0.1.17'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
       },
       /versionCode 10016/u,
     ],
     [
       "minimum sdk",
       {
-        badgingOutput: "package: name='com.lycaonsolutions.t4code' versionCode='10017' versionName='0.1.17'\nsdkVersion:'23'\ntargetSdkVersion:'36'\n",
+        badgingOutput:
+          "package: name='com.lycaonsolutions.t4code' versionCode='10017' versionName='0.1.17'\nsdkVersion:'23'\ntargetSdkVersion:'36'\n",
       },
       /minSdkVersion 23/u,
     ],
     [
       "target sdk",
       {
-        badgingOutput: "package: name='com.lycaonsolutions.t4code' versionCode='10017' versionName='0.1.17'\nsdkVersion:'24'\ntargetSdkVersion:'35'\n",
+        badgingOutput:
+          "package: name='com.lycaonsolutions.t4code' versionCode='10017' versionName='0.1.17'\nsdkVersion:'24'\ntargetSdkVersion:'35'\n",
       },
       /targetSdkVersion 35/u,
     ],
     [
       "split package",
       {
-        badgingOutput: "package: name='com.lycaonsolutions.t4code' versionCode='10017' versionName='0.1.17' split='config.arm64_v8a'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
+        badgingOutput:
+          "package: name='com.lycaonsolutions.t4code' versionCode='10017' versionName='0.1.17' split='config.arm64_v8a'\nsdkVersion:'24'\ntargetSdkVersion:'36'\n",
       },
       /standalone/u,
     ],
-    ["split manifest", { manifestTreeOutput: "E: manifest\n  A: split=\"config.en\"\n" }, /split-only metadata/u],
+    [
+      "split manifest",
+      { manifestTreeOutput: 'E: manifest\n  A: split="config.en"\n' },
+      /split-only metadata/u,
+    ],
     [
       "split output metadata",
       {
@@ -236,7 +301,22 @@ test("Android release inspector fails closed on identity, SDK, split, and signer
 });
 
 test("builder never publishes implicitly from a release tag", () => {
-  assert.deepEqual(buildElectronBuilderArgs(["--linux", "--x64"], repoRoot).slice(-2), ["--publish", "never"]);
+  for (const args of [
+    ["--linux", "--x64"],
+    ["--win", "--x64"],
+  ]) {
+    assert.deepEqual(buildElectronBuilderArgs(args, repoRoot).slice(-2), ["--publish", "never"]);
+  }
+});
+
+test("builder invokes the JavaScript CLI through Node on every platform", () => {
+  const invocation = buildElectronBuilderInvocation(["--win", "--x64"], repoRoot, "node-test");
+  assert.equal(invocation.executable, "node-test");
+  assert.equal(
+    invocation.args[0],
+    join(repoRoot, "apps", "desktop", "node_modules", "electron-builder", "cli.js"),
+  );
+  assert.deepEqual(invocation.args.slice(-4), ["--win", "--x64", "--publish", "never"]);
 });
 
 test("builder uses a public artifact umask without changing its caller", () => {
@@ -275,11 +355,24 @@ test("preflight accepts built desktop inputs", () => {
 });
 
 test("web index preflight rejects absolute assets, inline executable scripts, and missing bootstrap", () => {
-  const valid = '<script src="./t4-bootstrap.js"></script><script type="module" src="./assets/main.js"></script><link rel="stylesheet" href="./assets/main.css">';
+  const valid =
+    '<script src="./t4-bootstrap.js"></script><script type="module" src="./assets/main.js"></script><link rel="stylesheet" href="./assets/main.css">';
   assert.deepEqual(validateWebIndex(valid), []);
-  assert.ok(validateWebIndex('<script src="/src/main.js"></script><script src="./t4-bootstrap.js"></script>').some((error) => error.includes("root-absolute")));
-  assert.ok(validateWebIndex('<script src="./t4-bootstrap.js"></script><script>window.x=1</script>').some((error) => error.includes("inline")));
-  assert.ok(validateWebIndex('<script type="module" src="./main.js"></script>').some((error) => error.includes("missing external")));
+  assert.ok(
+    validateWebIndex(
+      '<script src="/src/main.js"></script><script src="./t4-bootstrap.js"></script>',
+    ).some((error) => error.includes("root-absolute")),
+  );
+  assert.ok(
+    validateWebIndex('<script src="./t4-bootstrap.js"></script><script>window.x=1</script>').some(
+      (error) => error.includes("inline"),
+    ),
+  );
+  assert.ok(
+    validateWebIndex('<script type="module" src="./main.js"></script>').some((error) =>
+      error.includes("missing external"),
+    ),
+  );
 });
 
 test("preload artifact guard rejects local edges and requires the bridge marker", () => {
@@ -320,7 +413,10 @@ test("artifact inspector reads macOS bundles with capitalized Resources", async 
     writeFileSync(join(resources, "LICENSE"), "MIT");
     writeFileSync(join(asarSource, "dist-electron", "main.cjs"), "");
     writeFileSync(join(asarSource, "dist-electron", "preload.cjs"), "");
-    writeFileSync(join(asarSource, "package.json"), JSON.stringify({ productName: config.productName }));
+    writeFileSync(
+      join(asarSource, "package.json"),
+      JSON.stringify({ productName: config.productName }),
+    );
     await createPackage(asarSource, join(resources, "app.asar"));
     assert.equal(locateAppRoot(scratch), contents);
     const result = inspectPackage(contents);
@@ -336,7 +432,10 @@ test("builder config wires the T4 icon set for linux and the 1024 master for mac
   assert.ok(existsSync(resolve(repoRoot, config.mac.icon)));
   assert.ok(existsSync(resolve(repoRoot, "apps/desktop/build/icon.svg")));
   for (const size of LINUX_ICON_SIZES) {
-    assert.ok(existsSync(resolve(repoRoot, config.linux.icon, `${size}x${size}.png`)), `missing ${size}x${size}.png`);
+    assert.ok(
+      existsSync(resolve(repoRoot, config.linux.icon, `${size}x${size}.png`)),
+      `missing ${size}x${size}.png`,
+    );
   }
 });
 

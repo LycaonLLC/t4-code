@@ -135,6 +135,8 @@ final class T4UpdateVerifier {
                 return "T4-Code-" + version + "-mac-arm64.dmg";
             case "mac:zip:arm64":
                 return "T4-Code-" + version + "-mac-arm64.zip";
+            case "windows:msi:x86_64":
+                return "T4-Code-" + version + "-win-x64.msi";
             default:
                 throw new IllegalArgumentException("unknown release asset");
         }

@@ -109,8 +109,8 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/release.yml",
       (text) =>
         text.replace(
-          "needs: [verify, ci-authority, build-android, build-linux, build-macos]",
-          "needs: [verify, build-android, build-linux, build-macos]",
+          "needs: [verify, ci-authority, build-android, build-linux, build-macos, build-windows]",
+          "needs: [verify, build-android, build-linux, build-macos, build-windows]",
         ),
     ],
     [
@@ -366,7 +366,7 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(!ciAuthority.includes("ref: ${{ needs.verify.outputs.source_sha }}"));
   assert.ok(
     releaseWorkflow.includes(
-      "needs: [verify, ci-authority, build-android, build-linux, build-macos]",
+      "needs: [verify, ci-authority, build-android, build-linux, build-macos, build-windows]",
     ),
   );
   const releaseVerify = releaseWorkflow.slice(

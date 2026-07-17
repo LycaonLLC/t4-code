@@ -255,7 +255,7 @@ test("public verification requires exact GitHub provenance despite admin bypass 
       "repos/$OMP_INTEGRATION_REPOSITORY/compare/$upstream_commit...$integration_commit",
       ".base_commit.sha",
       ".merge_base_commit.sha",
-      '== $upstream',
+      "== $upstream",
       ".ahead_by > 0",
     ],
     "integration ancestry verification",
@@ -264,11 +264,7 @@ test("public verification requires exact GitHub provenance despite admin bypass 
   const t4Reachability = shellFunction(runner, "t4_commit_is_reachable_from_main");
   assertIncludesAll(
     t4Reachability,
-    [
-      "repos/$T4_REPOSITORY/compare/$commit...main",
-      ".merge_base_commit.sha",
-      '== $commit',
-    ],
+    ["repos/$T4_REPOSITORY/compare/$commit...main", ".merge_base_commit.sha", "== $commit"],
     "T4 main reachability verification",
   );
 
@@ -315,6 +311,7 @@ test("public verification requires exact GitHub provenance despite admin bypass 
     "linux-x86_64.AppImage",
     "mac-arm64.dmg",
     "mac-arm64.zip",
+    "win-x64.msi",
     "latest-linux.yml",
   ]) {
     assert.ok(assets.includes(name), `release asset contract is missing: ${name}`);
@@ -325,12 +322,12 @@ test("public verification requires exact GitHub provenance despite admin bypass 
       ".digest",
       'actual_manifest_digest=$($SHA256SUM "$manifest_file"',
       'asset_digest == "sha256:$expected_digest"',
-      "manifest_entries == 6",
+      "manifest_entries == 7",
     ],
     "release checksum verification",
   );
   assert.match(assets, /\.assets\s*\|\s*length/u);
-  assert.match(assets, /\.assets\s*\|\s*length\s*==\s*7/u);
+  assert.match(assets, /\.assets\s*\|\s*length\s*==\s*8/u);
 
   const linuxUpdate = shellFunction(runner, "verify_live_linux_update");
   assertIncludesAll(
@@ -375,7 +372,7 @@ test("public verification requires exact GitHub provenance despite admin bypass 
       '.channel == "stable"',
       ".publishedAt == $release.published_at",
       ".releaseUrl == $release.html_url",
-      "(.assets | type == \"array\" and length == 5)",
+      '(.assets | type == "array" and length == 6)',
       "$published.size == $actual.size",
       "$published.browser_download_url == $actual.url",
       '$published.digest == "sha256:\\($actual.sha256)"',
@@ -450,17 +447,17 @@ test("processed state is a receipt, not permission to ignore live workstation dr
       ".localDeployment.omp.installedSha256",
       'recorded_omp_target == "$OMP_TARGET"',
       '$SHA256SUM "$OMP_TARGET"',
-      '--property MainPID --value',
-      '/proc/$app_pid/exe',
+      "--property MainPID --value",
+      "/proc/$app_pid/exe",
       '"$OMP_TARGET" appserver status --json',
       '.state == "running"',
       ".health.ok == true",
       ".localDeployment.desktop.installedVersion",
-      '$DPKG_QUERY -W',
+      "$DPKG_QUERY -W",
       '$DPKG -V "$T4_PACKAGE"',
       ".localDeployment.gateway.runtimeSourceRoot",
       ".t4.commit",
-      'rev-parse HEAD',
+      "rev-parse HEAD",
       ".sourceRoot",
       '"$NODE" "$runtime_root/scripts/tailnet-service.mjs" status',
       '$SYSTEMCTL --user is-enabled --quiet "$gateway_service"',
@@ -488,7 +485,7 @@ test("processed state is a receipt, not permission to ignore live workstation dr
   const tailnetState = shellFunction(runner, "tailnet_gateway_is_healthy");
   assertIncludesAll(
     tailnetState,
-    ['.allowedOrigin', '"${gateway_origin}/healthz"', '.transport == "local-unix"'],
+    [".allowedOrigin", '"${gateway_origin}/healthz"', '.transport == "local-unix"'],
     "separate Tailnet convergence proof",
   );
 
@@ -518,7 +515,7 @@ test("processed state is a receipt, not permission to ignore live workstation dr
   ]);
 
   const pending = shellFunction(runner, "deploy_pending_publication");
-  const skipStart = pending.indexOf('if [[ -s $PROCESSED_FILE ]]');
+  const skipStart = pending.indexOf("if [[ -s $PROCESSED_FILE ]]");
   const clearStart = pending.indexOf("clear_pending", skipStart);
   assert.notEqual(skipStart, -1, "missing already-processed pending guard");
   assert.notEqual(clearStart, -1, "missing already-processed pending cleanup");
@@ -571,7 +568,7 @@ test("tagged sources prove ancestry, compatibility, artifacts, and required chec
       "packages/coding-agent/test/rpc-managed-images.test.ts",
       '"$OMP_CANDIDATE" --smoke-test',
       'candidate_drain_help=$("$OMP_CANDIDATE" appserver drain-if-idle --help',
-      '[[ $candidate_drain_help == *drain-if-idle* ]]',
+      "[[ $candidate_drain_help == *drain-if-idle* ]]",
       'OMP_CANDIDATE_SHA=$($SHA256SUM "$OMP_CANDIDATE"',
       '"$PNPM" check',
       '"$PNPM" build',
@@ -599,12 +596,12 @@ test("local cutover binds public mirror, live drain, exposure, and gateway ident
   assertIncludesAll(
     mirror,
     [
-      'repos/$OMP_UPSTREAM_SLUG/commits/main',
-      'repos/$OMP_INTEGRATION_SLUG/commits/main',
-      'repos/$OMP_UPSTREAM_SLUG/git/ref/tags/$UPSTREAM_TAG',
-      'repos/$OMP_INTEGRATION_SLUG/git/ref/tags/$UPSTREAM_TAG',
-      'repos/$OMP_UPSTREAM_SLUG/commits/$UPSTREAM_TAG',
-      'repos/$OMP_INTEGRATION_SLUG/commits/$UPSTREAM_TAG',
+      "repos/$OMP_UPSTREAM_SLUG/commits/main",
+      "repos/$OMP_INTEGRATION_SLUG/commits/main",
+      "repos/$OMP_UPSTREAM_SLUG/git/ref/tags/$UPSTREAM_TAG",
+      "repos/$OMP_INTEGRATION_SLUG/git/ref/tags/$UPSTREAM_TAG",
+      "repos/$OMP_UPSTREAM_SLUG/commits/$UPSTREAM_TAG",
+      "repos/$OMP_INTEGRATION_SLUG/commits/$UPSTREAM_TAG",
       "MAIN_MIRROR_ATTEMPTS",
       "MAIN_MIRROR_INTERVAL_SECONDS",
       'fork_main == "$official_main"',
@@ -619,7 +616,7 @@ test("local cutover binds public mirror, live drain, exposure, and gateway ident
   assertIncludesAll(
     liveProof,
     [
-      '--property MainPID --value',
+      "--property MainPID --value",
       '"/proc/$current_pid/exe"',
       'current_sha == "$expected_sha"',
       'current_sha == "$OMP_CANDIDATE_SHA"',
@@ -682,7 +679,7 @@ test("local cutover defers while T4 or OMP sessions are active", async () => {
   const appserver = shellFunction(deployment, "require_appserver_sessionless");
   assertIncludesAll(
     appserver,
-    ['--property MainPID --value', 'pgrep -P "$app_pid"', "later idle retry"],
+    ["--property MainPID --value", 'pgrep -P "$app_pid"', "later idle retry"],
     "appserver child-session guard",
   );
 
@@ -691,7 +688,7 @@ test("local cutover defers while T4 or OMP sessions are active", async () => {
     capability,
     [
       'help_output=$("$OMP_TARGET" appserver drain-if-idle --help',
-      '[[ $help_output == *drain-if-idle* ]]',
+      "[[ $help_output == *drain-if-idle* ]]",
       '"$OMP_TARGET" appserver status --json',
       'mismatch_host="t4-maintainer-capability-host-$nonce"',
       'mismatch_epoch="t4-maintainer-capability-epoch-$nonce"',
@@ -735,7 +732,7 @@ test("local cutover defers while T4 or OMP sessions are active", async () => {
   assertIncludesAll(
     drainReceipt,
     [
-      ".state == \"draining\"",
+      '.state == "draining"',
       ".health.hostId == $host_id",
       ".health.epoch == $epoch",
       ".busy.connections",
@@ -764,7 +761,8 @@ test("local cutover defers while T4 or OMP sessions are active", async () => {
     'stop "$OMP_SERVICE"',
   ]);
   assert.ok(
-    mutationFlow.indexOf("require_workstation_idle") < mutationFlow.indexOf("MUTATION_STARTED=true"),
+    mutationFlow.indexOf("require_workstation_idle") <
+      mutationFlow.indexOf("MUTATION_STARTED=true"),
     "the idle guard must finish before mutation starts",
   );
 });
@@ -802,7 +800,7 @@ test("local deployment prepares everything before mutation and writes proof last
     "before-gateway-exposure",
     '$NODE "$T4_RUNTIME_ROOT/scripts/tailnet-service.mjs" start',
     'wait_for_gateway "$GATEWAY_PORT"',
-    'receipt_temporary=$(mktemp',
+    "receipt_temporary=$(mktemp",
     'mv -f -- "$receipt_temporary" "$RECEIPT_FILE"',
     "MUTATION_STARTED=false",
   ]);
@@ -811,10 +809,10 @@ test("local deployment prepares everything before mutation and writes proof last
 test("local deployment preserves gateway identity and rolls every component back", async () => {
   const deployment = await source("deploy-local.sh");
   for (const proof of [
-    '.allowedOrigin',
-    '.port',
-    '.appSocket',
-    '.label',
+    ".allowedOrigin",
+    ".port",
+    ".appSocket",
+    ".label",
     "Tailnet gateway config did not adopt the target runtime",
     "Tailnet gateway origin changed during deployment",
     "Tailnet gateway port changed during deployment",
@@ -842,7 +840,7 @@ test("local deployment preserves gateway identity and rolls every component back
     rollback,
     [
       '[[ $($SHA256SUM "$OMP_TARGET"',
-      'wait_for_appserver >/dev/null',
+      "wait_for_appserver >/dev/null",
       "PREVIOUS_T4_VERSION",
       'cmp -s -- "$BACKUP_DIR/tailnet-gateway.json" "$GATEWAY_CONFIG"',
       'cmp -s -- "$BACKUP_DIR/$GATEWAY_SERVICE" "$GATEWAY_UNIT"',
@@ -890,7 +888,7 @@ test("local deployment preserves gateway identity and rolls every component back
   const postExposure = shellFunction(deployment, "prepare_post_exposure_rollback");
   assertOrdered(postExposure, [
     "stop_gateway_durably",
-    'drain-if-idle --json',
+    "drain-if-idle --json",
     '--expected-host-id "$APP_HOST_ID"',
     '--expected-epoch "$APP_EPOCH"',
     'drain_receipt_is_valid "$drain_result" "$APP_HOST_ID" "$APP_EPOCH"',
@@ -909,7 +907,7 @@ test("local deployment preserves gateway identity and rolls every component back
 
   const exitTrap = shellFunction(deployment, "on_exit");
   assertOrdered(exitTrap, [
-    'if [[ $APP_EXPOSURE_ATTEMPTED == true ]]',
+    "if [[ $APP_EXPOSURE_ATTEMPTED == true ]]",
     "prepare_post_exposure_rollback",
     "rollback",
   ]);
@@ -968,7 +966,7 @@ test("processed state accepts only a complete post-cutover health receipt", asyn
     '$NODE "$T4_RUNTIME_ROOT/scripts/tailnet-service.mjs" install',
     "--defer-start",
     "before-gateway-exposure",
-    'write_transaction_marker gateway-exposure-starting',
+    "write_transaction_marker gateway-exposure-starting",
     '$NODE "$T4_RUNTIME_ROOT/scripts/tailnet-service.mjs" start',
     '$NODE "$T4_RUNTIME_ROOT/scripts/tailnet-service.mjs" status',
     'wait_for_gateway "$GATEWAY_PORT"',

@@ -761,11 +761,12 @@ release_assets_are_public() {
     "T4-Code-${version}-linux-x86_64.AppImage"
     "T4-Code-${version}-mac-arm64.dmg"
     "T4-Code-${version}-mac-arm64.zip"
+    "T4-Code-${version}-win-x64.msi"
     "latest-linux.yml"
   )
   local name url manifest_url manifest_digest manifest_file actual_manifest_digest expected_digest asset_digest
   local manifest_entries release_asset_count
-  release_asset_count=$(printf '%s' "$release_json" | $JQ -er 'select(.assets | length == 7) | .assets | length') || return 1
+  release_asset_count=$(printf '%s' "$release_json" | $JQ -er 'select(.assets | length == 8) | .assets | length') || return 1
   [[ $release_asset_count == "${#expected[@]}" ]] || return 1
   manifest_url=$(printf '%s' "$release_json" | $JQ -er '
     .assets[] | select(.name == "SHA256SUMS.txt" and .state == "uploaded" and .size > 0)
@@ -819,7 +820,7 @@ release_assets_are_public() {
   done
   manifest_entries=$(awk '$1 ~ /^[0-9a-f]{64}$/ && NF == 2 {count += 1} END {print count + 0}' "$manifest_file")
   rm -f -- "$manifest_file"
-  [[ $manifest_entries == 6 ]]
+  [[ $manifest_entries == 7 ]]
 }
 
 canonical_linux_update_assets() {
@@ -1014,7 +1015,8 @@ site_release_manifest_matches() {
         {platform: "linux", kind: "deb", arch: "x86_64", name: "T4-Code-\($version)-linux-amd64.deb"},
         {platform: "linux", kind: "appimage", arch: "x86_64", name: "T4-Code-\($version)-linux-x86_64.AppImage"},
         {platform: "mac", kind: "dmg", arch: "arm64", name: "T4-Code-\($version)-mac-arm64.dmg"},
-        {platform: "mac", kind: "zip", arch: "arm64", name: "T4-Code-\($version)-mac-arm64.zip"}
+        {platform: "mac", kind: "zip", arch: "arm64", name: "T4-Code-\($version)-mac-arm64.zip"},
+        {platform: "windows", kind: "msi", arch: "x86_64", name: "T4-Code-\($version)-win-x64.msi"}
       ];
       def checksum_entries:
         ($sums | if endswith("\n") then .[0:-1] else . end) | split("\n") | map(
@@ -1038,9 +1040,9 @@ site_release_manifest_matches() {
       .releaseUrl == $release.html_url and
       ($release.published_at | type == "string") and
       ($release.published_at | fromdateiso8601 | type == "number") and
-      (.assets | type == "array" and length == 5) and
+      (.assets | type == "array" and length == 6) and
       (($checksums | keys | sort) == ($checksummed_names | sort)) and
-      ([range(0; 5) as $index |
+      ([range(0; 6) as $index |
         $expected[$index] as $wanted |
         $manifest.assets[$index] as $actual |
         ([$release.assets[] | select(.name == $wanted.name)]) as $matches |
@@ -1349,6 +1351,7 @@ site_has_release() {
     "T4-Code-${version}-linux-x86_64.AppImage"
     "T4-Code-${version}-mac-arm64.dmg"
     "T4-Code-${version}-mac-arm64.zip"
+    "T4-Code-${version}-win-x64.msi"
   )
   cache_bust=$(date +%s)
   index=$($CURL -fsSL --retry 3 --retry-all-errors --max-time 45 "$T4_SITE/?maintainer=$cache_bust") || return 1

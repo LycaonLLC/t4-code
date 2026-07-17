@@ -17,8 +17,8 @@ const digest = "a".repeat(64);
 
 function asset(
   version: string,
-  platform: "android" | "linux" | "mac",
-  kind: "apk" | "deb" | "appimage" | "dmg" | "zip",
+  platform: "android" | "linux" | "mac" | "windows",
+  kind: "apk" | "deb" | "appimage" | "dmg" | "zip" | "msi",
   arch: "universal" | "x86_64" | "arm64",
   name: string,
 ) {
@@ -131,7 +131,7 @@ function response(
 function controller(
   options: {
     readonly updater?: FakeUpdater;
-    readonly platform?: "linux" | "darwin";
+    readonly platform?: "linux" | "darwin" | "win32";
     readonly isPackaged?: boolean;
     readonly nativeLinuxPackage?: "appimage" | "deb";
     readonly fetchManifest?: () => Promise<UpdateFetchResponse>;
@@ -228,6 +228,17 @@ describe("desktop update controller", () => {
     await instance.downloadUpdate();
     expect(opened).toEqual([
       "https://github.com/LycaonLLC/t4-code/releases/download/v0.1.18/T4-Code-0.1.18-mac-arm64.dmg",
+    ]);
+    expect(updater.checkCalls).toBe(0);
+    instance.dispose();
+  });
+
+  it("keeps Windows MSI updates manual and opens only the exact x64 asset", async () => {
+    const { instance, updater, opened } = controller({ platform: "win32" });
+    expect((await instance.checkForUpdate()).phase).toBe("manual");
+    await instance.downloadUpdate();
+    expect(opened).toEqual([
+      "https://github.com/LycaonLLC/t4-code/releases/download/v0.1.18/T4-Code-0.1.18-win-x64.msi",
     ]);
     expect(updater.checkCalls).toBe(0);
     instance.dispose();
