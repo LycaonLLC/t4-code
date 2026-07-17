@@ -593,13 +593,14 @@ public final class T4UpdatePlugin extends Plugin {
         Object assetsValue = manifest.get("assets");
         if (!(assetsValue instanceof JSONArray)) throw new IllegalStateException("release assets must be an array");
         JSONArray assets = (JSONArray) assetsValue;
-        if (assets.length() != 5) throw new IllegalStateException("invalid release asset count");
+        if (assets.length() < 5 || assets.length() > 6) throw new IllegalStateException("invalid release asset count");
         Set<String> expected = new HashSet<>();
         expected.add("android:apk:universal");
         expected.add("linux:deb:x86_64");
         expected.add("linux:appimage:x86_64");
         expected.add("mac:dmg:arm64");
         expected.add("mac:zip:arm64");
+        expected.add("windows:msi:x86_64");
         Set<String> identities = new HashSet<>();
         String apkUrl = null;
         Long apkSize = null;
@@ -635,11 +636,17 @@ public final class T4UpdatePlugin extends Plugin {
                 apkSha256 = sha256;
             }
         }
-        if (identities.size() != 5 || apkUrl == null || apkSize == null || apkSha256 == null) {
+        if (identities.size() < 5 || identities.size() > 6 || apkUrl == null || apkSize == null || apkSha256 == null) {
             throw new IllegalStateException("Android release asset is missing");
         }
+        if (!identities.contains("android:apk:universal") ||
+            !identities.contains("linux:deb:x86_64") ||
+            !identities.contains("linux:appimage:x86_64") ||
+            !identities.contains("mac:dmg:arm64") ||
+            !identities.contains("mac:zip:arm64")) {
+            throw new IllegalStateException("Required release assets are missing");
+        }
         return new ManifestRelease(version, apkUrl, apkSize, apkSha256);
-    }
 
     private String requireJsonString(JSONObject object, String key) throws Exception {
         Object value = object.get(key);

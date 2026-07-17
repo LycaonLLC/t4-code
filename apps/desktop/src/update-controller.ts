@@ -178,7 +178,7 @@ export function decodeReleaseManifest(value: unknown): ReleaseManifest {
   }
   const publishedAt = requiredString(root.publishedAt, "publishedAt", 64);
   if (!Number.isFinite(Date.parse(publishedAt))) throw new Error("invalid publishedAt");
-  if (!Array.isArray(root.assets) || root.assets.length !== 5) {
+  if (!Array.isArray(root.assets) || root.assets.length < 5 || root.assets.length > 6) {
     throw new Error("invalid release assets");
   }
   const assets = Object.freeze(root.assets.map((asset) => releaseAsset(asset, releaseVersion)));
@@ -191,6 +191,29 @@ export function decodeReleaseManifest(value: unknown): ReleaseManifest {
     ["mac", "dmg", "arm64", `T4-Code-${releaseVersion}-mac-arm64.dmg`],
     ["mac", "zip", "arm64", `T4-Code-${releaseVersion}-mac-arm64.zip`],
   ] as const;
+  const allowedExtra = {
+    platform: "windows",
+    kind: "msi",
+    arch: "x86_64",
+    name: `T4-Code-${releaseVersion}-win-x64.msi`,
+  } as const;
+  for (const asset of assets) {
+    const isCanonical = canonical.some(
+      ([platform, kind, arch, name]) =>
+        asset.platform === platform &&
+        asset.kind === kind &&
+        asset.arch === arch &&
+        asset.name === name,
+    );
+    const isWindowsExtra =
+      asset.platform === allowedExtra.platform &&
+      asset.kind === allowedExtra.kind &&
+      asset.arch === allowedExtra.arch &&
+      asset.name === allowedExtra.name;
+    if (!isCanonical && !isWindowsExtra) {
+      throw new Error("unexpected release asset");
+    }
+  }
   for (const [platform, kind, arch, name] of canonical) {
     if (
       assets.filter(
