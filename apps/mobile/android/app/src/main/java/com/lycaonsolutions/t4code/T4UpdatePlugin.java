@@ -626,7 +626,7 @@ public final class T4UpdatePlugin extends Plugin {
                 apkSha256 = sha256;
             }
         }
-        if (identities.size() != 6 || apkUrl == null || apkSize == null || apkSha256 == null) {
+        if (identities.size() != 5 || apkUrl == null || apkSize == null || apkSha256 == null) {
             throw new IllegalStateException("Android release asset is missing");
         }
         return new ManifestRelease(version, apkUrl, apkSize, apkSha256);
