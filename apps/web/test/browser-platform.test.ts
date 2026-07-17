@@ -5,10 +5,24 @@ import { describe, expect, it, afterEach } from "vite-plus/test";
 import { resolveRendererPlatform } from "../src/platform/bridge.ts";
 import { createBrowserShellPort, detectBackend } from "../src/platform/browser-shell-port.ts";
 import { BrowserWebSocketTransport } from "../src/platform/browser-transport.ts";
+import {
+  parseTailnetBackend,
+  selectStoredMobileBackend,
+  writeStoredMobileBackend,
+} from "../src/platform/native-mobile.ts";
 
 const originalDocument = globalThis.document;
 const originalWindow = globalThis.window;
 const originalWebSocket = globalThis.WebSocket;
+const originalSpeechSynthesis = (globalThis as typeof globalThis & { speechSynthesis?: unknown }).speechSynthesis;
+const originalUtterance = (globalThis as typeof globalThis & { SpeechSynthesisUtterance?: unknown }).SpeechSynthesisUtterance;
+
+class MemoryStorage {
+  readonly values = new Map<string, string>();
+  getItem(key: string): string | null { return this.values.get(key) ?? null; }
+  setItem(key: string, value: string): void { this.values.set(key, value); }
+  removeItem(key: string): void { this.values.delete(key); }
+}
 
 class FakeLifecycleTarget {
   visibilityState: DocumentVisibilityState = "visible";
@@ -45,6 +59,8 @@ afterEach(() => {
   Object.defineProperty(globalThis, "document", { configurable: true, value: originalDocument });
   Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
   Object.defineProperty(globalThis, "WebSocket", { configurable: true, value: originalWebSocket });
+  Object.defineProperty(globalThis, "speechSynthesis", { configurable: true, value: originalSpeechSynthesis });
+  Object.defineProperty(globalThis, "SpeechSynthesisUtterance", { configurable: true, value: originalUtterance });
 });
 
 describe("browser platform boundary", () => {
@@ -382,6 +398,75 @@ describe("browser platform boundary", () => {
     await shell.disconnect({ targetId: "remote" });
     stopFrames();
     expect(closed).toBe(true);
+  });
+
+  it("fails closed when the active native endpoint changes before pairing completes", async () => {
+    const profileA = parseTailnetBackend("https://profile-a.tailnet.ts.net:8445", "alpha");
+    const profileB = parseTailnetBackend("https://profile-b.tailnet.ts.net:8445", "beta");
+    const storage = new MemoryStorage();
+    writeStoredMobileBackend(profileA, storage);
+    writeStoredMobileBackend(profileB, storage);
+    selectStoredMobileBackend(profileA.endpointKey, storage);
+
+    const writes: Array<{ readonly hostKey: string }> = [];
+    Object.defineProperty(globalThis, "document", { configurable: true, value: undefined });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        localStorage: storage,
+        __t4MobileBackend: profileA,
+        Capacitor: {
+          isNativePlatform: () => true,
+          getPlatform: () => "android",
+          Plugins: {
+            T4SecureStorage: {
+              getCredentials: () => Promise.resolve({ credentials: null }),
+              setCredentials: (options: { readonly hostKey: string }) => {
+                writes.push(options);
+                return Promise.resolve();
+              },
+              clearCredentials: () => Promise.resolve(),
+            },
+          },
+        },
+      },
+    });
+
+    let capturedOptions: OmpClientOptions | undefined;
+    const fakeClient = {
+      get state(): "pairing" {
+        return "pairing";
+      },
+      pairStart: async () => {
+        const callback = capturedOptions?.privilegedPairResult;
+        if (callback === undefined) throw new Error("pair callback missing");
+        await callback({
+          deviceId: "profile-a-device",
+          deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        } as never);
+        return { type: "pair.ok" };
+      },
+      onFrame: () => () => undefined,
+      onState: () => () => undefined,
+      onError: () => () => undefined,
+    };
+    const shell = createBrowserShellPort({
+      clientFactory: (options) => {
+        capturedOptions = options;
+        return fakeClient as unknown as OmpClient;
+      },
+    });
+    if (shell === null) return;
+    await shell.bootstrap();
+
+    selectStoredMobileBackend(profileB.endpointKey, storage);
+    window.__t4MobileBackend = profileB;
+
+    await expect(shell.pair({ targetId: "remote", code: "123456" })).rejects.toThrow(
+      "The active mobile host changed while pairing.",
+    );
+    expect(writes).toEqual([]);
+    expect(capturedOptions?.authentication?.()).toBeUndefined();
   });
 
   it("manages overlapping transport openings and prevents old ones from keeping sockets open or breaking new ones", async () => {
@@ -731,5 +816,139 @@ describe("browser platform boundary", () => {
     await Promise.resolve();
 
     await shell.disconnect({ targetId: "remote" });
+  });
+  it("reports honest unsupported browser speech and stop state", async () => {
+    setBackendScript(JSON.stringify({ wsUrl: "wss://omp.example/v1/ws", label: "Remote OMP" }));
+    Object.defineProperty(globalThis, "window", { configurable: true, value: undefined });
+    Object.defineProperty(globalThis, "speechSynthesis", { configurable: true, value: undefined });
+    Object.defineProperty(globalThis, "SpeechSynthesisUtterance", { configurable: true, value: undefined });
+    const shell = createBrowserShellPort();
+    if (shell === null) throw new Error("browser shell was not created");
+    expect(await shell.speakText?.({ text: "hello" })).toEqual({
+      accepted: false,
+      error: "Speech synthesis is unavailable",
+    });
+    expect(await shell.stopSpeaking?.()).toEqual({
+      accepted: false,
+      error: "Speech synthesis is unavailable",
+    });
+  });
+
+  it("settles pending browser speech before client teardown on disconnect", async () => {
+    setBackendScript(JSON.stringify({ wsUrl: "wss://omp.example/v1/ws", label: "Remote OMP" }));
+    Object.defineProperty(globalThis, "window", { configurable: true, value: undefined });
+    const events: string[] = [];
+    class FakeUtterance {
+      readonly text: string;
+      onend: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor(text: string) {
+        this.text = text;
+      }
+    }
+    const spoken: FakeUtterance[] = [];
+    Object.defineProperty(globalThis, "SpeechSynthesisUtterance", {
+      configurable: true,
+      value: FakeUtterance,
+    });
+    Object.defineProperty(globalThis, "speechSynthesis", {
+      configurable: true,
+      value: {
+        cancel: () => {
+          events.push("speech.cancel");
+        },
+        speak: (utterance: FakeUtterance) => {
+          spoken.push(utterance);
+        },
+      },
+    });
+    const fakeClient = {
+      state: "idle",
+      connect: async () => undefined,
+      close: async () => {
+        events.push("client.close");
+      },
+      wake: () => undefined,
+      onFrame: () => () => undefined,
+      onState: () => () => undefined,
+      onError: () => () => undefined,
+    } as unknown as OmpClient;
+    const shell = createBrowserShellPort({
+      clientFactory: () => fakeClient,
+      lifecycle: { windowTarget: null, documentTarget: null },
+    });
+    if (shell === null) throw new Error("browser shell was not created");
+    await shell.bootstrap();
+
+    // Speech is mid-utterance: the fake synthesizer never fires onend.
+    const pending = shell.speakText?.({ text: "hello" });
+    if (pending === undefined) throw new Error("speakText is not exposed");
+    expect(spoken).toHaveLength(1);
+    // speakText itself cancels any prior utterance; only the disconnect
+    // ordering matters below.
+    events.length = 0;
+
+    const result = await shell.disconnect({ targetId: "remote" });
+    expect(result.state).toBe("disconnected");
+    // The pending speech promise settled instead of hanging forever...
+    await expect(pending).resolves.toEqual({ accepted: false, error: "Speech cancelled" });
+    // ...and the cancel landed before the client teardown, with no re-speak.
+    expect(events).toEqual(["speech.cancel", "client.close"]);
+    expect(spoken).toHaveLength(1);
+  });
+
+  it("stops pending Android speech before client teardown on disconnect", async () => {
+    setBackendScript(JSON.stringify({ wsUrl: "wss://omp.example/v1/ws", label: "Remote OMP" }));
+    const events: string[] = [];
+    let resolveSpeech: ((result: { accepted: boolean; error?: string }) => void) | undefined;
+    const speechPlugin = {
+      speakText: (_options: { text: string }) =>
+        new Promise<{ accepted: boolean; error?: string }>((resolve) => {
+          resolveSpeech = resolve;
+        }),
+      stopSpeaking: async () => {
+        events.push("android.stop");
+        // The native side settles the in-flight utterance when stopped.
+        resolveSpeech?.({ accepted: false, error: "Speech cancelled" });
+        resolveSpeech = undefined;
+        return { accepted: true };
+      },
+    };
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        location: { search: "" },
+        Capacitor: {
+          isNativePlatform: () => true,
+          getPlatform: () => "android",
+          Plugins: { T4Speech: speechPlugin },
+        },
+      },
+    });
+    const fakeClient = {
+      state: "idle",
+      connect: async () => undefined,
+      close: async () => {
+        events.push("client.close");
+      },
+      wake: () => undefined,
+      onFrame: () => () => undefined,
+      onState: () => () => undefined,
+      onError: () => () => undefined,
+    } as unknown as OmpClient;
+    const shell = createBrowserShellPort({
+      clientFactory: () => fakeClient,
+      lifecycle: { windowTarget: null, documentTarget: null },
+    });
+    if (shell === null) throw new Error("browser shell was not created");
+    await shell.bootstrap();
+
+    const pending = shell.speakText?.({ text: "hello" });
+    if (pending === undefined) throw new Error("speakText is not exposed");
+
+    const result = await shell.disconnect({ targetId: "remote" });
+    expect(result.state).toBe("disconnected");
+    await expect(pending).resolves.toEqual({ accepted: false, error: "Speech cancelled" });
+    expect(events).toEqual(["android.stop", "client.close"]);
   });
 });

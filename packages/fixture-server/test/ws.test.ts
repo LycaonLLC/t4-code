@@ -51,8 +51,10 @@ describe("loopback fixture websocket", () => {
     expect(await closed(wrong)).toBeGreaterThan(0);
     const wrongHost = new WebSocket(server.address.replace("127.0.0.1", "localhost"));
     expect(await closed(wrongHost)).toBeGreaterThan(0);
+    const clientConnected = server.waitForClientCount(1);
     const socket = new WebSocket(server.address);
     await opened(socket);
+    await clientConnected;
     const frameMessages = messages(socket, 3);
     socket.send(JSON.stringify(hello));
     expect(await frameMessages).toHaveLength(3);
@@ -77,15 +79,13 @@ describe("loopback fixture websocket", () => {
     const binaryClosed = closed(binary);
     binary.send(Buffer.from(JSON.stringify(hello)));
     expect(await binaryClosed).toBe(1009);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(server.clientCount).toBe(0);
+    await server.waitForClientCount(0);
     const oversized = new WebSocket(server.address);
     await opened(oversized);
     const oversizedClosed = closed(oversized);
     oversized.send("x".repeat(server.maxPayload + 1));
     expect(await oversizedClosed).toBe(1009);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(server.clientCount).toBe(0);
+    await server.waitForClientCount(0);
     await server.stop();
   });
   it("passes duplicate-key text through the protocol decoder and cleans disconnected clients", async () => {
@@ -100,8 +100,10 @@ describe("loopback fixture websocket", () => {
     socket.send('{"v":"omp-app/1","v":"omp-app/1","type":"ping","nonce":"n","timestamp":"t"}');
     expect(await malformed).toMatchObject({ type: "error", code: "INVALID_JSON" });
     const done = closed(socket);
+    const serverCleanup = server.waitForClientCount(0);
     socket.close();
     await done;
+    await serverCleanup;
     expect(server.clientCount).toBe(0);
     expect(server.engine.clientCount).toBe(0);
     await server.stop();

@@ -125,6 +125,7 @@ export type {
   DesktopRuntimeSnapshot,
   DesktopRuntimeSnapshotListener,
   DesktopRuntimeOptions,
+  DesktopRuntimeTimerScheduler,
   DesktopControllerLease,
   DesktopControllerLeaseAcquireResult,
   DesktopControllerLeaseResult,

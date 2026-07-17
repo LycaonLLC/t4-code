@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { decodeServerFrame, type SessionSnapshotFrame } from "@t4-code/protocol";
 import type { TranscriptImageSource } from "../src/features/session-runtime/transcript-images.ts";
+import { FrameFactory } from "../src/features/session-runtime/frame-builders.ts";
 import { initialProjection, reduceTranscript } from "../src/features/transcript/projection.ts";
 import { deriveTranscriptRows } from "../src/features/transcript/rows.ts";
 import { TranscriptRowContent } from "../src/features/transcript/TranscriptRows.tsx";
@@ -185,5 +186,84 @@ describe("collaboration message projection", () => {
 
     const rows = deriveTranscriptRows(reduceTranscript(initialProjection(), snapshot));
     expect(rows[0]?.kind).toBe("message");
+  });
+
+  it("renders newline-complete durable catch-up once in monotonic cursor order", () => {
+    const factory = new FrameFactory({ host: "host", session: "session", epoch: "epoch" });
+    let projection = reduceTranscript(initialProjection(), factory.snapshot([]));
+
+    // A partial final JSONL line has no appserver projection entry, so T4 receives no entry frame.
+    expect(deriveTranscriptRows(projection)).toEqual([]);
+    expect(projection.cursor).toEqual({ epoch: "epoch", seq: 0 });
+
+    const first = factory.entry(
+      factory.entryRecord({
+        id: "complete-first",
+        kind: "message",
+        timestamp: "2026-07-16T20:00:01Z",
+        data: { role: "assistant", text: "First complete durable line" },
+      }),
+    );
+    projection = reduceTranscript(projection, first);
+    const completedProjection = projection;
+    let rows = deriveTranscriptRows(projection);
+    expect(projection.cursor).toEqual({ epoch: "epoch", seq: 1 });
+    expect(rows).toHaveLength(1);
+    const firstMarkup = renderToStaticMarkup(
+      <TranscriptRowContent
+        imageSource={IMAGE_SOURCE}
+        nowMs={Date.parse("2026-07-16T20:00:02Z")}
+        row={rows[0]!}
+      />,
+    );
+    expect(firstMarkup.match(/First complete durable line/gu)).toHaveLength(1);
+
+    projection = reduceTranscript(projection, first);
+    expect(projection).toBe(completedProjection);
+    expect(deriveTranscriptRows(projection)).toHaveLength(1);
+
+    for (const [id, text, second] of [
+      ["complete-second", "Second complete durable line", 3],
+      ["complete-third", "Third complete durable line", 4],
+    ] as const) {
+      projection = reduceTranscript(
+        projection,
+        factory.entry(
+          factory.entryRecord({
+            id,
+            kind: "message",
+            timestamp: `2026-07-16T20:00:0${second}Z`,
+            data: { role: "assistant", text },
+          }),
+        ),
+      );
+    }
+
+    rows = deriveTranscriptRows(projection);
+    expect(projection.cursor).toEqual({ epoch: "epoch", seq: 3 });
+    expect(rows.map((row) => row.id)).toEqual([
+      "complete-first",
+      "complete-second",
+      "complete-third",
+    ]);
+    const catchUpMarkup = renderToStaticMarkup(
+      <>
+        {rows.map((row) => (
+          <TranscriptRowContent
+            imageSource={IMAGE_SOURCE}
+            key={row.id}
+            nowMs={Date.parse("2026-07-16T20:00:05Z")}
+            row={row}
+          />
+        ))}
+      </>,
+    );
+    for (const text of [
+      "First complete durable line",
+      "Second complete durable line",
+      "Third complete durable line",
+    ]) {
+      expect(catchUpMarkup.match(new RegExp(text, "gu"))).toHaveLength(1);
+    }
   });
 });

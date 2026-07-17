@@ -1,5 +1,6 @@
 import { decodeSessionListResult, type WelcomeFrame } from "@t4-code/protocol";
 import type { CommandRequest, CommandResult } from "@t4-code/protocol/desktop-ipc";
+import { DesktopRuntimeError } from "./desktop-runtime-contracts.ts";
 
 export type DesktopBootstrapCommand = (
   intent: CommandRequest["intent"],
@@ -12,6 +13,7 @@ export interface DesktopHostBootstrapOptions {
   readonly frame: WelcomeFrame;
   readonly issue: DesktopBootstrapCommand;
   readonly onError?: DesktopBootstrapErrorReporter;
+  readonly onSessionList?: (result: CommandResult) => void;
 }
 
 export async function bootstrapDesktopHost(options: DesktopHostBootstrapOptions): Promise<void> {
@@ -23,7 +25,7 @@ export async function bootstrapDesktopHost(options: DesktopHostBootstrapOptions)
     try {
       return await issue(intent);
     } catch (error) {
-      onError(error, "transport");
+      onError(error, error instanceof DesktopRuntimeError && error.code === "protocol" ? "protocol" : "transport");
       return undefined;
     }
   };
@@ -31,15 +33,16 @@ export async function bootstrapDesktopHost(options: DesktopHostBootstrapOptions)
   let sessionList: CommandResult | undefined;
   if (capability("sessions.read")) {
     sessionList = await issueSafely({ hostId: host, command: "session.list", args: {} });
-  }
-  if (sessionList?.accepted === true) {
-    try {
-      const decoded = decodeSessionListResult(sessionList.result);
-      if (feature("host.watch")) {
-        await issueSafely({ hostId: host, command: "host.watch", args: { cursor: decoded.cursor } });
+    if (sessionList?.accepted === true) {
+      try {
+        const decoded = decodeSessionListResult(sessionList.result);
+        options.onSessionList?.(sessionList);
+        if (feature("host.watch")) {
+          await issueSafely({ hostId: host, command: "host.watch", args: { cursor: decoded.cursor } });
+        }
+      } catch (error) {
+        onError(error, "protocol");
       }
-    } catch (error) {
-      onError(error, "protocol");
     }
   }
   if (capability("catalog.read") && feature("catalog.metadata")) {

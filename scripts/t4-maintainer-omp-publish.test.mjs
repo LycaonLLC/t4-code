@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -99,6 +99,38 @@ ${reject ? `grep -q 'refs/tags/${integrationTag}' <<<"$payload" && exit 1` : "ex
   };
 }
 
+test("atomic publisher rejects relative option-like state roots before creating state", async (t) => {
+  const value = await fixture();
+  t.after(() => value.cleanup());
+  const result = spawnSync(
+    helper,
+    ["--repo", value.source, "--integration-tag", integrationTag],
+    {
+      encoding: "utf8",
+      env: { ...value.env, T4_ATOMIC_STATE_DIR: "-unsafe-state" },
+    },
+  );
+  assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stderr, /T4_ATOMIC_STATE_DIR must be an absolute path/u);
+});
+
+test("atomic publisher preflights its configured date before creating state", async (t) => {
+  const value = await fixture();
+  t.after(() => value.cleanup());
+  const missingDate = join(value.root, "missing-date");
+  const result = spawnSync(
+    helper,
+    ["--repo", value.source, "--integration-tag", integrationTag],
+    {
+      encoding: "utf8",
+      env: { ...value.env, T4_MAINTAINER_DATE: missingDate },
+    },
+  );
+  assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stderr, /required command is unavailable:/u);
+  await assert.rejects(lstat(value.state), { code: "ENOENT" });
+});
+
 test("atomic OMP publisher updates exactly the three fixed refs in one receive", async (t) => {
   const value = await fixture();
   t.after(() => value.cleanup());
@@ -112,6 +144,10 @@ test("atomic OMP publisher updates exactly the three fixed refs in one receive",
   const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
   assert.equal(receipt.atomicPush, true);
   assert.equal(receipt.pushedRefCount, 3);
+  assert.equal((await lstat(value.state)).mode & 0o777, 0o700);
+  assert.equal((await lstat(join(value.state, integrationTag))).mode & 0o777, 0o700);
+  assert.equal((await lstat(receiptPath)).mode & 0o777, 0o600);
+  assert.equal((await lstat(join(value.state, integrationTag, "push.log"))).mode & 0o777, 0o600);
   assert.equal(ref(value.fork, `refs/tags/${baseTag}`), value.baseTagObject);
   assert.equal(ref(value.fork, "refs/heads/t4code/main"), value.integrationCommit);
   assert.equal(ref(value.fork, `refs/tags/${integrationTag}`), value.integrationTagObject);

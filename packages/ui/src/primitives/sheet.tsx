@@ -81,13 +81,13 @@ function SheetPopup({
 					className={cn(
 						"relative flex max-h-full min-h-0 w-full min-w-0 flex-col bg-popover not-dark:bg-clip-padding text-popover-foreground shadow-lg/5 transition-[opacity,translate] duration-(--motion-duration-deliberate) ease-(--motion-ease-in-out) will-change-transform before:pointer-events-none before:absolute before:inset-0 before:shadow-(--surface-edge-shadow) data-ending-style:opacity-0 data-starting-style:opacity-0 max-sm:before:hidden",
 						side === "bottom" &&
-							"row-start-2 border-t data-ending-style:translate-y-8 data-starting-style:translate-y-8",
+							"row-start-2 border-t pb-(--app-safe-area-bottom) data-ending-style:translate-y-8 data-starting-style:translate-y-8",
 						side === "top" &&
-							"data-ending-style:-translate-y-8 data-starting-style:-translate-y-8 border-b",
+							"data-ending-style:-translate-y-8 data-starting-style:-translate-y-8 border-b pt-(--app-safe-area-top)",
 						side === "left" &&
-							"data-ending-style:-translate-x-8 data-starting-style:-translate-x-8 w-[calc(100%-(--spacing(12)))] max-w-md border-e",
+							"data-ending-style:-translate-x-8 data-starting-style:-translate-x-8 w-[calc(100%-(--spacing(12)))] max-w-md border-e pt-(--app-safe-area-top) pb-(--app-safe-area-bottom) pl-(--app-safe-area-left)",
 						side === "right" &&
-							"col-start-2 w-[calc(100%-(--spacing(12)))] max-w-md border-s data-ending-style:translate-x-8 data-starting-style:translate-x-8",
+							"col-start-2 w-[calc(100%-(--spacing(12)))] max-w-md border-s pt-(--app-safe-area-top) pb-(--app-safe-area-bottom) pr-(--app-safe-area-right) data-ending-style:translate-x-8 data-starting-style:translate-x-8",
 						variant === "inset" &&
 							"before:hidden sm:rounded-2xl sm:border sm:before:rounded-[calc(var(--radius-2xl)-1px)] sm:**:data-[slot=sheet-footer]:rounded-b-[calc(var(--radius-2xl)-1px)]",
 						className,

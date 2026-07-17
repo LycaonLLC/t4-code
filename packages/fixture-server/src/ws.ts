@@ -8,6 +8,10 @@ import { loadScenario, type ScenarioId, type ScenarioSeed } from "./seeds.ts";
 
 const DEFAULT_PATH = "/fixture";
 const MAX_BUFFERED_BYTES = 1_048_576;
+type ClientCountWaiter = {
+  resolve: () => void;
+  reject: (reason?: unknown) => void;
+};
 export interface FixtureWebSocketOptions {
   scenario?: ScenarioId | ScenarioSeed;
   path?: string;
@@ -27,6 +31,7 @@ export class FixtureWebSocketServer {
   private running = false;
   private nextClient = 1;
   private boundPort = 0;
+  private readonly clientCountWaiters = new Map<number, Set<ClientCountWaiter>>();
   constructor(options: FixtureWebSocketOptions = {}) {
     const seed =
       typeof options.scenario === "object"
@@ -63,6 +68,19 @@ export class FixtureWebSocketServer {
   }
   get clientCount(): number {
     return this.engine.clientCount;
+  }
+  waitForClientCount(expected = 0): Promise<void> {
+    if (!Number.isSafeInteger(expected) || expected < 0)
+      return Promise.reject(new RangeError("expected client count must be a non-negative integer"));
+    if (this.clientCount === expected) return Promise.resolve();
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    let waiters = this.clientCountWaiters.get(expected);
+    if (waiters === undefined) {
+      waiters = new Set<ClientCountWaiter>();
+      this.clientCountWaiters.set(expected, waiters);
+    }
+    waiters.add({ resolve, reject });
+    return promise;
   }
   async start(): Promise<string> {
     if (this.running) return this.address;
@@ -118,6 +136,8 @@ export class FixtureWebSocketServer {
     this.sockets.clear();
     this.socketClients.clear();
     this.engine.close();
+    this.settleClientCountWaiters();
+    this.rejectClientCountWaiters(new Error("fixture stopped before reaching expected client count"));
     this.running = false;
     this.boundPort = 0;
   }
@@ -153,6 +173,7 @@ export class FixtureWebSocketServer {
     this.sockets.add(socket);
     this.socketClients.set(socket, clientId);
     this.engine.connect(clientId);
+    this.settleClientCountWaiters();
     socket.on("message", (data, isBinary) => {
       const bytes = Buffer.isBuffer(data)
         ? data.byteLength
@@ -216,6 +237,20 @@ export class FixtureWebSocketServer {
     if (clientId === undefined) return;
     this.socketClients.delete(socket);
     this.engine.disconnect(clientId);
+    this.settleClientCountWaiters();
+  }
+  private settleClientCountWaiters(): void {
+    for (const [expected, waiters] of this.clientCountWaiters) {
+      if (this.clientCount !== expected) continue;
+      this.clientCountWaiters.delete(expected);
+      for (const waiter of waiters) waiter.resolve();
+    }
+  }
+  private rejectClientCountWaiters(reason: Error): void {
+    for (const waiters of this.clientCountWaiters.values()) {
+      for (const waiter of waiters) waiter.reject(reason);
+    }
+    this.clientCountWaiters.clear();
   }
   private closeSocket(socket: WebSocket, code: number, reason: string): void {
     if (this.closingSockets.has(socket)) return;

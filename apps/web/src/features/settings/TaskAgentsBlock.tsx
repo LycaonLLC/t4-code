@@ -22,6 +22,7 @@ import {
   validateSelector,
 } from "./roles-model.ts";
 import { SettingRowView } from "./SettingRow.tsx";
+import { agentDisplayName, modelOptionLabel, selectorDisplay, selectorIndex } from "./settings-presentation.ts";
 import { useSettings, type SettingsStoreApi } from "./settings-store.ts";
 
 export const OVERRIDES_SETTING_ID = "task.agentModelOverrides";
@@ -77,6 +78,8 @@ function ChainEditor({
   const [entries, setEntries] = useState<readonly string[]>(chain);
   const [pending, setPending] = useState("");
   const catalogSelectors = new Set(models.map((model) => model.selector));
+  const modelIndex = selectorIndex(models);
+  const agentName = agentDisplayName(agent);
   const pendingError = pending.length === 0 ? null : validateSelector(pending);
 
   const add = (selector: string) => {
@@ -90,20 +93,24 @@ function ChainEditor({
       {entries.length === 0 ? (
         <p className="text-muted-foreground text-xs">No models yet. Add at least one, in fallback order.</p>
       ) : (
-        <ol aria-label={`Model fallback chain for ${agent}`} className="flex flex-col gap-1">
+        <ol aria-label={`Model fallback chain for ${agentName}`} className="flex flex-col gap-1">
           {entries.map((entry, index) => {
             const advisory = selectorAdvisory(entry, null, catalogSelectors);
+            const display = selectorDisplay(entry, modelIndex);
             return (
               <li className="flex items-center gap-1" key={`${entry}-${index}`}>
                 <span aria-hidden="true" className="w-4 font-mono text-muted-foreground text-xs">
                   {index + 1}.
                 </span>
-                <span className="min-w-0 flex-1 truncate font-mono text-xs" title={entry}>
-                  {entry}
+                <span className="min-w-0 shrink truncate text-xs" title={display.stored}>
+                  {display.primary}
+                </span>
+                <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground text-xs" title={display.stored}>
+                  {display.mono}
                 </span>
                 {advisory !== null && <Badge variant="outline">Not in catalog</Badge>}
                 <IconButton
-                  aria-label={`Move ${entry} earlier`}
+                  aria-label={`Move ${display.primary} earlier`}
                   disabled={index === 0}
                   onClick={() => setEntries(moveItem(entries, index, -1))}
                   size="icon-xs"
@@ -111,7 +118,7 @@ function ChainEditor({
                   <ArrowUp />
                 </IconButton>
                 <IconButton
-                  aria-label={`Move ${entry} later`}
+                  aria-label={`Move ${display.primary} later`}
                   disabled={index === entries.length - 1}
                   onClick={() => setEntries(moveItem(entries, index, 1))}
                   size="icon-xs"
@@ -119,7 +126,7 @@ function ChainEditor({
                   <ArrowDown />
                 </IconButton>
                 <IconButton
-                  aria-label={`Remove ${entry}`}
+                  aria-label={`Remove ${display.primary}`}
                   onClick={() => setEntries(entries.filter((_, at) => at !== index))}
                   size="icon-xs"
                 >
@@ -132,7 +139,7 @@ function ChainEditor({
       )}
       <div className="flex items-center gap-1.5">
         <label className="sr-only" htmlFor={`chain-pick-${agent}`}>
-          Add a catalog model for {agent}
+          Add a catalog model for {agentName}
         </label>
         <select
           className={cn(FIELD_CLASS, "h-7 w-40")}
@@ -148,12 +155,12 @@ function ChainEditor({
             .filter((model) => !entries.includes(model.selector))
             .map((model) => (
               <option key={model.selector} value={model.selector}>
-                {model.selector}
+                {modelOptionLabel(model)}
               </option>
             ))}
         </select>
         <input
-          aria-label={`Type a model selector for ${agent}`}
+          aria-label={`Type a model selector for ${agentName}`}
           className={cn(FIELD_CLASS, "h-7 min-w-0 flex-1 font-mono")}
           onChange={(event) => setPending(event.target.value)}
           onKeyDown={(event) => {
@@ -245,9 +252,13 @@ export function TaskAgentsBlock({
 
   const dirty = drafts[OVERRIDES_SETTING_ID] !== undefined || drafts[DISABLED_SETTING_ID] !== undefined;
 
+  const modelIndex = selectorIndex(models);
+
   const renderAgentRow = (name: string, description: string, isDiscovered: boolean) => {
+    const friendly = agentDisplayName(name);
     const override = overrides[name];
     const chain = override === undefined ? [] : parseChain(override);
+    const single = chain.length === 1 && chain[0] !== undefined ? selectorDisplay(chain[0], modelIndex) : null;
     const isDisabled = disabled.includes(name);
     return (
       <div
@@ -257,7 +268,10 @@ export function TaskAgentsBlock({
       >
         <div className="flex min-w-48 flex-1 flex-col gap-0.5">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="font-medium font-mono text-foreground text-sm">{name}</span>
+            <span className="font-medium text-foreground text-sm">{friendly}</span>
+            <span className="font-mono text-muted-foreground text-xs" title={`Configured as ${name}`}>
+              {name}
+            </span>
             {isDisabled && <Badge variant="outline">Disabled</Badge>}
             {!isDiscovered && <Badge variant="outline">Not discovered on this host</Badge>}
           </div>
@@ -288,10 +302,15 @@ export function TaskAgentsBlock({
             <div className="flex flex-wrap items-center justify-end gap-1.5">
               {override === undefined ? (
                 <span className="text-muted-foreground text-xs">Agent default</span>
-              ) : chain.length === 1 ? (
-                <span className="max-w-64 truncate font-mono text-xs" title={override}>
-                  {chain[0]}
-                </span>
+              ) : single !== null ? (
+                <>
+                  <span className="max-w-48 truncate text-xs" title={single.stored}>
+                    {single.primary}
+                  </span>
+                  <span className="max-w-48 truncate font-mono text-muted-foreground text-xs" title={single.stored}>
+                    {single.mono}
+                  </span>
+                </>
               ) : (
                 <span className="font-mono text-xs" title={override}>
                   {chain.length} models
@@ -305,7 +324,7 @@ export function TaskAgentsBlock({
               )}
               {overridesEditable && override !== undefined && (
                 <Button
-                  aria-label={`Clear the model override for ${name}`}
+                  aria-label={`Clear the model override for ${friendly}`}
                   onClick={() => {
                     const { [name]: _dropped, ...rest } = overrides;
                     stageOverrides(rest);
@@ -318,7 +337,7 @@ export function TaskAgentsBlock({
               )}
               {disabledEditable && (
                 <EnabledSwitch
-                  agent={name}
+                  agent={friendly}
                   enabled={!isDisabled}
                   onChange={(enabled) =>
                     stageDisabled(enabled ? disabled.filter((entry) => entry !== name) : [...disabled, name])

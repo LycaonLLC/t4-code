@@ -13,6 +13,7 @@ export const DEFAULT_GATEWAY_PORT = 4_194;
 const CONFIG_VERSION = 1;
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const MAX_TEXT = 4_096;
+const PROFILE_ROUTES_ENVIRONMENT_KEY = "T4_PROFILE_ROUTES";
 const CAPACITOR_NATIVE_ORIGINS = Object.freeze(["https://localhost", "capacitor://localhost"]);
 
 function fail(message) {
@@ -126,9 +127,29 @@ export function servicePaths({
   };
 }
 
+function profileRoutes(value) {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > 64) fail("profile routes must be an array");
+  const ids = new Set();
+  const routes = value.map((route) => {
+    if (route === null || typeof route !== "object" || Array.isArray(route)) fail("profile route is invalid");
+    const id = cleanText(route.id, "profile id", 64);
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(id) || id === "default" || ids.has(id)) fail("profile id is invalid");
+    ids.add(id);
+    const appSocket = absolutePath(route.appSocket, "profile appserver socket");
+    const serviceUnit = route.serviceUnit === undefined ? undefined : cleanText(route.serviceUnit, "profile service unit", 128);
+    if (serviceUnit !== undefined && (!/^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,127}$/u.test(serviceUnit) || serviceUnit.includes(".."))) fail("profile service unit is invalid");
+    if (route.startEnabled !== undefined && typeof route.startEnabled !== "boolean") fail("profile startEnabled is invalid");
+    return { id, appSocket, ...(serviceUnit === undefined ? {} : { serviceUnit }), startEnabled: route.startEnabled === true };
+  });
+  if (`${PROFILE_ROUTES_ENVIRONMENT_KEY}=${JSON.stringify(routes)}`.length > MAX_TEXT) fail("profile routes are too large");
+  return routes;
+}
+
 export function validateServiceConfig(input) {
   if (input === null || typeof input !== "object" || Array.isArray(input)) fail("service config is invalid");
   const sourceRoot = absolutePath(input.sourceRoot, "source root");
+  const routes = profileRoutes(input.profileRoutes);
   const config = {
     version: CONFIG_VERSION,
     sourceRoot,
@@ -141,6 +162,7 @@ export function validateServiceConfig(input) {
     port: gatewayPort(input.port ?? DEFAULT_GATEWAY_PORT),
     label: cleanText(input.label ?? "OMP on this Tailnet host", "host label", 128),
     deploymentIdentity: deploymentIdentity(input.deploymentIdentity),
+    ...(routes === undefined ? {} : { profileRoutes: routes, startProfiles: input.startProfiles === true }),
   };
   if (input.version !== undefined && input.version !== CONFIG_VERSION) fail("service config version is unsupported");
   return config;
@@ -158,7 +180,6 @@ function escapeXml(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&apos;");
 }
-
 function gatewayEnvironment(config) {
   return {
     T4_ALLOWED_ORIGIN: config.allowedOrigin,
@@ -169,6 +190,12 @@ function gatewayEnvironment(config) {
     T4_APP_SERVER_SOCKET: config.appSocket,
     T4_HOST_LABEL: config.label,
     T4_DEPLOYMENT_IDENTITY: config.deploymentIdentity,
+    ...(config.profileRoutes === undefined
+      ? {}
+      : {
+          [PROFILE_ROUTES_ENVIRONMENT_KEY]: JSON.stringify(config.profileRoutes),
+          T4_ENABLE_PROFILE_STARTS: config.startProfiles === true ? "1" : "0",
+        }),
   };
 }
 
@@ -533,7 +560,7 @@ export function parseCli(argv) {
     }
     if (!flag?.startsWith("--")) fail(`unexpected argument: ${flag}`);
     const key = flag.slice(2).replaceAll(/-([a-z])/gu, (_match, letter) => letter.toUpperCase());
-    if (flag === "--defer-start") {
+    if (flag === "--defer-start" || flag === "--start-profiles") {
       if (key in options) fail(`${flag} was provided more than once`);
       options[key] = true;
       continue;
@@ -546,7 +573,7 @@ export function parseCli(argv) {
   return { command, options };
 }
 
-function validateCliOptions(command, options) {
+export function validateCliOptions(command, options) {
   const allowed =
     command === "install"
       ? new Set([
@@ -557,6 +584,8 @@ function validateCliOptions(command, options) {
           "appSocket",
           "label",
           "deploymentIdentity",
+          "profileRoutes",
+          "startProfiles",
           "deferStart",
         ])
       : new Set(["help"]);
@@ -577,6 +606,8 @@ Install options:
   --port PORT           Loopback gateway port (default: 4194)
   --web-root PATH       Built T4 web directory (default: apps/web/dist)
   --app-socket PATH     OMP appserver Unix socket
+  --profile-routes JSON Static named-profile route array
+  --start-profiles       Allow configured named profiles to start on demand
   --label TEXT          Host label shown by T4 Code
   --deployment-identity SHA256:HEX
                         Immutable identity for the exact deployed T4/OMP tuple (required)
@@ -601,6 +632,7 @@ async function install(options, paths) {
     port: options.port ?? DEFAULT_GATEWAY_PORT,
     label: options.label ?? "OMP on this Tailnet host",
     deploymentIdentity: options.deploymentIdentity,
+    ...(options.profileRoutes === undefined ? {} : { profileRoutes: JSON.parse(options.profileRoutes), startProfiles: options.startProfiles === true }),
   });
   await preflight(config);
   if (paths.logs !== undefined) await mkdir(paths.logs, { recursive: true, mode: 0o700 });

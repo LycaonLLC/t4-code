@@ -24,7 +24,8 @@ import {
   type LiveSettingsScreenState,
 } from "../src/features/settings/live-screen-model.ts";
 import { SCOPE_LABEL } from "../src/features/settings/SettingRow.tsx";
-import { SCOPE_TAB_LABEL } from "../src/features/settings/SettingsWorkspace.tsx";
+import { buildSettingsRailSections, SCOPE_TAB_LABEL, UPDATE_SECTION_ID } from "../src/features/settings/SettingsWorkspace.tsx";
+import { filterSections } from "../src/features/settings/view-model.ts";
 
 const SETTINGS_SRC = join(import.meta.dirname, "../src/features/settings");
 
@@ -302,6 +303,133 @@ describe("full catalog rendering", () => {
       agents: [{ name: "scout", description: "Explores the repo." }],
       unavailableReason: null,
     });
+  });
+});
+
+// ─── Defensive labels, Advanced grouping, and search clarity ────────────────
+
+describe("defensive labels and advanced grouping", () => {
+  function readyViewModel(items: readonly Record<string, unknown>[]) {
+    const runtime = new FakeRuntime();
+    runtime.connectLocal();
+    runtime.publish(catalogFrame(items), settingsFrame());
+    const { model } = attachedModel(runtime);
+    const state = model.getState();
+    expect(state.phase).toBe("ready");
+    if (state.phase !== "ready") throw new Error("not ready");
+    return state.api.getState().viewModel;
+  }
+
+  const bare = (path: string, extra: Record<string, unknown> = {}) =>
+    settingItem(path, {
+      controlType: "number",
+      default: 1,
+      effectiveSource: "default",
+      configured: false,
+      sensitive: false,
+      ...extra,
+    });
+
+  it("humanizes unlabeled dotted camel/kebab keys and files them under Advanced, last", () => {
+    const vm = readyViewModel([
+      ...BASE_ITEMS,
+      bare("retry.baseDelayMs"),
+      bare("tui.maxInlineImages", { label: "tui.maxInlineImages" }),
+      bare("web.search-provider", { controlType: "string", default: "auto" }),
+    ]);
+    // Dotted camelCase, no label from the host.
+    expect(vm.rowsById.get("retry.baseDelayMs")?.label).toBe("Retry · Base Delay Ms");
+    // Older host echoing the raw key as the label: still humanized, acronym intact.
+    expect(vm.rowsById.get("tui.maxInlineImages")?.label).toBe("TUI · Max Inline Images");
+    // Kebab segments.
+    expect(vm.rowsById.get("web.search-provider")?.label).toBe("Web · Search Provider");
+    // Unlabeled host keys group under Advanced instead of shadowing schema tabs…
+    for (const id of ["retry.baseDelayMs", "tui.maxInlineImages", "web.search-provider"]) {
+      expect(vm.rowsById.get(id)?.sectionId).toBe("advanced");
+    }
+    // …and Advanced sits last, after the host's curated sections.
+    expect(vm.sections.map((section) => section.id)).toEqual(["appearance", "advanced"]);
+    expect(vm.sections.at(-1)?.label).toBe("Advanced");
+    // The canonical dotted key stays the row id and stays searchable.
+    const hits = filterSections(vm.sections, "retry.baseDelayMs");
+    expect(hits.flatMap((section) => section.rows.map((row) => row.id))).toEqual(["retry.baseDelayMs"]);
+  });
+
+  it("keeps explicit host labels and machine enum values without promoting them to copy", () => {
+    const vm = readyViewModel([
+      settingItem("ttsr.interruptMode", {
+        label: "Stream Rules Interruptions",
+        description: "When to interrupt mid-stream vs inject a warning after completion",
+        controlType: "enum",
+        options: [
+          { value: "always", label: "Always" },
+          { value: "prose-only", label: "Prose Only" },
+        ],
+        default: "always",
+        effectiveSource: "default",
+        configured: false,
+        sensitive: false,
+        tab: "context",
+      }),
+    ]);
+    const row = vm.rowsById.get("ttsr.interruptMode");
+    // The explicit label wins over any derived fallback.
+    expect(row?.label).toBe("Stream Rules Interruptions");
+    expect(row?.sectionId).toBe("context");
+    if (row?.control.kind !== "enum") throw new Error("expected enum control");
+    // Machine values stay as values — discoverable, never the primary label.
+    expect(row.control.options).toEqual([
+      { value: "always", label: "Always" },
+      { value: "prose-only", label: "Prose Only" },
+    ]);
+  });
+
+  it("separates Speech from Stream Rules in search and names where sound plays", () => {
+    const vm = readyViewModel([
+      settingItem("speech.enabled", {
+        label: "Speech Vocalization",
+        description: "Speak the assistant's replies aloud as they stream. Sound plays on the computer running the session",
+        controlType: "boolean",
+        default: false,
+        effectiveSource: "default",
+        configured: false,
+        sensitive: false,
+        tab: "providers",
+      }),
+      settingItem("ttsr.enabled", {
+        label: "Stream Rules",
+        description: "Interrupt the agent mid-stream when output matches rule patterns (Time-Traveling Stream Rules)",
+        controlType: "boolean",
+        default: true,
+        effectiveSource: "default",
+        configured: false,
+        sensitive: false,
+        tab: "context",
+      }),
+    ]);
+    const speechHits = filterSections(vm.sections, "speech").flatMap((section) =>
+      section.rows.map((row) => row.id),
+    );
+    expect(speechHits).toEqual(["speech.enabled"]);
+    const ruleHits = filterSections(vm.sections, "stream rules").flatMap((section) =>
+      section.rows.map((row) => row.id),
+    );
+    expect(ruleHits).toEqual(["ttsr.enabled"]);
+    expect(vm.rowsById.get("speech.enabled")?.help).toContain("computer running the session");
+  });
+
+  it("keeps the canonical key visible as wrapped mono metadata and Advanced reachable when narrow", () => {
+    // The row renders its dotted key as muted mono metadata that wraps
+    // (break-all) so narrow layouts never overflow; the label stays primary.
+    const rowSource = readFileSync(join(SETTINGS_SRC, "SettingRow.tsx"), "utf8");
+    expect(rowSource).toMatch(/break-all font-mono[^"]*"[^>]*>\{row\.id\}/);
+    // The narrow-layout section picker is built from the same rail list; the
+    // Advanced section stays selectable there, after every curated section.
+    const rail = buildSettingsRailSections([
+      { id: "appearance", label: "Appearance", summary: "", rows: [] },
+      { id: "advanced", label: "Advanced", summary: "", rows: [] },
+    ]);
+    expect(rail.map((entry) => entry.id)).toEqual(["appearance", "advanced", UPDATE_SECTION_ID]);
   });
 });
 

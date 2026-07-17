@@ -22,7 +22,6 @@ import {
   recordValue,
   roleEffectNote,
   roleFallbackNote,
-  roleInfo,
   selectorAdvisory,
   THINKING_LEVELS,
   type ThinkingLevel,
@@ -31,6 +30,16 @@ import {
 } from "./roles-model.ts";
 import type { SettingLayerScope } from "./schema.ts";
 import { SettingRowView } from "./SettingRow.tsx";
+import {
+  aliasRoleOf,
+  formatAlias,
+  modelOptionLabel,
+  NO_ROLE_TAGS,
+  roleDisplay,
+  type RoleTags,
+  selectorDisplay,
+  selectorIndex,
+} from "./settings-presentation.ts";
 import { useSettings, type SettingsStoreApi } from "./settings-store.ts";
 import type { SettingRow } from "./view-model.ts";
 
@@ -66,7 +75,7 @@ interface RoleEditorState {
 function editorFor(role: string, selector: string | undefined, models: readonly ModelChoice[]): RoleEditorState {
   const parsed = selector === undefined ? null : parseSelector(selector);
   const base = parsed?.base ?? "";
-  const listed = models.some((model) => model.selector === base) || base.startsWith("pi/");
+  const listed = models.some((model) => model.selector === base) || aliasRoleOf(base) !== null;
   return {
     role,
     base,
@@ -75,10 +84,17 @@ function editorFor(role: string, selector: string | undefined, models: readonly 
   };
 }
 
+/** Tiny color dot echoing the terminal's role tag color. Decorative only. */
+function RoleDot({ color }: { readonly color: string | null }) {
+  if (color === null) return null;
+  return <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />;
+}
+
 function RoleValueEditor({
   editor,
   models,
   roleIds,
+  roleTags,
   onChange,
   onApply,
   onCancel,
@@ -87,20 +103,29 @@ function RoleValueEditor({
   readonly editor: RoleEditorState;
   readonly models: readonly ModelChoice[];
   readonly roleIds: readonly string[];
+  readonly roleTags: RoleTags;
   readonly onChange: (next: RoleEditorState) => void;
   readonly onApply: (selector: string) => void;
   readonly onCancel: () => void;
   readonly catalogSelectors: ReadonlySet<string>;
 }) {
   const selector = withThinking(editor.base, editor.thinking === "inherit" ? null : editor.thinking);
-  const error = validateSelector(selector);
+  const { base } = parseSelector(selector);
+  // Canonical aliases are accepted by the runtime/catalog even though the
+  // generic selector validator also serves contexts that require a slash.
+  const canonicalAlias = /^@[A-Za-z0-9][A-Za-z0-9_-]*$/.test(base) && aliasRoleOf(base) !== null;
+  const error = canonicalAlias ? null : validateSelector(selector);
   const advisory = error === null ? selectorAdvisory(selector, editor.role, catalogSelectors) : null;
-  const selectValue = editor.custom ? "__custom" : editor.base;
+  const editedRoleName = roleDisplay(editor.role, roleTags).name;
+  // A legacy `pi/<role>` value and its canonical `@<role>` spelling pick the
+  // same option; the option's value is what a fresh pick would save.
+  const aliasBase = aliasRoleOf(editor.base);
+  const selectValue = editor.custom ? "__custom" : aliasBase !== null ? `pi/${aliasBase}` : editor.base;
   return (
     <div className="flex w-full flex-col gap-1.5 rounded-md border border-border bg-secondary/40 p-2">
       <div className="flex flex-wrap items-center gap-1.5">
         <label className="sr-only" htmlFor={`role-model-${editor.role}`}>
-          Model for {roleInfo(editor.role).name}
+          Model for {editedRoleName}
         </label>
         <select
           className={cn(FIELD_CLASS, "h-7 min-w-48 flex-1")}
@@ -119,7 +144,7 @@ function RoleValueEditor({
             <optgroup label="Available on this host">
               {models.map((model) => (
                 <option key={model.selector} value={model.selector}>
-                  {model.selector}
+                  {modelOptionLabel(model)}
                 </option>
               ))}
             </optgroup>
@@ -129,14 +154,14 @@ function RoleValueEditor({
               .filter((id) => id !== editor.role)
               .map((id) => (
                 <option key={id} value={`pi/${id}`}>
-                  pi/{id} — follow {roleInfo(id).name}
+                  {formatAlias(id)} — follows {roleDisplay(id, roleTags).name}
                 </option>
               ))}
           </optgroup>
           <option value="__custom">Type a selector…</option>
         </select>
         <label className="sr-only" htmlFor={`role-thinking-${editor.role}`}>
-          Thinking level for {roleInfo(editor.role).name}
+          Thinking level for {editedRoleName}
         </label>
         <select
           className={cn(FIELD_CLASS, "h-7 w-28")}
@@ -160,7 +185,7 @@ function RoleValueEditor({
       </div>
       {editor.custom && (
         <input
-          aria-label={`Custom model selector for ${roleInfo(editor.role).name}`}
+          aria-label={`Custom model selector for ${editedRoleName}`}
           className={cn(FIELD_CLASS, "h-7 w-full font-mono")}
           onChange={(event) => onChange({ ...editor, base: event.target.value })}
           placeholder="provider/model-id or provider/*"
@@ -191,10 +216,13 @@ export function ModelRolesBlock({
   api,
   models,
   hostLabel,
+  roleTags = NO_ROLE_TAGS,
 }: {
   readonly api: SettingsStoreApi;
   readonly models: readonly ModelChoice[];
   readonly hostLabel: string;
+  /** Role names/colors from the host's `modelTags` setting. */
+  readonly roleTags?: RoleTags;
 }) {
   const viewModel = useSettings(api, (state) => state.viewModel);
   const editScope = useSettings(api, (state) => state.editScope);
@@ -219,6 +247,7 @@ export function ModelRolesBlock({
   const cycle = cycleValue ?? [];
   const roleIds = knownRoleIds(roles, cycle);
   const catalogSelectors = new Set(models.map((model) => model.selector));
+  const modelIndex = selectorIndex(models);
   const state = api.getState();
 
   const stageRoles = (next: Record<string, string>) => state.stageValue(ROLES_SETTING_ID, next);
@@ -266,9 +295,9 @@ export function ModelRolesBlock({
         ) : (
           <>
             {shownRoleIds.map((role) => {
-              const info = roleInfo(role);
+              const info = roleDisplay(role, roleTags);
               const selector = roles[role];
-              const parsed = selector === undefined ? null : parseSelector(selector);
+              const display = selector === undefined ? null : selectorDisplay(selector, modelIndex, roleTags);
               const source = rolesRow === undefined ? null : roleSource(rolesRow, role);
               const dirty = drafts[ROLES_SETTING_ID] !== undefined;
               const advisory =
@@ -278,6 +307,7 @@ export function ModelRolesBlock({
                   <div className="flex min-w-48 flex-1 flex-col gap-0.5">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <Badge className="font-mono" variant="secondary">
+                        <RoleDot color={info.color} />
                         {info.tag}
                       </Badge>
                       <span className="font-medium text-foreground text-sm">{info.name}</span>
@@ -304,6 +334,7 @@ export function ModelRolesBlock({
                         }}
                         onChange={setEditing}
                         roleIds={roleIds}
+                        roleTags={roleTags}
                       />
                     ) : (
                       <div className="flex flex-wrap items-center justify-end gap-1.5">
@@ -311,14 +342,23 @@ export function ModelRolesBlock({
                           <span className="text-muted-foreground text-xs">
                             Inherited — {roleFallbackNote(role)}
                           </span>
-                        ) : (
+                        ) : display !== null ? (
                           <>
-                            <span className="max-w-72 truncate font-mono text-foreground text-xs" title={selector}>
-                              {parsed?.base ?? selector}
+                            <span className="max-w-56 truncate text-foreground text-xs" title={display.stored}>
+                              {display.primary}
                             </span>
-                            {parsed?.thinking != null && <Badge variant="outline">{parsed.thinking}</Badge>}
+                            {display.provider !== null && (
+                              <span className="text-muted-foreground text-xs">{display.provider}</span>
+                            )}
+                            <span
+                              className="max-w-56 truncate font-mono text-muted-foreground text-xs"
+                              title={display.stored}
+                            >
+                              {display.mono}
+                            </span>
+                            {display.thinking !== null && <Badge variant="outline">{display.thinking}</Badge>}
                           </>
-                        )}
+                        ) : null}
                         <Button
                           className="px-3"
                           onClick={() => setEditing(editorFor(role, selector, models))}
@@ -436,6 +476,7 @@ export function ModelRolesBlock({
                 ) : (
                   <ol aria-labelledby="quick-switch-cycle-heading" className="flex flex-wrap gap-1.5">
                     {cycle.map((role, index) => {
+                      const cycleRole = roleDisplay(role, roleTags);
                       const resolvable =
                         roles[role] !== undefined || isBuiltinRole(role);
                       return (
@@ -460,12 +501,13 @@ export function ModelRolesBlock({
                           <span aria-hidden="true" className="font-mono text-muted-foreground text-xs">
                             ⟳{index + 1}
                           </span>
-                          <span className="px-1 font-medium text-xs">{roleInfo(role).name}</span>
+                          <RoleDot color={cycleRole.color} />
+                          <span className="px-1 font-medium text-xs">{cycleRole.name}</span>
                           {!resolvable && (
                             <span className="text-warning-foreground text-xs">No model resolves for this role</span>
                           )}
                           <IconButton
-                            aria-label={`Move ${roleInfo(role).name} earlier in the cycle`}
+                            aria-label={`Move ${cycleRole.name} earlier in the cycle`}
                             disabled={index === 0}
                             onClick={() => stageCycle(moveItem(cycle, index, -1))}
                             size="icon-xs"
@@ -473,7 +515,7 @@ export function ModelRolesBlock({
                             <ArrowUp />
                           </IconButton>
                           <IconButton
-                            aria-label={`Move ${roleInfo(role).name} later in the cycle`}
+                            aria-label={`Move ${cycleRole.name} later in the cycle`}
                             disabled={index === cycle.length - 1}
                             onClick={() => stageCycle(moveItem(cycle, index, 1))}
                             size="icon-xs"
@@ -481,7 +523,7 @@ export function ModelRolesBlock({
                             <ArrowDown />
                           </IconButton>
                           <IconButton
-                            aria-label={`Remove ${roleInfo(role).name} from the cycle`}
+                            aria-label={`Remove ${cycleRole.name} from the cycle`}
                             onClick={() => stageCycle(cycle.filter((_, at) => at !== index))}
                             size="icon-xs"
                           >
@@ -513,7 +555,7 @@ export function ModelRolesBlock({
                         .filter((id) => !cycle.includes(id))
                         .map((id) => (
                           <option key={id} value={id}>
-                            {roleInfo(id).name}
+                            {roleDisplay(id, roleTags).name}
                           </option>
                         ))}
                     </select>

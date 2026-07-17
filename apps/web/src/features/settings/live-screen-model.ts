@@ -26,6 +26,7 @@ import {
   type LiveSettingsRuntimePort,
   type SaveChallenge,
 } from "./live-controller.ts";
+import { NO_ROLE_TAGS, roleTagsFromFrames, type RoleTags } from "./settings-presentation.ts";
 import { createSettingsStore, type SettingsStoreApi } from "./settings-store.ts";
 
 export interface ActiveHost {
@@ -78,6 +79,7 @@ export type LiveSettingsScreenState =
       readonly active: ActiveHost;
       readonly models: readonly ModelChoice[];
       readonly agents: AgentCatalog;
+      readonly roleTags: RoleTags;
       readonly hosts: readonly HostChoice[];
       readonly broker: BrokerStatusView;
     };
@@ -204,6 +206,9 @@ interface StoreEntry {
   catalogRevision: string;
   models: readonly ModelChoice[];
   agents: AgentCatalog;
+  /** Frame pair the roleTags were computed from; either frame can move. */
+  tagsKey: string;
+  roleTags: RoleTags;
 }
 
 export function createLiveSettingsScreenModel(options: LiveSettingsScreenModelOptions): LiveSettingsScreenModel {
@@ -262,6 +267,7 @@ export function createLiveSettingsScreenModel(options: LiveSettingsScreenModelOp
           state.api === next.api &&
           state.models === next.models &&
           state.agents === next.agents &&
+          state.roleTags === next.roleTags &&
           state.hosts === next.hosts &&
           state.broker === next.broker))
     ) {
@@ -407,6 +413,8 @@ export function createLiveSettingsScreenModel(options: LiveSettingsScreenModelOp
           catalogRevision: "",
           models: [],
           agents: { agents: [], unavailableReason: null },
+          tagsKey: "",
+          roleTags: NO_ROLE_TAGS,
         };
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
@@ -447,12 +455,21 @@ export function createLiveSettingsScreenModel(options: LiveSettingsScreenModelOp
       entry.agents = agentChoicesFromCatalog(catalogFrame);
     }
 
+    // `modelTags` rides the settings frame (the catalog fills in for older
+    // hosts), so the tags refresh whenever either frame's revision moves.
+    const tagsKey = `${String(settingsFrame.revision)}\u0000${String(catalogFrame.revision)}`;
+    if (tagsKey !== entry.tagsKey) {
+      entry.tagsKey = tagsKey;
+      entry.roleTags = roleTagsFromFrames(catalogFrame, settingsFrame);
+    }
+
     setState({
       phase: "ready",
       api: entry.api,
       active,
       models: entry.models,
       agents: entry.agents,
+      roleTags: entry.roleTags,
       hosts,
       broker: broker.getState(),
     });

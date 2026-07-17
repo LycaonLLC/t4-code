@@ -26,18 +26,18 @@ import {
 } from "../platform/native-mobile.ts";
 import { TailnetAddressForm } from "./MobileConnectionScreen.tsx";
 
-type ManagerView = { kind: "hosts" } | { kind: "add" } | { kind: "remove"; origin: string };
+type ManagerView = { kind: "hosts" } | { kind: "add" } | { kind: "remove"; endpointKey: string };
 
 /**
  * Switch the active host without removing any saved host or credential.
  * Reloads only after the selection reports success.
  */
 export function performHostSwitch(
-  origin: string,
-  io: { readonly select: (origin: string) => void; readonly reload: () => void },
+  endpointKey: string,
+  io: { readonly select: (endpointKey: string) => void; readonly reload: () => void },
 ): string | null {
   try {
-    io.select(origin);
+    io.select(endpointKey);
   } catch (cause) {
     return cause instanceof Error ? cause.message : "T4 Code could not switch hosts.";
   }
@@ -50,11 +50,11 @@ export function performHostSwitch(
  * credential removal both report success.
  */
 export async function performHostRemoval(
-  origin: string,
-  io: { readonly remove: (origin: string) => Promise<void>; readonly reload: () => void },
+  endpointKey: string,
+  io: { readonly remove: (endpointKey: string) => Promise<void>; readonly reload: () => void },
 ): Promise<string | null> {
   try {
-    await io.remove(origin);
+    await io.remove(endpointKey);
   } catch (cause) {
     return cause instanceof Error ? cause.message : "T4 Code could not remove that host.";
   }
@@ -100,18 +100,18 @@ export function MobileConnectionAction() {
     // The setup screen will repair invalid storage on the next launch.
   }
   const backends = directory?.backends ?? [];
-  const activeOrigin = directory?.activeOrigin ?? null;
+  const activeEndpointKey = directory?.activeEndpointKey ?? null;
   const addCancelSignal = addCancellation.current?.signal;
   const removing =
     view.kind === "remove"
-      ? (backends.find((backend) => backend.origin === view.origin) ?? null)
+      ? (backends.find((backend) => backend.endpointKey === view.endpointKey) ?? null)
       : null;
 
-  const switchToHost = (origin: string) => {
+  const switchToHost = (endpointKey: string) => {
     if (busy !== null) return;
     setBusy("switch");
     setError(null);
-    const failure = performHostSwitch(origin, {
+    const failure = performHostSwitch(endpointKey, {
       reload: () => window.location.reload(),
       select: selectStoredMobileBackend,
     });
@@ -121,11 +121,11 @@ export function MobileConnectionAction() {
     }
   };
 
-  const removeHost = (origin: string) => {
+  const removeHost = (endpointKey: string) => {
     if (busy !== null) return;
     setBusy("remove");
     setError(null);
-    void performHostRemoval(origin, {
+    void performHostRemoval(endpointKey, {
       reload: () => window.location.reload(),
       remove: removeNativeMobileBackend,
     }).then((failure) => {
@@ -173,6 +173,10 @@ export function MobileConnectionAction() {
                 This phone keeps a saved address and pairing credential for each host. Switching
                 hosts removes nothing.
               </DialogDescription>
+              <p className="text-muted-foreground text-xs">
+                Profile lifecycle is computer-managed. This phone can switch to a saved profile;
+                starting one is available only when the gateway explicitly allows it.
+              </p>
             </DialogHeader>
             {backends.length === 0 ? (
               <p className="rounded-md bg-secondary px-3 py-2 text-muted-foreground text-sm">
@@ -181,16 +185,19 @@ export function MobileConnectionAction() {
             ) : (
               <ul className="flex flex-col gap-1.5">
                 {backends.map((backend) => {
-                  const current = backend.origin === activeOrigin;
+                  const current = backend.endpointKey === activeEndpointKey;
                   return (
                     <li
                       className="flex min-h-11 items-center gap-1.5 rounded-md border border-border py-1 pr-1 pl-3"
-                      key={backend.origin}
+                      key={backend.endpointKey}
                     >
                       <span className="flex min-w-0 flex-1 flex-col py-1">
                         <span className="flex items-center gap-2">
                           <span className="truncate font-medium text-sm">{backend.label}</span>
                           {current && <Badge variant="outline">Current</Badge>}
+                        </span>
+                        <span className="truncate text-muted-foreground text-xs">
+                          {backend.profileId === "default" ? "Default profile" : `Profile · ${backend.profileId}`}
                         </span>
                         <span className="truncate font-mono text-muted-foreground text-xs">
                           {backend.origin}
@@ -200,7 +207,7 @@ export function MobileConnectionAction() {
                         <Button
                           className="min-h-11 sm:min-h-8"
                           disabled={busy !== null}
-                          onClick={() => switchToHost(backend.origin)}
+                          onClick={() => switchToHost(backend.endpointKey)}
                           size="sm"
                           variant="outline"
                         >
@@ -214,7 +221,7 @@ export function MobileConnectionAction() {
                         disabled={busy !== null}
                         onClick={() => {
                           setError(null);
-                          setView({ kind: "remove", origin: backend.origin });
+                          setView({ kind: "remove", endpointKey: backend.endpointKey });
                         }}
                         size="icon-sm"
                         variant="ghost"
@@ -232,10 +239,20 @@ export function MobileConnectionAction() {
               </p>
             )}
             <DialogFooter>
-              <DialogClose render={<Button disabled={busy !== null} size="sm" variant="ghost" />}>
+              <DialogClose
+                render={
+                  <Button
+                    className="min-h-11 sm:min-h-8"
+                    disabled={busy !== null}
+                    size="sm"
+                    variant="ghost"
+                  />
+                }
+              >
                 Done
               </DialogClose>
               <Button
+                className="min-h-11 sm:min-h-8"
                 disabled={busy !== null}
                 onClick={beginAdd}
                 size="sm"
@@ -263,6 +280,7 @@ export function MobileConnectionAction() {
             />
             <DialogFooter>
               <Button
+                className="min-h-11 sm:min-h-8"
                 onClick={() => {
                   cancelAddProbe();
                   setError(null);
@@ -282,12 +300,12 @@ export function MobileConnectionAction() {
             <DialogHeader>
               <DialogTitle>Remove {removing?.label ?? "this host"}?</DialogTitle>
               <DialogDescription>
-                Removing deletes only this host's saved address and pairing credential from this
+                Removing deletes only this endpoint's saved address and pairing credential from this
                 phone. Your computer and its sessions are not touched.
               </DialogDescription>
             </DialogHeader>
             <p className="break-all rounded-md bg-secondary px-3 py-2 font-mono text-sm">
-              {removing?.origin ?? view.origin}
+              {removing?.endpointKey ?? view.endpointKey}
             </p>
             {error !== null && (
               <p className="text-destructive-foreground text-sm" role="alert">
@@ -296,6 +314,7 @@ export function MobileConnectionAction() {
             )}
             <DialogFooter>
               <Button
+                className="min-h-11 sm:min-h-8"
                 disabled={busy !== null}
                 onClick={() => {
                   setError(null);
@@ -307,8 +326,9 @@ export function MobileConnectionAction() {
                 Keep host
               </Button>
               <Button
+                className="min-h-11 sm:min-h-8"
                 disabled={busy !== null || removing === null}
-                onClick={() => removeHost(view.origin)}
+                onClick={() => removeHost(view.endpointKey)}
                 size="sm"
                 variant="destructive"
               >

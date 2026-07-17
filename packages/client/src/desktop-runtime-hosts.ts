@@ -35,24 +35,33 @@ export interface TargetHostReconciliation {
 export class DesktopRuntimeHostState {
   private readonly metadataByTarget = new Map<string, DesktopHostMetadata>();
 
+  metadataForTarget(targetId: string): DesktopHostMetadata | undefined {
+    return this.metadataByTarget.get(targetId);
+  }
+
   acceptWelcome(
     targetId: string,
     frame: WelcomeFrame,
     targetHosts: ReadonlyMap<string, string>,
     hosts: ReadonlyMap<string, DesktopHostMetadata>,
+    connections: ReadonlyMap<string, DesktopTarget["state"]> = new Map(),
   ): WelcomeReconciliation {
     const hostIdValue = String(frame.hostId);
     const previous = targetHosts.get(targetId);
     if (previous !== undefined && previous !== hostIdValue) return { accepted: false };
 
-    const previousHost = previous === undefined ? undefined : hosts.get(previous);
+    const previousMetadata = this.metadataByTarget.get(targetId);
     const metadata = hostMetadata(targetId, frame);
     this.metadataByTarget.set(targetId, metadata);
+    const nextTargetHosts = new Map(targetHosts).set(targetId, hostIdValue);
+    const representative = this.metadataForHost(hostIdValue, nextTargetHosts, connections);
+    const nextHosts = new Map(hosts);
+    nextHosts.set(hostIdValue, representative ?? metadata);
     return {
       accepted: true,
-      epochChanged: previousHost !== undefined && previousHost.epoch !== frame.epoch,
-      targetHosts: mapValue(new Map(targetHosts).set(targetId, hostIdValue)),
-      hosts: mapValue(new Map(hosts).set(hostIdValue, metadata)),
+      epochChanged: previousMetadata !== undefined && previousMetadata.epoch !== frame.epoch,
+      targetHosts: mapValue(nextTargetHosts),
+      hosts: mapValue(nextHosts),
     };
   }
 
@@ -97,7 +106,8 @@ export class DesktopRuntimeHostState {
       if (
         currentMetadata !== undefined &&
         nextTargets.has(currentMetadata.targetId) &&
-        targetHosts.get(currentMetadata.targetId) === hostIdValue
+        targetHosts.get(currentMetadata.targetId) === hostIdValue &&
+        nextConnections.get(currentMetadata.targetId) === "connected"
       ) {
         hosts.set(hostIdValue, currentMetadata);
         continue;

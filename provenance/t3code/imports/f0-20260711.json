@@ -31,14 +31,14 @@
       "sourceBlobSha": "3e1b3d69cd15a1e56faa33bef329549d09ceb72a",
       "targetPath": "packages/ui/src/primitives/dialog.tsx",
       "classification": "adapted",
-      "checksum": "sha256:7c142265630a937448003bfa599e58dddcf492a5e7b467bf6acbfce8e24ba543"
+      "checksum": "sha256:3311617dd9bb9925a474126ad6d6056bb8b473e00c0c26bc8fb4f337efb7acb2"
     },
     {
       "sourcePath": "apps/web/src/components/ui/sheet.tsx",
       "sourceBlobSha": "9d0436b661da31b0b4944441f9c6971d23af5008",
       "targetPath": "packages/ui/src/primitives/sheet.tsx",
       "classification": "adapted",
-    "checksum": "sha256:a5979b997256c1d5012888dbe168883af88b8aaa9483e711a096e6bba4324d0a"
+    "checksum": "sha256:d582a5229ff48961cd755f2b59c62fdeebef50ada1f4e9458bc4764b9676d65d"
     },
     {
       "sourcePath": "apps/web/src/components/ui/scroll-area.tsx",
@@ -101,14 +101,14 @@
       "sourceBlobSha": "1641bb6b109b44f2c7b0f2576fcf0750a96da88f",
       "targetPath": "packages/ui/src/tokens.css + packages/ui/src/terminal/xtermTheme.ts",
       "classification": "reference-only",
-      "checksum": "sha256:9cb42304c8cf52aa10bf11068d3ff8b33efb3680e42abfc6addcef67b2da07df;sha256:3168d798b2274b85ef07a06bcc03af060b179a173449a53b91a9c4960dacf0d2"
+      "checksum": "sha256:c43520f3e36cd96811e6cb3edf3864b4bde0b7605de3d53d6db031294384edd7;sha256:3168d798b2274b85ef07a06bcc03af060b179a173449a53b91a9c4960dacf0d2"
     },
     {
       "sourcePath": "apps/web/src/index.css",
       "sourceBlobSha": "3ae42a3e61cac54e9fe75cb58a67313241989ec9",
       "targetPath": "packages/ui/src/tokens.css",
       "classification": "reference-only",
-      "checksum": "sha256:9cb42304c8cf52aa10bf11068d3ff8b33efb3680e42abfc6addcef67b2da07df"
+      "checksum": "sha256:c43520f3e36cd96811e6cb3edf3864b4bde0b7605de3d53d6db031294384edd7"
     }
   ]
 }

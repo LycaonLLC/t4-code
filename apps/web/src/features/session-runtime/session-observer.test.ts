@@ -10,12 +10,15 @@ import type { CatalogItem, SessionRef } from "@t4-code/protocol";
 import { slashCommandsFromCatalog } from "../composer/slash.ts";
 import type { ComposerControlsSnapshot } from "./session-controls.ts";
 import {
+  advanceRecordArrival,
   gateComposerControls,
   initialControlAnnouncerState,
   presentSessionControl,
   presentSessionControlKind,
   readSessionControl,
+  recordArrivalBaseline,
   reduceControlAnnouncement,
+  SESSION_CONTROL_RETURN_BLIP_MS,
   SESSION_CONTROL_RETURNED_ANNOUNCEMENT,
   sessionControlDisplayKind,
   sessionControlForLink,
@@ -149,18 +152,44 @@ describe("presentSessionControl", () => {
     }
   });
 
-  it("distinguishes live following from a snapshot copy", () => {
+  it("renders byte-identical observer copy for transcript live and snapshot", () => {
+    for (const lockStatus of ["live", "suspect", "malformed"] as const) {
+      const live = presentSessionControl({ mode: "observer", lockStatus, transcript: "live" });
+      const snapshot = presentSessionControl({
+        mode: "observer",
+        lockStatus,
+        transcript: "snapshot",
+      });
+      // The transcript field is a read-path detail, not an ownership state:
+      // every rendered string and the busy flag must match byte for byte.
+      expect(snapshot, lockStatus).toEqual(live);
+      expect(live.bannerBusy, lockStatus).toBe(false);
+    }
     const live = presentSessionControl({ mode: "observer", lockStatus: "live", transcript: "live" });
-    const snapshot = presentSessionControl({
+    expect(live.bannerDetail).toBe(
+      "Finished lines land here as the other app saves them. To continue here, run /continue-in-t4 in the other app — or just exit it.",
+    );
+  });
+
+  it("stays word-stable while transcript freshness churns at 250ms for 20 seconds", () => {
+    // Simulates the packaged-proof failure: the follower alternated
+    // live/snapshot every poll while the owner's app kept saving. Every
+    // visible and accessible string must be identical on every tick.
+    const baseline = presentSessionControl({
       mode: "observer",
       lockStatus: "live",
-      transcript: "snapshot",
+      transcript: "live",
     });
-    expect(live.bannerDetail).toContain("live");
-    expect(live.bannerBusy).toBe(true);
-    expect(snapshot.bannerDetail).toContain("saved copy");
-    expect(snapshot.bannerBusy).toBe(false);
-    expect(live.bannerDetail).not.toBe(snapshot.bannerDetail);
+    for (let tick = 0; tick * 250 < 20_000; tick += 1) {
+      const transcript = tick % 2 === 0 ? ("live" as const) : ("snapshot" as const);
+      const presentation = presentSessionControl({ mode: "observer", lockStatus: "live", transcript });
+      expect(presentation, `tick ${tick} (${transcript})`).toEqual(baseline);
+      // Read-only gates never blink open: every reason stays present.
+      expect(presentation.composerReason).not.toBe("");
+      expect(presentation.cancelReason).not.toBe("");
+      expect(presentation.slashReason).not.toBe("");
+      expect(presentation.managementReason).not.toBe("");
+    }
   });
 
   it("names /continue-in-t4 as the explicit transfer path while the owner is live", () => {
@@ -399,56 +428,147 @@ describe("reduceControlAnnouncement", () => {
   const step = (
     state: ControlAnnouncerState,
     control: SessionControlState | null,
+    nowMs: number,
     link: "live" | "cached" | "offline" = "live",
     writable = control === null,
-  ) => reduceControlAnnouncement(state, { control, link, writable });
+  ) => reduceControlAnnouncement(state, { control, link, writable, nowMs });
 
   it("announces entering a state once, then again only when the copy changes", () => {
-    let state = initialControlAnnouncerState(null);
-    const entered = step(state, OBSERVER_LIVE);
+    let state = initialControlAnnouncerState(null, 0);
+    const entered = step(state, OBSERVER_LIVE, 0);
     expect(entered.announcement).toBe(presentSessionControl(OBSERVER_LIVE).announcement);
     state = entered.state;
-    expect(step(state, OBSERVER_LIVE).announcement).toBeNull();
-    const reconciling = step(state, RECONCILING);
+    expect(step(state, OBSERVER_LIVE, 250).announcement).toBeNull();
+    const reconciling = step(state, RECONCILING, 500);
     expect(reconciling.announcement).toBe(presentSessionControl(RECONCILING).announcement);
   });
 
+  it("stays silent while transcript freshness churns within one observer episode", () => {
+    let state = initialControlAnnouncerState(null, 0);
+    state = step(state, OBSERVER_LIVE, 0).state;
+    for (let tick = 1; tick * 250 < 20_000; tick += 1) {
+      const transcript = tick % 2 === 0 ? ("live" as const) : ("snapshot" as const);
+      const next = step(
+        state,
+        { mode: "observer", lockStatus: "live", transcript },
+        tick * 250,
+        "live",
+        false,
+      );
+      expect(next.announcement, `tick ${tick}`).toBeNull();
+      state = next.state;
+    }
+    // The whole churn was one episode: its start time never moved.
+    expect(state.observedAtMs).toBe(0);
+  });
+
   it("announces input back only on a confirmed live+writable return", () => {
-    let state = initialControlAnnouncerState(OBSERVER_LIVE);
+    let state = initialControlAnnouncerState(OBSERVER_LIVE, 0);
     // Live but not yet writable (grants pending): keep holding.
     const notWritable = reduceControlAnnouncement(state, {
       control: null,
       link: "live",
       writable: false,
+      nowMs: 5_000,
     });
     expect(notWritable.announcement).toBeNull();
     expect(notWritable.state.pendingReturn).toBe(true);
     state = notWritable.state;
-    const returned = step(state, null);
+    const returned = step(state, null, 6_000);
     expect(returned.announcement).toBe(SESSION_CONTROL_RETURNED_ANNOUNCEMENT);
     // The transition is one-shot.
-    expect(step(returned.state, null).announcement).toBeNull();
+    expect(step(returned.state, null, 7_000).announcement).toBeNull();
+  });
+
+  it("suppresses the return for a sub-reading-speed control blip", () => {
+    let state = initialControlAnnouncerState(null, 0);
+    state = step(state, OBSERVER_LIVE, 10_000).state;
+    const returned = step(state, null, 10_000 + SESSION_CONTROL_RETURN_BLIP_MS - 1);
+    // "" clears the live region silently — never null, so a later identical
+    // entering announcement re-fires; gates were never delayed by this.
+    expect(returned.announcement).toBe("");
+    expect(returned.state.pendingReturn).toBe(false);
+    expect(returned.state.lastAnnouncement).toBe("");
+    // Re-entering the same state after a suppressed blip announces again.
+    const reentered = step(returned.state, OBSERVER_LIVE, 20_000);
+    expect(reentered.announcement).toBe(presentSessionControl(OBSERVER_LIVE).announcement);
+  });
+
+  it("announces the return once the episode outlives the blip window", () => {
+    let state = initialControlAnnouncerState(null, 0);
+    state = step(state, OBSERVER_LIVE, 10_000).state;
+    const returned = step(state, null, 10_000 + SESSION_CONTROL_RETURN_BLIP_MS);
+    expect(returned.announcement).toBe(SESSION_CONTROL_RETURNED_ANNOUNCEMENT);
   });
 
   it("retains the pending transition across cached/offline without announcing", () => {
-    let state = initialControlAnnouncerState(OBSERVER_LIVE);
+    let state = initialControlAnnouncerState(OBSERVER_LIVE, 0);
     for (const link of ["cached", "offline"] as const) {
-      const held = reduceControlAnnouncement(state, { control: null, link, writable: false });
+      const held = reduceControlAnnouncement(state, {
+        control: null,
+        link,
+        writable: false,
+        nowMs: 5_000,
+      });
       expect(held.announcement).toBeNull();
       expect(held.state.pendingReturn).toBe(true);
       state = held.state;
     }
     // Reconnecting straight into a writable live session announces exactly once.
-    const returned = step(state, null);
+    const returned = step(state, null, 6_000);
     expect(returned.announcement).toBe(SESSION_CONTROL_RETURNED_ANNOUNCEMENT);
   });
 
   it("never announces a return for a session that was never observed", () => {
-    let state = initialControlAnnouncerState(null);
+    let state = initialControlAnnouncerState(null, 0);
     for (const link of ["offline", "cached", "live"] as const) {
-      const next = reduceControlAnnouncement(state, { control: null, link, writable: true });
+      const next = reduceControlAnnouncement(state, {
+        control: null,
+        link,
+        writable: true,
+        nowMs: 9_000,
+      });
       expect(next.announcement).toBeNull();
       state = next.state;
     }
+  });
+});
+
+describe("record-arrival pulse signal", () => {
+  const entries = (...ids: string[]) => ids.map((id) => ({ id }));
+
+  it("fires only when a new durable entry lands", () => {
+    let baseline = recordArrivalBaseline(entries("a", "b"));
+    // Growth is arrival.
+    const grew = advanceRecordArrival(baseline, entries("a", "b", "c"));
+    expect(grew.arrived).toBe(true);
+    baseline = grew.baseline;
+    // Rotation under the retention cap (same length, new tail) is arrival.
+    const rotated = advanceRecordArrival(baseline, entries("b", "c", "d"));
+    expect(rotated.arrived).toBe(true);
+    baseline = rotated.baseline;
+    // Identical entries are not.
+    expect(advanceRecordArrival(baseline, entries("b", "c", "d")).arrived).toBe(false);
+    // Shrink (snapshot reinstall dropping history) is not.
+    expect(advanceRecordArrival(baseline, entries("b", "c")).arrived).toBe(false);
+  });
+
+  it("never fires across 20 seconds of freshness churn with no new entries", () => {
+    // The signal takes only durable entries: poll-derived transcript
+    // live/snapshot churn cannot reach it. Simulate the churn anyway with
+    // fresh (referentially distinct) arrays each tick, as a re-render would.
+    let baseline = recordArrivalBaseline(entries("a", "b", "c"));
+    for (let tick = 0; tick * 250 < 20_000; tick += 1) {
+      const step = advanceRecordArrival(baseline, entries("a", "b", "c"));
+      expect(step.arrived, `tick ${tick}`).toBe(false);
+      baseline = step.baseline;
+    }
+    // One durable arrival after the churn is still detected.
+    expect(advanceRecordArrival(baseline, entries("a", "b", "c", "d")).arrived).toBe(true);
+  });
+
+  it("does not fire on an empty transcript", () => {
+    const baseline = recordArrivalBaseline([]);
+    expect(advanceRecordArrival(baseline, []).arrived).toBe(false);
   });
 });

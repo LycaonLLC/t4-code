@@ -27,8 +27,11 @@ DPKG_DEB=${T4_MAINTAINER_DPKG_DEB:-dpkg-deb}
 SHA256SUM=${T4_MAINTAINER_SHA256SUM:-sha256sum}
 SYSTEMCTL=${T4_MAINTAINER_SYSTEMCTL:-systemctl}
 INSTALL=${T4_MAINTAINER_INSTALL:-install}
-SYNC=${T4_MAINTAINER_SYNC:-sync}
+SYNC=${T4_MAINTAINER_SYNC:-/bin/sync}
+DATE=${T4_MAINTAINER_DATE:-/bin/date}
 REALPATH=${T4_MAINTAINER_REALPATH:-realpath}
+UNAME=${T4_MAINTAINER_UNAME:-uname}
+PROC_ROOT=${T4_MAINTAINER_TEST_PROC_ROOT:-/proc}
 
 OMP_INTEGRATION_REPOSITORY=${T4_LOCAL_OMP_REPOSITORY:-https://github.com/lyc-aon/oh-my-pi.git}
 OMP_UPSTREAM_REPOSITORY=${T4_LOCAL_OMP_UPSTREAM_REPOSITORY:-https://github.com/can1357/oh-my-pi.git}
@@ -85,7 +88,7 @@ APP_EPOCH=""
 DEPLOYMENT_IDENTITY=""
 
 timestamp() {
-  date --utc +'%Y-%m-%dT%H:%M:%SZ'
+  "$DATE" -u +'%Y-%m-%dT%H:%M:%SZ'
 }
 
 log() {
@@ -122,6 +125,19 @@ gateway_is_disabled() {
   local enablement
   enablement=$("$SYSTEMCTL" --user is-enabled "$GATEWAY_SERVICE" 2>/dev/null || true)
   [[ $enablement == disabled ]]
+}
+
+read_profile_route_config() {
+  local config=$1
+  "$JQ" -cer '
+    if has("profileRoutes") then
+      select((.profileRoutes | type) == "array" and (.startProfiles | type) == "boolean")
+      | {profileRoutes, startProfiles}
+    else
+      select(has("startProfiles") | not)
+      | {}
+    end
+  ' "$config"
 }
 
 stop_gateway_durably() {
@@ -191,7 +207,8 @@ cleanup_success_inputs() {
 deployment_checkpoint() {
   local checkpoint=$1 requested=${T4_MAINTAINER_TEST_FAULT:-}
   [[ $requested != "$checkpoint" ]] || {
-    [[ ${T4_MAINTAINER_TEST_MODE:-0} == 1 && $MAINTAINER_ROOT == /tmp/* ]] \
+    [[ ${T4_MAINTAINER_TEST_MODE:-0} == 1 \
+      && ($MAINTAINER_ROOT == /tmp/* || $MAINTAINER_ROOT == /private/tmp/*) ]] \
       || fail "deployment fault injection is restricted to an explicit temporary test root"
     fail "injected deployment fault at $checkpoint"
   }
@@ -439,8 +456,8 @@ wait_for_appserver() {
   for ((attempt = 1; attempt <= HEALTH_ATTEMPTS; attempt += 1)); do
     if service_is_active "$OMP_SERVICE" && [[ -S $OMP_SOCKET ]]; then
       pid=$($SYSTEMCTL --user show "$OMP_SERVICE" --property MainPID --value)
-      if [[ $pid =~ ^[1-9][0-9]*$ && -r /proc/$pid/exe ]]; then
-        running_sha=$($SHA256SUM "/proc/$pid/exe" | awk '{print $1}')
+      if [[ $pid =~ ^[1-9][0-9]*$ && -r "$PROC_ROOT/$pid/exe" ]]; then
+        running_sha=$($SHA256SUM "$PROC_ROOT/$pid/exe" | awk '{print $1}')
         status_json=$("$OMP_TARGET" appserver status --json 2>/dev/null) || status_json=''
         if [[ $running_sha == "$installed_sha" ]] && printf '%s' "$status_json" | $JQ -e '
           .state == "running" and .health.ok == true and
@@ -467,9 +484,9 @@ prove_installed_drain_contract() {
   local probe_result probe_status
 
   current_pid=$($SYSTEMCTL --user show "$OMP_SERVICE" --property MainPID --value 2>/dev/null) || current_pid=0
-  [[ $current_pid == "$expected_pid" && -r /proc/$current_pid/exe ]] \
+  [[ $current_pid == "$expected_pid" && -r "$PROC_ROOT/$current_pid/exe" ]] \
     || fail "the installed appserver PID changed before its live drain-contract proof"
-  current_sha=$($SHA256SUM "/proc/$current_pid/exe" | awk '{print $1}')
+  current_sha=$($SHA256SUM "$PROC_ROOT/$current_pid/exe" | awk '{print $1}')
   [[ $current_sha == "$expected_sha" && $current_sha == "$OMP_CANDIDATE_SHA" ]] \
     || fail "the live appserver executable does not match the installed integration during its drain-contract proof"
   status_json=$("$OMP_TARGET" appserver status --json 2>/dev/null) \
@@ -507,9 +524,9 @@ prove_installed_drain_contract() {
     || fail "the installed appserver returned an invalid live identity-bound drain proof"
 
   current_pid=$($SYSTEMCTL --user show "$OMP_SERVICE" --property MainPID --value 2>/dev/null) || current_pid=0
-  [[ $current_pid == "$expected_pid" && -r /proc/$current_pid/exe ]] \
+  [[ $current_pid == "$expected_pid" && -r "$PROC_ROOT/$current_pid/exe" ]] \
     || fail "the installed appserver PID changed during its live drain-contract proof"
-  current_sha=$($SHA256SUM "/proc/$current_pid/exe" | awk '{print $1}')
+  current_sha=$($SHA256SUM "$PROC_ROOT/$current_pid/exe" | awk '{print $1}')
   [[ $current_sha == "$expected_sha" ]] \
     || fail "the installed appserver executable changed during its live drain-contract proof"
 }
@@ -651,11 +668,11 @@ prepare_post_exposure_rollback() {
   fi
 
   current_pid=$($SYSTEMCTL --user show "$OMP_SERVICE" --property MainPID --value 2>/dev/null) || current_pid=0
-  [[ $current_pid =~ ^[1-9][0-9]*$ && -r /proc/$current_pid/exe ]] || {
+  [[ $current_pid =~ ^[1-9][0-9]*$ && -r "$PROC_ROOT/$current_pid/exe" ]] || {
     write_transaction_marker rollback-blocked-appserver-identity || true
     return 1
   }
-  current_sha=$($SHA256SUM "/proc/$current_pid/exe" 2>/dev/null | awk '{print $1}')
+  current_sha=$($SHA256SUM "$PROC_ROOT/$current_pid/exe" 2>/dev/null | awk '{print $1}')
   [[ $current_sha =~ ^[0-9a-f]{64}$ && $current_sha == "$($SHA256SUM "$OMP_TARGET" 2>/dev/null | awk '{print $1}')" ]] || {
     write_transaction_marker rollback-blocked-appserver-executable || true
     return 1
@@ -738,25 +755,42 @@ wait_for_gateway() {
 
 for command in "$GH" "$CURL" "$JQ" "$GIT" "$BUN" "$PNPM" "$NODE" "$SUDO" "$APT_GET" \
   "$DPKG_QUERY" "$DPKG" "$DPKG_DEB" "$SHA256SUM" "$SYSTEMCTL" "$INSTALL" "$SYNC" \
-  "$REALPATH" awk basename chmod cmp cp date dirname find grep id mkdir mktemp mv pgrep rm sleep sort stat uname; do
+  "$REALPATH" "$UNAME" "$DATE" awk basename chmod cmp cp dirname find grep id mkdir mktemp mv pgrep rm sleep sort stat; do
   require_command "$command"
 done
 require_positive_integer T4_LOCAL_HEALTH_ATTEMPTS "$HEALTH_ATTEMPTS"
 require_positive_integer T4_LOCAL_HEALTH_INTERVAL_SECONDS "$HEALTH_INTERVAL_SECONDS"
 require_positive_integer T4_LOCAL_MAIN_MIRROR_ATTEMPTS "$MAIN_MIRROR_ATTEMPTS"
 require_positive_integer T4_LOCAL_MAIN_MIRROR_INTERVAL_SECONDS "$MAIN_MIRROR_INTERVAL_SECONDS"
-[[ $(uname -s) == Linux ]] || fail "the automatic local deployer currently supports Linux only; the Tailnet service helper remains Linux and macOS compatible"
+[[ $("$UNAME" -s) == Linux ]] || fail "the automatic local deployer currently supports Linux only; the Tailnet service helper remains Linux and macOS compatible"
 [[ $RESULT_FILE == /* && $RECEIPT_FILE == /* && $WORK_DIR == /* ]] || fail "deployment paths must be absolute"
 [[ $MAINTAINER_ROOT == /* && $DEPLOYMENTS_DIR == /* && $WORK_DIR != *'/../'* ]] || fail "maintainer deployment roots must be absolute and normalized"
+if [[ $PROC_ROOT != /proc ]]; then
+  [[ ${T4_MAINTAINER_TEST_MODE:-0} == 1 \
+    && ($MAINTAINER_ROOT == /tmp/* || $MAINTAINER_ROOT == /private/tmp/*) ]] \
+    || fail "process-root override is restricted to an explicit temporary test root"
+fi
 case $WORK_DIR in
   "$MAINTAINER_ROOT"/runs/*/local-work) ;;
   *) fail "deployment work directory must belong to the maintainer runs directory" ;;
 esac
 require_regular_file "$RESULT_FILE" "maintainer result"
 [[ ! -e $BLOCKED_FILE ]] || fail "local deployment is blocked pending operator reconciliation: $BLOCKED_FILE"
+if [[ $PROC_ROOT != /proc ]]; then
+  canonical_maintainer_root=$("$REALPATH" -e -- "$MAINTAINER_ROOT") \
+    || fail "test maintainer root must exist and be canonical"
+  canonical_proc_root=$("$REALPATH" -e -- "$PROC_ROOT") \
+    || fail "test process root must exist and be canonical"
+  [[ $canonical_maintainer_root == "$MAINTAINER_ROOT" ]] \
+    || fail "test maintainer root must be canonical"
+  [[ $canonical_proc_root == "$PROC_ROOT" ]] \
+    || fail "test process root must be canonical"
+  [[ $canonical_proc_root == "$canonical_maintainer_root"/* ]] \
+    || fail "test process root must be a child of the maintainer root"
+fi
 rm -f -- "$RECEIPT_FILE"
 mkdir -p -- "$WORK_DIR" "$(dirname -- "$RECEIPT_FILE")"
-chmod 700 -- "$WORK_DIR"
+chmod 700 "$WORK_DIR"
 
 $JQ -e '
   (.upstream.tag | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) and
@@ -786,6 +820,14 @@ GATEWAY_ORIGIN=$($JQ -er '.allowedOrigin | strings | select(test("^https://"))' 
 GATEWAY_PORT=$($JQ -er '.port | numbers | select(. >= 1024 and . <= 65535)' "$GATEWAY_CONFIG")
 GATEWAY_SOCKET=$($JQ -er '.appSocket | strings | select(startswith("/"))' "$GATEWAY_CONFIG")
 GATEWAY_LABEL=$($JQ -er '.label | strings | select(length > 0)' "$GATEWAY_CONFIG")
+GATEWAY_PROFILE_CONFIG=$(read_profile_route_config "$GATEWAY_CONFIG") \
+  || fail "Tailnet gateway profile routes are invalid"
+GATEWAY_PROFILE_ROUTES=""
+GATEWAY_START_PROFILES=false
+if [[ $GATEWAY_PROFILE_CONFIG != "{}" ]]; then
+  GATEWAY_PROFILE_ROUTES=$($JQ -c '.profileRoutes' "$GATEWAY_CONFIG")
+  GATEWAY_START_PROFILES=$($JQ -r '.startProfiles' "$GATEWAY_CONFIG")
+fi
 [[ $GATEWAY_SOCKET == "$OMP_SOCKET" ]] || fail "gateway and OMP service sockets do not match"
 
 package_state=$($DPKG_QUERY -W -f='${Status}\t${Version}\n' "$T4_PACKAGE") || fail "T4 package is not installed"
@@ -800,7 +842,7 @@ require_noninteractive_privilege
 require_atomic_drain_capability
 require_workstation_idle
 mkdir -p -- "$BACKUP_DIR" "$DOWNLOAD_DIR" "$DEPLOYMENTS_DIR"
-chmod 700 -- "$BACKUP_DIR" "$DOWNLOAD_DIR" "$DEPLOYMENTS_DIR"
+chmod 700 "$BACKUP_DIR" "$DOWNLOAD_DIR" "$DEPLOYMENTS_DIR"
 
 log "Preparing exact OMP integration $INTEGRATION_TAG before changing the workstation."
 verify_fork_publication_base
@@ -851,7 +893,7 @@ DEPLOYMENT_IDENTITY="sha256:$(printf '%s\0%s\0%s\0' "$T4_COMMIT" "$INTEGRATION_C
   || fail "could not derive the immutable T4/OMP deployment identity"
 
 log "Preparing exact T4 runtime $T4_TAG and verified release packages."
-runtime_suffix="${T4_VERSION}-${T4_COMMIT:0:12}-$(date --utc +%Y%m%dT%H%M%SZ)-$$"
+runtime_suffix="${T4_VERSION}-${T4_COMMIT:0:12}-$("${DATE}" -u +%Y%m%dT%H%M%SZ)-$$"
 T4_RUNTIME_ROOT="$DEPLOYMENTS_DIR/t4-$runtime_suffix"
 $GIT clone --quiet --filter=blob:none --depth 1 --branch "$T4_TAG" "$T4_CLONE_URL" "$T4_BUILD_ROOT"
 [[ $($GIT -C "$T4_BUILD_ROOT" rev-parse HEAD) == "$T4_COMMIT" ]] || fail "cloned T4 runtime commit does not match the verified publication"
@@ -987,14 +1029,24 @@ require_regular_file "$T4_INSTALLED_WEB_ROOT/index.html" "installed T4 web appli
 "$SYNC" -f "$T4_EXECUTABLE"
 
 log "Staging the Tailnet gateway for exact T4 runtime $T4_TAG while ingress remains stopped."
-$NODE "$T4_RUNTIME_ROOT/scripts/tailnet-service.mjs" install \
-  --defer-start \
-  --origin "$GATEWAY_ORIGIN" \
-  --port "$GATEWAY_PORT" \
-  --web-root "$T4_RUNTIME_ROOT/apps/web/dist" \
-  --app-socket "$GATEWAY_SOCKET" \
-  --label "$GATEWAY_LABEL" \
+GATEWAY_INSTALL_ARGS=(
+  "$T4_RUNTIME_ROOT/scripts/tailnet-service.mjs"
+  install
+  --defer-start
+  --origin "$GATEWAY_ORIGIN"
+  --port "$GATEWAY_PORT"
+  --web-root "$T4_RUNTIME_ROOT/apps/web/dist"
+  --app-socket "$GATEWAY_SOCKET"
+  --label "$GATEWAY_LABEL"
   --deployment-identity "$DEPLOYMENT_IDENTITY"
+)
+if [[ -n $GATEWAY_PROFILE_ROUTES ]]; then
+  GATEWAY_INSTALL_ARGS+=(--profile-routes "$GATEWAY_PROFILE_ROUTES")
+  if [[ $GATEWAY_START_PROFILES == true ]]; then
+    GATEWAY_INSTALL_ARGS+=(--start-profiles)
+  fi
+fi
+"$NODE" "${GATEWAY_INSTALL_ARGS[@]}"
 service_is_active "$GATEWAY_SERVICE" && fail "Tailnet gateway started before the final exposure gate"
 gateway_is_disabled || fail "Tailnet gateway was enabled before the final exposure gate"
 deployment_checkpoint after-gateway-install
@@ -1005,6 +1057,10 @@ deployment_checkpoint after-gateway-install
 [[ $($JQ -r '.label' "$GATEWAY_CONFIG") == "$GATEWAY_LABEL" ]] || fail "Tailnet gateway label changed during deployment"
 [[ $($JQ -r '.deploymentIdentity' "$GATEWAY_CONFIG") == "$DEPLOYMENT_IDENTITY" ]] \
   || fail "Tailnet gateway deployment identity changed during deployment"
+INSTALLED_GATEWAY_PROFILE_CONFIG=$(read_profile_route_config "$GATEWAY_CONFIG") \
+  || fail "installed Tailnet gateway profile routes are invalid"
+[[ $INSTALLED_GATEWAY_PROFILE_CONFIG == "$GATEWAY_PROFILE_CONFIG" ]] \
+  || fail "Tailnet gateway profile routes changed during deployment"
 GATEWAY_NODE_EXECUTABLE=$($JQ -er '.nodeExecutable | strings | select(startswith("/"))' "$GATEWAY_CONFIG") \
   || fail "Tailnet gateway Node executable is invalid"
 require_regular_file "$GATEWAY_CONFIG" "installed Tailnet gateway config"

@@ -404,14 +404,31 @@ const SETTINGS_FIXTURE_ROWS: readonly SettingMetadata[] = [
     default: false,
   },
   {
-    id: "speech.elevenlabs.apiKey",
+    id: "speech.voice",
     section: "speech",
-    label: "ElevenLabs API key",
-    help: "Used for read-aloud voices. The stored key has expired; sign in again to refresh it.",
+    label: "Read-aloud voice",
+    help: "Kokoro voice used when replies are read aloud. Sound plays on the computer running the session.",
+    control: {
+      kind: "enum",
+      options: [
+        { value: "af_heart", label: "Heart (American female)" },
+        { value: "af_nicole", label: "Nicole (American female)" },
+        { value: "am_michael", label: "Michael (American male)" },
+        { value: "bf_emma", label: "Emma (British female)" },
+        { value: "bm_george", label: "George (British male)" },
+      ],
+    },
+    default: "af_heart",
+  },
+  {
+    id: "speech.xai.apiKey",
+    section: "speech",
+    label: "xAI API key",
+    help: "Used by Grok Voice speech synthesis. The stored key has expired; run `omp auth login xai` in a terminal to refresh it.",
     control: { kind: "secret-reference" },
     layers: {
       global: {
-        secret: { state: "expired", reference: "keychain:omp/elevenlabs", source: "~/.omp/auth.json" },
+        secret: { state: "expired", reference: "keychain:omp/xai", source: "~/.omp/auth.json" },
         sourcePath: "~/.omp/auth.json",
       },
     },

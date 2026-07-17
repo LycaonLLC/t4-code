@@ -96,6 +96,62 @@ const TAB_SECTIONS: Readonly<Record<string, { readonly label: string; readonly s
   tasks: { label: "Tasks", summary: "Background tasks and delegated agents." },
 };
 
+/** Where host settings without a curated tab land, kept out of General so
+ * raw host keys never shadow the schema-organized sections. Always last. */
+const ADVANCED_SECTION_ID = "advanced";
+const ADVANCED_SECTION = {
+  label: "Advanced",
+  summary: "Host settings without a curated home yet, shown with their raw keys.",
+};
+
+/** Acronyms kept uppercase when a raw setting key is humanized for display. */
+const KEY_ACRONYMS: Record<string, true> = {
+  ai: true,
+  api: true,
+  cli: true,
+  cwd: true,
+  db: true,
+  gc: true,
+  id: true,
+  io: true,
+  lsp: true,
+  mcp: true,
+  qa: true,
+  stt: true,
+  tts: true,
+  ttsr: true,
+  ttl: true,
+  tui: true,
+  url: true,
+  wal: true,
+};
+
+/**
+ * Defensive presentation fallback ONLY: the host is the label authority, and
+ * current hosts publish readable labels for every setting. When an older host
+ * sends no label (or echoes the raw key as one), a dotted camel/kebab key like
+ * `tui.maxInlineImages` renders as "TUI · Max Inline Images" instead of
+ * masquerading as user copy. The canonical dotted key stays visible on the
+ * row and searchable via the row id.
+ */
+export function humanizeSettingKey(path: string): string {
+  return path
+    .split(".")
+    .map((segment) =>
+      segment
+        .replace(/([a-z0-9])([A-Z])/gu, "$1 $2")
+        .split(/[-_\s]+/u)
+        .filter(Boolean)
+        .map((word) =>
+          KEY_ACRONYMS[word.toLowerCase()] === true
+            ? word.toUpperCase()
+            : word.charAt(0).toUpperCase() + word.slice(1),
+        )
+        .join(" "),
+    )
+    .join(" · ");
+}
+
 // ─── Result shape ───────────────────────────────────────────────────────────
 
 export interface LiveSettingsCatalogInput {
@@ -234,7 +290,11 @@ function controlFor(meta: Record<string, unknown>): ControlMetadata | { readonly
 
 function settingRowFrom(wire: WireSetting, section: string, issues: string[]): SettingMetadata {
   const { path, meta } = wire;
-  const label = safeText(meta.label, 200) ?? path;
+  const hostLabel = safeText(meta.label, 200);
+  // Old hosts sent no label (or echoed the raw key). Humanize for display
+  // only; the canonical dotted key stays as the row id, rendered and
+  // searchable, so the raw key never becomes the primary label.
+  const label = hostLabel !== undefined && hostLabel !== path ? hostLabel : humanizeSettingKey(path);
   const help = safeText(meta.description, 2000) ?? "";
 
   const unknownKeys = Object.keys(meta).filter((key) => !KNOWN_ITEM_KEYS.has(key));
@@ -330,6 +390,7 @@ function settingRowFrom(wire: WireSetting, section: string, issues: string[]): S
 // ─── Entry point ────────────────────────────────────────────────────────────
 
 function sectionFor(tab: string): SettingsSectionMetadata {
+  if (tab === ADVANCED_SECTION_ID) return { id: tab, ...ADVANCED_SECTION };
   const known = TAB_SECTIONS[tab];
   if (known !== undefined) return { id: tab, ...known };
   const label = tab.charAt(0).toUpperCase() + tab.slice(1);
@@ -373,7 +434,7 @@ export function buildLiveSettingsCatalog(input: LiveSettingsCatalogInput): LiveS
       continue;
     }
     seen.add(wire.path);
-    const tab = safeText(wire.meta.tab, 64) ?? "general";
+    const tab = safeText(wire.meta.tab, 64) ?? ADVANCED_SECTION_ID;
     const group = safeText(wire.meta.group, 64) ?? "";
     tabs.add(tab);
     ordered.push({ wire, tab, group });
@@ -387,7 +448,12 @@ export function buildLiveSettingsCatalog(input: LiveSettingsCatalogInput): LiveS
   );
   for (const entry of ordered) rows.push(settingRowFrom(entry.wire, entry.tab, issues));
 
-  const sectionIds = [...tabs].sort((a, b) => (a === "general" ? -1 : b === "general" ? 1 : a.localeCompare(b)));
+  const sectionIds = [...tabs].sort((a, b) => {
+    if (a === b) return 0;
+    if (a === "general" || b === ADVANCED_SECTION_ID) return -1;
+    if (b === "general" || a === ADVANCED_SECTION_ID) return 1;
+    return a.localeCompare(b);
+  });
   const sections = sectionIds.map(sectionFor);
 
   const editableScopes = WIRE_WRITABLE_SCOPES.filter(

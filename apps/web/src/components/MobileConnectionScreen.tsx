@@ -61,6 +61,7 @@ export function TailnetAddressForm({
 }) {
   const id = useId();
   const [address, setAddress] = useState("");
+  const [profileId, setProfileId] = useState("");
   const [message, setMessage] = useState<string | null>(initialMessage ?? null);
   const [checking, setChecking] = useState(false);
   const activeProbe = useRef<AbortController | null>(null);
@@ -71,6 +72,7 @@ export function TailnetAddressForm({
     [],
   );
   const addressId = `${id}-address`;
+  const profileIdId = `${id}-profile`;
   const helpId = `${id}-help`;
   const statusId = `${id}-status`;
 
@@ -83,7 +85,7 @@ export function TailnetAddressForm({
         setMessage(null);
         let backend;
         try {
-          backend = parseTailnetBackend(address);
+          backend = parseTailnetBackend(address, profileId);
         } catch (error) {
           setMessage(error instanceof Error ? error.message : "Enter a valid Tailnet address.");
           return;
@@ -130,6 +132,22 @@ export function TailnetAddressForm({
         type="url"
         value={address}
       />
+      <label className="font-medium text-sm" htmlFor={profileIdId}>
+        Profile ID <span className="font-normal text-muted-foreground">(optional)</span>
+      </label>
+      <input
+        aria-describedby={helpId}
+        autoCapitalize="none"
+        autoComplete="off"
+        autoCorrect="off"
+        className="h-12 w-full rounded-lg border border-input bg-background px-3 font-mono text-base outline-none transition-shadow duration-(--motion-duration-fast) placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+        disabled={checking}
+        id={profileIdId}
+        onChange={(event) => setProfileId(event.target.value)}
+        placeholder="default route"
+        spellCheck={false}
+        value={profileId}
+      />
       <p className="text-muted-foreground text-xs leading-relaxed" id={helpId}>
         Use the full HTTPS address shown by the T4 gateway on your computer.
       </p>
@@ -152,10 +170,10 @@ export function TailnetAddressForm({
 export function MobileConnectionScreen({ startupMessage }: { readonly startupMessage?: string }) {
   return (
     <div className="flex min-h-full flex-col bg-background text-foreground">
-      <header className="flex min-h-14 items-center border-border border-b px-4 pt-[env(safe-area-inset-top)]">
+      <header className="flex min-h-14 items-center border-border border-b px-4 pt-(--app-safe-area-top)">
         <BrandLockup />
       </header>
-      <main className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center px-5 py-10">
+      <main className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center pt-10 pr-[max(1.25rem,var(--app-safe-area-right))] pb-[calc(2.5rem+var(--app-safe-area-bottom))] pl-[max(1.25rem,var(--app-safe-area-left))]">
         <div className="mb-8 flex size-11 items-center justify-center rounded-lg bg-primary text-primary-foreground">
           <Cable aria-hidden="true" className="size-5" />
         </div>

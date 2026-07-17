@@ -9,6 +9,11 @@ SYSTEMD_USER_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 SERVICE_NAME=t4-omp-maintainer.service
 TIMER_NAME=t4-omp-maintainer.timer
 
+[[ $HOME == /* && $MAINTAINER_ROOT == /* && $SYSTEMD_USER_DIR == /* ]] || {
+  printf 'maintainer installation roots must be absolute paths\n' >&2
+  exit 1
+}
+
 "$SCRIPT_DIR/validate.sh"
 
 if [[ ${1:-} == --check ]]; then
@@ -20,7 +25,7 @@ if [[ $# -gt 0 ]]; then
 fi
 
 mkdir -p -- "$MAINTAINER_ROOT"/{libexec,logs,runs,state,work} "$SYSTEMD_USER_DIR"
-chmod 700 -- "$MAINTAINER_ROOT" "$MAINTAINER_ROOT"/{libexec,logs,runs,state,work}
+chmod 700 "$MAINTAINER_ROOT" "$MAINTAINER_ROOT"/{libexec,logs,runs,state,work}
 exec 9>"$MAINTAINER_ROOT/state/maintainer.lock"
 flock 9
 touch "$MAINTAINER_ROOT/logs/service.log" "$MAINTAINER_ROOT/logs/service.error.log"
@@ -61,7 +66,7 @@ fi
 profile_root="$HOME/.omp/profiles/t4-maintainer"
 profile_token="$profile_root/auth-broker.token"
 mkdir -p -- "$profile_root"
-chmod 700 -- "$profile_root"
+chmod 700 "$profile_root"
 if [[ -L $profile_token ]]; then
   [[ $(readlink -f -- "$profile_token") == "$(readlink -f -- "$OMP_AUTH_BROKER_TOKEN_FILE")" ]] || {
     printf 'the t4-maintainer broker-token link points to another credential\n' >&2

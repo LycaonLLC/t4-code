@@ -63,9 +63,9 @@
 
   .workspace-topbar {
     display: flex;
-    height: calc(var(--workspace-topbar-height) + env(safe-area-inset-top));
-    min-height: calc(var(--workspace-topbar-height) + env(safe-area-inset-top));
-    padding-top: env(safe-area-inset-top);
+    height: calc(var(--workspace-topbar-height) + var(--app-safe-area-top));
+    min-height: calc(var(--workspace-topbar-height) + var(--app-safe-area-top));
+    padding-top: var(--app-safe-area-top);
     flex-shrink: 0;
     align-items: center;
   }

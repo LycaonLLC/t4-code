@@ -14,6 +14,7 @@ import {
   servicePaths,
   supervisorCommands,
   validateServiceConfig,
+  validateCliOptions,
 } from "./tailnet-service.mjs";
 
 const CONFIG = {
@@ -52,6 +53,49 @@ test("service config requires an exact Tailnet HTTPS origin and absolute local p
   assert.throws(
     () => validateServiceConfig({ ...CONFIG, deploymentIdentity: "latest" }),
     /deployment identity must be sha256/u,
+  );
+});
+
+test("profile route schema and generated environment are static and start-explicit", () => {
+  const config = validateServiceConfig({
+    ...CONFIG,
+    profileRoutes: [
+      { id: "fable", appSocket: "/run/user/1000/omp/fable.sock", serviceUnit: "t4-fable.service", startEnabled: true },
+    ],
+    startProfiles: true,
+  });
+  assert.deepEqual(config.profileRoutes, [
+    { id: "fable", appSocket: "/run/user/1000/omp/fable.sock", serviceUnit: "t4-fable.service", startEnabled: true },
+  ]);
+  const unit = renderSystemdUnit(config);
+  assert.match(unit, /T4_PROFILE_ROUTES=/u);
+  assert.match(unit, /T4_ENABLE_PROFILE_STARTS=1/u);
+  const renderableBoundary = validateServiceConfig({
+    ...CONFIG,
+    profileRoutes: [{ id: "edge", appSocket: `/${"a".repeat(4_026)}` }],
+  });
+  const darwinPaths = servicePaths({ platform: "darwin", homeDirectory: "/Users/alice", uid: 501 });
+  assert.doesNotThrow(() => renderSystemdUnit(renderableBoundary));
+  assert.doesNotThrow(() => renderLaunchAgent(renderableBoundary, darwinPaths));
+  assert.throws(
+    () =>
+      validateServiceConfig({
+        ...CONFIG,
+        profileRoutes: [{ id: "edge", appSocket: `/${"a".repeat(4_027)}` }],
+      }),
+    /profile routes are too large/u,
+  );
+  assert.throws(
+    () => validateServiceConfig({ ...CONFIG, profileRoutes: [{ id: "fable", appSocket: "/tmp/a", serviceUnit: "foo..service" }] }),
+    /profile service unit/u,
+  );
+  assert.throws(
+    () =>
+      validateServiceConfig({
+        ...CONFIG,
+        profileRoutes: [{ id: "oversized", appSocket: `/${"a".repeat(4_080)}` }],
+      }),
+    /profile routes are too large/u,
   );
 });
 
@@ -221,6 +265,9 @@ test("CLI parser rejects ambiguous values and accepts the documented install sha
       "Workstation",
       "--deployment-identity",
       CONFIG.deploymentIdentity,
+      "--profile-routes",
+      '[{"id":"fable","appSocket":"/run/user/1000/omp/fable.sock","serviceUnit":"t4-fable.service"}]',
+      "--start-profiles",
       "--defer-start",
     ]),
     {
@@ -230,10 +277,20 @@ test("CLI parser rejects ambiguous values and accepts the documented install sha
         port: "4194",
         label: "Workstation",
         deploymentIdentity: CONFIG.deploymentIdentity,
+        profileRoutes: '[{"id":"fable","appSocket":"/run/user/1000/omp/fable.sock","serviceUnit":"t4-fable.service"}]',
+        startProfiles: true,
         deferStart: true,
       },
     },
   );
+  validateCliOptions("install", parseCli([
+    "install",
+    "--origin",
+    CONFIG.allowedOrigin,
+    "--profile-routes",
+    "[]",
+    "--start-profiles",
+  ]).options);
   assert.throws(() => parseCli(["install", "--origin"]), /requires a value/u);
   assert.throws(
     () => parseCli(["install", "--origin", CONFIG.allowedOrigin, "--origin", CONFIG.allowedOrigin]),

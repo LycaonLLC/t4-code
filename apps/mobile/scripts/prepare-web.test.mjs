@@ -16,6 +16,26 @@ test("Capacitor uses bundled assets and a local secure origin", async () => {
   assert.equal(config.server.cleartext, undefined);
 });
 
+test("Android system bars hand insets to CSS through the SystemBars plugin", async () => {
+  const config = JSON.parse(await readFile(resolve(mobileRoot, "capacitor.config.json"), "utf8"));
+  const hostedIndex = await readFile(resolve(mobileRoot, "../web/index.html"), "utf8");
+  const systemBars = await readFile(
+    resolve(
+      mobileRoot,
+      "node_modules/@capacitor/android/capacitor/src/main/java/com/getcapacitor/plugin/SystemBars.java",
+    ),
+    "utf8",
+  );
+
+  // Capacitor 8 core registers SystemBars itself; the config keeps the CSS
+  // variable injection (--safe-area-inset-*) explicit so the web token layer
+  // always has a value on Android WebViews where env() misreports.
+  assert.equal(config.plugins.SystemBars.insetsHandling, "css");
+  assert.match(hostedIndex, /viewport-fit=cover/);
+  assert.match(systemBars, /--safe-area-inset-top/);
+  assert.match(systemBars, /--safe-area-inset-bottom/);
+});
+
 test("mobile package pins one Capacitor release across core, CLI, and Android", async () => {
   const packageJson = JSON.parse(await readFile(resolve(mobileRoot, "package.json"), "utf8"));
   const core = packageJson.dependencies["@capacitor/core"];

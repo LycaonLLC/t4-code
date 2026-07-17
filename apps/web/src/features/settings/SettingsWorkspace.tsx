@@ -22,8 +22,10 @@ import { buildDiagnosticsExport } from "./diagnostics.ts";
 import { railFocusTarget, type RailKey } from "./keyboard.ts";
 import type { AgentCatalog, ModelChoice } from "./live-catalog.ts";
 import { CYCLE_SETTING_ID, ModelRolesBlock, ROLES_SETTING_ID } from "./ModelRolesBlock.tsx";
+import { listValue, recordValue } from "./roles-model.ts";
 import type { EditableScope } from "./schema.ts";
 import { EDITABLE_SCOPES } from "./schema.ts";
+import { modelRoutingSearchText, NO_ROLE_TAGS, type RoleTags } from "./settings-presentation.ts";
 import type { SettingsStoreApi } from "./settings-store.ts";
 import { useSettings } from "./settings-store.ts";
 import { SettingRowView } from "./SettingRow.tsx";
@@ -283,6 +285,8 @@ export interface RestartAction {
 export interface SettingsCatalogChoices {
   readonly models: readonly ModelChoice[];
   readonly agents: AgentCatalog;
+  /** Role names/colors from the host's `modelTags` setting. */
+  readonly roleTags?: RoleTags;
 }
 
 const NO_CHOICES: SettingsCatalogChoices = { models: [], agents: { agents: [], unavailableReason: null } };
@@ -342,9 +346,30 @@ export function SettingsWorkspace({
   const updateMatches =
     searching &&
     "updates version release download install restart".includes(normalizedQuery);
+  const roleTags = catalogChoices.roleTags ?? NO_ROLE_TAGS;
+  // The specialized editors show friendly names beside the raw values, so
+  // search must hit both spellings on the rows those editors own.
+  const routingSearch = useMemo(() => {
+    const rowValue = (id: string) => viewModel.rowsById.get(id)?.effective?.value;
+    const text = modelRoutingSearchText({
+      roles: recordValue(rowValue(ROLES_SETTING_ID)) ?? {},
+      cycle: listValue(rowValue(CYCLE_SETTING_ID)) ?? [],
+      overrides: recordValue(rowValue(OVERRIDES_SETTING_ID)) ?? {},
+      disabledAgents: listValue(rowValue(DISABLED_SETTING_ID)) ?? [],
+      models: catalogChoices.models,
+      agentNames: catalogChoices.agents.agents.map((agent) => agent.name),
+      tags: roleTags,
+    });
+    return new Map([
+      [ROLES_SETTING_ID, text.roles],
+      [CYCLE_SETTING_ID, text.cycle],
+      [OVERRIDES_SETTING_ID, text.overrides],
+      [DISABLED_SETTING_ID, text.disabled],
+    ]);
+  }, [viewModel, catalogChoices, roleTags]);
   const matchedSections = useMemo(
-    () => (searching ? filterSections(viewModel.sections, query) : null),
-    [searching, viewModel, query],
+    () => (searching ? filterSections(viewModel.sections, query, routingSearch) : null),
+    [searching, viewModel, query, routingSearch],
   );
   const matchedIds = useMemo(
     () =>
@@ -522,7 +547,7 @@ export function SettingsWorkspace({
           )}
 
           <div className="min-h-0 flex-1 overflow-y-auto" ref={contentRef}>
-            <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-4">
+            <div className="mx-auto flex max-w-3xl flex-col gap-6 pt-4 pr-[max(1rem,var(--app-safe-area-right))] pb-[calc(1rem+var(--app-safe-area-bottom))] pl-[max(1rem,var(--app-safe-area-left))]">
               {railOverlaid && (
                 <label className="flex flex-col gap-1">
                   <span className="font-medium text-muted-foreground text-xs">Section</span>
@@ -564,7 +589,7 @@ export function SettingsWorkspace({
                   </div>
                   <SectionRows api={api} hiddenIds={hiddenIds} section={section} />
                   {section.id === rolesHome && (
-                    <ModelRolesBlock api={api} hostLabel={viewModel.hostLabel} models={catalogChoices.models} />
+                    <ModelRolesBlock api={api} hostLabel={viewModel.hostLabel} models={catalogChoices.models} roleTags={roleTags} />
                   )}
                   {section.id === tasksHome && (
                     <TaskAgentsBlock
@@ -590,7 +615,7 @@ export function SettingsWorkspace({
           </div>
 
           {(dirtyCount > 0 || saving) && (
-            <footer className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-border border-t bg-background px-4 py-2">
+            <footer className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-border border-t bg-background pt-2 pr-[max(1rem,var(--app-safe-area-right))] pb-[calc(0.5rem+var(--app-safe-area-bottom))] pl-[max(1rem,var(--app-safe-area-left))]">
               <p className="text-sm">
                 {dirtyCount === 1 ? "1 unsaved change" : `${dirtyCount} unsaved changes`}
                 {errorCount > 0 && (

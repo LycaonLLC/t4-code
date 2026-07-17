@@ -152,7 +152,7 @@ export function LiveSettingsScreen({
       <SettingsWorkspace
         api={state.api}
         brokerStatus={{ view: state.broker, onRefresh: () => model.refreshBrokerStatus() }}
-        catalogChoices={{ models: state.models, agents: state.agents }}
+        catalogChoices={{ models: state.models, agents: state.agents, roleTags: state.roleTags }}
         hostSelection={hostSelection}
         onBack={onBack}
         onOpenHosts={onOpenHosts}

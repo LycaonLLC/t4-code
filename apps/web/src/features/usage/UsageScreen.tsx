@@ -491,7 +491,7 @@ function LiveUsageScreen({
         <UnavailableUsage availability={availability} onOpenHosts={onOpenHosts} />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto flex max-w-4xl flex-col gap-4 px-4 py-4">
+          <div className="mx-auto flex max-w-4xl flex-col gap-4 pt-4 pr-[max(1rem,var(--app-safe-area-right))] pb-[calc(1rem+var(--app-safe-area-bottom))] pl-[max(1rem,var(--app-safe-area-left))]">
             {entry.error !== null && entry.snapshot !== null && <ErrorNotice message={entry.error} />}
             {entry.snapshot === null ? (
               entry.loading ? (

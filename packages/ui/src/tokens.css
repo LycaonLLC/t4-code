@@ -14,12 +14,21 @@
 @custom-variant wco (&:is(.wco, .wco *));
 
 :root {
+  /* Safe-area insets — the single inset layer. Capacitor SystemBars
+     (insetsHandling: "css") writes --safe-area-inset-* on <html> for Android
+     WebViews where env() misreports; env() answers everywhere else. Every
+     surface consumes these tokens, never env(safe-area-inset-*) directly. */
+  --app-safe-area-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --app-safe-area-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+  --app-safe-area-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --app-safe-area-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+
   /* Window control / titlebar geometry (T3 workspace vars, kept 1:1). */
   --app-scrollbar-width: 6px;
   --workspace-topbar-height: 52px;
   --workspace-controls-top: 0px;
-  --workspace-controls-left: calc(env(safe-area-inset-left) + 0.75rem);
-  --workspace-controls-right: calc(env(safe-area-inset-right) + 0.75rem);
+  --workspace-controls-left: calc(var(--app-safe-area-left) + 0.75rem);
+  --workspace-controls-right: calc(var(--app-safe-area-right) + 0.75rem);
   --workspace-native-controls-inset: 0px;
   --workspace-titlebar-control-size: 1.75rem;
   --workspace-titlebar-control-gap: 0.75rem;

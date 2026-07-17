@@ -26,7 +26,7 @@ import { createDesktopRuntimeController, type DesktopRuntimeController } from "@
 import { createLiveSessionRuntime } from "../src/features/session-runtime/live-runtime.ts";
 import type { SessionRuntime } from "../src/features/session-runtime/controller.ts";
 import { deriveAttention, deriveTranscriptRows } from "../src/features/transcript/rows.ts";
-import { deferred, FakeShell, makeWelcome } from "./fake-shell.ts";
+import { bindProjectionInventoryResults, deferred, FakeShell, makeWelcome } from "./fake-shell.ts";
 
 const V = "omp-app/1" as const;
 const HOST = "host-a";
@@ -146,6 +146,7 @@ async function startedRuntime(options?: {
       ],
     },
   });
+  bindProjectionInventoryResults(shell, controller);
   if (options?.skipCatalog !== true) {
     shell.emitFrame({
       targetId: "local",

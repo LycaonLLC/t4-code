@@ -91,7 +91,7 @@ export interface SessionControlPresentation {
   /** Transcript banner, `title · detail`. */
   readonly bannerTitle: string;
   readonly bannerDetail: string;
-  /** Show the small working dot beside the banner (live follow / takeover). */
+  /** Show the persistent working dot beside the banner (takeover only). */
   readonly bannerBusy: boolean;
   /** Composer disabled reason (the read-only explanation under the field). */
   readonly composerReason: string;
@@ -141,16 +141,18 @@ const UNCLEAR_PRESENTATION: Omit<SessionControlPresentation, "bannerDetail" | "b
 
 export function presentSessionControl(state: SessionControlState): SessionControlPresentation {
   if (state.mode === "observer") {
-    const following =
-      state.transcript === "live"
-        ? "You're following along live."
-        : "Showing the last saved copy — it catches up on its own.";
+    // Observer copy is byte-identical for transcript "live" and "snapshot":
+    // that field reports how the follower happens to be reading right now
+    // and can churn while the owner's app saves. Copy that flapped with it
+    // read as an ownership change that never happened. Ownership motion is
+    // likewise never derived from it — the banner's quiet record-arrival
+    // pulse keys on durable entry progression instead (SessionMain).
     if (state.lockStatus === "live") {
       return {
         railLabel: "Active elsewhere",
         bannerTitle: "Active in another app",
-        bannerDetail: `${following} ${TRANSFER_HINT}`,
-        bannerBusy: state.transcript === "live",
+        bannerDetail: `Finished lines land here as the other app saves them. ${TRANSFER_HINT}`,
+        bannerBusy: false,
         composerReason: OBSERVER_COMPOSER_REASON,
         cancelReason: "Only the app running this session can stop it.",
         controlReason: "This session is active in another app right now.",
@@ -166,8 +168,9 @@ export function presentSessionControl(state: SessionControlState): SessionContro
       return {
         railLabel: "Waiting to take over",
         bannerTitle: "Waiting to take over",
-        bannerDetail: `${following} The other app has gone quiet. T4 waits, then takes over on its own once the session settles.`,
-        bannerBusy: state.transcript === "live",
+        bannerDetail:
+          "The other app has gone quiet. T4 waits, then takes over on its own once the session settles.",
+        bannerBusy: false,
         composerReason:
           "The app running this session has gone quiet. T4 takes over on its own once the session settles; input returns then.",
         cancelReason: "Only the app running this session can stop it.",
@@ -179,8 +182,8 @@ export function presentSessionControl(state: SessionControlState): SessionContro
     }
     return {
       ...UNCLEAR_PRESENTATION,
-      bannerDetail: `${following} Ownership of this session is unclear right now. T4 stays read-only until it's safe.`,
-      bannerBusy: state.transcript === "live",
+      bannerDetail: UNCLEAR_DETAIL,
+      bannerBusy: false,
     };
   }
   if (state.mode === "reconciling") {
@@ -272,21 +275,35 @@ export function gateComposerControls(
  * but only once the session is confirmed live AND writable again. Dropping to
  * a cached/offline link hides ownership truth, so the pending transition is
  * retained silently (the freshness copy speaks) instead of announcing a
- * return that was never proven.
+ * return that was never proven. An ownership blip too short to read never
+ * earns the return announcement either: the write gates lift immediately —
+ * only the narration is suppressed.
  */
 export interface ControlAnnouncerState {
   /** Ownership copy last announced; "" when none. */
   readonly lastAnnouncement: string;
   /** An observed/reconciling state still owes a confirmed-return announcement. */
   readonly pendingReturn: boolean;
+  /** When the current observed/reconciling episode began; null when none. */
+  readonly observedAtMs: number | null;
 }
+
+/**
+ * An ownership episode shorter than this never announces "input is back":
+ * nobody could have finished reading the entering announcement, so the
+ * return would narrate a blip that was never an ownership change. Gates are
+ * untouched — they follow the control state itself, never this timer.
+ */
+export const SESSION_CONTROL_RETURN_BLIP_MS = 1500;
 
 export function initialControlAnnouncerState(
   control: SessionControlState | null,
+  nowMs: number,
 ): ControlAnnouncerState {
   return {
     lastAnnouncement: control === null ? "" : presentSessionControl(control).announcement,
     pendingReturn: control !== null,
+    observedAtMs: control === null ? null : nowMs,
   };
 }
 
@@ -296,21 +313,68 @@ export function reduceControlAnnouncement(
     readonly control: SessionControlState | null;
     readonly link: "live" | "cached" | "offline";
     readonly writable: boolean;
+    readonly nowMs: number;
   },
 ): { readonly state: ControlAnnouncerState; readonly announcement: string | null } {
   if (input.control !== null) {
     const announcement = presentSessionControl(input.control).announcement;
     return {
-      state: { lastAnnouncement: announcement, pendingReturn: true },
+      state: {
+        lastAnnouncement: announcement,
+        pendingReturn: true,
+        // One episode, one start: state changes within it keep the clock.
+        observedAtMs: state.pendingReturn ? state.observedAtMs : input.nowMs,
+      },
       announcement: announcement === state.lastAnnouncement ? null : announcement,
     };
   }
   if (!state.pendingReturn) return { state, announcement: null };
   if (input.link !== "live" || !input.writable) return { state, announcement: null };
+  const blip =
+    state.observedAtMs !== null &&
+    input.nowMs - state.observedAtMs < SESSION_CONTROL_RETURN_BLIP_MS;
   return {
-    state: { lastAnnouncement: "", pendingReturn: false },
-    announcement: SESSION_CONTROL_RETURNED_ANNOUNCEMENT,
+    state: { lastAnnouncement: "", pendingReturn: false, observedAtMs: null },
+    // A suppressed blip returns "" (not null): the live region clears
+    // silently so a later identical entering announcement re-fires.
+    announcement: blip ? "" : SESSION_CONTROL_RETURNED_ANNOUNCEMENT,
   };
+}
+
+/**
+ * Durable record-arrival tracking for the observer banner's quiet activity
+ * pulse. The only trusted progress signal is the projection's durable entry
+ * list (deduped by entry id, arrival order): it grows exactly when a
+ * finished line lands from the owner's saved transcript. Poll-derived state
+ * (transcript live/snapshot, lock freshness) never reaches this — churn
+ * there must not read as activity.
+ */
+export interface RecordArrivalBaseline {
+  readonly count: number;
+  readonly lastId: string | null;
+}
+
+export function recordArrivalBaseline(
+  entries: readonly { readonly id: string }[],
+): RecordArrivalBaseline {
+  return { count: entries.length, lastId: entries.at(-1)?.id ?? null };
+}
+
+/**
+ * Advance the baseline and report whether a new durable entry arrived.
+ * Growth is arrival; same-length rotation under the retention cap (new tail
+ * id) is arrival; shrink or reorder-only is not — a snapshot reinstall that
+ * drops history must never pulse.
+ */
+export function advanceRecordArrival(
+  baseline: RecordArrivalBaseline,
+  entries: readonly { readonly id: string }[],
+): { readonly baseline: RecordArrivalBaseline; readonly arrived: boolean } {
+  const next = recordArrivalBaseline(entries);
+  const arrived =
+    next.count > baseline.count ||
+    (next.count === baseline.count && next.count > 0 && next.lastId !== baseline.lastId);
+  return { baseline: next, arrived };
 }
 
 /**
