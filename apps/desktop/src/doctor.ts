@@ -217,7 +217,7 @@ export async function collectDoctorReport(
           "Platform",
           "warning",
           `${runtime.platform}/${runtime.arch} is not a released desktop target.`,
-          "Use Android, Linux x86-64, or Apple Silicon macOS for a supported packaged build.",
+          "Use Linux x86-64 or Apple Silicon macOS for a supported packaged desktop build.",
         ),
   );
 

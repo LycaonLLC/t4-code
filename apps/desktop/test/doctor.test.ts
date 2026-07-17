@@ -87,6 +87,17 @@ describe("T4 setup doctor", () => {
     expect(report.checks.find((item) => item.id === "tailscale")?.status).toBe("warning");
   });
 
+  it("keeps mobile targets out of unsupported desktop guidance", async () => {
+    const report = await collectDoctorReport(runtime({ arch: "x64" }));
+    const platform = report.checks.find((item) => item.id === "platform");
+
+    expect(platform?.status).toBe("warning");
+    expect(platform?.action).toBe(
+      "Use Linux x86-64 or Apple Silicon macOS for a supported packaged desktop build.",
+    );
+    expect(platform?.action).not.toContain("Android");
+  });
+
   it("implements the caret range used by the repository", () => {
     expect(satisfiesCaretVersion("24.13.1", "^24.13.1")).toBe(true);
     expect(satisfiesCaretVersion("24.17.0", "^24.13.1")).toBe(true);
