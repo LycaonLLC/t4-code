@@ -178,7 +178,7 @@ export function decodeReleaseManifest(value: unknown): ReleaseManifest {
   }
   const publishedAt = requiredString(root.publishedAt, "publishedAt", 64);
   if (!Number.isFinite(Date.parse(publishedAt))) throw new Error("invalid publishedAt");
-  if (!Array.isArray(root.assets) || root.assets.length !== 6) {
+  if (!Array.isArray(root.assets) || root.assets.length !== 5) {
     throw new Error("invalid release assets");
   }
   const assets = Object.freeze(root.assets.map((asset) => releaseAsset(asset, releaseVersion)));
@@ -190,7 +190,6 @@ export function decodeReleaseManifest(value: unknown): ReleaseManifest {
     ["linux", "appimage", "x86_64", `T4-Code-${releaseVersion}-linux-x86_64.AppImage`],
     ["mac", "dmg", "arm64", `T4-Code-${releaseVersion}-mac-arm64.dmg`],
     ["mac", "zip", "arm64", `T4-Code-${releaseVersion}-mac-arm64.zip`],
-    ["windows", "msi", "x86_64", `T4-Code-${releaseVersion}-win-x64.msi`],
   ] as const;
   for (const [platform, kind, arch, name] of canonical) {
     if (
@@ -248,11 +247,17 @@ export function compareVersions(left: string, right: string): number {
   }
   return 0;
 }
-
 function selectedManualAsset(
   manifest: ReleaseManifest,
   platform: DesktopUpdateControllerOptions["platform"],
-): ReleaseAsset {
+): { readonly name: string; readonly url: string } {
+  if (platform === "win32") {
+    const name = `T4-Code-${manifest.version}-win-x64.msi`;
+    return {
+      name,
+      url: `https://github.com/LycaonLLC/t4-code/releases/download/v${manifest.version}/${name}`,
+    };
+  }
   const expected =
     platform === "darwin"
       ? {
@@ -261,19 +266,12 @@ function selectedManualAsset(
           arch: "arm64",
           name: `T4-Code-${manifest.version}-mac-arm64.dmg`,
         }
-      : platform === "win32"
-        ? {
-            platform: "windows",
-            kind: "msi",
-            arch: "x86_64",
-            name: `T4-Code-${manifest.version}-win-x64.msi`,
-          }
-        : {
-            platform: "linux",
-            kind: "deb",
-            arch: "x86_64",
-            name: `T4-Code-${manifest.version}-linux-amd64.deb`,
-          };
+      : {
+          platform: "linux",
+          kind: "deb",
+          arch: "x86_64",
+          name: `T4-Code-${manifest.version}-linux-amd64.deb`,
+        };
   const matches = manifest.assets.filter(
     (asset) =>
       asset.platform === expected.platform &&

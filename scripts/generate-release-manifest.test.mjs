@@ -95,11 +95,11 @@ test("builds the small deterministic stable manifest in canonical platform order
   assert.equal(manifest.channel, "stable");
   assert.deepEqual(
     manifest.assets.map(({ kind }) => kind),
-    ["apk", "deb", "appimage", "dmg", "zip", "msi"],
+    ["apk", "deb", "appimage", "dmg", "zip"],
   );
   assert.deepEqual(
     manifest.assets.map(({ sha256 }) => sha256),
-    packages.map(({ name }) => digest(name)),
+    packages.filter(({ platform }) => platform !== "windows").map(({ name }) => digest(name)),
   );
   assert.ok(manifest.assets.every(({ url }) => url.includes(`/releases/download/${tag}/`)));
 });

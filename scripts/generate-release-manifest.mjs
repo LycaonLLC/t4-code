@@ -138,15 +138,17 @@ export function createStableReleaseManifest({
     tag: `v${version}`,
     publishedAt: release.published_at,
     releaseUrl: release.html_url,
-    assets: packageDescriptors.map((descriptor) => {
-      const asset = releaseAssets.get(descriptor.name);
-      return {
-        ...descriptor,
-        url: asset.browser_download_url,
-        size: asset.size,
-        sha256: checksums.get(descriptor.name),
-      };
-    }),
+    assets: packageDescriptors
+      .filter(({ platform }) => platform !== "windows")
+      .map((descriptor) => {
+        const asset = releaseAssets.get(descriptor.name);
+        return {
+          ...descriptor,
+          url: asset.browser_download_url,
+          size: asset.size,
+          sha256: checksums.get(descriptor.name),
+        };
+      }),
   };
 }
 

@@ -47,7 +47,6 @@ function manifest(version: string) {
       asset(version, "linux", "appimage", "x86_64", `T4-Code-${version}-linux-x86_64.AppImage`),
       asset(version, "mac", "dmg", "arm64", `T4-Code-${version}-mac-arm64.dmg`),
       asset(version, "mac", "zip", "arm64", `T4-Code-${version}-mac-arm64.zip`),
-      asset(version, "windows", "msi", "x86_64", `T4-Code-${version}-win-x64.msi`),
     ],
   };
 }
