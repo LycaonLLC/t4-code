@@ -28,6 +28,7 @@ import {
   installInspectorStoreFactory,
   resolveDir,
   resolvePreview,
+  resolveFileWriteOutcome,
   resolveReviewOutcome,
   type InspectorController,
   type InspectorStoreApi,
@@ -143,6 +144,11 @@ export function deriveActionAvailability(
     apply.enabled && !revisionKnown
       ? { enabled: false, reason: "Waiting for this session's latest state." }
       : apply;
+  const write = commandAvailability(snapshot, targetId, hostId, "files.write");
+  const fileWrite =
+    write.enabled && !revisionKnown
+      ? { enabled: false, reason: "Waiting for this session's latest state." }
+      : write;
   const writeGate =
     sessionWriteLink(snapshot, targetId, hostId, sessionId) === "live" ? null : SYNCING_WRITE;
   return {
@@ -151,6 +157,7 @@ export function deriveActionAvailability(
     agentWake: NO_WAKE,
     reviewApply: writeGate !== null && reviewApply.enabled ? writeGate : reviewApply,
     reviewDiscard: NO_DISCARD,
+    fileWrite: writeGate !== null && fileWrite.enabled ? writeGate : fileWrite,
   };
 }
 
@@ -161,6 +168,7 @@ function sameAvailability(a: InspectorActionAvailability, b: InspectorActionAvai
     [a.agentWake, b.agentWake],
     [a.reviewApply, b.reviewApply],
     [a.reviewDiscard, b.reviewDiscard],
+    [a.fileWrite, b.fileWrite],
   ];
   return pairs.every(
     ([left, right]) => left.enabled === right.enabled && left.reason === right.reason,
@@ -224,7 +232,7 @@ export function createLiveInspectorStore(
   /** Directory paths resolved from pushed file frames; refreshed on sync. */
   const frameDirs = new Set<string>();
   const pendingDirs = new Map<string, string>();
-  const pendingPreviews = new Map<string, string>();
+  const pendingPreviews = new Map<string, { readonly path: string; readonly baseRevision: string | null }>();
   const pendingReviewApplies = new Map<string, string>();
   let reviewFiles: readonly ReviewFile[] = [];
   let reviewIdByPath: ReadonlyMap<string, string> = new Map();
@@ -343,9 +351,10 @@ export function createLiveInspectorStore(
     },
     loadPreview(path) {
       const snapshot = runtime.getSnapshot();
-      const frame = warmSession(snapshot)?.files.get(path);
+      const warm = warmSession(snapshot);
+      const frame = warm?.files.get(path);
       if (frame !== undefined && frame.content !== undefined) {
-        resolvePreview(api, previewFromFileFrame(frame));
+        resolvePreview(api, previewFromFileFrame(frame), warm?.revision ?? null);
         return;
       }
       if (snapshot.connections.get(address.targetId) !== "connected") {
@@ -359,10 +368,15 @@ export function createLiveInspectorStore(
         "files.read",
       );
       if (readable.enabled) {
+        const readRevision = expectedRevision();
         void sendCommand("files.read", { path }, false)
           .then((result) => {
-            if (result.accepted) pendingPreviews.set(result.requestId, path);
-            else {
+            if (result.accepted) {
+              pendingPreviews.set(result.requestId, {
+                path,
+                baseRevision: readRevision === undefined ? null : String(readRevision),
+              });
+            } else {
               resolvePreview(api, {
                 kind: "diagnostic",
                 path,
@@ -384,7 +398,47 @@ export function createLiveInspectorStore(
         frame !== undefined
           ? previewFromFileFrame(frame)
           : { kind: "diagnostic", path, message: "This host cannot read files from here." },
+        warm?.revision ?? null,
       );
+    },
+    writeFile(path, content, baseRevision) {
+      const snapshot = runtime.getSnapshot();
+      const writable = commandAvailability(
+        snapshot,
+        address.targetId,
+        address.hostId,
+        "files.write",
+      );
+      const revisionValue = baseRevision === null ? undefined : brandRevision(baseRevision);
+      if (
+        !isSafeRelativePath(path) ||
+        !writable.enabled ||
+        !writableNow(snapshot) ||
+        revisionValue === undefined
+      ) {
+        resolveFileWriteOutcome(api, path, "conflict");
+        return;
+      }
+      void runtime
+        .command(address.targetId, {
+          hostId: wireHostId,
+          sessionId: wireSessionId,
+          command: "files.write",
+          args: { path, content },
+          expectedRevision: revisionValue,
+        })
+        .then((result) =>
+          resolveFileWriteOutcome(
+            api,
+            path,
+            result.accepted
+              ? "saved"
+              : result.error?.code === "stale_revision"
+                ? "conflict"
+                : "error",
+          ),
+        )
+        .catch(() => resolveFileWriteOutcome(api, path, "error"));
     },
   });
 
@@ -412,6 +466,7 @@ export function createLiveInspectorStore(
         ...nextAvailability,
         agentCancel: nextAvailability.agentCancel.enabled ? gate : nextAvailability.agentCancel,
         reviewApply: nextAvailability.reviewApply.enabled ? gate : nextAvailability.reviewApply,
+        fileWrite: nextAvailability.fileWrite.enabled ? gate : nextAvailability.fileWrite,
       };
     }
     if (availability === null || !sameAvailability(availability, nextAvailability)) {
@@ -462,7 +517,7 @@ export function createLiveInspectorStore(
         resolveDir(store, path, "error");
       }
     }
-    for (const [requestId, path] of pendingPreviews) {
+    for (const [requestId, pending] of pendingPreviews) {
       const result = warm.results.get(requestId);
       if (result === undefined) continue;
       pendingPreviews.delete(requestId);
@@ -473,8 +528,9 @@ export function createLiveInspectorStore(
       resolvePreview(
         store,
         typeof content === "string"
-          ? { kind: "code", path, text: content, truncated: content.length >= 8192 }
-          : { kind: "diagnostic", path, message: "The host could not read this file." },
+          ? { kind: "code", path: pending.path, text: content, truncated: content.length >= 8192 }
+          : { kind: "diagnostic", path: pending.path, message: "The host could not read this file." },
+        pending.baseRevision,
       );
     }
     for (const [requestId, path] of pendingReviewApplies) {
@@ -506,7 +562,7 @@ export function createLiveInspectorStore(
     if (selectedPath !== null && preview === "loading") {
       const frame = warm.files.get(selectedPath);
       if (frame !== undefined && frame.content !== undefined) {
-        resolvePreview(store, previewFromFileFrame(frame));
+        resolvePreview(store, previewFromFileFrame(frame), warm.revision ?? null);
       }
     }
   };
