@@ -396,13 +396,17 @@ test("public verification requires exact GitHub provenance despite admin bypass 
       '.path == ".github/workflows/ci.yml"',
       '.name == "Release app builds"',
       '.path == ".github/workflows/release.yml"',
-      '.name == "Deploy project site"',
       '.path == ".github/workflows/deploy-site.yml"',
       ".head_branch == $tag",
       '.status == "completed"',
       '.conclusion == "success"',
     ],
     "exact-commit workflow verification",
+  );
+  assert.doesNotMatch(
+    workflows,
+    /\.name == "Deploy project site"/u,
+    "site workflow identity must use the stable path because run-name is dynamic",
   );
 
   const assets = shellFunction(runner, "release_assets_are_public");

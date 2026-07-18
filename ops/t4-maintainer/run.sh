@@ -1508,7 +1508,7 @@ publication_workflows_succeeded() {
   printf '%s' "$runs" | $JQ -e --arg tag "$t4_tag" --arg commit "$commit" '
     any(.workflow_runs[]; .name == "CI" and .path == ".github/workflows/ci.yml" and .head_sha == $commit and .event == "push" and .status == "completed" and .conclusion == "success") and
     any(.workflow_runs[]; .name == "Release app builds" and .path == ".github/workflows/release.yml" and .head_sha == $commit and .event == "push" and .head_branch == $tag and .status == "completed" and .conclusion == "success") and
-    any(.workflow_runs[]; .name == "Deploy project site" and .path == ".github/workflows/deploy-site.yml" and .head_sha == $commit and .event == "workflow_dispatch" and .status == "completed" and .conclusion == "success")
+    any(.workflow_runs[]; .path == ".github/workflows/deploy-site.yml" and .head_sha == $commit and .event == "workflow_dispatch" and .status == "completed" and .conclusion == "success")
   ' >/dev/null
 }
 
@@ -1520,12 +1520,12 @@ publication_workflows_active_or_recent() {
     def relevant:
       (.name == "CI" and .path == ".github/workflows/ci.yml" and .head_sha == $commit and .event == "push") or
       (.name == "Release app builds" and .path == ".github/workflows/release.yml" and .head_sha == $commit and .event == "push" and .head_branch == $tag) or
-      (.name == "Deploy project site" and .path == ".github/workflows/deploy-site.yml" and .head_sha == $commit and .event == "workflow_dispatch");
+      (.path == ".github/workflows/deploy-site.yml" and .head_sha == $commit and .event == "workflow_dispatch");
     any(.workflow_runs[]; relevant and .status != "completed") or
     (
       any(.workflow_runs[]; .name == "CI" and .path == ".github/workflows/ci.yml" and .head_sha == $commit and .event == "push" and .conclusion == "success") and
       any(.workflow_runs[]; .name == "Release app builds" and .path == ".github/workflows/release.yml" and .head_sha == $commit and .event == "push" and .head_branch == $tag and .conclusion == "success") and
-      any(.workflow_runs[]; .name == "Deploy project site" and .path == ".github/workflows/deploy-site.yml" and .head_sha == $commit and .event == "workflow_dispatch" and .conclusion == "success") and
+      any(.workflow_runs[]; .path == ".github/workflows/deploy-site.yml" and .head_sha == $commit and .event == "workflow_dispatch" and .conclusion == "success") and
       any(.workflow_runs[]; relevant and .conclusion == "success" and ((.updated_at | fromdateiso8601) >= $cutoff))
     )
   ' >/dev/null
