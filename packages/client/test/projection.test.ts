@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 import { hostId, revision, sessionId, type DurableEntry, type SessionRef } from "@t4-code/protocol";
 import { MAX_INDEXED_SESSION_REFS } from "../src/projection.ts";
@@ -14,6 +17,14 @@ import {
   type ProjectionFrame,
   type PublicOmpServerEvent,
 } from "../src/index.ts";
+const PROTOCOL_ROOT = dirname(dirname(fileURLToPath(import.meta.resolve("@t4-code/protocol"))));
+const APP_WIRE_ROOT = join(PROTOCOL_ROOT, "node_modules", "@oh-my-pi", "app-wire");
+const AGENT_VIEW_CORPUS = JSON.parse(
+  readFileSync(
+    join(APP_WIRE_ROOT, "fixtures", "v1", "scenarios", "agent-view-lifecycle.json"),
+    "utf8",
+  ),
+) as { schema: string; frames: ProjectionFrame[] };
 const V = "omp-app/1" as const;
 const HOST = hostId("projection-host");
 function sessionKey(session: string): string {
@@ -860,9 +871,7 @@ describe("client projections", () => {
       totalCount: 1,
       truncated: false,
     });
-    const compactingRefOrdinal = state.sessionRefArrivalOrdinals.get(
-      sessionKey("session-a"),
-    )!;
+    const compactingRefOrdinal = state.sessionRefArrivalOrdinals.get(sessionKey("session-a"))!;
 
     state = applyPublicFrame(state, {
       ...frame("event"),
@@ -895,9 +904,7 @@ describe("client projections", () => {
       totalCount: 1,
       truncated: false,
     });
-    const newerCompactingRefOrdinal = state.sessionRefArrivalOrdinals.get(
-      sessionKey("session-a"),
-    )!;
+    const newerCompactingRefOrdinal = state.sessionRefArrivalOrdinals.get(sessionKey("session-a"))!;
     expect(newerCompactingRefOrdinal).toBeGreaterThan(compactionEndOrdinal);
 
     state = applyPublicFrame(state, {
@@ -914,9 +921,9 @@ describe("client projections", () => {
       ...frame("snapshot"),
       cursor: { epoch: "e1", seq: 4 },
     });
-    expect(
-      state.sessions.get(sessionKey("session-a"))!.contextMaintenanceEventArrivalOrdinal,
-    ).toBe(turnStartOrdinal);
+    expect(state.sessions.get(sessionKey("session-a"))!.contextMaintenanceEventArrivalOrdinal).toBe(
+      turnStartOrdinal,
+    );
 
     state = applyPublicFrame(state, {
       v: V,
@@ -931,9 +938,9 @@ describe("client projections", () => {
       ...frame("snapshot"),
       cursor: { epoch: "e1", seq: 6 },
     });
-    expect(
-      state.sessions.get(sessionKey("session-a"))!.contextMaintenanceEventArrivalOrdinal,
-    ).toBe(0);
+    expect(state.sessions.get(sessionKey("session-a"))!.contextMaintenanceEventArrivalOrdinal).toBe(
+      0,
+    );
   });
 
   it("does not persist process-local arrival ordering in projection caches", () => {
@@ -1156,6 +1163,49 @@ describe("client projections", () => {
     store.applyPublicFrame({ ...frame("snapshot", "session-8"), cursor: { epoch: "e1", seq: 1 } });
     expect(store.snapshot.sessions.size).toBe(8);
     expect(store.snapshot.sessions.has(sessionKey("session-2"))).toBe(false);
+  });
+
+  it("projects the frozen runtime Agent View lifecycle corpus through normalized events", () => {
+    const agentHost = hostId("agent-view-host");
+    const agentSession = sessionId("agent-view-session");
+    const key = `${String(agentHost)}\u0000${String(agentSession)}`;
+    let state = applyPublicFrame(createProjectionSnapshot(), {
+      v: V,
+      type: "snapshot",
+      cursor: { epoch: "agent-view-e1", seq: 1 },
+      revision: revision("agent-view-r1"),
+      hostId: agentHost,
+      sessionId: agentSession,
+      entries: [],
+    });
+    const observedStates: string[] = [];
+
+    expect(AGENT_VIEW_CORPUS.schema).toBe("agent-view/1");
+    for (const wireFrame of AGENT_VIEW_CORPUS.frames) {
+      const event = ompAppV1ProtocolProvider.decodeServerEvent(wireFrame);
+      if (event.kind === "pair.ok") throw new Error("Agent View corpus cannot contain pair.ok");
+      state = applyPublicEvent(state, event);
+      observedStates.push(state.sessions.get(key)?.agents.get("WorkerA")?.state ?? "missing");
+    }
+
+    expect(observedStates).toEqual([
+      "started",
+      "running",
+      "completed",
+      "parked",
+      "started",
+      "cancelled",
+    ]);
+    expect(state.sessions.get(key)?.agents.get("WorkerA")).toMatchObject({
+      agentId: "WorkerA",
+      state: "cancelled",
+      detail: {
+        title: "Verify parity",
+        index: 0,
+        resumable: true,
+        contextUsage: { used: 2_000, limit: 8_000 },
+      },
+    });
   });
 
   it("projects agents, terminal output, files, reviews, confirmations, audit, and results", () => {

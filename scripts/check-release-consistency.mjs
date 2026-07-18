@@ -120,7 +120,9 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     typeof androidIdentity?.certificateBaseline?.assetSha256 !== "string" ||
     !SHA256_PATTERN.test(androidIdentity.certificateBaseline.assetSha256)
   ) {
-    errors.push(`${androidIdentityPath} certificate baseline asset must have a lowercase SHA-256 digest`);
+    errors.push(
+      `${androidIdentityPath} certificate baseline asset must have a lowercase SHA-256 digest`,
+    );
   }
 
   const packagePaths = [...files.keys()]
@@ -154,14 +156,19 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     errors.push(`${matrixPath} desktop version must be ${version}`);
   }
 
-  // The compatibility matrix is the release's provenance authority. These
-  // checks validate its shape and internal relationships; the cross-surface
-  // checks below ensure the site, README, and release notes match it.
+  // The compatibility matrix records both the current vendored contract and
+  // immutable provenance for the published release surfaces.
   const appWire = matrix?.appWire;
   const appWireVersion = appWire?.version;
   const appWireSourceCommit = typeof appWire?.sourceCommit === "string" ? appWire.sourceCommit : "";
   const appWireSourceTree =
     typeof appWire?.sourceTreeHash === "string" ? appWire.sourceTreeHash : "";
+  const publishedAppWire = matrix?.publishedAppWire;
+  const publishedAppWireVersion = publishedAppWire?.version;
+  const publishedAppWireSourceCommit =
+    typeof publishedAppWire?.sourceCommit === "string" ? publishedAppWire.sourceCommit : "";
+  const publishedAppWireSourceTree =
+    typeof publishedAppWire?.sourceTreeHash === "string" ? publishedAppWire.sourceTreeHash : "";
   if (appWire?.package !== "@oh-my-pi/app-wire") {
     errors.push(`${matrixPath} app-wire package must be @oh-my-pi/app-wire`);
   }
@@ -176,6 +183,26 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   }
   if (!SHA_PATTERN.test(appWireSourceTree)) {
     errors.push(`${matrixPath} app-wire source tree must be a lowercase 40-character Git SHA`);
+  }
+  if (publishedAppWire?.package !== "@oh-my-pi/app-wire") {
+    errors.push(`${matrixPath} published app-wire package must be @oh-my-pi/app-wire`);
+  }
+  if (
+    typeof publishedAppWireVersion !== "string" ||
+    !VERSION_PATTERN.test(publishedAppWireVersion)
+  ) {
+    errors.push(`${matrixPath} published app-wire version must be a stable x.y.z version`);
+  }
+  if (publishedAppWire?.sourceRepository !== OMP_RUNTIME_REPOSITORY) {
+    errors.push(`${matrixPath} published app-wire repository must be ${OMP_RUNTIME_REPOSITORY}`);
+  }
+  if (!SHA_PATTERN.test(publishedAppWireSourceCommit)) {
+    errors.push(`${matrixPath} published app-wire commit must be a lowercase 40-character Git SHA`);
+  }
+  if (!SHA_PATTERN.test(publishedAppWireSourceTree)) {
+    errors.push(
+      `${matrixPath} published app-wire source tree must be a lowercase 40-character Git SHA`,
+    );
   }
   if (
     typeof appWireVersion === "string" &&
@@ -350,7 +377,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   requireText(
     site,
-    `export const APP_WIRE_VERSION = "${appWireVersion}";`,
+    `export const APP_WIRE_VERSION = "${publishedAppWireVersion}";`,
     "apps/site/src/release.ts",
     errors,
   );
@@ -397,7 +424,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   requireText(
     readme,
-    `T4 Code vendors \`@oh-my-pi/app-wire\` ${appWireVersion} from integration commit [\`${appWireSourceCommit.slice(0, 8)}\`](${OMP_RUNTIME_REPOSITORY}/commit/${appWireSourceCommit}), source tree \`${appWireSourceTree}\`.`,
+    `T4 Code vendors \`@oh-my-pi/app-wire\` ${publishedAppWireVersion} from integration commit [\`${publishedAppWireSourceCommit.slice(0, 8)}\`](${OMP_RUNTIME_REPOSITORY}/commit/${publishedAppWireSourceCommit}), source tree \`${publishedAppWireSourceTree}\`.`,
     "README.md",
     errors,
   );
@@ -425,8 +452,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
 
   const releaseNotes = files.get("docs/CURRENT_RELEASE_NOTES.md") ?? "";
   for (const expected of [
-    `app-wire ${appWireVersion}`,
-    `[${appWireSourceCommit.slice(0, 8)}](${OMP_RUNTIME_REPOSITORY}/commit/${appWireSourceCommit})`,
+    `app-wire ${publishedAppWireVersion}`,
+    `[${publishedAppWireSourceCommit.slice(0, 8)}](${OMP_RUNTIME_REPOSITORY}/commit/${publishedAppWireSourceCommit})`,
     `OMP ${ompRuntimeVersion}`,
     `[${String(ompRuntimeCommit).slice(0, 8)}](${ompRuntimeCommitUrl})`,
     `[${ompRuntimeSourceTag}](${ompRuntimeSourceUrl})`,
@@ -486,9 +513,9 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "name: verify",
     "if: ${{ always() }}",
     "needs: [core, tooling, android-debug]",
-    "test \"$CORE_RESULT\" = success",
-    "test \"$TOOLING_RESULT\" = success",
-    "test \"$ANDROID_RESULT\" = success",
+    'test "$CORE_RESULT" = success',
+    'test "$TOOLING_RESULT" = success',
+    'test "$ANDROID_RESULT" = success',
     "github.event_name == 'pull_request' && github.ref || github.sha",
     "cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
     "actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9",
@@ -573,9 +600,9 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     'WORKFLOW_NAME = "CI"',
     'WORKFLOW_PATH = ".github/workflows/ci.yml"',
     'MAIN_BRANCH = "main"',
-    'run.head_sha === commit',
+    "run.head_sha === commit",
     'run.event === "push"',
-    'run.head_branch === MAIN_BRANCH',
+    "run.head_branch === MAIN_BRANCH",
     'status === "completed" && conclusion === "success"',
     "readBoundedResponseBytes",
   ]) {
@@ -594,7 +621,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   }
   const manifestGenerator = files.get("scripts/generate-release-manifest.mjs") ?? "";
   for (const expected of [
-    'RELEASE_MANIFEST_SCHEMA_VERSION = 1',
+    "RELEASE_MANIFEST_SCHEMA_VERSION = 1",
     'LINUX_UPDATE_METADATA_NAME = "latest-linux.yml"',
     'channel: "stable"',
     "validateLinuxUpdateMetadata",
@@ -630,8 +657,8 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   for (const expected of [
     "classifyStableReleasePublication",
-    'response.status === 404',
-    'response.status !== 200',
+    "response.status === 404",
+    "response.status !== 200",
     "readBoundedResponseBytes",
     'state: "not-published"',
   ]) {
@@ -662,9 +689,9 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   for (const expected of [
     "dispatchAndWaitForSiteDeployment",
     "body: { ref: tag, inputs: { release_tag: tag, dispatch_nonce: dispatchNonce } }",
-    'run.head_branch === tag',
-    'run.head_sha === commit',
-    'run.display_title === `Deploy project site ${tag} ${dispatchNonce}`',
+    "run.head_branch === tag",
+    "run.head_sha === commit",
+    "run.display_title === `Deploy project site ${tag} ${dispatchNonce}`",
     'exact.conclusion !== "success"',
   ]) {
     requireText(

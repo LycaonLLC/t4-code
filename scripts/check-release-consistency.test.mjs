@@ -196,14 +196,21 @@ test("historical repair runs CI authority from trusted control while querying ol
   assert.notEqual(checkoutSha, queriedSha);
 });
 
-test("rejects app-wire matrix changes until the release surfaces agree", () => {
+test("rejects published app-wire version drift until release surfaces agree", () => {
   const drifted = changed("compat/omp-app-matrix.json", (text) =>
-    text.replace('"version": "0.5.8"', '"version": "0.5.1"'),
+    text.replace(
+      '"publishedAppWire": {\n    "package": "@oh-my-pi/app-wire",\n    "version": "0.5.8"',
+      '"publishedAppWire": {\n    "package": "@oh-my-pi/app-wire",\n    "version": "0.5.1"',
+    ),
   );
-  assert.ok(collectReleaseConsistencyErrors(drifted).length > 0);
+  assert.ok(
+    collectReleaseConsistencyErrors(drifted).some(
+      (error) => error.startsWith("README.md") || error.startsWith("apps/site/src/release.ts"),
+    ),
+  );
 });
 
-test("rejects app-wire provenance changes until the release surfaces agree", () => {
+test("rejects published app-wire provenance drift until release surfaces agree", () => {
   const drifted = changed("compat/omp-app-matrix.json", (text) =>
     text.replace(
       '"sourceCommit": "33615123ff986fc9cadf645463b4fed17e8b9f35"',
@@ -220,7 +227,7 @@ test("rejects app-wire provenance changes until the release surfaces agree", () 
 test("rejects drift between the compatibility matrix and vendored app-wire manifest", () => {
   const drifted = changed("vendor/app-wire/manifest.json", (text) =>
     text.replace(
-      '"sourceTreeHash": "e36475dc81dd4c3703eb207ae466f85947b33525"',
+      '"sourceTreeHash": "4d8794bad6fc57d86058a46dc4698fcca14263e5"',
       '"sourceTreeHash": "0000000000000000000000000000000000000000"',
     ),
   );
@@ -257,37 +264,21 @@ test("rejects drift in verified OMP runtime provenance", () => {
   }
 });
 
-test("accepts a coordinated app-wire provenance update without editing the workflow", () => {
+test("accepts a current app-wire update without rewriting published release surfaces", () => {
   const coordinated = new Map(files);
   coordinated.set(
     "compat/omp-app-matrix.json",
     coordinated
       .get("compat/omp-app-matrix.json")
-      .replace('"version": "0.5.8"', '"version": "0.5.9"')
-      .replace("oh-my-pi-app-wire-0.5.8.tgz", "oh-my-pi-app-wire-0.5.9.tgz"),
-  );
-  coordinated.set(
-    "apps/site/src/release.ts",
-    coordinated
-      .get("apps/site/src/release.ts")
-      .replace('APP_WIRE_VERSION = "0.5.8"', 'APP_WIRE_VERSION = "0.5.9"'),
-  );
-  coordinated.set(
-    "README.md",
-    coordinated
-      .get("README.md")
-      .replace("`@oh-my-pi/app-wire` 0.5.8", "`@oh-my-pi/app-wire` 0.5.9"),
-  );
-  coordinated.set(
-    "docs/CURRENT_RELEASE_NOTES.md",
-    coordinated.get("docs/CURRENT_RELEASE_NOTES.md").replace("app-wire 0.5.8", "app-wire 0.5.9"),
+      .replace('"version": "0.5.9"', '"version": "0.6.0"')
+      .replace("oh-my-pi-app-wire-0.5.9.tgz", "oh-my-pi-app-wire-0.6.0.tgz"),
   );
   coordinated.set(
     "vendor/app-wire/manifest.json",
     coordinated
       .get("vendor/app-wire/manifest.json")
-      .replace('"version": "0.5.8"', '"version": "0.5.9"')
-      .replace("oh-my-pi-app-wire-0.5.8.tgz", "oh-my-pi-app-wire-0.5.9.tgz"),
+      .replace('"version": "0.5.9"', '"version": "0.6.0"')
+      .replace("oh-my-pi-app-wire-0.5.9.tgz", "oh-my-pi-app-wire-0.6.0.tgz"),
   );
 
   assert.deepEqual(collectReleaseConsistencyErrors(coordinated), []);
