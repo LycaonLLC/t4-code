@@ -3,7 +3,7 @@
 // Linux window controls are injected by the desktop shell later.
 import { Badge, BrandLockup, IconButton, Tooltip, TooltipPopup, TooltipTrigger } from "@t4-code/ui";
 import { useNavigate } from "@tanstack/react-router";
-import { Command, Moon, PanelLeft, Settings, Sun } from "lucide-react";
+import { Command, Moon, PanelLeft, Settings, Sun, UsersRound } from "lucide-react";
 import { useEffect } from "react";
 
 import { updateIsAvailable } from "../features/updates/update-model.ts";
@@ -90,6 +90,7 @@ export function Titlebar({
   onToggleRail: () => void;
   railToggle: RailTogglePresentation;
 }) {
+  const navigate = useNavigate();
   return (
     <header
       className="drag-region workspace-topbar titlebar-traffic-light-inset titlebar-window-controls-reserve shrink-0 gap-1 border-border border-b bg-background px-1 sm:gap-2 sm:px-3"
@@ -127,6 +128,21 @@ export function Titlebar({
           <TooltipPopup side="bottom">Built-in sample sessions. Nothing here is live.</TooltipPopup>
         </Tooltip>
       )}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <IconButton
+              aria-label="Open Agent View"
+              className="size-11 sm:size-7"
+              onClick={() => void navigate({ to: "/agents" })}
+              size="icon-sm"
+            >
+              <UsersRound />
+            </IconButton>
+          }
+        />
+        <TooltipPopup side="bottom">Agent View</TooltipPopup>
+      </Tooltip>
       <HostedAppAction />
       <MobileConnectionAction />
       <Tooltip>

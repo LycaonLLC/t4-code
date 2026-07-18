@@ -33,6 +33,11 @@ import {
 } from "@t4-code/protocol";
 import type { CommandIntent, CommandResult } from "@t4-code/protocol/desktop-ipc";
 import { describe, expect, it } from "vite-plus/test";
+import {
+  agentCancelAvailability,
+  cancelAgentFromView,
+  deriveAgentViewGroups,
+} from "../src/features/agent-view/model.ts";
 
 import {
   createLiveInspectorStore,
@@ -930,5 +935,110 @@ describe("live pane actions", () => {
     const apply = store.getState().actions.reviewApply;
     expect(apply.enabled).toBe(false);
     expect(apply.reason).toBe("Waiting for this session's latest state.");
+  });
+});
+
+describe("global Agent View", () => {
+  it("groups loaded agents and preserves lifecycle corpus detail", () => {
+    const fake = new FakeRuntime({ catalog: AGENT_CATALOG });
+    fake.setProjection(
+      project([
+        snapshotFrame("rev-7"),
+        agentFrame("agent-1", {
+          state: "parked",
+          progress: 0.5,
+          detail: {
+            title: "Research worker",
+            description: "Compare persistence architectures",
+            resumable: true,
+            model: "test-model",
+            contextUsage: { used: 4_000, limit: 8_000 },
+          },
+        }),
+      ]),
+    );
+
+    const groups = deriveAgentViewGroups(fake.getSnapshot());
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({
+      viewId: VIEW_ID,
+      projectName: "project-1",
+      session: { title: "Session" },
+    });
+    expect(groups[0]?.agents[0]).toMatchObject({
+      task: "Compare persistence architectures",
+      resumable: true,
+      node: {
+        id: "agent-1",
+        title: "Research worker",
+        state: "parked",
+        progress: 0.5,
+        model: "test-model",
+        contextUsed: 4_000,
+        contextLimit: 8_000,
+      },
+    });
+  });
+
+  it("rechecks ownership and freshness before sending one revision-bound cancellation", async () => {
+    const fake = new FakeRuntime({ catalog: AGENT_CATALOG });
+    fake.setProjection(
+      project([snapshotFrame("rev-7"), agentFrame("agent-1", { detail: { title: "Worker" } })]),
+    );
+    const group = deriveAgentViewGroups(fake.getSnapshot())[0];
+    const node = group?.agents[0]?.node;
+    expect(group).toBeDefined();
+    expect(node).toBeDefined();
+    if (group === undefined || node === undefined) return;
+    expect(agentCancelAvailability(fake.getSnapshot(), group.viewId, node).enabled).toBe(true);
+
+    await cancelAgentFromView(fake, group.viewId, node);
+    expect(fake.targets).toEqual(["local"]);
+    expect(fake.commands).toEqual([
+      {
+        hostId: HOST,
+        sessionId: SESSION,
+        command: "agent.cancel",
+        args: { agentId: "agent-1" },
+        expectedRevision: "rev-7",
+      },
+    ]);
+
+    fake.setConnection("disconnected");
+    await expect(cancelAgentFromView(fake, group.viewId, node)).rejects.toThrow(
+      "This host is offline right now.",
+    );
+    expect(fake.commands).toHaveLength(1);
+  });
+
+  it("rejects a stale row after its agent leaves the live projection", async () => {
+    const fake = new FakeRuntime({ catalog: AGENT_CATALOG });
+    fake.setProjection(
+      project([snapshotFrame("rev-7"), agentFrame("agent-1", { detail: { title: "Worker" } })]),
+    );
+    const group = deriveAgentViewGroups(fake.getSnapshot())[0];
+    const node = group?.agents[0]?.node;
+    if (group === undefined || node === undefined) throw new Error("expected a projected agent");
+
+    fake.setProjection(
+      project([
+        snapshotFrame("rev-8"),
+        agentFrame("agent-1", { detail: { title: "Worker" }, state: "cancelled" }),
+      ]),
+    );
+    expect(agentCancelAvailability(fake.getSnapshot(), group.viewId, node)).toEqual({
+      enabled: false,
+      reason: "This agent has already stopped.",
+    });
+
+    fake.setProjection(project([snapshotFrame("rev-9")]));
+    expect(agentCancelAvailability(fake.getSnapshot(), group.viewId, node)).toEqual({
+      enabled: false,
+      reason: "This agent is no longer available.",
+    });
+    await expect(cancelAgentFromView(fake, group.viewId, node)).rejects.toThrow(
+      "This agent is no longer available.",
+    );
+    expect(fake.commands).toHaveLength(0);
   });
 });
