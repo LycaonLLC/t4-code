@@ -501,23 +501,25 @@ test("@soak mounts the bounded tail of a 10k history on a phone viewport", async
         }
         const realList = transcript?.querySelector(".legend-list-content-container") ?? null;
         const overlay = transcript?.querySelector("[data-cold-mount-overlay]") ?? null;
-        const scroller = [...(transcript?.querySelectorAll<HTMLElement>("div") ?? [])].find(
-          (element) => {
-            const { overflowY } = getComputedStyle(element);
-            return overflowY === "auto" || overflowY === "scroll";
-          },
-        );
-        const transcriptRect = transcript?.getBoundingClientRect();
-        const rows = [...(transcript?.querySelectorAll<HTMLElement>("[data-transcript-row]") ?? [])];
-        const rowsInView = transcriptRect !== undefined && rows.some((row) => {
-          const rect = row.getBoundingClientRect();
-          return rect.bottom > transcriptRect.top && rect.top < transcriptRect.bottom;
-        });
-        if (scroller !== undefined && transcriptRect !== undefined) {
-          const maxScroll = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-          const aligned = Math.abs(scroller.scrollTop - maxScroll) <= 1;
-          if (phases.tailAlignedAt === undefined && aligned && rowsInView) {
-            phases.tailAlignedAt = performance.now();
+        if (phases.tailAlignedAt === undefined) {
+          const scroller = [...(transcript?.querySelectorAll<HTMLElement>("div") ?? [])].find(
+            (element) => {
+              const { overflowY } = getComputedStyle(element);
+              return overflowY === "auto" || overflowY === "scroll";
+            },
+          );
+          const transcriptRect = transcript?.getBoundingClientRect();
+          const rows = [...(transcript?.querySelectorAll<HTMLElement>("[data-transcript-row]") ?? [])];
+          const rowsInView = transcriptRect !== undefined && rows.some((row) => {
+            const rect = row.getBoundingClientRect();
+            return rect.bottom > transcriptRect.top && rect.top < transcriptRect.bottom;
+          });
+          if (scroller !== undefined && transcriptRect !== undefined) {
+            const maxScroll = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+            const aligned = Math.abs(scroller.scrollTop - maxScroll) <= 1;
+            if (aligned && rowsInView) {
+              phases.tailAlignedAt = performance.now();
+            }
           }
         }
         if (
