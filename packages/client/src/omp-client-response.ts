@@ -17,10 +17,10 @@ function matchingConfirmRequests(
 ): string[] {
   const matches: string[] = [];
   for (const [requestKey, pending] of entries) {
-    if (pending.kind !== "confirm" || pending.frame.type !== "confirm") continue;
-    if (String(pending.frame.commandId) !== String(frame.commandId)) continue;
-    if (pending.frame.hostId !== frame.hostId) continue;
-    if (pending.frame.sessionId !== frame.sessionId) continue;
+    if (pending.kind !== "confirm" || pending.message.kind !== "confirm") continue;
+    if (String(pending.message.commandId) !== String(frame.commandId)) continue;
+    if (pending.message.hostId !== frame.hostId) continue;
+    if (pending.message.sessionId !== frame.sessionId) continue;
     matches.push(requestKey);
   }
   return matches;
@@ -48,11 +48,11 @@ export function handleResponseFrame(
     callbacks.publish(frame);
     return;
   }
-  if (!("hostId" in pending.frame) || frame.hostId !== pending.frame.hostId) {
+  if (pending.message.kind === "pair-start" || frame.hostId !== pending.message.hostId) {
     callbacks.protocolFailure("response host correlation mismatch");
     return;
   }
-  const expectedSession = "sessionId" in pending.frame ? pending.frame.sessionId : undefined;
+  const expectedSession = pending.message.sessionId;
   if (frame.sessionId !== expectedSession) {
     callbacks.protocolFailure("response session correlation mismatch");
     return;

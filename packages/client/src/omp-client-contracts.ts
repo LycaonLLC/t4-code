@@ -1,6 +1,6 @@
-import type { ClientFrame, PairOkFrame, RequestId, ResultFrame, Cursor, ServerFrame } from "@t4-code/protocol";
+import type { PairOkFrame, RequestId, ResultFrame, Cursor, ServerFrame } from "@t4-code/protocol";
 import type { ProjectionStore } from "./projection.ts";
-import type { OmpProtocolProvider } from "./omp-protocol-provider.ts";
+import type { OmpClientMessage, OmpProtocolProvider } from "./omp-protocol-provider.ts";
 
 
 export type OmpClientState =
@@ -136,10 +136,11 @@ export class DefaultIds implements IdFactory {
 }
 
 export type PendingResult = ResultFrame | PairOkFrame;
+export type PendingMessage = Extract<OmpClientMessage, { kind: "command" | "confirm" | "pair-start" }>;
 export interface Pending {
   requestId: RequestId;
   commandId?: string;
-  frame: ClientFrame;
+  message: PendingMessage;
   resolve: (frame: PendingResult) => void;
   reject: (error: OmpClientError) => void;
   timer?: { active: boolean; handle: unknown };

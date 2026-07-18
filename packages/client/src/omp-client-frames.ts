@@ -44,9 +44,8 @@ export class OmpClientEventDispatcher {
     }
   }
 }
-import type { ClientFrame } from "@t4-code/protocol";
 import type { CursorRecord, OmpClientOptions } from "./omp-client-contracts.ts";
-import { buildOutgoingFrame } from "./omp-client-outbound.ts";
+import { encodeOutgoingMessage } from "./omp-client-outbound.ts";
 import type { OmpProtocolProvider } from "./omp-protocol-provider.ts";
 
 export function sendClientHello(
@@ -67,28 +66,15 @@ export function sendClientHello(
       authentication = { deviceId: provided.deviceId, deviceToken: provided.deviceToken };
     }
   } catch { fatal(); return; }
-  let hello: ClientFrame | undefined;
-  try {
-    hello = buildOutgoingFrame(provider, {
-      kind: "hello",
-      client: options.client ?? { name: "t4-code", version: "0.1.22", build: "client", platform: "electron" },
-      requestedFeatures: [...(options.requestedFeatures ?? ["resume"])],
-      savedCursors,
-      ...(options.capabilities === undefined ? {} : { capabilities: options.capabilities }),
-      ...(authentication === undefined ? {} : { authentication }),
-    });
-  } catch {
-    protocolFailure();
-    return;
-  }
-  if (hello === undefined || hello.type !== "hello") { protocolFailure(); return; }
-  let encoded: string;
-  try {
-    encoded = provider.encodeClientFrame(hello);
-  } catch {
-    protocolFailure();
-    return;
-  }
+  const encoded = encodeOutgoingMessage(provider, {
+    kind: "hello",
+    client: options.client ?? { name: "t4-code", version: "0.1.22", build: "client", platform: "electron" },
+    requestedFeatures: [...(options.requestedFeatures ?? ["resume"])],
+    savedCursors,
+    ...(options.capabilities === undefined ? {} : { capabilities: options.capabilities }),
+    ...(authentication === undefined ? {} : { authentication }),
+  });
+  if (encoded === undefined) { protocolFailure(); return; }
   try {
     send(encoded);
   } catch (error) {

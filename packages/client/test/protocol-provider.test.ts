@@ -1,4 +1,4 @@
-import { decodeClientFrame, hostId, pairingId, requestId, type ClientFrame, type PairOkFrame, type WelcomeFrame } from "@t4-code/protocol";
+import { decodeClientFrame, hostId, pairingId, requestId, type PairOkFrame, type WelcomeFrame } from "@t4-code/protocol";
 import { describe, expect, it } from "vite-plus/test";
 import {
   OmpClient,
@@ -150,7 +150,9 @@ describe("OmpProtocolProvider", () => {
   it("builds every outbound message using the pinned wire shape", () => {
     const messages = outboundMessages();
 
-    const frames = messages.map((message) => ompAppV1ProtocolProvider.buildClientFrame(message));
+    const frames = messages.map((message) =>
+      decodeClientFrame(ompAppV1ProtocolProvider.encodeClientMessage(message)),
+    );
 
     expect(frames.map((frame) => frame.type)).toEqual([
       "hello",
@@ -166,7 +168,7 @@ describe("OmpProtocolProvider", () => {
     if (promptFrame?.type !== "command") throw new Error("expected command frame");
     expect(promptFrame).toMatchObject({ v: "omp-app/1", type: "command" });
     expect(promptFrame.args).toEqual({ message: "hello" });
-    const normalized = ompAppV1ProtocolProvider.buildClientFrame({
+    const normalized = decodeClientFrame(ompAppV1ProtocolProvider.encodeClientMessage({
       kind: "command",
       requestId: "request-legacy",
       commandId: "command-legacy",
@@ -174,11 +176,11 @@ describe("OmpProtocolProvider", () => {
       sessionId: "provider-session",
       command: "session.prompt",
       args: { prompt: "legacy" },
-    });
+    }));
     if (normalized.type !== "command") throw new Error("expected command frame");
     expect(normalized.args).toEqual({ message: "legacy" });
     expect(() =>
-      ompAppV1ProtocolProvider.buildClientFrame({
+      ompAppV1ProtocolProvider.encodeClientMessage({
         kind: "command",
         requestId: "request-empty",
         commandId: "command-empty",
@@ -188,8 +190,8 @@ describe("OmpProtocolProvider", () => {
         args: {},
       }),
     ).toThrow();
-    for (const frame of frames) {
-      expect(JSON.parse(ompAppV1ProtocolProvider.encodeClientFrame(frame))).toEqual(frame);
+    for (const [index, frame] of frames.entries()) {
+      expect(JSON.parse(ompAppV1ProtocolProvider.encodeClientMessage(messages[index]!))).toEqual(frame);
     }
   });
 
@@ -211,18 +213,13 @@ describe("OmpProtocolProvider", () => {
   });
 
   it("routes outbound work and inbound events through an injected provider", async () => {
-    let clientBuilds = 0;
     let clientEncodes = 0;
     let serverEventDecodes = 0;
     const provider: OmpProtocolProvider = {
       ...ompAppV1ProtocolProvider,
-      buildClientFrame(message: OmpClientMessage): ClientFrame {
-        clientBuilds += 1;
-        return ompAppV1ProtocolProvider.buildClientFrame(message);
-      },
-      encodeClientFrame(frame: ClientFrame): string {
+      encodeClientMessage(message: OmpClientMessage): string {
         clientEncodes += 1;
-        return ompAppV1ProtocolProvider.encodeClientFrame(frame);
+        return ompAppV1ProtocolProvider.encodeClientMessage(message);
       },
       decodeServerEvent(input: unknown): OmpDecodedServerEvent {
         serverEventDecodes += 1;
@@ -240,7 +237,6 @@ describe("OmpProtocolProvider", () => {
     await client.connect();
 
     expect(client.state).toBe("ready");
-    expect(clientBuilds).toBeGreaterThan(0);
     expect(clientEncodes).toBeGreaterThan(0);
     expect(serverEventDecodes).toBe(1);
     expect(events).toHaveLength(1);
@@ -262,6 +258,27 @@ describe("OmpProtocolProvider", () => {
 
     await expect(client.connect()).rejects.toMatchObject({ code: "protocol" });
     expect(client.state).toBe("fatal");
+    await client.close();
+  });
+
+  it("classifies provider-side outbound encoding failures as protocol errors", async () => {
+    const provider: OmpProtocolProvider = {
+      ...ompAppV1ProtocolProvider,
+      encodeClientMessage(message: OmpClientMessage): string {
+        if (message.kind === "command") throw new Error("unsupported logical message");
+        return ompAppV1ProtocolProvider.encodeClientMessage(message);
+      },
+    };
+    const client = new OmpClient({
+      hostId: "provider-host",
+      protocolProvider: provider,
+      transport: () => new HandshakeTransport(),
+    });
+
+    await client.connect();
+    await expect(client.command({ hostId: "provider-host", command: "session.list" }))
+      .rejects.toMatchObject({ code: "protocol" });
+    expect(client.state).toBe("ready");
     await client.close();
   });
 });

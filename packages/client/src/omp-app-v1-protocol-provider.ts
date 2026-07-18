@@ -5,7 +5,6 @@ import {
   decodeClientFrame,
   decodeServerFrame,
   requiredCapability,
-  type ClientFrame,
 } from "@t4-code/protocol";
 
 import type {
@@ -105,16 +104,18 @@ function appV1Input(message: OmpClientMessage): Record<string, unknown> {
   }
 }
 
+function encodeAppV1ClientMessage(message: OmpClientMessage): string {
+  const frame = decodeClientFrame(appV1Input(message));
+  const encoded = JSON.stringify(frame);
+  decodeClientFrame(encoded);
+  return encoded;
+}
+
 /** Current canonical provider backed by the pinned @oh-my-pi/app-wire v1 artifact. */
 export const ompAppV1ProtocolProvider: OmpProtocolProvider = Object.freeze({
   id: "omp-app-v1",
   protocolVersion: PROTOCOL_VERSION,
-  buildClientFrame: (message: OmpClientMessage) => decodeClientFrame(appV1Input(message)),
-  encodeClientFrame: (frame: ClientFrame) => {
-    const encoded = JSON.stringify(frame);
-    decodeClientFrame(encoded);
-    return encoded;
-  },
+  encodeClientMessage: encodeAppV1ClientMessage,
   decodeServerEvent: (input: unknown) => decodedOmpServerEventFromFrame(decodeServerFrame(input)),
   commandDescriptor: (command: string) => COMMAND_DESCRIPTORS[command],
   requiredCapability,

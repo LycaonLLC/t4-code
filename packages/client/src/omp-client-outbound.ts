@@ -1,13 +1,11 @@
-import type { ClientFrame } from "@t4-code/protocol";
-
 import type { OmpClientMessage, OmpProtocolProvider } from "./omp-protocol-provider.ts";
 
-export function buildOutgoingFrame(
+export function encodeOutgoingMessage(
   provider: OmpProtocolProvider,
   message: OmpClientMessage,
-): ClientFrame | undefined {
+): string | undefined {
   try {
-    return provider.buildClientFrame(message);
+    return provider.encodeClientMessage(message);
   } catch {
     return undefined;
   }

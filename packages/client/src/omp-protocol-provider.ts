@@ -1,5 +1,4 @@
 import type {
-  ClientFrame,
   CommandDescriptor,
   Cursor,
   DeviceCapability,
@@ -82,8 +81,8 @@ export type OmpClientMessage =
 export interface OmpProtocolProvider {
   readonly id: string;
   readonly protocolVersion: string;
-  buildClientFrame(message: OmpClientMessage): ClientFrame;
-  encodeClientFrame(frame: ClientFrame): string;
+  /** Validate and encode one logical T4 message using this provider's wire format. */
+  encodeClientMessage(message: OmpClientMessage): string;
   decodeServerEvent(input: unknown): OmpDecodedServerEvent;
   commandDescriptor(command: string): CommandDescriptor | undefined;
   requiredCapability(command: string): DeviceCapability | undefined;

@@ -40,8 +40,7 @@ export function protocolProviderConformance(
         new Set(Object.keys(OUTBOUND_KINDS)),
       );
       for (const message of options.outboundMessages) {
-        const frame = options.provider.buildClientFrame(message);
-        const encoded = options.provider.encodeClientFrame(frame);
+        const encoded = options.provider.encodeClientMessage(message);
         expect(typeof encoded).toBe("string");
         expect(encoded.length).toBeGreaterThan(0);
       }
