@@ -48,24 +48,26 @@ const SECRET_KEY = /token|secret|password|credential|authorization|cookie|privat
 const retainedJsonByteCache = new WeakMap<object, number>();
 const UTF8_ENCODER = new TextEncoder();
 
-const IMPORTANT_KEY_PRIORITY: Readonly<Record<string, number>> = {
-  type: 0,
-  images: 1,
-  role: 2,
-  text: 3,
-  reasoning: 4,
-  tool: 5,
-  title: 6,
-  args: 7,
-  result: 8,
-  details: 9,
-  customType: 10,
-  customDetails: 11,
-  output: 12,
-  stdout: 13,
-  stderr: 14,
-  content: 15,
-};
+const IMPORTANT_KEY_PRIORITY: Readonly<Record<string, number>> = Object.freeze(
+  Object.assign(Object.create(null) as Record<string, number>, {
+    type: 0,
+    images: 1,
+    role: 2,
+    text: 3,
+    reasoning: 4,
+    tool: 5,
+    title: 6,
+    args: 7,
+    result: 8,
+    details: 9,
+    customType: 10,
+    customDetails: 11,
+    output: 12,
+    stdout: 13,
+    stderr: 14,
+    content: 15,
+  }),
+);
 const IMPORTANT_KEY_COUNT = 16;
 
 interface SanitizedNode {
