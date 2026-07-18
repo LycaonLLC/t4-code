@@ -196,18 +196,26 @@ export function retainedText(value: string, maxJsonBytes: number): string {
 }
 
 function orderedEntries(value: Record<string, unknown>): Array<[string, unknown]> {
-  return Object.entries(value).sort(([left], [right]) => {
-    const leftPriority = IMPORTANT_KEY_PRIORITY[left] ?? IMPORTANT_KEY_COUNT;
-    const rightPriority = IMPORTANT_KEY_PRIORITY[right] ?? IMPORTANT_KEY_COUNT;
-    return leftPriority - rightPriority;
-  });
+  const entries = Object.entries(value);
+  for (let index = 1; index < entries.length; index += 1) {
+    const previous = IMPORTANT_KEY_PRIORITY[entries[index - 1]![0]] ?? IMPORTANT_KEY_COUNT;
+    const current = IMPORTANT_KEY_PRIORITY[entries[index]![0]] ?? IMPORTANT_KEY_COUNT;
+    if (previous <= current) continue;
+    entries.sort(([left], [right]) => {
+      const leftPriority = IMPORTANT_KEY_PRIORITY[left] ?? IMPORTANT_KEY_COUNT;
+      const rightPriority = IMPORTANT_KEY_PRIORITY[right] ?? IMPORTANT_KEY_COUNT;
+      return leftPriority - rightPriority;
+    });
+    break;
+  }
+  return entries;
 }
 
 function sanitizeNode(
   value: unknown,
   budget: number,
   depth: number,
-  ancestors: ReadonlySet<object>,
+  ancestors: Set<object>,
   imageBlock = false,
 ): SanitizedNode | undefined {
   if (budget < 1 || value === undefined) return undefined;
@@ -229,19 +237,19 @@ function sanitizeNode(
     return undefined;
   }
 
-  const nextAncestors = new Set(ancestors);
-  nextAncestors.add(value);
+  ancestors.add(value);
   if (Array.isArray(value)) {
     let bytes = 2;
     const output: unknown[] = [];
     for (const item of value.slice(0, MAX_RETAINED_VALUE_ARRAY_ITEMS)) {
       const separator = output.length === 0 ? 0 : 1;
-      const child = sanitizeNode(item, budget - bytes - separator, depth + 1, nextAncestors);
+      const child = sanitizeNode(item, budget - bytes - separator, depth + 1, ancestors);
       if (child === undefined) continue;
       output.push(child.value);
       bytes += separator + child.bytes;
       if (bytes >= budget) break;
     }
+    ancestors.delete(value);
     return bytes <= budget ? { value: Object.freeze(output), bytes } : undefined;
   }
 
@@ -270,7 +278,7 @@ function sanitizeNode(
       item,
       budget - bytes - fixedBytes,
       depth + 1,
-      nextAncestors,
+      ancestors,
       sourceIsImageBlock,
     );
     if (child === undefined) continue;
@@ -279,6 +287,7 @@ function sanitizeNode(
     bytes += fixedBytes + child.bytes;
     if (bytes >= budget) break;
   }
+  ancestors.delete(value);
   return bytes <= budget ? { value: Object.freeze(output), bytes } : undefined;
 }
 
@@ -417,7 +426,8 @@ export function appendRetainedValue<T>(
     retainedCount -= 1;
   }
 
-  const candidates = [...values.slice(firstPriorIndex), value];
+  const candidates = values.slice(firstPriorIndex) as T[];
+  candidates.push(value);
   bytes += retainedArrayItemBytes(value) + (retainedCount === 0 ? 0 : 1);
   retainedCount += 1;
 
@@ -429,7 +439,9 @@ export function appendRetainedValue<T>(
     firstRetainedIndex += 1;
   }
 
-  const retained = Object.freeze(candidates.slice(firstRetainedIndex));
+  const retained = Object.freeze(
+    firstRetainedIndex === 0 ? candidates : candidates.slice(firstRetainedIndex),
+  );
   return rememberRetainedJsonBytes(retained, bytes);
 }
 
