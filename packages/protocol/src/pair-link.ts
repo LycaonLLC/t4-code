@@ -69,7 +69,10 @@ export class PendingPairQueue {
   private readonly capacity: number;
 
   constructor(capacity = 8) {
-    this.capacity = Math.max(1, capacity);
+    if (!Number.isSafeInteger(capacity) || capacity < 1) {
+      throw new Error("invalid pending pair capacity");
+    }
+    this.capacity = capacity;
   }
 
   push(value: PendingPair): void {

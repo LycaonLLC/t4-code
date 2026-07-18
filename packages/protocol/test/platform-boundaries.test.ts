@@ -50,6 +50,23 @@ describe("headless platform contracts", () => {
     for (const fixture of androidUpdateFixtures.invalid) {
       expect(() => decodeAndroidUpdateState(fixture)).toThrow();
     }
+    expect(() =>
+      decodeAndroidUpdateState(
+        Object.assign(new (class AndroidState {})(), {
+          currentVersion: "0.1.22",
+          phase: "idle",
+          revision: 1,
+        }),
+      ),
+    ).toThrow();
+    expect(
+      decodeAndroidUpdateState({
+        currentVersion: "0.1.22",
+        phase: "error",
+        revision: 2,
+        message: "x".repeat(1_000_000),
+      }).message,
+    ).toBe("x".repeat(512));
   });
 
   it("rejects malformed pair events before Electron IPC receives them", () => {
@@ -70,6 +87,9 @@ describe("headless platform contracts", () => {
       }),
     ]) {
       expect(() => decodePairLinkEvent(fixture)).toThrow();
+    }
+    for (const capacity of [Number.NaN, Number.POSITIVE_INFINITY, 0, 1.5]) {
+      expect(() => new PendingPairQueue(capacity)).toThrow(/capacity/u);
     }
   });
 });

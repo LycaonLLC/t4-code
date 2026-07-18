@@ -50,6 +50,8 @@ function record(value: unknown, name: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`invalid ${name}`);
   }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) throw new Error(`invalid ${name}`);
   return value as Record<string, unknown>;
 }
 
@@ -76,15 +78,16 @@ function timestamp(value: unknown, name: string): number | undefined {
 function displayText(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string") throw new Error(`invalid ${name}`);
-  const cleaned = Array.from(value)
-    .map((character) => {
-      const point = character.codePointAt(0) ?? 0;
-      return point <= 0x1f || (point >= 0x7f && point <= 0x9f) ? " " : character;
-    })
-    .join("")
-    .trim();
+  let cleaned = "";
+  for (const character of value.slice(0, 4_096)) {
+    const point = character.codePointAt(0) ?? 0;
+    const next = point <= 0x1f || (point >= 0x7f && point <= 0x9f) ? " " : character;
+    if (cleaned.length + next.length > 512) break;
+    cleaned += next;
+  }
+  cleaned = cleaned.trim();
   if (cleaned.length === 0) return undefined;
-  return cleaned.slice(0, 512);
+  return cleaned;
 }
 
 /** Strictly decode and freeze update state before it crosses either Electron IPC boundary. */
