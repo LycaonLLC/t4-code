@@ -96,7 +96,13 @@
       min-height: 2.75rem;
     }
   }
+}
 
+/* These platform reserves must share Tailwind's utilities layer. The
+   titlebar also uses px-* utilities, and a later cascade layer wins before
+   selector specificity is considered. Keeping these rules here ensures the
+   native window controls always take precedence over the normal padding. */
+@layer utilities {
   /* macOS traffic lights live at the top-left of the frameless window.
 	   Reserve their inset; the desktop shell owns the real controls. */
   [data-platform="darwin"] .titlebar-traffic-light-inset {
