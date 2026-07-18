@@ -130,6 +130,20 @@ test.afterAll(async () => {
   await web?.stop();
 });
 
+test("reserves macOS traffic-light space only for native window chrome", async ({ page }) => {
+  await page.goto(`${web.url}fixture?platform=darwin&reset=1`, {
+    waitUntil: "domcontentloaded",
+  });
+
+  const titlebar = page.locator("header");
+  await expect(titlebar).not.toHaveAttribute("data-window-chrome");
+  await expect(titlebar).toHaveCSS("padding-left", "12px");
+
+  await titlebar.evaluate((element) => element.setAttribute("data-window-chrome", "darwin"));
+  await expect(titlebar).toHaveCSS("padding-left", "76px");
+  await expect(titlebar.getByRole("button", { name: /session list/u })).toBeVisible();
+});
+
 test("installs from the hosted-client titlebar without overflowing a phone", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 568 });
   await page.goto(web.url, { waitUntil: "domcontentloaded" });

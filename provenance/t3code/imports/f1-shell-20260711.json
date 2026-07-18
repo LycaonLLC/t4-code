@@ -30,7 +30,7 @@
       "sourceBlobSha": "3ae42a3e61cac54e9fe75cb58a67313241989ec9",
       "targetPath": "apps/web/src/app.css",
       "classification": "adapted",
-      "checksum": "sha256:bc4ddb0bbceeb26a1b8754d8d39728e3a61a85baf6ed71719374b396d4134e75"
+      "checksum": "sha256:f6e4c9902a5b0bbaf92867119a67102e6ed6ab257fdf60961101cf0705febe0e"
     },
     {
       "sourcePath": "apps/web/src/hooks/useResizableWidth.ts",

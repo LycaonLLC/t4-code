@@ -91,7 +91,12 @@ export function Titlebar({
   railToggle: RailTogglePresentation;
 }) {
   return (
-    <header className="drag-region workspace-topbar titlebar-traffic-light-inset titlebar-window-controls-reserve shrink-0 gap-1 border-border border-b bg-background px-1 sm:gap-2 sm:px-3">
+    <header
+      className="drag-region workspace-topbar titlebar-traffic-light-inset titlebar-window-controls-reserve shrink-0 gap-1 border-border border-b bg-background px-1 sm:gap-2 sm:px-3"
+      data-window-chrome={
+        rendererPlatform.mode === "desktop" ? rendererPlatform.platform : undefined
+      }
+    >
       <Tooltip>
         <TooltipTrigger
           render={
