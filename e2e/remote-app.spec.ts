@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { spawn, type ChildProcess } from "node:child_process";
-import { access, readFile, stat } from "node:fs/promises";
+import { access, readFile, stat, writeFile } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AddressInfo } from "node:net";
@@ -448,16 +448,44 @@ test("@soak mounts the bounded tail of a 10k history on a phone viewport", async
     await historyWeb.start();
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(historyWeb.url, { waitUntil: "domcontentloaded" });
+    const navigationTiming = await page.evaluate(() => {
+      const navigation = performance.getEntriesByType("navigation")[0] as
+        | PerformanceNavigationTiming
+        | undefined;
+      return { domContentLoaded: navigation?.domContentLoadedEventEnd ?? 0 };
+    });
     await expect(page.getByText(CONNECTED_COPY, { exact: true })).toBeVisible();
+    const connectedAt = await page.evaluate(() => performance.now());
     await page.getByRole("button", { name: "Show session list", exact: true }).click();
     const rail = page.getByRole("dialog", { name: "Working folders and sessions" });
+    const sessionClickStartedAt = await page.evaluate(() => performance.now());
     await rail.locator('[data-session-row="host-history/session-history"]').click();
 
     const transcript = page.getByRole("log", { name: "Transcript" });
     await expect(transcript).toBeVisible();
+    const transcriptVisibleAt = await page.evaluate(() => performance.now());
     await expect(transcript.locator("[data-cold-mount-overlay]")).toHaveCount(0);
+    const realListVisibleAt = await page.evaluate(() => performance.now());
     await expect(transcript.getByText("message-10000", { exact: true })).toBeVisible();
+    const tailPaintedAt = await page.evaluate(
+      () => new Promise<number>((resolvePaint) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolvePaint(performance.now())));
+      }),
+    );
     expect(await transcript.locator("[data-transcript-row]").count()).toBeLessThan(100);
+    const phaseOutput = process.env.T4_PERF_PHASE_OUTPUT;
+    if (phaseOutput !== undefined) {
+      await writeFile(
+        phaseOutput,
+        `${JSON.stringify({
+          navigationDomContentLoaded: navigationTiming.domContentLoaded,
+          connectedAfterDomContentLoaded: connectedAt - navigationTiming.domContentLoaded,
+          sessionClickToTranscriptVisible: transcriptVisibleAt - sessionClickStartedAt,
+          sessionClickToRealListVisible: realListVisibleAt - sessionClickStartedAt,
+          sessionClickToTailPainted: tailPaintedAt - sessionClickStartedAt,
+        })}\n`,
+      );
+    }
   } finally {
     await historyWeb?.stop();
     await historyFixture.stop();
