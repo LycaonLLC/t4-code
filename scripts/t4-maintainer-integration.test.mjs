@@ -19,6 +19,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 
+import { makeCanonicalTemporaryDirectory } from "./test-temporary-directory.mjs";
+
 const repoRoot = resolve(import.meta.dirname, "..");
 const deployScript = resolve(repoRoot, "ops/t4-maintainer/deploy-local.sh");
 const runnerScript = resolve(repoRoot, "ops/t4-maintainer/run.sh");
@@ -1125,8 +1127,7 @@ async function waitForPath(path) {
 async function createDeployFixture(options = {}) {
   const previousVersion = options.sameVersion ? "1.2.3" : "1.2.2";
   const manifestKind = options.manifestKind ?? "t4-maintainer-local-deployment";
-  const fixtureRoot = process.platform === "darwin" ? "/private/tmp" : tmpdir();
-  const root = await realpath(await mkdtemp(join(fixtureRoot, "t4-maintainer-contract-")));
+  const root = await makeCanonicalTemporaryDirectory("t4-maintainer-contract-");
   const home = join(root, "home");
   const state = join(root, "mock-state");
   const bin = join(root, "bin");
@@ -3216,14 +3217,17 @@ test("test mode cannot bypass publication gates from a production root", async (
     workflowsTerminal: true,
     useHostPrivilegeTools: true,
   });
-  const productionRoot = await mkdtemp(join("/var/tmp", "t4-maintainer-production-"));
+  const productionTemporaryRoot = await realpath("/var/tmp");
+  const productionRoot = await realpath(
+    await mkdtemp(join(productionTemporaryRoot, "t4-maintainer-production-")),
+  );
   t.after(async () => {
     await fixture.cleanup();
     await rm(productionRoot, { recursive: true, force: true });
   });
   const result = fixture.runRunner({
     T4_MAINTAINER_ROOT: productionRoot,
-    T4_MAINTAINER_PROC_ROOT: "/proc",
+    T4_MAINTAINER_TEST_PROC_ROOT: "/proc",
   });
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   const calls = await fixture.callsText();

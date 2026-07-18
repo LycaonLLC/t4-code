@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { connect as connectSocket } from "node:net";
 import { tmpdir } from "node:os";
@@ -22,6 +22,7 @@ import {
   safeStaticPath,
   startTailnetGateway,
 } from "./tailnet-gateway.mjs";
+import { makeCanonicalTemporaryDirectory } from "./test-temporary-directory.mjs";
 
 const ALLOWED_ORIGIN = "https://host.example-tailnet.ts.net:8445";
 const DEPLOYMENT_IDENTITY = `sha256:${"b".repeat(64)}`;
@@ -41,7 +42,7 @@ function websocketOpen(socket) {
 }
 
 async function fixture(socketTopology = "symlink", gatewayOptions = {}) {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), "t4-gateway-")));
+  const directory = await makeCanonicalTemporaryDirectory("t4-gateway-");
   await chmod(directory, 0o700);
   const webRoot = join(directory, "web");
   const socketPath = join(directory, "appserver.sock");

@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 
+import { makeCanonicalTemporaryDirectory } from "./test-temporary-directory.mjs";
+
 const repoRoot = resolve(import.meta.dirname, "..");
 const maintainerRoot = resolve(repoRoot, "ops/t4-maintainer");
 const bashPath = "/bin/bash";
@@ -56,7 +58,7 @@ test("maintainer shell entrypoints remain syntactically valid", async () => {
 });
 
 test("runner preflights the configured date helper before creating state", async () => {
-  const scratch = await mkdtemp(join(tmpdir(), "t4-maintainer-date-"));
+  const scratch = await makeCanonicalTemporaryDirectory("t4-maintainer-date-");
   const stateRoot = join(scratch, "state");
   const missingDate = join(scratch, "missing-date");
   await mkdir(stateRoot, { mode: 0o700 });
@@ -78,17 +80,23 @@ test("runner preflights the configured date helper before creating state", async
 });
 
 test("runner preflights the Linux Sol privilege runner before creating state", async () => {
-  const scratch = await mkdtemp(join(tmpdir(), "t4-maintainer-setpriv-"));
+  const scratch = await makeCanonicalTemporaryDirectory("t4-maintainer-setpriv-");
   const stateRoot = join(scratch, "maintainer");
+  const bin = join(scratch, "bin");
   const uname = join(stateRoot, "uname");
   const missingSetpriv = join(stateRoot, "missing-setpriv");
   await mkdir(stateRoot, { mode: 0o700 });
+  await mkdir(bin, { mode: 0o700 });
+  for (const command of ["dpkg", "dpkg-query", "flock", "sha256sum", "systemctl"]) {
+    await writeFile(join(bin, command), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  }
   await writeFile(uname, "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o700 });
   try {
     const result = spawnSync(bashPath, [resolve(maintainerRoot, "run.sh")], {
       encoding: "utf8",
       env: {
         ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
         T4_MAINTAINER_TEST_MODE: "1",
         T4_MAINTAINER_ROOT: stateRoot,
         T4_MAINTAINER_UNAME: uname,
