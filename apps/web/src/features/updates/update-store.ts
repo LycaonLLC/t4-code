@@ -1,4 +1,5 @@
 import type { DesktopShellPort } from "@t4-code/client";
+import { decodeAndroidUpdateState } from "@t4-code/protocol";
 import type { DesktopUpdateState } from "@t4-code/protocol/desktop-ipc";
 import { useSyncExternalStore } from "react";
 
@@ -31,33 +32,16 @@ function initialState(): AppUpdateState {
   return { version: 1, currentVersion: BUILD_VERSION, phase: "current", delivery: "web" };
 }
 
-function cleanMessage(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const cleaned = Array.from(value)
-    .map((character) => {
-      const point = character.codePointAt(0) ?? 0;
-      return point <= 0x1f || (point >= 0x7f && point <= 0x9f) ? " " : character;
-    })
-    .join("")
-    .trim();
-  return cleaned.length === 0 ? undefined : cleaned.slice(0, 512);
-}
-
 function fromDesktop(state: DesktopUpdateState): AppUpdateState {
   return Object.freeze({ ...state, delivery: "desktop" });
 }
 
 export function fromAndroidUpdateState(state: NativeUpdateState): AppUpdateState {
-  if (!Number.isSafeInteger(state.revision) || state.revision < 0) {
-    throw new Error("invalid Android updater revision");
-  }
-  const checkedAt =
-    state.checkedAt !== undefined && Number.isSafeInteger(state.checkedAt) && state.checkedAt >= 0
-      ? state.checkedAt
-      : undefined;
+  const decoded = decodeAndroidUpdateState(state);
+  const checkedAt = decoded.checkedAt;
   let phase: AppUpdateState["phase"];
   let handoff: AppUpdateState["handoff"];
-  switch (state.phase) {
+  switch (decoded.phase) {
     case "available":
       phase = "manual";
       break;
@@ -66,25 +50,33 @@ export function fromAndroidUpdateState(state: NativeUpdateState): AppUpdateState
       handoff = "installer";
       break;
     case "idle":
+      phase = "idle";
+      break;
     case "checking":
+      phase = "checking";
+      break;
     case "current":
+      phase = "current";
+      break;
     case "downloading":
+      phase = "downloading";
+      break;
     case "error":
-      phase = state.phase;
+      phase = "error";
       break;
     default:
       throw new Error("invalid Android updater phase");
   }
-  const message = cleanMessage(state.error) ?? cleanMessage(state.message);
+  const message = decoded.error ?? decoded.message;
   return Object.freeze({
     version: 1,
-    currentVersion: state.currentVersion,
+    currentVersion: decoded.currentVersion,
     phase,
     delivery: "android",
-    nativeRevision: state.revision,
+    nativeRevision: decoded.revision,
     ...(handoff === undefined ? {} : { handoff }),
     ...(checkedAt === undefined ? {} : { checkedAt }),
-    ...(state.latestVersion === undefined ? {} : { availableVersion: state.latestVersion }),
+    ...(decoded.latestVersion === undefined ? {} : { availableVersion: decoded.latestVersion }),
     ...(message === undefined ? {} : { message }),
   });
 }

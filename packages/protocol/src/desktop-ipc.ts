@@ -18,6 +18,15 @@ import {
   type TerminalId,
 } from "@oh-my-pi/app-wire";
 import { decodeServerFrame } from "./index.ts";
+import {
+  decodeDesktopUpdateState,
+  type DesktopUpdateState,
+} from "./app-update.ts";
+import { decodePairLinkEvent, type PairLinkEvent } from "./pair-link.ts";
+
+export { decodeDesktopUpdateState } from "./app-update.ts";
+export type { DesktopUpdatePhase, DesktopUpdateState } from "./app-update.ts";
+export type { PairLinkEvent } from "./pair-link.ts";
 
 export const DESKTOP_IPC_VERSION = PROTOCOL_VERSION;
 export type RendererServerFrame = Exclude<ServerFrame, { type: "pair.ok" }>;
@@ -131,11 +140,6 @@ export interface BootstrapResult {
   version: typeof PROTOCOL_VERSION;
   connected: boolean;
   service?: ServiceInspection;
-}
-export interface PairLinkEvent {
-  hostHint: string;
-  code: string;
-  issuedAt: number;
 }
 export interface PairLinksDrainRequest {}
 export interface PairLinksDrainResult {
@@ -260,27 +264,6 @@ export interface TerminalCloseRequest {
 export interface TerminalResult {
   targetId: string;
   accepted: boolean;
-}
-
-export type DesktopUpdatePhase =
-  | "idle"
-  | "checking"
-  | "current"
-  | "available"
-  | "manual"
-  | "downloading"
-  | "ready"
-  | "error";
-
-/** Renderer-safe update metadata. Download URLs and filesystem paths stay in Electron main. */
-export interface DesktopUpdateState {
-  readonly version: 1;
-  readonly currentVersion: string;
-  readonly phase: DesktopUpdatePhase;
-  readonly checkedAt?: number;
-  readonly availableVersion?: string;
-  readonly progressPercent?: number;
-  readonly message?: string;
 }
 
 export interface DesktopUpdateRequest {}
@@ -592,70 +575,6 @@ function state(value: unknown): ConnectionState {
   return value as ConnectionState;
 }
 
-const DESKTOP_VERSION_PATTERN =
-  /^\d{1,6}\.\d{1,6}\.\d{1,6}(?:-[0-9A-Za-z](?:[0-9A-Za-z.-]{0,62}[0-9A-Za-z])?)?$/u;
-
-function desktopVersion(value: unknown, name: string): string {
-  const decoded = controlFree(value, name, 96);
-  if (!DESKTOP_VERSION_PATTERN.test(decoded)) throw new Error(`invalid ${name}`);
-  return decoded;
-}
-
-/** Strictly decode and freeze update state before it crosses either IPC boundary. */
-export function decodeDesktopUpdateState(value: unknown): DesktopUpdateState {
-  const item = object(value, "desktop update state");
-  exact(item, [
-    "version",
-    "currentVersion",
-    "phase",
-    "checkedAt",
-    "availableVersion",
-    "progressPercent",
-    "message",
-  ]);
-  if (item.version !== 1) throw new Error("unsupported desktop update state");
-  if (
-    ![
-      "idle",
-      "checking",
-      "current",
-      "available",
-      "manual",
-      "downloading",
-      "ready",
-      "error",
-    ].includes(item.phase as string)
-  )
-    throw new Error("invalid desktop update phase");
-  if (
-    item.checkedAt !== undefined &&
-    (typeof item.checkedAt !== "number" ||
-      !Number.isSafeInteger(item.checkedAt) ||
-      item.checkedAt < 0)
-  )
-    throw new Error("invalid desktop update checkedAt");
-  if (
-    item.progressPercent !== undefined &&
-    (typeof item.progressPercent !== "number" ||
-      !Number.isFinite(item.progressPercent) ||
-      item.progressPercent < 0 ||
-      item.progressPercent > 100)
-  )
-    throw new Error("invalid desktop update progress");
-  const decoded: DesktopUpdateState = {
-    version: 1,
-    currentVersion: desktopVersion(item.currentVersion, "currentVersion"),
-    phase: item.phase as DesktopUpdatePhase,
-    ...(item.checkedAt === undefined ? {} : { checkedAt: item.checkedAt }),
-    ...(item.availableVersion === undefined
-      ? {}
-      : { availableVersion: desktopVersion(item.availableVersion, "availableVersion") }),
-    ...(item.progressPercent === undefined ? {} : { progressPercent: item.progressPercent }),
-    ...(item.message === undefined ? {} : { message: controlFree(item.message, "message", 512) }),
-  };
-  return Object.freeze(decoded);
-}
-
 export function decodeDesktopUpdateRendererReadyResult(
   value: unknown,
 ): DesktopUpdateRendererReadyResult {
@@ -898,17 +817,6 @@ export function decodeDesktopInvokeRequest(input: unknown): DesktopInvokeRequest
   }
   throw new Error("unsupported desktop channel");
 }
-function pairLink(value: unknown): PairLinkEvent {
-  const item = object(value, "pair link");
-  exact(item, ["hostHint", "code", "issuedAt"]);
-  const hostHint = controlFree(item.hostHint, "hostHint", 128);
-  const code = controlFree(item.code, "code", 6);
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(hostHint) || !/^\d{6}$/u.test(code))
-    throw new Error("invalid pair link");
-  if (typeof item.issuedAt !== "number" || !Number.isFinite(item.issuedAt) || item.issuedAt < 0)
-    throw new Error("invalid pair link issuedAt");
-  return { hostHint, code, issuedAt: item.issuedAt };
-}
 export function decodeDesktopEvent(input: unknown): DesktopEvent {
   const frame = inputObject(input);
   exact(frame, ["channel", "payload"]);
@@ -930,7 +838,7 @@ export function decodeDesktopEvent(input: unknown): DesktopEvent {
       payload: { targetId: target(payload.targetId), state: state(payload.state) },
     };
   }
-  if (channel === "omp:pair-link") return { channel, payload: pairLink(payload) };
+  if (channel === "omp:pair-link") return { channel, payload: decodePairLinkEvent(payload) };
   if (channel === "app:update:state") {
     return { channel, payload: decodeDesktopUpdateState(payload) };
   }

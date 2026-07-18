@@ -1,4 +1,4 @@
-import { deviceToken as validateDeviceToken } from "@t4-code/protocol";
+import { deviceToken as validateDeviceToken, type AndroidUpdateState } from "@t4-code/protocol";
 
 const LEGACY_MOBILE_BACKEND_STORAGE_KEY = "t4-code:mobile-backend:v1";
 export const MOBILE_BACKEND_STORAGE_KEY = "t4-code:mobile-backends:v2";
@@ -45,15 +45,7 @@ interface T4SecureStoragePlugin {
   clearCredentials(options: { readonly hostKey: string }): Promise<void>;
 }
 
-export interface NativeUpdateState {
-  readonly currentVersion: string;
-  readonly latestVersion?: string;
-  readonly checkedAt?: number;
-  readonly phase: "idle" | "checking" | "current" | "available" | "downloading" | "installer" | "error";
-  readonly revision: number;
-  readonly error?: string;
-  readonly message?: string;
-}
+export type NativeUpdateState = AndroidUpdateState;
 
 export interface T4UpdatePlugin {
   getState(): Promise<NativeUpdateState>;
