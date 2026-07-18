@@ -5,7 +5,11 @@ import {
   decodeDesktopInvokeRequest,
   decodeDesktopUpdateRendererReadyResult,
   decodeDesktopUpdateState,
+  decodeProjectionCacheLoadResult,
+  decodeProjectionCacheSaveRequestValue,
+  decodeProjectionCacheSaveResult,
   decodeSpeechText,
+  MAX_PROJECTION_CACHE_BYTES,
   MAX_SPEECH_TEXT_BYTES,
   isDesktopInvokeRequest,
 } from "../src/desktop-ipc.ts";
@@ -420,5 +424,40 @@ describe("desktop IPC boundary", () => {
     expect(() => decodeSpeechText("x".repeat(MAX_SPEECH_TEXT_BYTES + 1))).toThrow();
     expect(() => decodeSpeechText("bad\0text")).toThrow();
     expect(() => decodeDesktopInvokeRequest({ channel: "omp:speech:stop", payload: {} })).not.toThrow();
+  });
+  it("strictly bounds and versions projection cache IPC payloads", () => {
+    const value = JSON.stringify({
+      kind: "t4-code-projection",
+      version: 1,
+      data: { sessions: [], sessionIndex: [], lru: [], freshness: "cached" },
+    });
+    expect(decodeDesktopInvokeRequest({
+      channel: "app:projection-cache:load",
+      payload: {},
+    })).toEqual({ channel: "app:projection-cache:load", payload: {} });
+    expect(decodeDesktopInvokeRequest({
+      channel: "app:projection-cache:save",
+      payload: { value },
+    })).toEqual({ channel: "app:projection-cache:save", payload: { value } });
+    expect(decodeProjectionCacheSaveRequestValue(value)).toBe(value);
+    expect(decodeProjectionCacheLoadResult({ available: true, value })).toEqual({
+      available: true,
+      value,
+    });
+    expect(decodeProjectionCacheSaveResult({ saved: true })).toEqual({ saved: true });
+
+    for (const invalid of [
+      { channel: "app:projection-cache:load", payload: { storageKey: "renderer-choice" } },
+      { channel: "app:projection-cache:save", payload: { value: JSON.stringify({ kind: "t4-code-projection", version: 2, data: {} }) } },
+      { channel: "app:projection-cache:save", payload: { value: "not-json" } },
+    ]) expect(() => decodeDesktopInvokeRequest(invalid)).toThrow();
+    expect(() => decodeProjectionCacheLoadResult({ available: false, value })).toThrow();
+    expect(() => decodeProjectionCacheSaveResult({ saved: "yes" })).toThrow();
+    const oversized = JSON.stringify({
+      kind: "t4-code-projection",
+      version: 1,
+      data: { padding: "x".repeat(MAX_PROJECTION_CACHE_BYTES) },
+    });
+    expect(() => decodeProjectionCacheSaveRequestValue(oversized)).toThrow();
   });
 });

@@ -182,7 +182,25 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
   }
 
   const hosts: WorkspaceHost[] = [];
-  for (const [hostId, meta] of snapshot.hosts) {
+  const hostIds = new Set(snapshot.hosts.keys());
+  for (const ref of snapshot.projection.sessionIndex.values()) {
+    hostIds.add(String(ref.hostId));
+  }
+  for (const hostId of hostIds) {
+    const meta = snapshot.hosts.get(hostId);
+    if (meta === undefined) {
+      // Projection caches retain stable host ids but intentionally do not
+      // persist target bindings or welcome capabilities. This display-only
+      // placeholder keeps cached rows grouped without inventing authority;
+      // the first live welcome replaces it with authenticated metadata.
+      hosts.push({
+        id: hostId,
+        name: hostId,
+        kind: "remote",
+        sessionInventoryTruncated: true,
+      });
+      continue;
+    }
     const target = snapshot.targets.get(meta.targetId);
     const inventoryMetadata = snapshot.projection.sessionIndexMetadata.get(hostId);
     hosts.push({

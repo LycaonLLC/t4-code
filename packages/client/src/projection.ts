@@ -1438,7 +1438,8 @@ export class ProjectionStore {
   }
   private async drainCacheSaves(): Promise<void> {
     try {
-      while (this.pendingSnapshot !== undefined && !this.disposed) {
+      // Disposal blocks new mutations, but already-coalesced snapshots must still drain.
+      while (this.pendingSnapshot !== undefined) {
         const snapshot = this.pendingSnapshot;
         this.pendingSnapshot = undefined;
         let serialized: string;

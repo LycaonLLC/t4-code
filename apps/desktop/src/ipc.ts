@@ -5,6 +5,8 @@ import {
   decodeLocalProfileId,
   decodeDesktopUpdateRendererReadyResult,
   decodeDesktopUpdateState,
+  decodeProjectionCacheLoadResult,
+  decodeProjectionCacheSaveResult,
   type BootstrapResult,
   type CommandRequest,
   type CommandResult,
@@ -29,6 +31,9 @@ import {
   type PairRequest,
   type PairResult,
   type PairLinksDrainResult,
+  type ProjectionCacheLoadResult,
+  type ProjectionCacheSaveRequest,
+  type ProjectionCacheSaveResult,
   type RuntimeErrorEvent,
   type ServiceActionResult,
   type ServiceAvailabilityIssue,
@@ -71,6 +76,10 @@ export interface IpcRuntime {
     readonly downloadUpdate: () => Promise<DesktopUpdateState>;
     readonly restartToUpdate: () => DesktopUpdateState;
     readonly subscribe: (listener: (state: DesktopUpdateState) => void) => () => void;
+  };
+  readonly projectionCache?: {
+    readonly load: () => ProjectionCacheLoadResult | Promise<ProjectionCacheLoadResult>;
+    readonly save: (value: string) => ProjectionCacheSaveResult | Promise<ProjectionCacheSaveResult>;
   };
 }
 export class RemotePairingUnavailableError extends Error {
@@ -271,6 +280,18 @@ export class DesktopIpcRegistry {
         openSettings: this.runtime.drainPendingUpdateOpen?.() ?? false,
       });
     });
+    this.ipc.handle("app:projection-cache:load", async (event, payload: unknown): Promise<ProjectionCacheLoadResult> => {
+      this.assertSender(event);
+      decodeRequest("app:projection-cache:load", payload);
+      const result = await (this.runtime.projectionCache?.load() ?? { available: false, value: null });
+      return decodeProjectionCacheLoadResult(result);
+    });
+    this.ipc.handle("app:projection-cache:save", async (event, payload: unknown): Promise<ProjectionCacheSaveResult> => {
+      this.assertSender(event);
+      const input = decodeRequest("app:projection-cache:save", payload).payload as ProjectionCacheSaveRequest;
+      const result = await (this.runtime.projectionCache?.save(input.value) ?? { saved: false });
+      return decodeProjectionCacheSaveResult(result);
+    });
     this.updateUnsubscribe = this.runtime.updateController?.subscribe((state) => {
       this.emit("app:update:state", state);
     });
@@ -289,6 +310,7 @@ export class DesktopIpcRegistry {
       "omp:service:restart", "omp:service:uninstall",
       "app:update:get-state", "app:update:check", "app:update:download", "app:update:restart",
       "app:update:renderer-ready",
+      "app:projection-cache:load", "app:projection-cache:save",
     ] as const) this.ipc.removeHandler(channel);
     this.installed = false;
   }

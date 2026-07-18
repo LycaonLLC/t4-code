@@ -2,6 +2,12 @@ import { randomBytes } from "node:crypto";
 import { hostname } from "node:os";
 import ElectronStore from "electron-store";
 import { safeStorage } from "electron";
+import {
+  decodeProjectionCacheSaveRequestValue,
+  MAX_PROJECTION_CACHE_BYTES,
+  type ProjectionCacheLoadResult,
+  type ProjectionCacheSaveResult,
+} from "@t4-code/protocol/desktop-ipc";
 import type { CursorRecord, CursorStore } from "@t4-code/client";
 import type { CredentialEntry, CredentialVault, PairedHostRecord, TargetRegistry } from "@t4-code/remote";
 import type { CredentialCiphertextStore, RemoteTargetRecord, RemoteTargetStore, SafeStorageAdapter } from "./remote-runtime/index.ts";
@@ -21,6 +27,10 @@ interface RegistryState { readonly targets: Record<string, PairedHostRecord>; }
 interface VaultState { readonly ciphertext: Record<string, string>; }
 interface RemoteRegistryState { readonly version: 1; readonly records: readonly RemoteTargetRecord[]; }
 interface CredentialCiphertextState { readonly version: 1; readonly ciphertexts: Record<string, string>; }
+interface ProjectionCacheCiphertextState {
+  readonly version: 1;
+  readonly ciphertext: string | null;
+}
 
 function recordKey(hostId: string, sessionId: string): string { return `${hostId}\u0000${sessionId}`; }
 function decodeRemoteState(value: unknown): RemoteRegistryState {
@@ -39,6 +49,28 @@ function decodeCredentialState(value: unknown): CredentialCiphertextState {
     ciphertexts[key] = encoded;
   }
   return { version: 1, ciphertexts };
+}
+const MAX_PROJECTION_CACHE_CIPHERTEXT_LENGTH =
+  4 * Math.ceil((MAX_PROJECTION_CACHE_BYTES + 64) / 3);
+function decodeProjectionCacheState(value: unknown): ProjectionCacheCiphertextState {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("invalid projection cache state");
+  const root = value as Record<string, unknown>;
+  if (Object.keys(root).some((key) => key !== "version" && key !== "ciphertext"))
+    throw new Error("invalid projection cache state");
+  if (root.version !== 1) throw new Error("invalid projection cache state");
+  const ciphertext = root.ciphertext;
+  if (ciphertext === null) return { version: 1, ciphertext: null };
+  if (
+    typeof ciphertext !== "string" ||
+    ciphertext.length === 0 ||
+    ciphertext.length > MAX_PROJECTION_CACHE_CIPHERTEXT_LENGTH ||
+    ciphertext.length % 4 !== 0 ||
+    !/^[A-Za-z0-9+/]*={0,2}$/u.test(ciphertext) ||
+    Buffer.from(ciphertext, "base64").toString("base64") !== ciphertext
+  )
+    throw new Error("invalid projection cache state");
+  return { version: 1, ciphertext };
 }
 function enqueueWrite(queue: { tail: Promise<void> }, operation: () => void): Promise<void> {
   const result = queue.tail.then(operation, operation);
@@ -127,6 +159,71 @@ export class ElectronCredentialCiphertextStore implements CredentialCiphertextSt
       this.store.set("version", state.version);
       this.store.set("ciphertexts", state.ciphertexts);
     });
+  }
+}
+
+export class ElectronProjectionCacheStore {
+  private readonly store: ElectronStore<ProjectionCacheCiphertextState>;
+  private readonly writeQueue = { tail: Promise.resolve() };
+  private readonly safeStorage: SafeStorageAdapter;
+  constructor(
+    store = new ElectronStore<ProjectionCacheCiphertextState>({
+      name: "projection-cache",
+      defaults: { version: 1, ciphertext: null },
+    }),
+    safeStorage: SafeStorageAdapter = electronSafeStorage,
+  ) {
+    this.store = store;
+    this.safeStorage = safeStorage;
+  }
+  load(): ProjectionCacheLoadResult {
+    if (!this.safeStorage.isEncryptionAvailable()) return { available: false, value: null };
+    let state: ProjectionCacheCiphertextState;
+    try {
+      state = decodeProjectionCacheState(this.store.store);
+    } catch {
+      this.clear();
+      return { available: true, value: null };
+    }
+    if (state.ciphertext === null) return { available: true, value: null };
+    try {
+      const value = this.safeStorage.decryptString(Buffer.from(state.ciphertext, "base64"));
+      decodeProjectionCacheSaveRequestValue(value);
+      return { available: true, value };
+    } catch {
+      this.clear();
+      return { available: true, value: null };
+    }
+  }
+  save(value: string): Promise<ProjectionCacheSaveResult> {
+    try {
+      decodeProjectionCacheSaveRequestValue(value);
+    } catch {
+      return Promise.resolve({ saved: false });
+    }
+    return enqueueWrite(this.writeQueue, () => {
+      if (!this.safeStorage.isEncryptionAvailable()) throw new Error("projection cache encryption unavailable");
+      const ciphertext = this.safeStorage.encryptString(value).toString("base64");
+      if (
+        ciphertext.length === 0 ||
+        ciphertext.length > MAX_PROJECTION_CACHE_CIPHERTEXT_LENGTH ||
+        ciphertext.length % 4 !== 0 ||
+        !/^[A-Za-z0-9+/]*={0,2}$/u.test(ciphertext) ||
+        Buffer.from(ciphertext, "base64").toString("base64") !== ciphertext
+      )
+        throw new Error("projection cache ciphertext is invalid");
+      this.store.store = { version: 1, ciphertext };
+    }).then(
+      () => ({ saved: true }),
+      () => ({ saved: false }),
+    );
+  }
+  private clear(): void {
+    try {
+      this.store.store = { version: 1, ciphertext: null };
+    } catch {
+      /* best-effort removal of corrupt state */
+    }
   }
 }
 

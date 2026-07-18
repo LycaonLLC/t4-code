@@ -626,6 +626,8 @@ export class DesktopRuntimeController {
     let bootstrap: BootstrapResult;
     let listed: TargetListResult;
     try {
+      await this.projection.ready();
+      if (this.stopped) throw new DesktopRuntimeError("stopped", "desktop runtime is stopped");
       bootstrap = await this.shell.bootstrap();
       if (this.stopped) throw new DesktopRuntimeError("stopped", "desktop runtime is stopped");
       this.replace({ platform: bootstrap.platform, desktopVersion: bootstrap.version });
