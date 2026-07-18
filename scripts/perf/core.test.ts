@@ -7,6 +7,7 @@ import { positiveInteger, sample, summarize, writeReport } from "./report.mjs";
 const ENTRY_COUNT = positiveInteger(process.env.T4_PERF_ENTRY_COUNT, 10_000, "entry count");
 const EVENT_COUNT = positiveInteger(process.env.T4_PERF_EVENT_COUNT, 100_000, "event count");
 const REPETITIONS = positiveInteger(process.env.T4_PERF_REPETITIONS, 5, "repetitions");
+const WARMUPS = positiveInteger(process.env.T4_PERF_WARMUPS, 1, "warmups");
 const HOST_ID = "host-perf";
 const SESSION_ID = "session-perf";
 const VERSION = "omp-app/1";
@@ -79,7 +80,7 @@ test(
           throw new Error("projection snapshot did not retain the expected entries");
         }
       },
-      { repetitions: REPETITIONS },
+      { repetitions: REPETITIONS, warmups: WARMUPS },
     );
 
     const rowProjection = transcriptProjection();
@@ -91,11 +92,11 @@ test(
           throw new Error("row derivation returned fewer rows than expected");
         }
       },
-      { repetitions: REPETITIONS },
+      { repetitions: REPETITIONS, warmups: WARMUPS },
     );
 
     const eventSamples = [];
-    for (let repetition = 0; repetition < REPETITIONS; repetition += 1) {
+    for (let repetition = -WARMUPS; repetition < REPETITIONS; repetition += 1) {
       globalThis.gc?.();
       let state = applyPublicFrame(createProjectionSnapshot(), snapshotFrame() as never);
       const heapBefore = process.memoryUsage().heapUsed;
@@ -113,10 +114,13 @@ test(
           } as never,
         );
       }
-      eventSamples.push({
-        elapsedMs: performance.now() - startedAt,
-        heapGrowthBytes: Math.max(0, process.memoryUsage().heapUsed - heapBefore),
-      });
+      const elapsedMs = performance.now() - startedAt;
+      if (repetition >= 0) {
+        eventSamples.push({
+          elapsedMs,
+          heapGrowthBytes: Math.max(0, process.memoryUsage().heapUsed - heapBefore),
+        });
+      }
       const session = state.sessions.values().next().value;
       const expectedRetainedEvents = Math.min(EVENT_COUNT, 512);
       if (session?.events.length !== expectedRetainedEvents || session.entries.length !== ENTRY_COUNT) {
@@ -129,6 +133,11 @@ test(
       direction: "lower",
       ...summarize(eventSamples.map((value) => value.elapsedMs)),
     };
+    const eventPerItemMetric = {
+      name: "projection.event-ns-per-event",
+      direction: "lower",
+      ...summarize(eventSamples.map((value) => value.elapsedMs * 1_000_000 / EVENT_COUNT), "ns/event"),
+    };
     const heapMetric = {
       name: "projection.events-heap-growth",
       direction: "lower",
@@ -138,9 +147,18 @@ test(
       ),
     };
 
-    writeReport("core", [snapshotMetric, rowsMetric, eventMetric, heapMetric], {
-      scenario: { entryCount: ENTRY_COUNT, eventCount: EVENT_COUNT, repetitions: REPETITIONS },
-    });
+    writeReport(
+      "core",
+      [snapshotMetric, rowsMetric, eventMetric, eventPerItemMetric, heapMetric],
+      {
+        scenario: {
+          entryCount: ENTRY_COUNT,
+          eventCount: EVENT_COUNT,
+          repetitions: REPETITIONS,
+          warmups: WARMUPS,
+        },
+      },
+    );
   },
   120_000,
 );
