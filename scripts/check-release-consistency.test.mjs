@@ -46,6 +46,13 @@ test("current source tree has one consistent release version", () => {
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);
 });
 
+test("tracks the current verified runtime separately from published release provenance", () => {
+  const matrix = JSON.parse(files.get("compat/omp-app-matrix.json"));
+  assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.4-appserver-3");
+  assert.equal(matrix.publishedRuntime.sourceTag, "t4code-17.0.0-appserver-6");
+  assert.notEqual(matrix.verifiedRuntime.sourceCommit, matrix.publishedRuntime.sourceCommit);
+});
+
 test("rejects a tag that differs from the package version", () => {
   assert.ok(
     collectReleaseConsistencyErrors(files, "v9.9.9").some((error) =>
@@ -54,13 +61,22 @@ test("rejects a tag that differs from the package version", () => {
   );
 });
 
-test("tagged releases require published app-wire provenance to match the vendored contract", () => {
+test("tagged releases require published provenance to match current contracts", () => {
   const errors = collectReleaseConsistencyErrors(files, "v0.1.22");
   for (const field of ["version", "commit", "source tree"]) {
     assert.ok(
       errors.some((error) =>
         error.includes(
           `published app-wire ${field} must match current app-wire for tagged releases`,
+        ),
+      ),
+    );
+  }
+  for (const field of ["version", "commit", "tag", "upstream commit", "integration patches"]) {
+    assert.ok(
+      errors.some((error) =>
+        error.includes(
+          `published runtime ${field} must match current verified runtime for tagged releases`,
         ),
       ),
     );
@@ -266,6 +282,27 @@ test("rejects drift in verified OMP runtime provenance", () => {
   const cases = [
     (text) =>
       text.replace(
+        "c77cd02a67304b529b6f19d42f4c7cc22de39ce9",
+        "0000000000000000000000000000000000000000",
+      ),
+    (text) => text.replace('"sourceTag": "t4code-17.0.4-appserver-3"', '"sourceTag": "wrong-tag"'),
+    (text) =>
+      text.replace(
+        '"upstreamCommit": "3fdd85ab6c6bab6c0cdee80abbbec0981740a5c0"',
+        '"upstreamCommit": "invalid"',
+      ),
+    (text) => text.replace('"versioned-agent-view-lifecycle-corpus"', '"Wrong integration patch"'),
+  ];
+  for (const [index, replace] of cases.entries()) {
+    const drifted = changed("compat/omp-app-matrix.json", replace);
+    assert.ok(collectReleaseConsistencyErrors(drifted).length > 0, `runtime drift case ${index}`);
+  }
+});
+
+test("rejects drift in published OMP runtime provenance", () => {
+  const cases = [
+    (text) =>
+      text.replace(
         "f909a2895bc1a352d1d3c27c45d59622bc1c0a36",
         "0000000000000000000000000000000000000000",
       ),
@@ -274,12 +311,6 @@ test("rejects drift in verified OMP runtime provenance", () => {
       text.replace(
         '"upstreamCommit": "d5cd24f39a951bfbd50dc8f50bcf095d59694d6c"',
         '"upstreamCommit": "0000000000000000000000000000000000000000"',
-      ),
-    (text) => text.replace('"complete-session-event-projection"', '"Wrong integration patch"'),
-    (text) =>
-      text.replace(
-        '"upstreamTagContainsIntegrationPatches": false',
-        '"upstreamTagContainsIntegrationPatches": true',
       ),
   ];
   for (const replace of cases) {
