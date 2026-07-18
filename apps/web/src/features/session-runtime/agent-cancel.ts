@@ -141,7 +141,7 @@ async function runConfirmedAgentCancelNow(
   try {
     if (!listenerReady) {
       await challenge;
-      throw new Error("Unable to subscribe for the agent cancellation confirmation.");
+      return;
     }
     const command = runtime.command(address.targetId, {
       hostId: brandHostId(address.hostId),
