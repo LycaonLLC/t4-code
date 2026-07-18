@@ -6,6 +6,7 @@ import {
   collectDoctorReport,
   formatDoctorReport,
   inspectTailnet,
+  readSourceContract,
   satisfiesCaretVersion,
   type DoctorRuntime,
   type SourceContract,
@@ -36,6 +37,16 @@ function runtime(overrides: Partial<DoctorRuntime> = {}): DoctorRuntime {
 }
 
 describe("T4 setup doctor", () => {
+  it("uses current verified runtime metadata instead of published release provenance", async () => {
+    const source = await readSourceContract();
+
+    expect(source.ompVersion).toBe("17.0.4");
+    expect(source.ompTag).toBe("t4code-17.0.4-appserver-4");
+    expect(source.ompUrl).toBe(
+      "https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.4-appserver-4",
+    );
+  });
+
   it("accepts the checked-in toolchain and a healthy local runtime", async () => {
     const report = await collectDoctorReport(runtime());
 
