@@ -1,12 +1,33 @@
-import { hostId, type ClientFrame, type ServerFrame, type WelcomeFrame } from "@t4-code/protocol";
+import { decodeClientFrame, hostId, type ClientFrame, type WelcomeFrame } from "@t4-code/protocol";
 import { describe, expect, it } from "vite-plus/test";
 import {
   OmpClient,
   ompAppV1ProtocolProvider,
   type OmpClientMessage,
+  type OmpDecodedServerEvent,
   type OmpProtocolProvider,
   type OmpTransport,
+  type PublicOmpServerEvent,
 } from "../src/index.ts";
+
+function welcomeFrame(): WelcomeFrame {
+  return {
+    v: "omp-app/1",
+    type: "welcome",
+    selectedProtocol: "omp-app/1",
+    hostId: hostId("provider-host"),
+    ompVersion: "test",
+    ompBuild: "test",
+    appserverVersion: "test",
+    appserverBuild: "test",
+    epoch: "provider-epoch",
+    grantedCapabilities: ["sessions.read"],
+    grantedFeatures: ["resume"],
+    negotiatedLimits: {},
+    authentication: "local",
+    resumed: false,
+  };
+}
 
 class HandshakeTransport implements OmpTransport {
   private readonly messages = new Set<(data: string | Uint8Array) => void>();
@@ -22,25 +43,9 @@ class HandshakeTransport implements OmpTransport {
   }
   close(): void {}
   send(data: string): void {
-    const frame = ompAppV1ProtocolProvider.decodeClientFrame(data);
+    const frame = decodeClientFrame(data);
     if (frame.type !== "hello") return;
-    const welcome: WelcomeFrame = {
-      v: "omp-app/1",
-      type: "welcome",
-      selectedProtocol: "omp-app/1",
-      hostId: hostId("provider-host"),
-      ompVersion: "test",
-      ompBuild: "test",
-      appserverVersion: "test",
-      appserverBuild: "test",
-      epoch: "provider-epoch",
-      grantedCapabilities: ["sessions.read"],
-      grantedFeatures: ["resume"],
-      negotiatedLimits: {},
-      authentication: "local",
-      resumed: false,
-    };
-    for (const listener of this.messages) listener(JSON.stringify(welcome));
+    for (const listener of this.messages) listener(JSON.stringify(welcomeFrame()));
   }
 }
 
@@ -158,10 +163,27 @@ describe("OmpProtocolProvider", () => {
     }
   });
 
-  it("routes outbound building, encoding, and server decoding through an injected provider", async () => {
+  it("normalizes a validated server frame into a version-free T4 event", () => {
+    const decoded = ompAppV1ProtocolProvider.decodeServerEvent(welcomeFrame());
+
+    expect(decoded.kind).toBe("welcome");
+    expect(decoded.event).toEqual({ kind: "welcome", payload: decoded.payload });
+    expect(decoded.payload).not.toHaveProperty("v");
+    expect(decoded.payload).not.toHaveProperty("type");
+    expect(decoded.payload).toMatchObject({
+      hostId: "provider-host",
+      selectedProtocol: "omp-app/1",
+      authentication: "local",
+    });
+    expect(decoded.wireFrame).toMatchObject({ v: "omp-app/1", type: "welcome" });
+    expect(Object.isFrozen(decoded.event)).toBe(true);
+    expect(Object.isFrozen(decoded.payload)).toBe(true);
+  });
+
+  it("routes outbound work and inbound events through an injected provider", async () => {
     let clientBuilds = 0;
     let clientEncodes = 0;
-    let serverDecodes = 0;
+    let serverEventDecodes = 0;
     const provider: OmpProtocolProvider = {
       ...ompAppV1ProtocolProvider,
       buildClientFrame(message: OmpClientMessage): ClientFrame {
@@ -172,9 +194,9 @@ describe("OmpProtocolProvider", () => {
         clientEncodes += 1;
         return ompAppV1ProtocolProvider.encodeClientFrame(frame);
       },
-      decodeServerFrame(input: unknown): ServerFrame {
-        serverDecodes += 1;
-        return ompAppV1ProtocolProvider.decodeServerFrame(input);
+      decodeServerEvent(input: unknown): OmpDecodedServerEvent {
+        serverEventDecodes += 1;
+        return ompAppV1ProtocolProvider.decodeServerEvent(input);
       },
     };
     const client = new OmpClient({
@@ -182,13 +204,17 @@ describe("OmpProtocolProvider", () => {
       protocolProvider: provider,
       transport: () => new HandshakeTransport(),
     });
+    const events: PublicOmpServerEvent[] = [];
+    client.onEvent((event) => events.push(event));
 
     await client.connect();
 
     expect(client.state).toBe("ready");
     expect(clientBuilds).toBeGreaterThan(0);
     expect(clientEncodes).toBeGreaterThan(0);
-    expect(serverDecodes).toBe(1);
+    expect(serverEventDecodes).toBe(1);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ kind: "welcome", payload: { hostId: "provider-host" } });
     await client.close();
   });
 });

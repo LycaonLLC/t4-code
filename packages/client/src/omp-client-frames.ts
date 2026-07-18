@@ -1,44 +1,46 @@
-import { AppWireError, type PairOkFrame, type ResultFrame, type ServerFrame, type WelcomeFrame } from "@t4-code/protocol";
+import { AppWireError } from "@t4-code/protocol";
+import type { OmpDecodedServerEvent } from "./omp-protocol-provider.ts";
 
-type DurableFrame = Extract<ServerFrame, { type: "entry" | "event" | "session.delta" }>;
+type DecodedEvent<Kind extends OmpDecodedServerEvent["kind"]> = Extract<OmpDecodedServerEvent, { kind: Kind }>;
+type DurableEvent = DecodedEvent<"entry" | "event" | "session.delta">;
 export function safeFrameDecodeFailure(error: unknown): string {
   if (!(error instanceof AppWireError)) return "invalid server frame";
   const safePath = error.path !== undefined && /^[A-Za-z0-9.[\]_-]{1,128}$/u.test(error.path) ? ` at ${error.path}` : "";
   return `invalid server frame (${error.code}${safePath})`;
 }
 export interface FrameDispatchHandlers {
-  welcome(frame: WelcomeFrame): void;
+  welcome(message: DecodedEvent<"welcome">): void;
   pong(nonce: string): void;
-  bye(frame: Extract<ServerFrame, { type: "bye" }>): void;
-  response(frame: ResultFrame): void;
-  pairOk(frame: PairOkFrame, generation: number): void | Promise<void>;
-  pairError(frame: Extract<ServerFrame, { type: "pair.error" }>): void;
-  gap(frame: Extract<ServerFrame, { type: "gap" }>): void;
-  snapshot(frame: Extract<ServerFrame, { type: "snapshot" }>): void;
-  durable(frame: DurableFrame): void;
-  other(frame: Exclude<ServerFrame, WelcomeFrame | ResultFrame | PairOkFrame | Extract<ServerFrame, { type: "bye" | "pong" | "pair.error" | "gap" | "snapshot" | "entry" | "event" | "session.delta" }>>): void;
+  bye(message: DecodedEvent<"bye">): void;
+  response(message: DecodedEvent<"response">): void;
+  pairOk(message: DecodedEvent<"pair.ok">, generation: number): void | Promise<void>;
+  pairError(message: DecodedEvent<"pair.error">): void;
+  gap(message: DecodedEvent<"gap">): void;
+  snapshot(message: DecodedEvent<"snapshot">): void;
+  durable(message: DurableEvent): void;
+  other(message: Exclude<OmpDecodedServerEvent, DecodedEvent<"welcome" | "response" | "pair.ok" | "bye" | "pong" | "pair.error" | "gap" | "snapshot" | "entry" | "event" | "session.delta">>): void;
 }
 
-/** Stable server-frame dispatch boundary; callbacks are constructed once per client. */
-export class OmpClientFrameDispatcher {
+/** Stable server-event dispatch boundary; callbacks are constructed once per client. */
+export class OmpClientEventDispatcher {
   private readonly handlers: FrameDispatchHandlers;
   constructor(handlers: FrameDispatchHandlers) {
     this.handlers = handlers;
   }
-  dispatch(frame: ServerFrame, generation: number): void | Promise<void> {
-    switch (frame.type) {
-      case "welcome": return this.handlers.welcome(frame);
-      case "pong": return this.handlers.pong(frame.nonce);
-      case "bye": return this.handlers.bye(frame);
-      case "response": return this.handlers.response(frame);
-      case "pair.ok": return this.handlers.pairOk(frame, generation);
-      case "pair.error": return this.handlers.pairError(frame);
-      case "gap": return this.handlers.gap(frame);
-      case "snapshot": return this.handlers.snapshot(frame);
+  dispatch(message: OmpDecodedServerEvent, generation: number): void | Promise<void> {
+    switch (message.kind) {
+      case "welcome": return this.handlers.welcome(message);
+      case "pong": return this.handlers.pong(message.payload.nonce);
+      case "bye": return this.handlers.bye(message);
+      case "response": return this.handlers.response(message);
+      case "pair.ok": return this.handlers.pairOk(message, generation);
+      case "pair.error": return this.handlers.pairError(message);
+      case "gap": return this.handlers.gap(message);
+      case "snapshot": return this.handlers.snapshot(message);
       case "entry":
       case "event":
-      case "session.delta": return this.handlers.durable(frame);
-      default: return this.handlers.other(frame);
+      case "session.delta": return this.handlers.durable(message);
+      default: return this.handlers.other(message);
     }
   }
 }

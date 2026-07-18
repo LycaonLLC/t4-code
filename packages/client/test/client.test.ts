@@ -20,6 +20,7 @@ import {
   type CursorRecord,
   type CursorStore,
   type OmpTransport,
+  type PublicOmpServerEvent,
   type PublicServerFrame,
   type TimerScheduler,
 } from "../src/index.ts";
@@ -745,9 +746,12 @@ describe("OmpClient protocol state machine", () => {
   it("keeps pair.ok privileged and isolates listener throws/unsubscribe", async () => {
     const transport = new FakeTransport({ welcome: welcome({ authentication: "pairing-required", grantedCapabilities: [] }) });
     let token = "";
+    const publicEvents: PublicOmpServerEvent[] = [];
     const publicFrames: PublicServerFrame[] = [];
     const client = await readyClient(transport, { privilegedPairResult: (frame) => { token = frame.deviceToken; } });
     const unsubscribe = client.onFrame(() => { throw new Error("listener"); });
+    const unsubscribeEvent = client.onEvent(() => { throw new Error("listener"); });
+    client.onEvent((event) => publicEvents.push(event));
     client.onFrame((frame) => publicFrames.push(frame));
     const pairing = client.pairStart({ code: "123456", deviceId: "device", deviceName: "test", platform: "linux", requestedCapabilities: [] });
     const request = transport.lastClientFrame();
@@ -755,8 +759,11 @@ describe("OmpClient protocol state machine", () => {
     transport.emit({ v: V, type: "pair.ok", requestId: request.requestId, pairingId: "pair-1", deviceId: "device", deviceName: "test", platform: "linux", requestedCapabilities: [], grantedCapabilities: [], deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", expiresAt: "2030-01-01T00:00:00Z" });
     await pairing;
     unsubscribe();
+    unsubscribeEvent();
     expect(token).toBe("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    expect(publicEvents).toHaveLength(0);
     expect(publicFrames).toHaveLength(0);
+    expect(JSON.stringify(publicEvents)).not.toContain("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     expect(JSON.stringify(publicFrames)).not.toContain("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     await client.close();
   });

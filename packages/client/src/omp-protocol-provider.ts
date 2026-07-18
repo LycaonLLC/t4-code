@@ -70,6 +70,31 @@ export type OmpClientMessage =
     }
   | { readonly kind: "ping"; readonly nonce: string; readonly timestamp: string };
 
+type OmpServerEventFromFrame<Frame extends ServerFrame> = Frame extends ServerFrame
+  ? Readonly<{
+      kind: Frame["type"];
+      payload: Readonly<Omit<Frame, "v" | "type">>;
+    }>
+  : never;
+
+type OmpDecodedServerEventFromFrame<Frame extends ServerFrame> = Frame extends ServerFrame
+  ? Readonly<{
+      kind: Frame["type"];
+      payload: Readonly<Omit<Frame, "v" | "type">>;
+      event: OmpServerEventFromFrame<Frame>;
+      wireFrame: Frame;
+    }>
+  : never;
+
+/** Stable, version-free event shape exposed to new T4 consumers. */
+export type OmpServerEvent = OmpServerEventFromFrame<ServerFrame>;
+
+/** Decoded provider result used while the legacy onFrame API is supported. */
+export type OmpDecodedServerEvent = OmpDecodedServerEventFromFrame<ServerFrame>;
+
+/** Pairing credentials never cross the public event subscription boundary. */
+export type PublicOmpServerEvent = Exclude<OmpServerEvent, { kind: "pair.ok" }>;
+
 /**
  * The narrow protocol seam consumed by OmpClient. Transport, reconnect, replay,
  * and projection logic stay independent from a concrete wire implementation.
@@ -79,8 +104,7 @@ export interface OmpProtocolProvider {
   readonly protocolVersion: string;
   buildClientFrame(message: OmpClientMessage): ClientFrame;
   encodeClientFrame(frame: ClientFrame): string;
-  decodeClientFrame(input: unknown): ClientFrame;
-  decodeServerFrame(input: unknown): ServerFrame;
+  decodeServerEvent(input: unknown): OmpDecodedServerEvent;
   commandDescriptor(command: string): CommandDescriptor | undefined;
   requiredCapability(command: string): DeviceCapability | undefined;
 }

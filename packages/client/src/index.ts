@@ -1,6 +1,12 @@
 export { OmpClient, createOmpClient } from "./omp-client-runtime.ts";
 export { ompAppV1ProtocolProvider } from "./omp-app-v1-protocol-provider.ts";
-export type { OmpClientMessage, OmpProtocolProvider } from "./omp-protocol-provider.ts";
+export type {
+  OmpClientMessage,
+  OmpDecodedServerEvent,
+  OmpProtocolProvider,
+  OmpServerEvent,
+  PublicOmpServerEvent,
+} from "./omp-protocol-provider.ts";
 export { isConfirmationDecisionConsumed } from "./omp-client-response.ts";
 export {
   OmpClientError,

@@ -5,9 +5,15 @@ import {
   decodeServerFrame,
   requiredCapability,
   type ClientFrame,
+  type ServerFrame,
 } from "@t4-code/protocol";
 
-import type { OmpClientMessage, OmpProtocolProvider } from "./omp-protocol-provider.ts";
+import type {
+  OmpClientMessage,
+  OmpDecodedServerEvent,
+  OmpProtocolProvider,
+  OmpServerEvent,
+} from "./omp-protocol-provider.ts";
 
 function commandArgs(message: Extract<OmpClientMessage, { kind: "command" }>): Readonly<Record<string, unknown>> {
   const args = message.args;
@@ -101,6 +107,12 @@ function appV1Input(message: OmpClientMessage): Record<string, unknown> {
   }
 }
 
+function appV1ServerEvent(frame: ServerFrame): OmpDecodedServerEvent {
+  const { v: _version, type, ...payload } = frame;
+  const event = Object.freeze({ kind: type, payload: Object.freeze(payload) }) as OmpServerEvent;
+  return Object.freeze({ ...event, event, wireFrame: frame }) as OmpDecodedServerEvent;
+}
+
 /** Current canonical provider backed by the pinned @oh-my-pi/app-wire v1 artifact. */
 export const ompAppV1ProtocolProvider: OmpProtocolProvider = Object.freeze({
   id: "omp-app-v1",
@@ -111,8 +123,7 @@ export const ompAppV1ProtocolProvider: OmpProtocolProvider = Object.freeze({
     decodeClientFrame(encoded);
     return encoded;
   },
-  decodeClientFrame,
-  decodeServerFrame,
+  decodeServerEvent: (input: unknown) => appV1ServerEvent(decodeServerFrame(input)),
   commandDescriptor: (command: string) => COMMAND_DESCRIPTORS[command],
   requiredCapability,
 });

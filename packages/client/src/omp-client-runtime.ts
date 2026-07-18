@@ -47,13 +47,14 @@ import { PendingRequests } from "./omp-client-pending.ts";
 import { ClientTimerRegistry } from "./omp-client-timers.ts";
 import { OmpClientEvents } from "./omp-client-events.ts";
 import { OmpClientConnection } from "./omp-client-connection.ts";
-import { OmpClientFrameDispatcher, safeFrameDecodeFailure, sendClientHello } from "./omp-client-frames.ts";
+import { OmpClientEventDispatcher, safeFrameDecodeFailure, sendClientHello } from "./omp-client-frames.ts";
 import { OmpClientReconnectHealth } from "./omp-client-reconnect-health.ts";
 import { ompAppV1ProtocolProvider } from "./omp-app-v1-protocol-provider.ts";
 import { buildOutgoingFrame } from "./omp-client-outbound.ts";
 import {
   type OmpClientMessage,
   type OmpProtocolProvider,
+  type PublicOmpServerEvent,
 } from "./omp-protocol-provider.ts";
 import { handleResponseFrame } from "./omp-client-response.ts";
 import { isLegalClientTransition } from "./omp-client-state.ts";
@@ -64,6 +65,7 @@ export * from "./desktop-runtime.ts";
 
 type PendingResult = ResultFrame | PairOkFrame;
 type DurableFrame = Extract<ServerFrame, { type: "entry" | "event" | "session.delta" }>;
+type PublicEvent<Kind extends PublicOmpServerEvent["kind"]> = Extract<PublicOmpServerEvent, { kind: Kind }>;
 interface ConnectWaiter {
   resolve: () => void;
   reject: (error: OmpClientError) => void;
@@ -84,7 +86,7 @@ export class OmpClient {
   private readonly pendingRequests: PendingRequests;
   private readonly connection: OmpClientConnection;
   private readonly reconnectHealth: OmpClientReconnectHealth;
-  private readonly frames: OmpClientFrameDispatcher;
+  private readonly inboundDispatcher: OmpClientEventDispatcher;
   private readonly events = new OmpClientEvents();
   private readonly attached = new Map<string, { hostId: HostId; sessionId: SessionId }>();
   private handshakeTimer: ClientTimer | undefined;
@@ -153,23 +155,23 @@ export class OmpClient {
       },
     );
     this.reconnectHealth = new OmpClientReconnectHealth(() => this.connection.resetAttempts());
-    this.frames = new OmpClientFrameDispatcher({
-      welcome: (frame) => this.handleWelcome(frame),
+    this.inboundDispatcher = new OmpClientEventDispatcher({
+      welcome: (message) => this.handleWelcome(message.wireFrame, message.event),
       pong: (nonce) => this.handlePong(nonce),
-      bye: (frame) => { if (frame.retryable) this.handleDisconnect(undefined, frame.reason); else this.fatal(this.error(frame.code.toLowerCase().includes("auth") ? "auth" : "protocol", "server closed the protocol session")); },
-      response: (frame) => this.handleResponse(frame),
-      pairOk: (frame, generation) => this.handlePairOk(frame, generation),
-      pairError: (frame) => { if (frame.requestId !== undefined) this.settlePairError(frame); this.publish(frame); },
-      gap: (frame) => { this.markDesynced(sessionKey(String(frame.hostId), String(frame.sessionId)), "cursor gap requires a snapshot"); this.publish(frame); },
-      snapshot: (frame) => this.acceptSnapshot(frame),
-      durable: (frame) => {
+      bye: (message) => { if (message.payload.retryable) this.handleDisconnect(undefined, message.payload.reason); else this.fatal(this.error(message.payload.code.toLowerCase().includes("auth") ? "auth" : "protocol", "server closed the protocol session")); },
+      response: (message) => this.handleResponse(message.wireFrame, message.event),
+      pairOk: (message, generation) => this.handlePairOk(message.wireFrame, generation),
+      pairError: (message) => { if (message.wireFrame.requestId !== undefined) this.settlePairError(message.wireFrame); this.publish(message.wireFrame, message.event); },
+      gap: (message) => { this.markDesynced(sessionKey(String(message.payload.hostId), String(message.payload.sessionId)), "cursor gap requires a snapshot"); this.publish(message.wireFrame, message.event); },
+      snapshot: (message) => this.acceptSnapshot(message.wireFrame, message.event),
+      durable: (message) => {
         // Host-wide session-index deltas have their own per-session ordering in
         // ProjectionStore. They must not inherit transcript cursor contiguity:
         // an unattached client can legitimately miss entry/event frames.
-        if (frame.type === "session.delta") this.publish(frame);
-        else if (this.acceptDurable(frame)) this.publish(frame);
+        if (message.kind === "session.delta") this.publish(message.wireFrame, message.event);
+        else if (this.acceptDurable(message.wireFrame)) this.publish(message.wireFrame, message.event);
       },
-      other: (frame) => this.publish(frame),
+      other: (message) => this.publish(message.wireFrame, message.event),
     });
   }
 
@@ -209,6 +211,8 @@ export class OmpClient {
   }
 
   onState(listener: (snapshot: OmpStateSnapshot) => void): Unsubscribe { return this.events.onState(listener); }
+  onEvent(listener: (event: PublicOmpServerEvent) => void): Unsubscribe { return this.events.onEvent(listener); }
+  /** @deprecated Prefer onEvent for a version-free event envelope. */
   onFrame(listener: (frame: PublicServerFrame) => void): Unsubscribe { return this.events.onFrame(listener); }
   onError(listener: (error: OmpClientError) => void): Unsubscribe { return this.events.onError(listener); }
 
@@ -444,13 +448,13 @@ export class OmpClient {
   private handleRaw(raw: string | Uint8Array, generation: number): void | Promise<void> {
     if (generation !== this.generation || this.closedByUser) return;
     try {
-      return this.frames.dispatch(this.protocol.decodeServerFrame(raw), generation);
+      return this.inboundDispatcher.dispatch(this.protocol.decodeServerEvent(raw), generation);
     } catch (error) {
       if (generation === this.generation) this.protocolFailure(safeFrameDecodeFailure(error));
     }
   }
 
-  private handleWelcome(frame: WelcomeFrame): void {
+  private handleWelcome(frame: WelcomeFrame, event: PublicEvent<"welcome">): void {
     this.clearTimer("handshakeTimer");
     if (this.expectedHost !== undefined && frame.hostId !== this.expectedHost) {
       this.fatal(this.error("protocol", "welcome host does not match target"));
@@ -463,7 +467,7 @@ export class OmpClient {
       this.reconnectHealth.beginWelcome(this.generation, []);
       this.transition("pairing");
       this.startHeartbeat();
-      this.publish(frame);
+      this.publish(frame, event);
       for (const waiter of this.connectWaiters.splice(0)) waiter.resolve();
       return;
     }
@@ -476,12 +480,12 @@ export class OmpClient {
     }
     this.transition("ready");
     this.startHeartbeat();
-    this.publish(frame);
+    this.publish(frame, event);
     for (const waiter of this.connectWaiters.splice(0)) waiter.resolve();
     this.reattachSessions();
   }
 
-  private acceptSnapshot(frame: Extract<ServerFrame, { type: "snapshot" }>): void {
+  private acceptSnapshot(frame: Extract<ServerFrame, { type: "snapshot" }>, event: PublicEvent<"snapshot">): void {
     const currentKey = sessionKey(String(frame.hostId), String(frame.sessionId));
     this.desyncedSessions.delete(currentKey);
     this.epochValue = frame.cursor.epoch;
@@ -493,7 +497,7 @@ export class OmpClient {
       frame.cursor,
       true,
     );
-    this.publish(frame);
+    this.publish(frame, event);
   }
 
   private acceptDurable(frame: DurableFrame): boolean {
@@ -523,10 +527,10 @@ export class OmpClient {
     return true;
   }
 
-  private handleResponse(frame: ResultFrame): void {
+  private handleResponse(frame: ResultFrame, event: PublicEvent<"response">): void {
     handleResponseFrame(this.pendingRequests, frame, {
       protocolFailure: (message) => this.protocolFailure(message),
-      publish: (response) => this.publish(response),
+      publish: (response) => this.publish(response, event),
       attached: (host, session, response) => {
         const attachedHost = hostId(host);
         const attachedSession = sessionId(session);
@@ -721,8 +725,8 @@ export class OmpClient {
   private error(code: ClientErrorCode, message: string, retryable = false, metadata?: Record<string, string | number | boolean>): OmpClientError {
     return new OmpClientError({ code, message, retryable, ...(metadata === undefined ? {} : { metadata: boundedMetadata(metadata) }) });
   }
-  private publish(frame: PublicServerFrame): void {
-    this.events.publish(frame, this.projection);
+  private publish(frame: PublicServerFrame, event: PublicOmpServerEvent): void {
+    this.events.publish(frame, event, this.projection);
   }
 
   private emitError(error: OmpClientError): void { this.events.emitError(error); }
