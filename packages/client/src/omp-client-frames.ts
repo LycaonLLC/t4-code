@@ -42,10 +42,12 @@ export class OmpClientFrameDispatcher {
     }
   }
 }
-import { PROTOCOL_VERSION, decodeClientFrame, hostId, sessionId, type ClientFrame, type SavedCursor } from "@t4-code/protocol";
+import { hostId, sessionId, type ClientFrame, type SavedCursor } from "@t4-code/protocol";
 import type { CursorRecord, OmpClientOptions } from "./omp-client-contracts.ts";
+import type { OmpProtocolProvider } from "./omp-protocol-provider.ts";
 
 export function sendClientHello(
+  provider: OmpProtocolProvider,
   options: OmpClientOptions,
   records: readonly CursorRecord[],
   send: (encoded: string) => void,
@@ -72,9 +74,9 @@ export function sendClientHello(
   let hello: ClientFrame | undefined;
   try {
     hello = decodeOutgoing({
-      v: PROTOCOL_VERSION,
+      v: provider.protocolVersion,
       type: "hello",
-      protocol: { min: PROTOCOL_VERSION, max: PROTOCOL_VERSION },
+      protocol: { min: provider.protocolVersion, max: provider.protocolVersion },
       client: options.client ?? { name: "t4-code", version: "0.1.22", build: "client", platform: "electron" },
       requestedFeatures: [...(options.requestedFeatures ?? ["resume"])],
       savedCursors,
@@ -89,7 +91,7 @@ export function sendClientHello(
   let encoded: string;
   try {
     encoded = JSON.stringify(hello);
-    decodeClientFrame(encoded);
+    provider.decodeClientFrame(encoded);
   } catch {
     protocolFailure();
     return;

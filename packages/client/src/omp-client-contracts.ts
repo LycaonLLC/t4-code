@@ -1,5 +1,6 @@
 import type { ClientFrame, PairOkFrame, RequestId, ResultFrame, Cursor, ServerFrame } from "@t4-code/protocol";
 import type { ProjectionStore } from "./projection.ts";
+import type { OmpProtocolProvider } from "./omp-protocol-provider.ts";
 
 
 export type OmpClientState =
@@ -61,6 +62,8 @@ export interface TimerScheduler { setTimeout(callback: () => void, delayMs: numb
 export interface IdFactory { next(kind: "request" | "command" | "ping"): string; }
 export interface OmpClientOptions {
   transport: OmpTransportFactory;
+  /** Concrete wire implementation. Defaults to the pinned omp-app/1 provider. */
+  protocolProvider?: OmpProtocolProvider;
   hostId?: string; expectedHostId?: string;
   client?: { name: string; version: string; build: string; platform: string };
   requestedFeatures?: readonly string[];

@@ -1,18 +1,16 @@
-import {
-  PROTOCOL_VERSION,
-  decodeClientFrame,
-  type ClientFrame,
-} from "@t4-code/protocol";
+import type { ClientFrame } from "@t4-code/protocol";
 
 import type { CommandIntent } from "./omp-client-contracts.ts";
+import type { OmpProtocolProvider } from "./omp-protocol-provider.ts";
 
 export function buildCommandFrameInput(
   intent: CommandIntent,
   requestId: string,
   commandId: string,
+  protocolVersion: string,
 ): Record<string, unknown> {
   return {
-    v: PROTOCOL_VERSION,
+    v: protocolVersion,
     type: "command",
     requestId,
     commandId,
@@ -34,9 +32,9 @@ export function buildCommandFrameInput(
   };
 }
 
-export function decodeOutgoingFrame(input: Record<string, unknown>): ClientFrame | undefined {
+export function decodeOutgoingFrame(provider: OmpProtocolProvider, input: Record<string, unknown>): ClientFrame | undefined {
   try {
-    return decodeClientFrame(input);
+    return provider.decodeClientFrame(input);
   } catch {
     return undefined;
   }
