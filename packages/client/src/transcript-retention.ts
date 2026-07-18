@@ -46,25 +46,27 @@ const SECRET_KEY = /token|secret|password|credential|authorization|cookie|privat
 
 /** Exact byte totals for immutable values created by this module. */
 const retainedJsonByteCache = new WeakMap<object, number>();
+const UTF8_ENCODER = new TextEncoder();
 
-const IMPORTANT_KEYS = [
-  "type",
-  "images",
-  "role",
-  "text",
-  "reasoning",
-  "tool",
-  "title",
-  "args",
-  "result",
-  "details",
-  "customType",
-  "customDetails",
-  "output",
-  "stdout",
-  "stderr",
-  "content",
-] as const;
+const IMPORTANT_KEY_PRIORITY: Readonly<Record<string, number>> = {
+  type: 0,
+  images: 1,
+  role: 2,
+  text: 3,
+  reasoning: 4,
+  tool: 5,
+  title: 6,
+  args: 7,
+  result: 8,
+  details: 9,
+  customType: 10,
+  customDetails: 11,
+  output: 12,
+  stdout: 13,
+  stderr: 14,
+  content: 15,
+};
+const IMPORTANT_KEY_COUNT = 16;
 
 interface SanitizedNode {
   readonly value: unknown;
@@ -97,14 +99,53 @@ export type RetainedTranscriptEvent = Extract<
   { kind: "snapshot" | "entry" | "event" | "agent.transcript" | "gap" }
 >;
 
+function jsonStringBytes(value: string): number {
+  let bytes = 2;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (
+      code === 0x22 ||
+      code === 0x5c ||
+      code === 0x08 ||
+      code === 0x09 ||
+      code === 0x0a ||
+      code === 0x0c ||
+      code === 0x0d
+    ) {
+      bytes += 2;
+    } else if (code < 0x20) {
+      bytes += 6;
+    } else if (code < 0x80) {
+      bytes += 1;
+    } else if (code < 0x800) {
+      bytes += 2;
+    } else if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        index += 1;
+      } else {
+        bytes += 6;
+      }
+    } else {
+      bytes += code >= 0xdc00 && code <= 0xdfff ? 6 : 3;
+    }
+  }
+  return bytes;
+}
+
 export function retainedJsonBytes(value: unknown): number {
-  if (value !== null && (typeof value === "object" || typeof value === "function")) {
+  if (typeof value === "string") return jsonStringBytes(value);
+  if (typeof value === "number") return Number.isFinite(value) ? String(value).length : 4;
+  if (typeof value === "boolean") return value ? 4 : 5;
+  if (value === null) return 4;
+  if (typeof value === "object" || typeof value === "function") {
     const cached = retainedJsonByteCache.get(value);
     if (cached !== undefined) return cached;
   }
   const serialized = JSON.stringify(value);
   if (serialized === undefined) return 0;
-  return new TextEncoder().encode(serialized).byteLength;
+  return UTF8_ENCODER.encode(serialized).byteLength;
 }
 
 function rememberRetainedJsonBytes<T>(value: T, bytes: number): T {
@@ -131,9 +172,8 @@ function boundedInteger(value: number | undefined, fallback: number, ceiling: nu
  */
 export function retainedText(value: string, maxJsonBytes: number): string {
   const budget = Math.max(2, Math.floor(maxJsonBytes));
-  if (retainedJsonBytes(value) <= budget && retainedJsonBytes(value) <= MAX_RETAINED_VALUE_STRING_BYTES + 2) {
-    return value;
-  }
+  const valueBytes = retainedJsonBytes(value);
+  if (valueBytes <= budget && valueBytes <= MAX_RETAINED_VALUE_STRING_BYTES + 2) return value;
 
   const available = Math.max(0, Math.min(value.length, MAX_RETAINED_VALUE_STRING_BYTES));
   let low = 0;
@@ -156,10 +196,9 @@ export function retainedText(value: string, maxJsonBytes: number): string {
 }
 
 function orderedEntries(value: Record<string, unknown>): Array<[string, unknown]> {
-  const priority = new Map<string, number>(IMPORTANT_KEYS.map((key, index) => [key, index]));
   return Object.entries(value).sort(([left], [right]) => {
-    const leftPriority = priority.get(left) ?? IMPORTANT_KEYS.length;
-    const rightPriority = priority.get(right) ?? IMPORTANT_KEYS.length;
+    const leftPriority = IMPORTANT_KEY_PRIORITY[left] ?? IMPORTANT_KEY_COUNT;
+    const rightPriority = IMPORTANT_KEY_PRIORITY[right] ?? IMPORTANT_KEY_COUNT;
     return leftPriority - rightPriority;
   });
 }
