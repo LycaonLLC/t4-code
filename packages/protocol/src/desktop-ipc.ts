@@ -30,6 +30,31 @@ export type { PairLinkEvent } from "./pair-link.ts";
 
 export const DESKTOP_IPC_VERSION = PROTOCOL_VERSION;
 export type RendererServerFrame = Exclude<ServerFrame, { type: "pair.ok" }>;
+type KnownFields<Value> = {
+  [Key in keyof Value as string extends Key
+    ? never
+    : number extends Key
+      ? never
+      : symbol extends Key
+        ? never
+        : Key]: Value[Key];
+};
+type PreservedIndex<Value> = string extends keyof Value ? Readonly<Record<string, unknown>> : object;
+type RendererServerEventFromFrame<Frame extends RendererServerFrame> =
+  Frame extends RendererServerFrame
+    ? Readonly<{
+        kind: Frame["type"];
+        payload: Readonly<
+          Omit<KnownFields<Frame>, "v" | "type"> & PreservedIndex<Frame>
+        >;
+      }>
+    : never;
+export type RendererServerEvent = RendererServerEventFromFrame<RendererServerFrame>;
+
+export function rendererServerEventFromFrame(frame: RendererServerFrame): RendererServerEvent {
+  const { v: _version, type, ...payload } = frame;
+  return Object.freeze({ kind: type, payload: Object.freeze(payload) }) as RendererServerEvent;
+}
 export const DESKTOP_IPC_CHANNELS = [
   "omp:targets:list",
   "omp:targets:add",
@@ -70,7 +95,7 @@ export const DESKTOP_IPC_CHANNELS = [
 ] as const;
 export type DesktopInvokeChannel = (typeof DESKTOP_IPC_CHANNELS)[number];
 export const DESKTOP_IPC_EVENTS = [
-  "omp:server-frame",
+  "omp:server-event",
   "omp:connection-state",
   "omp:runtime-error",
   "omp:pair-link",
@@ -508,12 +533,17 @@ export interface DesktopInvokeResponseMap {
   "app:projection-cache:load": ProjectionCacheLoadResult;
   "app:projection-cache:save": ProjectionCacheSaveResult;
 }
+export interface RendererServerEventEnvelope {
+  targetId: string;
+  event: RendererServerEvent;
+}
+/** Compatibility envelope used by renderer-side subscribers during migration. */
 export interface RendererServerFrameEvent {
   targetId: string;
   frame: RendererServerFrame;
 }
 export interface DesktopEventPayloadMap {
-  "omp:server-frame": RendererServerFrameEvent;
+  "omp:server-event": RendererServerEventEnvelope;
   "omp:connection-state": ConnectionStateEvent;
   "omp:runtime-error": RuntimeErrorEvent;
   "omp:pair-link": PairLinkEvent;
@@ -923,12 +953,28 @@ export function decodeDesktopEvent(input: unknown): DesktopEvent {
     throw new Error("unknown channel");
   const channel = frame.channel as DesktopEventChannel;
   const payload = object(frame.payload, "payload");
-  if (channel === "omp:server-frame") {
-    exact(payload, ["targetId", "frame"]);
-    const serverFrame = decodeServerFrame(payload.frame);
+  if (channel === "omp:server-event") {
+    exact(payload, ["targetId", "event"]);
+    const rawEvent = object(payload.event, "event");
+    exact(rawEvent, ["kind", "payload"]);
+    const eventPayload = object(rawEvent.payload, "event.payload");
+    if ("v" in eventPayload || "type" in eventPayload) {
+      throw new Error("wire envelope fields cannot cross renderer IPC");
+    }
+    const serverFrame = decodeServerFrame({
+      ...eventPayload,
+      v: PROTOCOL_VERSION,
+      type: controlFree(rawEvent.kind, "event.kind", 128),
+    });
     if (serverFrame.type === "pair.ok")
       throw new Error("pair credentials cannot cross renderer IPC");
-    return { channel, payload: { targetId: target(payload.targetId), frame: serverFrame } };
+    return {
+      channel,
+      payload: {
+        targetId: target(payload.targetId),
+        event: rendererServerEventFromFrame(serverFrame),
+      },
+    };
   }
   if (channel === "omp:connection-state") {
     exact(payload, ["targetId", "state"]);

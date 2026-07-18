@@ -13,11 +13,10 @@
 import {
   createOmpClient,
   isConfirmationDecisionConsumed,
-  ompAppV1PublicFrameFromEvent,
   type OmpClient,
   type OmpClientOptions,
   type OmpTransport,
-  type PublicServerFrame,
+  type PublicOmpServerEvent,
   type Unsubscribe,
 } from "@t4-code/client";
 import {
@@ -25,7 +24,6 @@ import {
   DEVICE_CAPABILITIES,
   PROTOCOL_VERSION,
   deviceToken as validateDeviceToken,
-  type WelcomeFrame,
 } from "@t4-code/protocol";
 import type {
   BootstrapResult,
@@ -41,7 +39,7 @@ import type {
   PairResult,
   PairLinkEvent,
   PairLinksDrainResult,
-  RendererServerFrameEvent,
+  RendererServerEventEnvelope,
   RuntimeErrorEvent,
   SpeechRequest,
   SpeechResult,
@@ -192,8 +190,8 @@ export function detectBackend(): BrowserBackendConfig | null {
 interface StateListener {
   (event: ConnectionStateEvent): void;
 }
-interface FrameListener {
-  (event: RendererServerFrameEvent): void;
+interface ServerEventListener {
+  (event: RendererServerEventEnvelope): void;
 }
 interface ErrorListener {
   (event: RuntimeErrorEvent): void;
@@ -224,7 +222,7 @@ export function createBrowserShellPort(
   let client: OmpClient | undefined;
   let transport: BrowserWebSocketTransport | undefined;
   const pendingOpens = new Set<BrowserWebSocketTransport>();
-  let welcome: WelcomeFrame | undefined;
+  let welcomeAuthentication: "local" | "pairing-required" | "paired" | undefined;
   let stopLifecycle: Unsubscribe | undefined;
   let connectionState: DesktopTarget["state"] = "disconnected";
   let authentication: { deviceId: string; deviceToken: string } | undefined =
@@ -233,7 +231,7 @@ export function createBrowserShellPort(
       : { deviceId: backendConfig.deviceId, deviceToken: backendConfig.deviceToken };
   const browserDeviceId = backendConfig.deviceId ?? `browser-${Date.now().toString(36)}`;
 
-  const frameListeners = new Set<FrameListener>();
+  const serverEventListeners = new Set<ServerEventListener>();
   const stateListeners = new Set<StateListener>();
   const errorListeners = new Set<ErrorListener>();
   const pairLinkListeners = new Set<PairLinkListener>();
@@ -259,18 +257,21 @@ export function createBrowserShellPort(
     for (const listener of errorListeners) listener(event);
   }
 
-  function emitFrame(targetId: string, frame: RendererServerFrameEvent["frame"]): void {
-    const event: RendererServerFrameEvent = { targetId, frame };
-    for (const listener of frameListeners) listener(event);
+  function emitServerEvent(targetId: string, event: PublicOmpServerEvent): void {
+    const envelope: RendererServerEventEnvelope = { targetId, event };
+    for (const listener of serverEventListeners) listener(envelope);
   }
 
-  function safePublicFrame(frame: PublicServerFrame): PublicServerFrame {
-    if (frame.type !== "response" || frame.error === undefined) return frame;
-    const error = commandResultError(frame.error) ?? {
+  function safePublicEvent(event: PublicOmpServerEvent): PublicOmpServerEvent {
+    if (event.kind !== "response" || event.payload.error === undefined) return event;
+    const error = commandResultError(event.payload.error) ?? {
       code: "internal",
       message: "command failed",
     };
-    return { ...frame, error };
+    return Object.freeze({
+      ...event,
+      payload: Object.freeze({ ...event.payload, error }),
+    }) as PublicOmpServerEvent;
   }
   function buildClient(): OmpClient {
     const transportFactory = async (): Promise<OmpTransport> => {
@@ -312,9 +313,8 @@ export function createBrowserShellPort(
     });
 
     c.onEvent((event) => {
-      const frame = ompAppV1PublicFrameFromEvent(event);
-      if (frame.type === "welcome") welcome = frame;
-      emitFrame(TARGET_ID, safePublicFrame(frame));
+      if (event.kind === "welcome") welcomeAuthentication = event.payload.authentication;
+      emitServerEvent(TARGET_ID, safePublicEvent(event));
     });
 
     c.onState((snapshot) => {
@@ -440,7 +440,7 @@ export function createBrowserShellPort(
         await client.close();
         client = undefined;
         transport = undefined;
-        welcome = undefined;
+        welcomeAuthentication = undefined;
       }
       stopLifecycle?.();
       stopLifecycle = undefined;
@@ -555,7 +555,7 @@ export function createBrowserShellPort(
           label: backendConfig.label,
           kind: "remote",
           state: connectionState,
-          paired: authentication !== undefined || welcome?.authentication === "paired",
+          paired: authentication !== undefined || welcomeAuthentication === "paired",
         },
       ];
       return { targets };
@@ -577,9 +577,9 @@ export function createBrowserShellPort(
       return this.disconnect(request);
     },
 
-    onServerFrame(listener: FrameListener): Unsubscribe {
-      frameListeners.add(listener);
-      return () => frameListeners.delete(listener);
+    onServerEvent(listener: ServerEventListener): Unsubscribe {
+      serverEventListeners.add(listener);
+      return () => serverEventListeners.delete(listener);
     },
 
     onConnectionState(listener: StateListener): Unsubscribe {

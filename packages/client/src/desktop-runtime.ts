@@ -11,6 +11,7 @@ import {
   type DesktopTarget,
   type PairResult,
   type RendererServerFrame,
+  type RendererServerEventEnvelope,
   type RendererServerFrameEvent,
   type RuntimeErrorEvent,
   type TargetAddRequest,
@@ -23,6 +24,7 @@ import {
 } from "@t4-code/protocol/desktop-ipc";
 import { decodeCatalog, decodeSessions, hostId, revision, sessionId, type CatalogFrame, type Cursor, type SettingsFrame, type WelcomeFrame } from "@t4-code/protocol";
 import type { Unsubscribe } from "./index.ts";
+import { ompAppV1PublicFrameFromEvent } from "./omp-app-v1-protocol-provider.ts";
 import { ProjectionStore, type ProjectionFrame } from "./projection.ts";
 import {
   DesktopRuntimeError,
@@ -652,7 +654,7 @@ export class DesktopRuntimeController {
   }
   private installListeners(): void {
     this.unsubscribes = [
-      this.shell.onServerFrame((event) => this.handleEvent({ channel: "omp:server-frame", payload: event })),
+      this.shell.onServerEvent((event) => this.handleEvent({ channel: "omp:server-event", payload: event })),
       this.shell.onConnectionState((event) => this.handleEvent({ channel: "omp:connection-state", payload: event })),
       this.shell.onRuntimeError((event) => this.handleEvent({ channel: "omp:runtime-error", payload: event })),
       ...(this.shell.onWake === undefined
@@ -667,8 +669,8 @@ export class DesktopRuntimeController {
     if (this.stopped) return;
     try {
       const event = decodeDesktopEvent(input);
-      if (event.channel === "omp:server-frame") {
-        this.handleFrame(event.payload as RendererServerFrameEvent);
+      if (event.channel === "omp:server-event") {
+        this.handleServerEvent(event.payload as RendererServerEventEnvelope);
       } else if (event.channel === "omp:connection-state") {
         const payload = event.payload as ConnectionStateEvent;
         this.updateConnection(payload.targetId, payload.state);
@@ -679,8 +681,8 @@ export class DesktopRuntimeController {
       this.recordError({ code: "protocol", message: error instanceof Error ? error.message : "invalid desktop event" });
     }
   }
-  private handleFrame(event: RendererServerFrameEvent): void {
-    const incomingFrame = event.frame;
+  private handleServerEvent(event: RendererServerEventEnvelope): void {
+    const incomingFrame = ompAppV1PublicFrameFromEvent(event.event);
     const transcriptFrame = this.isRetainedTranscriptFrame(incomingFrame);
     // Do not deep-clone a potentially large transcript payload before applying
     // retention. The shared projection consumes the decoded frame directly;
@@ -690,6 +692,7 @@ export class DesktopRuntimeController {
       : freezeClone(incomingFrame);
     if (frame.type === "welcome") {
       if (!this.handleWelcome(event.targetId, frame)) return;
+      this.applyProjectionEvent(event.targetId, event.event);
     } else {
       const hostIdValue = frameId(frame, "hostId");
       const boundHost = this.current.targetHosts.get(event.targetId);
@@ -713,7 +716,7 @@ export class DesktopRuntimeController {
         else this.replace({ settings: mapValue(new Map(this.current.settings).set(hostIdValue, frame as SettingsFrame)) });
       }
       if (hostIdValue === undefined || hostProjectionCurrent || frame.type === "response") {
-        this.applyProjection(event.targetId, transcriptFrame ? incomingFrame : frame);
+        this.applyProjectionEvent(event.targetId, event.event);
       }
       if (!hostProductResponse) this.notifyFrames({ targetId: event.targetId, frame });
       return;
@@ -793,7 +796,6 @@ export class DesktopRuntimeController {
       this.invalidateSessionRefresh(targetId);
     }
     this.replace({ targetHosts: reconciled.targetHosts, hosts: reconciled.hosts });
-    this.applyProjection(targetId, frame);
     void this.bootstrapHost(targetId, frame);
     return true;
   }
@@ -825,6 +827,16 @@ export class DesktopRuntimeController {
     if (this.stopped) return;
     this.projection.applyPublicFrame(frame as ProjectionFrame);
     if (this.current.targets.has(targetId)) this.replace({ projection: this.projection.getSnapshot() });
+  }
+  private applyProjectionEvent(
+    targetId: string,
+    event: RendererServerEventEnvelope["event"],
+  ): void {
+    if (this.stopped) return;
+    this.projection.applyPublicEvent(event);
+    if (this.current.targets.has(targetId)) {
+      this.replace({ projection: this.projection.getSnapshot() });
+    }
   }
   private notifyFrames(event: RendererServerFrameEvent): void {
     const hostIdValue = frameId(event.frame, "hostId");

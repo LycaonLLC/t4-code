@@ -22,6 +22,7 @@ import type {
   PairResult,
   PairLinksDrainResult,
   RendererServerFrame,
+  RendererServerEventEnvelope,
   RendererServerFrameEvent,
   RuntimeErrorEvent,
   ServiceActionResult,
@@ -86,7 +87,7 @@ export interface DesktopShellPort {
   readonly removeTarget: (request: TargetRequest) => Promise<TargetRemoveResult>;
   readonly connectTarget: (request: TargetRequest) => Promise<ConnectResult>;
   readonly disconnectTarget: (request: TargetRequest) => Promise<DisconnectResult>;
-  readonly onServerFrame: (listener: (event: RendererServerFrameEvent) => void) => () => void;
+  readonly onServerEvent: (listener: (event: RendererServerEventEnvelope) => void) => () => void;
   readonly onConnectionState: (listener: (event: ConnectionStateEvent) => void) => () => void;
   readonly onRuntimeError: (listener: (event: RuntimeErrorEvent) => void) => () => void;
   /** Existing browser/native lifecycle funnel; does not install a second listener set. */

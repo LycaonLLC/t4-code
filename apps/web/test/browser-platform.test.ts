@@ -1,5 +1,6 @@
 import {
   createOmpClient,
+  ompAppV1PublicFrameFromEvent,
   ompAppV1ProtocolProvider,
   type OmpClient,
   type OmpClientOptions,
@@ -304,7 +305,9 @@ describe("browser platform boundary", () => {
     });
     if (shell === null) return;
     const emittedFrames: PublicServerFrame[] = [];
-    const stopFrames = shell.onServerFrame((event) => emittedFrames.push(event.frame));
+    const stopFrames = shell.onServerEvent((event) => {
+      emittedFrames.push(ompAppV1PublicFrameFromEvent(event.event));
+    });
     await shell.bootstrap();
     expect(connectCalls).toBe(0);
     await shell.connect({ targetId: "remote" });

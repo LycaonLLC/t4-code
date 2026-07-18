@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { hostId, revision, sessionId, type WelcomeFrame } from "@t4-code/protocol";
+import { rendererServerEventFromFrame } from "@t4-code/protocol/desktop-ipc";
 import type {
   BootstrapResult,
   CommandRequest,
@@ -19,6 +20,7 @@ import type {
   PairRequest,
   PairResult,
   RendererServerFrame,
+  RendererServerEventEnvelope,
   RendererServerFrameEvent,
   RuntimeErrorEvent,
   SpeechResult,
@@ -82,7 +84,7 @@ class FakeTimerScheduler {
 class FakeShell implements DesktopShellPort {
   readonly kind = "desktop" as const;
   readonly platform = "linux" as const;
-  readonly frames = new Set<(event: RendererServerFrameEvent) => void>();
+  readonly serverEvents = new Set<(event: RendererServerEventEnvelope) => void>();
   readonly states = new Set<(event: ConnectionStateEvent) => void>();
   readonly errors = new Set<(event: RuntimeErrorEvent) => void>();
   readonly wakes = new Set<() => void>();
@@ -191,12 +193,18 @@ class FakeShell implements DesktopShellPort {
   async profileRestart(request: LocalProfileRequest): Promise<LocalProfileResult> {
     return { profile: localProfile(request.profileId) };
   }
-  onServerFrame(listener: (event: RendererServerFrameEvent) => void): () => void { this.frames.add(listener); return () => this.frames.delete(listener); }
+  onServerEvent(listener: (event: RendererServerEventEnvelope) => void): () => void { this.serverEvents.add(listener); return () => this.serverEvents.delete(listener); }
   onConnectionState(listener: (event: ConnectionStateEvent) => void): () => void { this.states.add(listener); return () => this.states.delete(listener); }
   onRuntimeError(listener: (event: RuntimeErrorEvent) => void): () => void { this.errors.add(listener); return () => this.errors.delete(listener); }
   onWake(listener: () => void): () => void { this.wakes.add(listener); return () => this.wakes.delete(listener); }
-  // eslint-disable-next-line unicorn/no-useless-spread -- preserve listener snapshot when callbacks may unsubscribe during dispatch.
-  emitFrame(event: RendererServerFrameEvent): void { for (const listener of [...this.frames]) listener(event); }
+  emitFrame(event: RendererServerFrameEvent): void {
+    const envelope = {
+      targetId: event.targetId,
+      event: rendererServerEventFromFrame(event.frame),
+    };
+    // eslint-disable-next-line unicorn/no-useless-spread -- preserve listener snapshot when callbacks may unsubscribe during dispatch.
+    for (const listener of [...this.serverEvents]) listener(envelope);
+  }
   // eslint-disable-next-line unicorn/no-useless-spread -- preserve listener snapshot when callbacks may unsubscribe during dispatch.
   emitState(event: ConnectionStateEvent): void { for (const listener of [...this.states]) listener(event); }
   // eslint-disable-next-line unicorn/no-useless-spread -- preserve listener snapshot when callbacks may unsubscribe during dispatch.
