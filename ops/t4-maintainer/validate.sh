@@ -6,8 +6,8 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 for file in run.sh deploy-local.sh publish-omp-atomic.sh install.sh validate.sh; do
   bash -n "$SCRIPT_DIR/$file"
 done
-
-for command in apt-get awk bash bun cmp curl dpkg dpkg-deb dpkg-query flock gh git grep install jq node omp pnpm readlink realpath sed sha256sum sort sudo sync systemctl systemd-analyze uname wc; do
+python3 -m py_compile "$SCRIPT_DIR/notify.py"
+for command in apt-get awk bash bun cmp curl dpkg dpkg-deb dpkg-query flock gh git grep install jq node omp pnpm python3 readlink realpath sed sha256sum sort sudo sync systemctl systemd-analyze uname wc; do
   command -v "$command" >/dev/null 2>&1 || {
     printf 'required command is unavailable: %s\n' "$command" >&2
     exit 1
@@ -49,6 +49,7 @@ install -m 0700 "$SCRIPT_DIR/deploy-local.sh" "$runtime_root/libexec/deploy-loca
 install -m 0700 "$SCRIPT_DIR/publish-omp-atomic.sh" "$runtime_root/libexec/publish-omp-atomic.sh"
 install -m 0600 "$SCRIPT_DIR/../../scripts/inspect-linux-update.mjs" \
   "$runtime_root/libexec/inspect-linux-update.mjs"
+install -m 0700 "$SCRIPT_DIR/notify.py" "$runtime_root/libexec/notify.py"
 install -m 0600 "$SCRIPT_DIR/prompt.md" "$runtime_root/libexec/prompt.md"
 sed \
   -e "s|@HOME@|$HOME|g" \

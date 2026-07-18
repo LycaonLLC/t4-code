@@ -46,12 +46,14 @@ OMP_SOCKET=${T4_LOCAL_OMP_SOCKET:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/omp/app
 T4_PACKAGE=${T4_LOCAL_T4_PACKAGE:-t4-code}
 T4_EXECUTABLE=${T4_LOCAL_T4_EXECUTABLE:-/opt/T4 Code/t4-code}
 T4_INSTALLED_WEB_ROOT=${T4_LOCAL_T4_WEB_ROOT:-/opt/T4 Code/resources/web}
+T4_APP_ASAR=${T4_LOCAL_T4_APP_ASAR:-/opt/T4 Code/resources/app.asar}
 GATEWAY_SERVICE=${T4_LOCAL_GATEWAY_SERVICE:-com.lycaonsolutions.t4code.tailnet-gateway.service}
 GATEWAY_CONFIG=${T4_LOCAL_GATEWAY_CONFIG:-$HOME/.config/t4-code/tailnet-gateway.json}
 GATEWAY_UNIT=${T4_LOCAL_GATEWAY_UNIT:-$HOME/.config/systemd/user/$GATEWAY_SERVICE}
 MAINTAINER_ROOT=${T4_MAINTAINER_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/t4-maintainer}
 DEPLOYMENTS_DIR=${T4_LOCAL_DEPLOYMENTS_DIR:-$MAINTAINER_ROOT/deployments}
 BLOCKED_FILE=${T4_LOCAL_BLOCKED_FILE:-$MAINTAINER_ROOT/state/deployment-blocked.json}
+ROLLBACK_RECEIPT=${T4_LOCAL_ROLLBACK_RECEIPT:-$MAINTAINER_ROOT/state/operator-overlay.json}
 HEALTH_ATTEMPTS=${T4_LOCAL_HEALTH_ATTEMPTS:-60}
 HEALTH_INTERVAL_SECONDS=${T4_LOCAL_HEALTH_INTERVAL_SECONDS:-1}
 MAIN_MIRROR_ATTEMPTS=${T4_LOCAL_MAIN_MIRROR_ATTEMPTS:-5}
@@ -66,6 +68,9 @@ PREVIOUS_DEB=""
 PREVIOUS_T4_VERSION=""
 PREVIOUS_OMP_SHA=""
 PREVIOUS_OMP_VERSION=""
+OVERLAY_PACKAGE_SIZE=""
+OVERLAY_PACKAGE_SHA=""
+OVERLAY_APP_ASAR_SHA=""
 PREVIOUS_OMP_MODE=""
 PREVIOUS_GATEWAY_SOURCE=""
 PREVIOUS_APP_ACTIVE=false
@@ -289,7 +294,17 @@ rollback() {
   fi
 
   if [[ $T4_MUTATED == true && -n $PREVIOUS_DEB ]]; then
-    "$SUDO" -n "$APT_GET" install -y --reinstall --allow-downgrades "$PREVIOUS_DEB" >/dev/null 2>&1 || rollback_failed=true
+    if [[ -n $OVERLAY_PACKAGE_SHA ]]; then
+      if verify_sealed_overlay "$PREVIOUS_DEB"; then
+        "$SUDO" -n "$APT_GET" install -y --reinstall --allow-downgrades "$PREVIOUS_DEB" >/dev/null 2>&1 \
+          || rollback_failed=true
+      else
+        rollback_failed=true
+      fi
+    else
+      "$SUDO" -n "$APT_GET" install -y --reinstall --allow-downgrades "$PREVIOUS_DEB" >/dev/null 2>&1 \
+        || rollback_failed=true
+    fi
   fi
   if [[ $OMP_MUTATED == true ]]; then
     atomic_restore_file "$BACKUP_DIR/omp" "$OMP_TARGET" "$PREVIOUS_OMP_MODE" || rollback_failed=true
@@ -450,6 +465,146 @@ download_verified_deb() {
   printf '%s\n' "$deb"
 }
 
+seal_operator_overlay() {
+  local source=$1 package_sha=$2 sealed_dir sealed temporary
+  sealed_dir="$MAINTAINER_ROOT/state/operator-overlays"
+  mkdir -p -- "$sealed_dir"
+  chmod 700 "$MAINTAINER_ROOT/state" "$sealed_dir"
+  sealed="$sealed_dir/$package_sha.deb"
+  if [[ -e $sealed ]]; then
+    verify_sealed_overlay "$sealed" \
+      || fail "existing sealed operator rollback package failed verification"
+    printf '%s\n' "$sealed"
+    return 0
+  fi
+  temporary=$(mktemp "$sealed_dir/.overlay.XXXXXX")
+  cp -- "$source" "$temporary"
+  "$SYNC" -f "$temporary" 2>/dev/null || "$SYNC"
+  mv -f -- "$temporary" "$sealed"
+  chmod 400 "$sealed"
+  "$SYNC" -f "$sealed_dir" 2>/dev/null || "$SYNC"
+  printf '%s\n' "$sealed"
+}
+sealed_overlay_invalid() {
+  log "ERROR: sealed operator rollback package verification failed: $*" >&2
+  return 1
+}
+
+verify_sealed_overlay() {
+  local package=$1
+  [[ -f $package && ! -L $package ]] \
+    || { sealed_overlay_invalid "package is unavailable"; return 1; }
+  [[ $(stat -c '%a' "$package") == 400 ]] \
+    || { sealed_overlay_invalid "permissions changed"; return 1; }
+  [[ $(wc -c <"$package") == "$OVERLAY_PACKAGE_SIZE" ]] \
+    || { sealed_overlay_invalid "size changed"; return 1; }
+  [[ $($SHA256SUM "$package" | awk '{print $1}') == "$OVERLAY_PACKAGE_SHA" ]] \
+    || { sealed_overlay_invalid "digest changed"; return 1; }
+  [[ $(overlay_app_asar_sha "$package") == "$OVERLAY_APP_ASAR_SHA" ]] \
+    || { sealed_overlay_invalid "app.asar digest changed"; return 1; }
+}
+
+validate_operator_overlay() {
+  local receipt=$1 package_path canonical_path package_size package_sha app_asar_sha \
+    t4_commit omp_sha gateway_identity current_gateway_identity manifest \
+    manifest_t4_commit manifest_identity manifest_omp_sha manifest_version \
+    canonical_source_root
+  require_regular_file "$receipt" "operator rollback receipt"
+  [[ $(stat -c '%a' "$receipt") == 600 ]] || fail "operator rollback receipt must be owner-only mode 0600"
+  canonical_source_root=$("$REALPATH" -e -- "$PREVIOUS_GATEWAY_SOURCE") \
+    || fail "current gateway sourceRoot is unavailable"
+  [[ $canonical_source_root == "$PREVIOUS_GATEWAY_SOURCE" ]] \
+    || fail "current gateway sourceRoot must be canonical"
+  manifest="$canonical_source_root/LOCAL_DEPLOYMENT.json"
+  require_regular_file "$manifest" "current gateway deployment manifest"
+  [[ $("$REALPATH" -e -- "$manifest") == "$manifest" ]] \
+    || fail "current gateway deployment manifest must be canonical"
+  $JQ -e '
+    .schemaVersion == 1 and
+    (.kind == "t4-maintainer-local-deployment" or .kind == "local-unreleased-candidate") and
+    (.t4Commit | strings | test("^[0-9a-f]{40}$")) and
+    (.installedOmpSha256 | strings | test("^[0-9a-f]{64}$")) and
+    (.reportedPackageVersion | strings | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and
+    (.deploymentIdentity | strings | test("^sha256:[0-9a-f]{64}$"))
+  ' "$manifest" >/dev/null || fail "current gateway deployment manifest is invalid"
+  manifest_t4_commit=$($JQ -er '.t4Commit | strings' "$manifest") \
+    || fail "current gateway deployment manifest has no T4 commit"
+  manifest_omp_sha=$($JQ -er '.installedOmpSha256 | strings' "$manifest") \
+    || fail "current gateway deployment manifest has no installed OMP digest"
+  manifest_version=$($JQ -er '.reportedPackageVersion | strings' "$manifest") \
+    || fail "current gateway deployment manifest has no package version"
+  manifest_identity=$($JQ -er '.deploymentIdentity | strings' "$manifest") \
+    || fail "current gateway deployment manifest has no deployment identity"
+  package_path=$($JQ -er '.artifact.package.path | strings | select(startswith("/"))' "$receipt") \
+    || fail "operator rollback receipt has no absolute package path"
+  canonical_path=$($JQ -er '.artifact.package.canonicalPath | strings' "$receipt") \
+    || fail "operator rollback receipt has no canonical package path"
+  [[ $package_path == "$canonical_path" && $("$REALPATH" -e -- "$package_path") == "$canonical_path" ]] \
+    || fail "operator rollback package path is not the exact canonical artifact"
+  require_regular_file "$canonical_path" "operator rollback package"
+  package_size=$($JQ -er '.artifact.package.size | numbers | select(. > 0 and . <= 524288000)' "$receipt") \
+    || fail "operator rollback package size is invalid"
+  [[ $(wc -c <"$canonical_path") == "$package_size" ]] \
+    || fail "operator rollback package size does not match its receipt"
+  package_sha=$($JQ -er '.artifact.package.sha256 | strings | select(test("^[0-9a-f]{64}$"))' "$receipt") \
+    || fail "operator rollback package digest is invalid"
+  [[ $($SHA256SUM "$canonical_path" | awk '{print $1}') == "$package_sha" ]] \
+    || fail "operator rollback package digest does not match its receipt"
+  $JQ -e \
+    --arg manifest_t4_commit "$manifest_t4_commit" \
+    --arg manifest_omp_sha "$manifest_omp_sha" \
+    --arg manifest_version "$manifest_version" \
+    --arg manifest_identity "$manifest_identity" \
+    --arg current_omp_sha "$PREVIOUS_OMP_SHA" \
+    --arg current_version "$PREVIOUS_T4_VERSION" \
+    --arg current_identity "$($JQ -er '.deploymentIdentity | strings' "$GATEWAY_CONFIG")" '
+    .schemaVersion == 1 and
+    .kind == "t4-maintainer-operator-overlay" and
+    .artifact.package.version == $manifest_version and
+    .artifact.package.version == $current_version and
+    .artifact.t4.commit == $manifest_t4_commit and
+    (.artifact.t4.commit | strings | test("^[0-9a-f]{40}$")) and
+    (.artifact.t4.appAsarSha256 | strings | test("^[0-9a-f]{64}$")) and
+    .artifact.omp.sha256 == $manifest_omp_sha and
+    .artifact.omp.sha256 == $current_omp_sha and
+    (.artifact.omp.sha256 | strings | test("^[0-9a-f]{64}$")) and
+    .artifact.gateway.deploymentIdentity == $manifest_identity and
+    .artifact.gateway.deploymentIdentity == $current_identity and
+    (.artifact.gateway.deploymentIdentity | strings | test("^sha256:[0-9a-f]{64}$"))
+  ' "$receipt" >/dev/null || fail "operator rollback overlay identity does not exactly match the current deployment"
+  app_asar_sha=$(overlay_app_asar_sha "$canonical_path") \
+    || fail "operator rollback package app.asar could not be extracted"
+  $JQ -e --arg sha "$app_asar_sha" '.artifact.t4.appAsarSha256 == $sha' "$receipt" >/dev/null \
+    || fail "operator rollback app.asar digest does not match its receipt"
+  require_regular_file "$T4_APP_ASAR" "installed T4 app.asar"
+  [[ $($SHA256SUM "$T4_APP_ASAR" | awk '{print $1}') == "$app_asar_sha" ]] \
+    || fail "operator rollback app.asar does not match the installed T4 app.asar"
+  omp_sha=$($SHA256SUM "$OMP_TARGET" | awk '{print $1}')
+  [[ $omp_sha == "$manifest_omp_sha" ]] \
+    || fail "operator rollback OMP digest does not match the current deployment manifest"
+  gateway_identity=$($JQ -er '.artifact.gateway.deploymentIdentity | strings' "$receipt") \
+    || fail "operator rollback gateway identity is missing"
+  current_gateway_identity=$($JQ -er '.deploymentIdentity | strings' "$GATEWAY_CONFIG") \
+    || fail "current gateway deployment identity is missing"
+  [[ $gateway_identity == "$current_gateway_identity" ]] \
+    || fail "operator rollback gateway identity does not match the current gateway"
+  wait_for_gateway "$GATEWAY_PORT" "$gateway_identity" \
+    || fail "current gateway health does not prove the operator overlay identity"
+  OVERLAY_PACKAGE_SIZE=$package_size
+  OVERLAY_PACKAGE_SHA=$package_sha
+  OVERLAY_APP_ASAR_SHA=$app_asar_sha
+  PREVIOUS_DEB=$(seal_operator_overlay "$canonical_path" "$package_sha")
+  verify_sealed_overlay "$PREVIOUS_DEB" \
+    || fail "sealed operator rollback package failed verification"
+}
+
+
+overlay_app_asar_sha() {
+  local package=$1
+  "$DPKG_DEB" --fsys-tarfile "$package" \
+    | tar -xOf - './opt/T4 Code/resources/app.asar' 2>/dev/null \
+    | $SHA256SUM | awk '{print $1}'
+}
 wait_for_appserver() {
   local attempt pid installed_sha running_sha status_json host_id epoch
   installed_sha=$($SHA256SUM "$OMP_TARGET" | awk '{print $1}')
@@ -755,7 +910,7 @@ wait_for_gateway() {
 
 for command in "$GH" "$CURL" "$JQ" "$GIT" "$BUN" "$PNPM" "$NODE" "$SUDO" "$APT_GET" \
   "$DPKG_QUERY" "$DPKG" "$DPKG_DEB" "$SHA256SUM" "$SYSTEMCTL" "$INSTALL" "$SYNC" \
-  "$REALPATH" "$UNAME" "$DATE" awk basename chmod cmp cp dirname find grep id mkdir mktemp mv pgrep rm sleep sort stat; do
+  "$REALPATH" "$UNAME" "$DATE" awk basename chmod cmp cp dirname find grep id mkdir mktemp mv pgrep rm sleep sort stat tar; do
   require_command "$command"
 done
 require_positive_integer T4_LOCAL_HEALTH_ATTEMPTS "$HEALTH_ATTEMPTS"
@@ -765,9 +920,13 @@ require_positive_integer T4_LOCAL_MAIN_MIRROR_INTERVAL_SECONDS "$MAIN_MIRROR_INT
 [[ $("$UNAME" -s) == Linux ]] || fail "the automatic local deployer currently supports Linux only; the Tailnet service helper remains Linux and macOS compatible"
 [[ $RESULT_FILE == /* && $RECEIPT_FILE == /* && $WORK_DIR == /* ]] || fail "deployment paths must be absolute"
 [[ $MAINTAINER_ROOT == /* && $DEPLOYMENTS_DIR == /* && $WORK_DIR != *'/../'* ]] || fail "maintainer deployment roots must be absolute and normalized"
+canonical_maintainer_root=$("$REALPATH" -e -- "$MAINTAINER_ROOT") \
+  || fail "maintainer root must exist and be canonical"
+[[ $canonical_maintainer_root == "$MAINTAINER_ROOT" ]] \
+  || fail "maintainer root must be canonical"
 if [[ $PROC_ROOT != /proc ]]; then
   [[ ${T4_MAINTAINER_TEST_MODE:-0} == 1 \
-    && ($MAINTAINER_ROOT == /tmp/* || $MAINTAINER_ROOT == /private/tmp/*) ]] \
+    && ($canonical_maintainer_root == /tmp/* || $canonical_maintainer_root == /private/tmp/*) ]] \
     || fail "process-root override is restricted to an explicit temporary test root"
 fi
 case $WORK_DIR in
@@ -777,12 +936,8 @@ esac
 require_regular_file "$RESULT_FILE" "maintainer result"
 [[ ! -e $BLOCKED_FILE ]] || fail "local deployment is blocked pending operator reconciliation: $BLOCKED_FILE"
 if [[ $PROC_ROOT != /proc ]]; then
-  canonical_maintainer_root=$("$REALPATH" -e -- "$MAINTAINER_ROOT") \
-    || fail "test maintainer root must exist and be canonical"
   canonical_proc_root=$("$REALPATH" -e -- "$PROC_ROOT") \
     || fail "test process root must exist and be canonical"
-  [[ $canonical_maintainer_root == "$MAINTAINER_ROOT" ]] \
-    || fail "test maintainer root must be canonical"
   [[ $canonical_proc_root == "$PROC_ROOT" ]] \
     || fail "test process root must be canonical"
   [[ $canonical_proc_root == "$canonical_maintainer_root"/* ]] \
@@ -949,8 +1104,6 @@ TARGET_DEB=$(download_verified_deb "$T4_VERSION" "$DOWNLOAD_DIR")
 TARGET_DEB_SHA=$($SHA256SUM "$TARGET_DEB" | awk '{print $1}')
 [[ $($DPKG_DEB -f "$TARGET_DEB" Package) == "$T4_PACKAGE" ]] || fail "release deb has the wrong package name"
 [[ $($DPKG_DEB -f "$TARGET_DEB" Version) == "$T4_VERSION" ]] || fail "release deb has the wrong version"
-PREVIOUS_DEB=$(download_verified_deb "$PREVIOUS_T4_VERSION" "$BACKUP_DIR")
-
 PREVIOUS_OMP_SHA=$($SHA256SUM "$OMP_TARGET" | awk '{print $1}')
 PREVIOUS_OMP_VERSION=$("$OMP_TARGET" --version)
 [[ $PREVIOUS_OMP_VERSION =~ ^omp/[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "installed OMP binary reports an invalid version"
@@ -959,12 +1112,22 @@ PREVIOUS_OMP_MODE=$(stat -c '%a' "$OMP_TARGET")
 $INSTALL -m "$PREVIOUS_OMP_MODE" -- "$OMP_TARGET" "$BACKUP_DIR/omp"
 $INSTALL -m 0600 -- "$GATEWAY_CONFIG" "$BACKUP_DIR/tailnet-gateway.json"
 $INSTALL -m 0644 -- "$GATEWAY_UNIT" "$BACKUP_DIR/$GATEWAY_SERVICE"
+if [[ $PREVIOUS_T4_VERSION == "$T4_VERSION" ]]; then
+  require_regular_file "$ROLLBACK_RECEIPT" "same-version operator overlay receipt"
+  validate_operator_overlay "$ROLLBACK_RECEIPT"
+else
+  PREVIOUS_DEB=$(download_verified_deb "$PREVIOUS_T4_VERSION" "$BACKUP_DIR")
+fi
 
 require_workstation_idle
 require_noninteractive_privilege
 require_atomic_drain_capability
 "$SUDO" -n "$APT_GET" --simulate install --reinstall --allow-downgrades "$TARGET_DEB" >/dev/null \
   || fail "the target T4 package cannot be installed cleanly"
+if [[ -n $OVERLAY_PACKAGE_SHA ]]; then
+  verify_sealed_overlay "$PREVIOUS_DEB" \
+    || fail "sealed operator rollback package failed verification"
+fi
 "$SUDO" -n "$APT_GET" --simulate install --reinstall --allow-downgrades "$PREVIOUS_DEB" >/dev/null \
   || fail "the rollback T4 package cannot be installed cleanly"
 PREVIOUS_APP_ACTIVE=$(service_is_active "$OMP_SERVICE" && printf true || printf false)
