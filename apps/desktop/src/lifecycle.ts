@@ -8,7 +8,7 @@ import type { ServiceManager } from "@t4-code/service-manager";
 import type { RemoteTargetRegistry } from "./remote-runtime/registry.ts";
 import { createDesktopWindow, type DesktopWindowHandle } from "./window.ts";
 import { DesktopIpcRegistry, runtimeError, type IpcRuntime } from "./ipc.ts";
-import { ElectronCursorStore, ElectronRemoteTargetStore, ElectronCredentialCiphertextStore, ElectronLocalProfileStore, electronSafeStorage, loadDeviceIdentity, type DeviceIdentity } from "./stores.ts";
+import { ElectronCursorStore, ElectronRemoteTargetStore, ElectronCredentialCiphertextStore, ElectronLocalProfileStore, ElectronProjectionCacheStore, electronSafeStorage, loadDeviceIdentity, type DeviceIdentity } from "./stores.ts";
 import { VersionedRemoteTargetRegistry, DeviceCredentialStore } from "./remote-runtime/index.ts";
 import { LocalTargetManager, type TargetManagerOptions } from "./target-manager.ts";
 import { createAppserverServiceManager, discoverOmpExecutable, OmpAppserverCompatibilityError, probeOmpAppserver, NodeServiceFileSystem } from "./service.ts";
@@ -18,6 +18,8 @@ import { installApplicationMenu, type ApplicationMenuOptions } from "./menu.ts";
 import { DesktopUpdateController } from "./update-controller.ts";
 import { LocalProfileRegistry } from "./local-profiles.ts";
 import { LocalProfileRuntime } from "./profile-runtime.ts";
+
+type ProjectionCacheRuntime = NonNullable<IpcRuntime["projectionCache"]>;
 
 export function appserverLogsDirectory(
   homeDirectory: string,
@@ -48,6 +50,7 @@ export interface DesktopLifecycleOptions {
   readonly createRemoteRegistry?: () => RemoteTargetRegistry;
   readonly createCredentials?: () => DeviceCredentialStore | undefined;
   readonly createLocalProfileRegistry?: () => LocalProfileRegistry;
+  readonly createProjectionCache?: () => ProjectionCacheRuntime;
   readonly discoverExecutable?: () => Promise<string | undefined>;
   readonly probeAppserver?: (executable: string) => Promise<boolean>;
   readonly createServiceManager?: (options: Parameters<typeof createAppserverServiceManager>[0]) => ServiceManager;
@@ -75,6 +78,7 @@ export class DesktopLifecycle {
   private readonly remoteRegistryFactory: () => RemoteTargetRegistry;
   private readonly credentialsFactory: () => DeviceCredentialStore | undefined;
   private readonly localProfileRegistryFactory: () => LocalProfileRegistry;
+  private readonly projectionCacheFactory: () => ProjectionCacheRuntime;
   private readonly executableFactory: () => Promise<string | undefined>;
   private readonly serviceFactory: (options: Parameters<typeof createAppserverServiceManager>[0]) => ServiceManager;
   private readonly speechServiceFactory: (options: { readonly discoverExecutable: () => Promise<string | undefined> }) => DesktopSpeechService;
@@ -88,6 +92,7 @@ export class DesktopLifecycle {
   private localProfileRegistry: LocalProfileRegistry | undefined;
   private speechService: DesktopSpeechService | undefined;
   private profileRuntime: LocalProfileRuntime | undefined;
+  private projectionCache: ProjectionCacheRuntime | undefined;
   private serviceManager: ServiceManager | undefined;
   private readonly serviceManagers = new Map<string, ServiceManager>();
   private serviceAvailabilityIssue: ServiceAvailabilityIssue | undefined;
@@ -121,6 +126,7 @@ export class DesktopLifecycle {
     this.localProfileRegistryFactory = options.createLocalProfileRegistry ?? (
       () => new LocalProfileRegistry(new ElectronLocalProfileStore())
     );
+    this.projectionCacheFactory = options.createProjectionCache ?? (() => new ElectronProjectionCacheStore());
     this.executableFactory = options.discoverExecutable ?? (() => discoverOmpExecutable());
     this.appserverProbe = options.probeAppserver ?? ((executable) => probeOmpAppserver(executable));
     this.serviceFactory = options.createServiceManager ?? createAppserverServiceManager;
@@ -165,6 +171,7 @@ export class DesktopLifecycle {
       ingest(value);
     });
     await this.electronApp.whenReady();
+    this.projectionCache = this.projectionCacheFactory();
     if (process.platform === "darwin") this.electronApp.setAsDefaultProtocolClient("t4-code");
     this.updateController = this.updateControllerFactory();
     this.menuInstaller({ onOpenUpdates: () => this.openUpdatesFromMenu() });
@@ -227,6 +234,7 @@ export class DesktopLifecycle {
     this.mainWindow = undefined;
     this.updateController?.dispose();
     this.updateController = undefined;
+    this.projectionCache = undefined;
     const manager = this.manager;
     this.manager = undefined;
     const recovery = this.serviceRecoveryPromise;
@@ -423,6 +431,7 @@ export class DesktopLifecycle {
       getServiceAvailabilityIssue: () => this.serviceAvailabilityIssue,
       ...(this.speechService === undefined ? {} : { speech: this.speechService }),
       ...(this.profileRuntime === undefined ? {} : { profileRuntime: this.profileRuntime }),
+      ...(this.projectionCache === undefined ? {} : { projectionCache: this.projectionCache }),
       drainPairLinks: () => this.pendingPairs.drain(),
       drainPendingUpdateOpen: () => this.markUpdateRendererReady(),
       ...(this.updateController === undefined ? {} : { updateController: this.updateController }),

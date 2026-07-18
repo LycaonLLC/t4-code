@@ -37,6 +37,9 @@ import type {
   TerminalResult,
   SpeechRequest,
   SpeechResult,
+  ProjectionCacheLoadResult,
+  ProjectionCacheSaveRequest,
+  ProjectionCacheSaveResult,
 } from "@t4-code/protocol/desktop-ipc";
 import type { CatalogFrame, SettingsFrame, WelcomeFrame } from "@t4-code/protocol";
 import { ImmutableMap } from "./immutable-map.ts";
@@ -76,6 +79,8 @@ export interface DesktopShellPort {
   readonly downloadUpdate?: () => Promise<DesktopUpdateState>;
   readonly restartToUpdate?: () => Promise<DesktopUpdateState>;
   readonly updateRendererReady?: () => Promise<DesktopUpdateRendererReadyResult>;
+  readonly loadProjectionCache?: () => Promise<ProjectionCacheLoadResult>;
+  readonly saveProjectionCache?: (request: ProjectionCacheSaveRequest) => Promise<ProjectionCacheSaveResult>;
   readonly listTargets: () => Promise<TargetListResult>;
   readonly addTarget: (request: TargetAddRequest) => Promise<TargetAddResult>;
   readonly removeTarget: (request: TargetRequest) => Promise<TargetRemoveResult>;

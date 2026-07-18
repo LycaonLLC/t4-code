@@ -87,6 +87,7 @@ function setup(
   overrides: {
     readonly discoverExecutable?: () => Promise<string | undefined>;
     readonly createServiceManager?: NonNullable<DesktopLifecycleOptions["createServiceManager"]>;
+    readonly createProjectionCache?: NonNullable<DesktopLifecycleOptions["createProjectionCache"]>;
   } = {},
 ) {
   const app = new FakeApp();
@@ -132,6 +133,7 @@ function setup(
     createCursorStore: () => ({ load: () => [], save: () => {} }),
     createCredentials: () => undefined,
     createLocalProfileRegistry: () => localProfileRegistry,
+    ...(overrides.createProjectionCache === undefined ? {} : { createProjectionCache: overrides.createProjectionCache }),
     discoverExecutable: overrides.discoverExecutable ?? (serviceManager === undefined ? async () => undefined : async () => "/opt/omp/bin/omp"),
     ...(
       overrides.createServiceManager === undefined && serviceManager === undefined
@@ -179,6 +181,29 @@ describe("desktop Electron lifecycle", () => {
     expect(fixture.runtimes[0]).toMatchObject({ manager: fixture.manager });
     expect(fixture.runtimes[1]).toMatchObject({ manager: fixture.manager });
     expect(fixture.managerOptions).toBeDefined();
+    await fixture.lifecycle.stop();
+  });
+  it("creates one projection cache after readiness and injects it into every IPC binding", async () => {
+    const cache = {
+      load: () => ({ available: false, value: null }),
+      save: (_value: string) => ({ saved: false }),
+    };
+    let cacheCreates = 0;
+    const fixture = setup(undefined, async () => true, {
+      createProjectionCache: () => {
+        cacheCreates += 1;
+        return cache;
+      },
+    });
+    expect(cacheCreates).toBe(0);
+    await fixture.lifecycle.start();
+    expect(cacheCreates).toBe(1);
+    expect(fixture.runtimes[0]).toMatchObject({ projectionCache: cache });
+    fixture.windows[0]!.close();
+    fixture.app.listeners.get("activate")?.();
+    expect(fixture.runtimes).toHaveLength(2);
+    expect(fixture.runtimes[1]).toMatchObject({ projectionCache: cache });
+    expect(cacheCreates).toBe(1);
     await fixture.lifecycle.stop();
   });
   it("routes the native update menu to the trusted renderer and schedules one passive check", async () => {

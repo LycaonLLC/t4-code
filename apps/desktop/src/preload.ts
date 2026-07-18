@@ -3,6 +3,8 @@ import {
   decodeDesktopEvent,
   decodeDesktopUpdateRendererReadyResult,
   decodeDesktopUpdateState,
+  decodeProjectionCacheLoadResult,
+  decodeProjectionCacheSaveResult,
   type BootstrapResult,
   type CommandRequest,
   type CommandResult,
@@ -39,6 +41,9 @@ import {
   type TerminalResult,
   type SpeechRequest,
   type SpeechResult,
+  type ProjectionCacheLoadResult,
+  type ProjectionCacheSaveRequest,
+  type ProjectionCacheSaveResult,
 } from "@t4-code/protocol/desktop-ipc";
  
 export interface OmpShellBridge {
@@ -62,6 +67,8 @@ export interface OmpShellBridge {
   readonly serviceStop: () => Promise<ServiceActionResult>;
   readonly serviceRestart: () => Promise<ServiceActionResult>;
   readonly serviceUninstall: () => Promise<ServiceActionResult>;
+  readonly loadProjectionCache: () => Promise<ProjectionCacheLoadResult>;
+  readonly saveProjectionCache: (request: ProjectionCacheSaveRequest) => Promise<ProjectionCacheSaveResult>;
   readonly getUpdateState: () => Promise<DesktopUpdateState>;
   readonly checkForUpdate: () => Promise<DesktopUpdateState>;
   readonly downloadUpdate: () => Promise<DesktopUpdateState>;
@@ -84,11 +91,19 @@ export interface OmpShellBridge {
   readonly onConnectionState: (listener: (event: ConnectionStateEvent) => void) => () => void;
   readonly onRuntimeError: (listener: (event: RuntimeErrorEvent) => void) => () => void;
   readonly onPairLink: (listener: (event: PairLinkEvent) => void) => () => void;
+
   readonly onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   readonly onOpenUpdateSettings: (listener: (event: DesktopUpdateOpenEvent) => void) => () => void;
 }
 
 function invoke<C extends "omp:bootstrap" | "omp:connect" | "omp:disconnect" | "omp:command" | "omp:confirm" | "omp:terminal:input" | "omp:terminal:resize" | "omp:terminal:close" | "omp:pair" | "omp:pair-links:drain" | "omp:speech:speak" | "omp:speech:stop" | "omp:service:inspect" | "omp:service:install" | "omp:service:start" | "omp:service:stop" | "omp:service:restart" | "omp:service:uninstall" | "omp:targets:list" | "omp:targets:add" | "omp:targets:remove" | "omp:profiles:list" | "omp:profiles:add" | "omp:profiles:update" | "omp:profiles:remove" | "omp:profiles:status" | "omp:profiles:start" | "omp:profiles:stop" | "omp:profiles:restart" | "app:update:get-state" | "app:update:check" | "app:update:download" | "app:update:restart" | "app:update:renderer-ready", R>(channel: C, payload: unknown): Promise<R> {
+  return ipcRenderer.invoke(channel, { channel, payload }) as Promise<R>;
+}
+
+function invokeProjectionCache<R>(
+  channel: "app:projection-cache:load" | "app:projection-cache:save",
+  payload: unknown,
+): Promise<R> {
   return ipcRenderer.invoke(channel, { channel, payload }) as Promise<R>;
 }
 
@@ -146,6 +161,10 @@ const bridge: OmpShellBridge = {
   downloadUpdate: () => invoke<"app:update:download", unknown>("app:update:download", {}).then(decodeDesktopUpdateState),
   restartToUpdate: () => invoke<"app:update:restart", unknown>("app:update:restart", {}).then(decodeDesktopUpdateState),
   updateRendererReady: () => invoke<"app:update:renderer-ready", unknown>("app:update:renderer-ready", {}).then(decodeDesktopUpdateRendererReadyResult),
+  loadProjectionCache: () =>
+    invokeProjectionCache<unknown>("app:projection-cache:load", {}).then(decodeProjectionCacheLoadResult),
+  saveProjectionCache: (request) =>
+    invokeProjectionCache<unknown>("app:projection-cache:save", request).then(decodeProjectionCacheSaveResult),
   listTargets: () => invoke("omp:targets:list", {}),
   addTarget: (request) => invoke("omp:targets:add", request),
   removeTarget: (request) => invoke("omp:targets:remove", request),
