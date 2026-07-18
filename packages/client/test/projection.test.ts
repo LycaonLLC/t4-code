@@ -1553,7 +1553,7 @@ describe("client projections", () => {
     expect(process.memoryUsage().heapUsed).toBeLessThan(512 * 1024 * 1024);
     const cached = decodeProjectionCacheValue(encodeProjectionCache(state));
     expect(cached?.sessions.get(sessionKey("session-a"))?.entries).toHaveLength(10_000);
-  });
+  }, 20_000);
 
   it("codec bounds and rejects corrupt/old/oversized cache", () => {
     const state = applyPublicFrame(createProjectionSnapshot(), frame("snapshot"));

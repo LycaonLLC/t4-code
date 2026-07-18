@@ -69,6 +69,14 @@ export class FixtureWebSocketServer {
   get clientCount(): number {
     return this.engine.clientCount;
   }
+  /** Total WebSocket connections accepted since this fixture started. */
+  get connectionCount(): number {
+    return this.nextClient - 1;
+  }
+  /** Simulate an unclean network loss without stopping the fixture server. */
+  dropConnections(): void {
+    for (const socket of this.sockets) socket.terminate();
+  }
   waitForClientCount(expected = 0): Promise<void> {
     if (!Number.isSafeInteger(expected) || expected < 0)
       return Promise.reject(new RangeError("expected client count must be a non-negative integer"));

@@ -64,18 +64,18 @@ describe("mobile saved-host manager", () => {
     expect([...storage.values.keys()]).toEqual([MOBILE_BACKEND_STORAGE_KEY]);
   });
 
-  it("switches hosts without any removal and reloads only after the selection persists", () => {
+  it("switches hosts without any removal and restarts at home only after the selection persists", () => {
     const calls: string[] = [];
     const failure = performHostSwitch("https://laptop.tailnet.ts.net:8445", {
-      reload: () => calls.push("reload"),
+      restartAtHome: () => calls.push("restart-home"),
       select: (origin) => calls.push(`select:${origin}`),
     });
     expect(failure).toBeNull();
-    expect(calls).toEqual(["select:https://laptop.tailnet.ts.net:8445", "reload"]);
+    expect(calls).toEqual(["select:https://laptop.tailnet.ts.net:8445", "restart-home"]);
 
     const failedCalls: string[] = [];
     const message = performHostSwitch("https://gone.tailnet.ts.net:8445", {
-      reload: () => failedCalls.push("reload"),
+      restartAtHome: () => failedCalls.push("restart-home"),
       select: () => {
         throw new Error("That saved host is no longer available.");
       },
