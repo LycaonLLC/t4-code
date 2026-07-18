@@ -43,7 +43,7 @@ function resolveWorkflowExpression(expression, context) {
 }
 
 test("current source tree has one consistent release version", () => {
-  assert.deepEqual(collectReleaseConsistencyErrors(files, "v0.1.22"), []);
+  assert.deepEqual(collectReleaseConsistencyErrors(files), []);
 });
 
 test("rejects a tag that differs from the package version", () => {
@@ -52,6 +52,19 @@ test("rejects a tag that differs from the package version", () => {
       error.includes("release tag v9.9.9 does not match v0.1.22"),
     ),
   );
+});
+
+test("tagged releases require published app-wire provenance to match the vendored contract", () => {
+  const errors = collectReleaseConsistencyErrors(files, "v0.1.22");
+  for (const field of ["version", "commit", "source tree"]) {
+    assert.ok(
+      errors.some((error) =>
+        error.includes(
+          `published app-wire ${field} must match current app-wire for tagged releases`,
+        ),
+      ),
+    );
+  }
 });
 
 test("rejects workspace, site, README, and runtime version drift", () => {
@@ -266,20 +279,31 @@ test("rejects drift in verified OMP runtime provenance", () => {
 
 test("accepts a current app-wire update without rewriting published release surfaces", () => {
   const coordinated = new Map(files);
-  coordinated.set(
-    "compat/omp-app-matrix.json",
-    coordinated
-      .get("compat/omp-app-matrix.json")
-      .replace('"version": "0.5.9"', '"version": "0.6.0"')
-      .replace("oh-my-pi-app-wire-0.5.9.tgz", "oh-my-pi-app-wire-0.6.0.tgz"),
-  );
-  coordinated.set(
-    "vendor/app-wire/manifest.json",
-    coordinated
-      .get("vendor/app-wire/manifest.json")
-      .replace('"version": "0.5.9"', '"version": "0.6.0"')
-      .replace("oh-my-pi-app-wire-0.5.9.tgz", "oh-my-pi-app-wire-0.6.0.tgz"),
-  );
+  for (const path of ["compat/omp-app-matrix.json", "vendor/app-wire/manifest.json"]) {
+    coordinated.set(
+      path,
+      coordinated
+        .get(path)
+        .replace('"version": "0.5.9"', '"version": "0.6.0"')
+        .replace(
+          '"sourceCommit": "5633bdd7e5f9062d1822eeeddb9311b2d942bf6f"',
+          '"sourceCommit": "1111111111111111111111111111111111111111"',
+        )
+        .replace(
+          '"sourceTreeHash": "4d8794bad6fc57d86058a46dc4698fcca14263e5"',
+          '"sourceTreeHash": "2222222222222222222222222222222222222222"',
+        )
+        .replace("oh-my-pi-app-wire-0.5.9.tgz", "oh-my-pi-app-wire-0.6.0.tgz")
+        .replace(
+          '"tarballSha256": "b3a891610e919833d16302b1893831f509d264322c3869d28f17adbbff6116f0"',
+          '"tarballSha256": "3333333333333333333333333333333333333333333333333333333333333333"',
+        )
+        .replace(
+          '"goldenCorpusSha256": "50b087a3a22bb48908718b7786eff6ce618bbd6b6123c055e40c957ef47a805c"',
+          '"goldenCorpusSha256": "4444444444444444444444444444444444444444444444444444444444444444"',
+        ),
+    );
+  }
 
   assert.deepEqual(collectReleaseConsistencyErrors(coordinated), []);
   assert.equal(

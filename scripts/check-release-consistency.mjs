@@ -204,6 +204,21 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       `${matrixPath} published app-wire source tree must be a lowercase 40-character Git SHA`,
     );
   }
+  if (releaseTag !== undefined) {
+    for (const [field, currentValue, publishedValue] of [
+      ["package", appWire?.package, publishedAppWire?.package],
+      ["version", appWireVersion, publishedAppWireVersion],
+      ["repository", appWire?.sourceRepository, publishedAppWire?.sourceRepository],
+      ["commit", appWireSourceCommit, publishedAppWireSourceCommit],
+      ["source tree", appWireSourceTree, publishedAppWireSourceTree],
+    ]) {
+      if (publishedValue !== currentValue) {
+        errors.push(
+          `${matrixPath} published app-wire ${field} must match current app-wire for tagged releases`,
+        );
+      }
+    }
+  }
   if (
     typeof appWireVersion === "string" &&
     appWire?.tarball !== `vendor/app-wire/oh-my-pi-app-wire-${appWireVersion}.tgz`
