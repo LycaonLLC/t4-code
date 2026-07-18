@@ -19,11 +19,20 @@ const IMAGE_SOURCE: TranscriptImageSource = {
   dispose: () => undefined,
 };
 
-function renderWorkingRow(projection: TranscriptProjection, nowMs: number): string | null {
+function renderWorkingRow(
+  projection: TranscriptProjection,
+  nowMs: number,
+  options?: { readonly ghost?: boolean },
+): string | null {
   const row = deriveTranscriptRows(projection).find((candidate) => candidate.kind === "working");
   if (row?.kind !== "working") return null;
   return renderToStaticMarkup(
-    <TranscriptRowContent imageSource={IMAGE_SOURCE} nowMs={nowMs} row={row} />,
+    <TranscriptRowContent
+      ghost={options?.ghost ?? false}
+      imageSource={IMAGE_SOURCE}
+      nowMs={nowMs}
+      row={row}
+    />,
   );
 }
 
@@ -86,5 +95,28 @@ describe("compaction transcript status", () => {
     expect(markup).toContain("Working for ");
     expect(markup).toContain("4s");
     expect(markup).not.toContain("Compacting context");
+  });
+
+  it("keeps the lifecycle hook off paint-only ghost copies so one semantic row exists", () => {
+    const factory = new FrameFactory({ host: "host", session: "session", epoch: "epoch" });
+    let projection = projectionWithSnapshot(factory);
+    projection = reduceTranscript(
+      projection,
+      factory.event({
+        type: "compaction.start",
+        reason: "pending_prompt_size",
+        at: "2026-07-15T20:00:01Z",
+      }),
+    );
+
+    const nowMs = Date.parse("2026-07-15T20:00:06Z");
+    const ghost = renderWorkingRow(projection, nowMs, { ghost: true });
+    expect(ghost).not.toBeNull();
+    // The ghost paints the same copy but never duplicates the semantic hook.
+    expect(ghost).not.toContain("data-transcript-status");
+    expect(ghost).toContain("Compacting context for ");
+    expect(renderWorkingRow(projection, nowMs)).toContain(
+      'data-transcript-status="compacting-context"',
+    );
   });
 });

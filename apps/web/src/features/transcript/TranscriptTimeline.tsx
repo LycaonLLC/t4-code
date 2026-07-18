@@ -370,6 +370,7 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
                   key={row.id}
                 >
                   <TranscriptRowContent
+                    ghost
                     imageSource={imageSource}
                     nowMs={nowMs}
                     row={row}
