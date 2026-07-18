@@ -92,6 +92,7 @@ test("runner preflights the Linux Sol privilege runner before creating state", a
         T4_MAINTAINER_TEST_MODE: "1",
         T4_MAINTAINER_ROOT: stateRoot,
         T4_MAINTAINER_UNAME: uname,
+        T4_MAINTAINER_OMP: bashPath,
         T4_MAINTAINER_SETPRIV: missingSetpriv,
       },
     });
