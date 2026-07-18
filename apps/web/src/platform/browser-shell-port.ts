@@ -528,7 +528,7 @@ export function createBrowserShellPort(
 
     async pair(request: PairRequest): Promise<PairResult> {
       if (client === undefined || client.state !== "pairing") throw new Error("not ready to pair");
-      const result = await client.pairStart({
+      await client.pairStart({
         code: request.code,
         deviceId: browserDeviceId,
         deviceName:
@@ -538,7 +538,7 @@ export function createBrowserShellPort(
         platform: mobilePlatform ?? platform,
         requestedCapabilities: DEVICE_CAPABILITIES,
       });
-      return { targetId: request.targetId, paired: result.type === "pair.ok" };
+      return { targetId: request.targetId, paired: true };
     },
 
     async drainPairLinks(): Promise<PairLinksDrainResult> {

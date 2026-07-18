@@ -1,5 +1,4 @@
 import {
-  decodedOmpServerEventFromFrame,
   hostId,
   ompServerEventFromFrame,
   pairingId,
@@ -63,13 +62,12 @@ describe("shared server events", () => {
   });
 
   it("retains privileged pair events only in the complete internal union", () => {
-    const decoded = decodedOmpServerEventFromFrame(pairOk());
+    const event = ompServerEventFromFrame(pairOk());
 
-    expect(decoded.kind).toBe("pair.ok");
-    expect(decoded.event.kind).toBe("pair.ok");
-    expect(decoded.payload).toBe(decoded.event.payload);
-    expect(decoded.payload).toHaveProperty("deviceToken");
-    expect(decoded.wireFrame.type).toBe("pair.ok");
-    expect(Object.isFrozen(decoded)).toBe(true);
+    expect(event.kind).toBe("pair.ok");
+    expect(event.payload).toHaveProperty("deviceToken");
+    expect(event.payload).not.toHaveProperty("v");
+    expect(event.payload).not.toHaveProperty("type");
+    expect(Object.isFrozen(event)).toBe(true);
   });
 });

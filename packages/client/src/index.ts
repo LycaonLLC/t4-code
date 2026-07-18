@@ -4,8 +4,11 @@ export {
 } from "./omp-app-v1-protocol-provider.ts";
 export type {
   OmpClientMessage,
-  OmpDecodedServerEvent,
+  OmpPairOk,
   OmpProtocolProvider,
+  OmpResponse,
+  OmpServerEventOf,
+  OmpServerPayload,
   OmpServerEvent,
   PublicOmpServerEvent,
 } from "./omp-protocol-provider.ts";

@@ -26,21 +26,8 @@ export type OmpServerEventFromFrame<Frame extends ServerFrame> =
       }>
     : never;
 
-export type OmpDecodedServerEventFromFrame<Frame extends ServerFrame> =
-  Frame extends ServerFrame
-    ? Readonly<{
-        kind: Frame["type"];
-        payload: OmpServerEventPayload<Frame>;
-        event: OmpServerEventFromFrame<Frame>;
-        wireFrame: Frame;
-      }>
-    : never;
-
 /** Stable, version-free event union shared by protocol providers and applications. */
 export type OmpServerEvent = OmpServerEventFromFrame<ServerFrame>;
-
-/** A decoded event paired with the validated wire frame used by legacy consumers. */
-export type OmpDecodedServerEvent = OmpDecodedServerEventFromFrame<ServerFrame>;
 
 /** Pairing credentials never cross application-facing event boundaries. */
 export type PublicOmpServerEvent = Exclude<OmpServerEvent, { kind: "pair.ok" }>;
@@ -53,15 +40,4 @@ export function ompServerEventFromFrame<Frame extends ServerFrame>(
     kind: type,
     payload: Object.freeze(payload),
   }) as OmpServerEventFromFrame<Frame>;
-}
-
-export function decodedOmpServerEventFromFrame<Frame extends ServerFrame>(
-  wireFrame: Frame,
-): OmpDecodedServerEventFromFrame<Frame> {
-  const event = ompServerEventFromFrame(wireFrame);
-  return Object.freeze({
-    ...event,
-    event,
-    wireFrame,
-  }) as OmpDecodedServerEventFromFrame<Frame>;
 }

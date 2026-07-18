@@ -2,13 +2,21 @@ import type {
   CommandDescriptor,
   Cursor,
   DeviceCapability,
-  OmpDecodedServerEvent,
+  OmpServerEvent,
 } from "@t4-code/protocol";
 export type {
-  OmpDecodedServerEvent,
   OmpServerEvent,
   PublicOmpServerEvent,
 } from "@t4-code/protocol";
+
+export type OmpServerEventOf<Kind extends OmpServerEvent["kind"]> = Extract<
+  OmpServerEvent,
+  { kind: Kind }
+>;
+export type OmpServerPayload<Kind extends OmpServerEvent["kind"]> =
+  OmpServerEventOf<Kind>["payload"];
+export type OmpResponse = OmpServerPayload<"response">;
+export type OmpPairOk = OmpServerPayload<"pair.ok">;
 
 /** Messages the T4 client can ask a concrete protocol adapter to send. */
 export type OmpClientMessage =
@@ -83,7 +91,7 @@ export interface OmpProtocolProvider {
   readonly protocolVersion: string;
   /** Validate and encode one logical T4 message using this provider's wire format. */
   encodeClientMessage(message: OmpClientMessage): string;
-  decodeServerEvent(input: unknown): OmpDecodedServerEvent;
+  decodeServerEvent(input: unknown): OmpServerEvent;
   commandDescriptor(command: string): CommandDescriptor | undefined;
   requiredCapability(command: string): DeviceCapability | undefined;
 }

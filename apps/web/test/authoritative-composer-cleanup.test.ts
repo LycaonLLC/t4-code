@@ -83,7 +83,7 @@ function apply(snapshot: ProjectionSnapshot, frame: ProjectionFrame): Projection
 }
 
 function publicEvent(frame: ProjectionFrame): PublicOmpServerEvent {
-  const event = ompAppV1ProtocolProvider.decodeServerEvent(frame).event;
+  const event = ompAppV1ProtocolProvider.decodeServerEvent(frame);
   if (event.kind === "pair.ok") throw new Error("pair.ok is not a public event");
   return event;
 }

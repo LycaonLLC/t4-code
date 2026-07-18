@@ -52,7 +52,7 @@ function withSnapshot(factory: FrameFactory, count = 2): TranscriptProjection {
 }
 
 function transcriptEvent(frame: TranscriptFrame): TranscriptServerEvent {
-  const event = ompAppV1ProtocolProvider.decodeServerEvent(frame).event;
+  const event = ompAppV1ProtocolProvider.decodeServerEvent(frame);
   if (
     event.kind !== "snapshot" &&
     event.kind !== "entry" &&

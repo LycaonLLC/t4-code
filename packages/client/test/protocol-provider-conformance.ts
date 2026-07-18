@@ -50,12 +50,9 @@ export function protocolProviderConformance(
       expect(options.inboundFrames.length).toBeGreaterThan(0);
       for (const input of options.inboundFrames) {
         const decoded = options.provider.decodeServerEvent(input);
-        expect(decoded.kind).toBe(decoded.event.kind);
-        expect(decoded.payload).toBe(decoded.event.payload);
         expect(decoded.payload).not.toHaveProperty("v");
         expect(decoded.payload).not.toHaveProperty("type");
         expect(Object.isFrozen(decoded)).toBe(true);
-        expect(Object.isFrozen(decoded.event)).toBe(true);
         expect(Object.isFrozen(decoded.payload)).toBe(true);
       }
     });

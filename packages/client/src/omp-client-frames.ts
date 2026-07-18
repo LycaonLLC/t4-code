@@ -1,24 +1,24 @@
 import { AppWireError } from "@t4-code/protocol";
-import type { OmpDecodedServerEvent } from "./omp-protocol-provider.ts";
+import type { OmpServerEvent } from "./omp-protocol-provider.ts";
 
-type DecodedEvent<Kind extends OmpDecodedServerEvent["kind"]> = Extract<OmpDecodedServerEvent, { kind: Kind }>;
-type DurableEvent = DecodedEvent<"entry" | "event" | "session.delta">;
+type ServerEvent<Kind extends OmpServerEvent["kind"]> = Extract<OmpServerEvent, { kind: Kind }>;
+type DurableEvent = ServerEvent<"entry" | "event" | "session.delta">;
 export function safeFrameDecodeFailure(error: unknown): string {
   if (!(error instanceof AppWireError)) return "invalid server frame";
   const safePath = error.path !== undefined && /^[A-Za-z0-9.[\]_-]{1,128}$/u.test(error.path) ? ` at ${error.path}` : "";
   return `invalid server frame (${error.code}${safePath})`;
 }
 export interface FrameDispatchHandlers {
-  welcome(message: DecodedEvent<"welcome">): void;
+  welcome(message: ServerEvent<"welcome">): void;
   pong(nonce: string): void;
-  bye(message: DecodedEvent<"bye">): void;
-  response(message: DecodedEvent<"response">): void;
-  pairOk(message: DecodedEvent<"pair.ok">, generation: number): void | Promise<void>;
-  pairError(message: DecodedEvent<"pair.error">): void;
-  gap(message: DecodedEvent<"gap">): void;
-  snapshot(message: DecodedEvent<"snapshot">): void;
+  bye(message: ServerEvent<"bye">): void;
+  response(message: ServerEvent<"response">): void;
+  pairOk(message: ServerEvent<"pair.ok">, generation: number): void | Promise<void>;
+  pairError(message: ServerEvent<"pair.error">): void;
+  gap(message: ServerEvent<"gap">): void;
+  snapshot(message: ServerEvent<"snapshot">): void;
   durable(message: DurableEvent): void;
-  other(message: Exclude<OmpDecodedServerEvent, DecodedEvent<"welcome" | "response" | "pair.ok" | "bye" | "pong" | "pair.error" | "gap" | "snapshot" | "entry" | "event" | "session.delta">>): void;
+  other(message: Exclude<OmpServerEvent, ServerEvent<"welcome" | "response" | "pair.ok" | "bye" | "pong" | "pair.error" | "gap" | "snapshot" | "entry" | "event" | "session.delta">>): void;
 }
 
 /** Stable server-event dispatch boundary; callbacks are constructed once per client. */
@@ -27,7 +27,7 @@ export class OmpClientEventDispatcher {
   constructor(handlers: FrameDispatchHandlers) {
     this.handlers = handlers;
   }
-  dispatch(message: OmpDecodedServerEvent, generation: number): void | Promise<void> {
+  dispatch(message: OmpServerEvent, generation: number): void | Promise<void> {
     switch (message.kind) {
       case "welcome": return this.handlers.welcome(message);
       case "pong": return this.handlers.pong(message.payload.nonce);

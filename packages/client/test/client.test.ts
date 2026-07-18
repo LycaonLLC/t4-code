@@ -361,7 +361,10 @@ describe("OmpClient protocol state machine", () => {
     expect(await commandOutcome).toEqual({ code: "timeout" });
     expect(client.resources().pending).toBe(1);
     transport.emit(responseFor(command, { cancelled: true }));
-    expect((await confirmResult).requestId).toBe(command.requestId);
+    const confirmed = await confirmResult;
+    expect(confirmed.requestId).toBe(command.requestId);
+    expect(confirmed).not.toHaveProperty("v");
+    expect(confirmed).not.toHaveProperty("type");
     expect(client.resources().pending).toBe(0);
     await client.close();
   });
@@ -753,9 +756,11 @@ describe("OmpClient protocol state machine", () => {
     const request = transport.lastClientFrame();
     if (request.type !== "pair.start") throw new Error("expected pair start");
     transport.emit({ v: V, type: "pair.ok", requestId: request.requestId, pairingId: "pair-1", deviceId: "device", deviceName: "test", platform: "linux", requestedCapabilities: [], grantedCapabilities: [], deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", expiresAt: "2030-01-01T00:00:00Z" });
-    await pairing;
+    const paired = await pairing;
     unsubscribeEvent();
     expect(token).toBe("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    expect(paired).not.toHaveProperty("v");
+    expect(paired).not.toHaveProperty("type");
     expect(publicEvents).toHaveLength(0);
     expect(JSON.stringify(publicEvents)).not.toContain("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     await client.close();

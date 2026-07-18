@@ -4,7 +4,7 @@ import {
   OmpClient,
   ompAppV1ProtocolProvider,
   type OmpClientMessage,
-  type OmpDecodedServerEvent,
+  type OmpServerEvent,
   type OmpProtocolProvider,
   type OmpTransport,
   type PublicOmpServerEvent,
@@ -199,7 +199,7 @@ describe("OmpProtocolProvider", () => {
     const decoded = ompAppV1ProtocolProvider.decodeServerEvent(welcomeFrame());
 
     expect(decoded.kind).toBe("welcome");
-    expect(decoded.event).toEqual({ kind: "welcome", payload: decoded.payload });
+    expect(decoded).toEqual({ kind: "welcome", payload: decoded.payload });
     expect(decoded.payload).not.toHaveProperty("v");
     expect(decoded.payload).not.toHaveProperty("type");
     expect(decoded.payload).toMatchObject({
@@ -207,8 +207,7 @@ describe("OmpProtocolProvider", () => {
       selectedProtocol: "omp-app/1",
       authentication: "local",
     });
-    expect(decoded.wireFrame).toMatchObject({ v: "omp-app/1", type: "welcome" });
-    expect(Object.isFrozen(decoded.event)).toBe(true);
+    expect(decoded).not.toHaveProperty("wireFrame");
     expect(Object.isFrozen(decoded.payload)).toBe(true);
   });
 
@@ -221,7 +220,7 @@ describe("OmpProtocolProvider", () => {
         clientEncodes += 1;
         return ompAppV1ProtocolProvider.encodeClientMessage(message);
       },
-      decodeServerEvent(input: unknown): OmpDecodedServerEvent {
+      decodeServerEvent(input: unknown): OmpServerEvent {
         serverEventDecodes += 1;
         return ompAppV1ProtocolProvider.decodeServerEvent(input);
       },

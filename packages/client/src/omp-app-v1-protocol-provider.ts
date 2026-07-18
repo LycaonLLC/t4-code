@@ -1,9 +1,9 @@
 import {
   COMMAND_DESCRIPTORS,
   PROTOCOL_VERSION,
-  decodedOmpServerEventFromFrame,
   decodeClientFrame,
   decodeServerFrame,
+  ompServerEventFromFrame,
   requiredCapability,
 } from "@t4-code/protocol";
 
@@ -116,7 +116,7 @@ export const ompAppV1ProtocolProvider: OmpProtocolProvider = Object.freeze({
   id: "omp-app-v1",
   protocolVersion: PROTOCOL_VERSION,
   encodeClientMessage: encodeAppV1ClientMessage,
-  decodeServerEvent: (input: unknown) => decodedOmpServerEventFromFrame(decodeServerFrame(input)),
+  decodeServerEvent: (input: unknown) => ompServerEventFromFrame(decodeServerFrame(input)),
   commandDescriptor: (command: string) => COMMAND_DESCRIPTORS[command],
   requiredCapability,
 });

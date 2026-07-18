@@ -1,8 +1,7 @@
-import { createOmpClient, isConfirmationDecisionConsumed, OmpClientError, type CommandIntent, type CursorStore, type OmpClient, type PublicOmpServerEvent } from "@t4-code/client";
+import { createOmpClient, isConfirmationDecisionConsumed, OmpClientError, type CommandIntent, type CursorStore, type OmpClient, type OmpPairOk, type PublicOmpServerEvent } from "@t4-code/client";
 import { commandResultError, type CommandResult, type ConnectionStateEvent, type RuntimeErrorEvent } from "@t4-code/protocol/desktop-ipc";
 import type { ConfirmRequest, ConfirmResult, TerminalCloseRequest, TerminalInputRequest, TerminalResizeRequest, TerminalResult } from "@t4-code/protocol/desktop-ipc";
 import { ADDITIVE_FEATURES, DEVICE_CAPABILITIES, type DeviceCapability } from "@t4-code/protocol";
-import type { PairOkFrame } from "@t4-code/protocol";
 import { createLocalTransport, type UnixWebSocketTransport } from "./transport.ts";
 import { createRemoteWebSocketTransport, type RemoteWebSocketTransport } from "./remote-runtime/transport.ts";
 import { validateRemoteTarget, type CredentialStore, type PublicRemoteTarget, type RemoteTargetRecord, type RemoteTargetRegistry } from "./remote-runtime/registry.ts";
@@ -374,7 +373,7 @@ export class DesktopTargetManager {
             return undefined;
           }
         },
-        privilegedPairResult: async (frame: PairOkFrame) => {
+        privilegedPairResult: async (frame: OmpPairOk) => {
           await this.credentials!.set(targetId, { token: frame.deviceToken, deviceId: frame.deviceId });
           const active = this.runtimes.get(targetId);
           if (active !== undefined && active.generation === generation) active.paired = true;

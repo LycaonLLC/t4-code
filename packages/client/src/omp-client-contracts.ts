@@ -1,6 +1,6 @@
-import type { PairOkFrame, RequestId, ResultFrame, Cursor, ServerFrame } from "@t4-code/protocol";
+import type { PairOkFrame, RequestId, Cursor, ServerFrame } from "@t4-code/protocol";
 import type { ProjectionStore } from "./projection.ts";
-import type { OmpClientMessage, OmpProtocolProvider } from "./omp-protocol-provider.ts";
+import type { OmpClientMessage, OmpPairOk, OmpProtocolProvider, OmpResponse } from "./omp-protocol-provider.ts";
 
 
 export type OmpClientState =
@@ -76,7 +76,7 @@ export interface OmpClientOptions {
   heartbeat?: { intervalMs?: number; timeoutMs?: number }; handshakeTimeoutMs?: number; commandTimeoutMs?: number;
   /** Maximum inbound-idle time before a foreground wake replaces a possibly stale socket. */
   wakeStaleAfterMs?: number;
-  maxPending?: number; privilegedPairResult?: (result: PairOkFrame) => void | Promise<void>;
+  maxPending?: number; privilegedPairResult?: (result: OmpPairOk) => void | Promise<void>;
 }
 export interface OmpStateSnapshot {
   state: OmpClientState; generation: number; attempt: number; hostId?: string; epoch?: string; cursor?: Cursor;
@@ -135,7 +135,7 @@ export class DefaultIds implements IdFactory {
   }
 }
 
-export type PendingResult = ResultFrame | PairOkFrame;
+export type PendingResult = OmpResponse | OmpPairOk;
 export type PendingMessage = Extract<OmpClientMessage, { kind: "command" | "confirm" | "pair-start" }>;
 export interface Pending {
   requestId: RequestId;

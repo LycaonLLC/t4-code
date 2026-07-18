@@ -20,7 +20,7 @@ function sessionKey(session: string): string {
   return `${String(HOST)}\u0000${session}`;
 }
 function publicEvent(input: ProjectionFrame): PublicOmpServerEvent {
-  const event = ompAppV1ProtocolProvider.decodeServerEvent(input).event;
+  const event = ompAppV1ProtocolProvider.decodeServerEvent(input);
   if (event.kind === "pair.ok") throw new Error("pair.ok is not a public projection event");
   return event;
 }
