@@ -3023,6 +3023,41 @@ describe("window runtime slot", () => {
     await controller.stop();
   });
 
+  it("skips projection cache saves when the shell reports caching unavailable", async () => {
+    let loads = 0;
+    let saves = 0;
+    type CacheShell = FakeShell & {
+      loadProjectionCache: () => Promise<{ available: boolean; value: string | null }>;
+      saveProjectionCache: (request: { value: string }) => Promise<{ saved: boolean }>;
+    };
+    const shell = new FakeShell() as CacheShell;
+    shell.loadProjectionCache = async () => {
+      loads += 1;
+      return { available: false, value: null };
+    };
+    shell.saveProjectionCache = async () => {
+      saves += 1;
+      return { saved: false };
+    };
+    const holder: RuntimeSlotHolder = {};
+    const controller = acquireRuntimeController(shell, holder);
+
+    await controller.start();
+    shell.emitFrame({
+      targetId: "local",
+      frame: makeWelcome(HOST, ["sessions.prompt"]),
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: durableEntryFrame(2, entry("live", "do not persist")),
+    });
+    await settle();
+    await controller.stop();
+
+    expect(loads).toBe(1);
+    expect(saves).toBe(0);
+  });
+
   it("retains one live controller across a persisted pagehide/pageshow", async () => {
     class FakePageLifecycleTarget {
       private readonly listeners = new Map<string, Set<EventListener>>();

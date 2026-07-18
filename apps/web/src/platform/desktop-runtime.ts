@@ -37,12 +37,15 @@ function projectionCacheStore(shell: DesktopShellPort): ProjectionCacheStore | u
   const load = shell.loadProjectionCache?.bind(shell);
   const save = shell.saveProjectionCache?.bind(shell);
   if (load === undefined || save === undefined) return undefined;
+  let cacheAvailable: boolean | undefined;
   return {
     load: async () => {
       const result = await load();
+      cacheAvailable = result.available;
       return result.available ? result.value : null;
     },
     save: async (value) => {
+      if (cacheAvailable === false) return;
       const result = await save({ value });
       if (!result.saved) throw new Error("projection cache save failed");
     },
