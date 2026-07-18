@@ -25,6 +25,7 @@ import { useAppUpdateState } from "../updates/update-store.ts";
 import type { SaveChallenge } from "./live-controller.ts";
 import type { HostSelection } from "./HostSelector.tsx";
 import {
+  catalogExplorerInputForLiveState,
   createLiveSettingsScreenModel,
   type LiveSettingsScreenModel,
 } from "./live-screen-model.ts";
@@ -63,6 +64,7 @@ const WAIT_COPY: Record<"no-host" | "connecting" | "disconnected" | "not-publish
     spin: true,
   },
 };
+
 
 export function LiveSettingsScreen({
   controller,
@@ -130,6 +132,7 @@ export function LiveSettingsScreen({
     activeTargetId: state.phase === "ready" ? state.active.targetId : state.activeTargetId,
     onSelect: (targetId) => model.selectHost(targetId),
   };
+  const catalogExplorer = catalogExplorerInputForLiveState(controller, state);
 
   if (state.phase !== "ready") {
     const copy =
@@ -143,6 +146,7 @@ export function LiveSettingsScreen({
         onBack={onBack}
         onOpenHosts={onOpenHosts}
         update={update}
+        {...(catalogExplorer === undefined ? {} : { catalogExplorer })}
       />
     );
   }
@@ -154,6 +158,7 @@ export function LiveSettingsScreen({
         brokerStatus={{ view: state.broker, onRefresh: () => model.refreshBrokerStatus() }}
         catalogChoices={{ models: state.models, agents: state.agents, roleTags: state.roleTags }}
         hostSelection={hostSelection}
+        {...(catalogExplorer === undefined ? {} : { catalogExplorer })}
         onBack={onBack}
         onOpenHosts={onOpenHosts}
         scopes={["global", "session"]}
