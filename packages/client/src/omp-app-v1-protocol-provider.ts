@@ -11,9 +11,7 @@ import {
 import type {
   OmpClientMessage,
   OmpProtocolProvider,
-  PublicOmpServerEvent,
 } from "./omp-protocol-provider.ts";
-import type { PublicServerFrame } from "./omp-client-contracts.ts";
 
 function commandArgs(message: Extract<OmpClientMessage, { kind: "command" }>): Readonly<Record<string, unknown>> {
   const args = message.args;
@@ -105,20 +103,6 @@ function appV1Input(message: OmpClientMessage): Record<string, unknown> {
     case "ping":
       return { v: PROTOCOL_VERSION, type: "ping", nonce: message.nonce, timestamp: message.timestamp };
   }
-}
-
-/**
- * Temporary bridge for desktop/browser shell ports whose public contract still
- * carries omp-app/1 frames. New application code should consume the event.
- */
-export function ompAppV1PublicFrameFromEvent(event: PublicOmpServerEvent): PublicServerFrame {
-  const frame = decodeServerFrame({
-    ...event.payload,
-    v: PROTOCOL_VERSION,
-    type: event.kind,
-  });
-  if (frame.type === "pair.ok") throw new Error("pair credentials cannot cross public boundaries");
-  return frame;
 }
 
 /** Current canonical provider backed by the pinned @oh-my-pi/app-wire v1 artifact. */

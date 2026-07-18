@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   OmpClient,
   ompAppV1ProtocolProvider,
-  ompAppV1PublicFrameFromEvent,
   type OmpClientMessage,
   type OmpDecodedServerEvent,
   type OmpProtocolProvider,
@@ -209,13 +208,6 @@ describe("OmpProtocolProvider", () => {
     expect(decoded.wireFrame).toMatchObject({ v: "omp-app/1", type: "welcome" });
     expect(Object.isFrozen(decoded.event)).toBe(true);
     expect(Object.isFrozen(decoded.payload)).toBe(true);
-  });
-
-  it("rebuilds a validated legacy public frame only at compatibility boundaries", () => {
-    const decoded = ompAppV1ProtocolProvider.decodeServerEvent(welcomeFrame());
-    if (decoded.event.kind === "pair.ok") throw new Error("welcome decoded as pair.ok");
-
-    expect(ompAppV1PublicFrameFromEvent(decoded.event)).toEqual(welcomeFrame());
   });
 
   it("routes outbound work and inbound events through an injected provider", async () => {

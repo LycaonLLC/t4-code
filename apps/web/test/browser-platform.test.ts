@@ -1,6 +1,5 @@
 import {
   createOmpClient,
-  ompAppV1PublicFrameFromEvent,
   ompAppV1ProtocolProvider,
   type OmpClient,
   type OmpClientOptions,
@@ -304,9 +303,9 @@ describe("browser platform boundary", () => {
       },
     });
     if (shell === null) return;
-    const emittedFrames: PublicServerFrame[] = [];
-    const stopFrames = shell.onServerEvent((event) => {
-      emittedFrames.push(ompAppV1PublicFrameFromEvent(event.event));
+    const emittedEvents: PublicOmpServerEvent[] = [];
+    const stopEvents = shell.onServerEvent((event) => {
+      emittedEvents.push(event.event);
     });
     await shell.bootstrap();
     expect(connectCalls).toBe(0);
@@ -375,18 +374,18 @@ describe("browser platform boundary", () => {
         },
       },
     }));
-    const rejectedFrame = emittedFrames.at(-1);
-    expect(rejectedFrame).toMatchObject({
-      type: "response",
-      error: {
+    const rejectedEvent = emittedEvents.at(-1);
+    expect(rejectedEvent).toMatchObject({
+      kind: "response",
+      payload: { error: {
         code: "outcome_unknown",
         message: "reader failed; [redacted]",
         details: { diagnostic: "token=[redacted]" },
-      },
+      } },
     });
-    expect(JSON.stringify(rejectedFrame)).not.toContain("live-frame-token");
-    expect(JSON.stringify(rejectedFrame)).not.toContain("live-frame-detail");
-    expect(JSON.stringify(rejectedFrame)).not.toContain("must-not-cross-browser-boundary");
+    expect(JSON.stringify(rejectedEvent)).not.toContain("live-frame-token");
+    expect(JSON.stringify(rejectedEvent)).not.toContain("live-frame-detail");
+    expect(JSON.stringify(rejectedEvent)).not.toContain("must-not-cross-browser-boundary");
     const confirmationRequest = {
       targetId: "remote",
       confirmationId: confirmationId("confirm"),
@@ -414,7 +413,7 @@ describe("browser platform boundary", () => {
     } as never;
     expect((await shell.confirm(confirmationRequest)).accepted).toBe(false);
     await shell.disconnect({ targetId: "remote" });
-    stopFrames();
+    stopEvents();
     expect(closed).toBe(true);
   });
 

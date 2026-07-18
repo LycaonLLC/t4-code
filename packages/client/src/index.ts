@@ -1,7 +1,6 @@
 export { OmpClient, createOmpClient } from "./omp-client-runtime.ts";
 export {
   ompAppV1ProtocolProvider,
-  ompAppV1PublicFrameFromEvent,
 } from "./omp-app-v1-protocol-provider.ts";
 export type {
   OmpClientMessage,

@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { DESKTOP_IPC_CHANNELS, decodeDesktopInvokeRequest } from "@t4-code/protocol/desktop-ipc";
 import {
-  ompAppV1PublicFrameFromEvent,
   type CursorRecord,
   type CursorStore,
   type OmpTransport,
-  type PublicServerFrame,
+  type PublicOmpServerEvent,
 } from "@t4-code/client";
 import {
   commandId,
@@ -189,7 +188,7 @@ const target = (targetId: string): RemoteTargetRecord => ({
 function manager(
   transports: Transport[],
   registry = new Registry(),
-  onFrame: (frame: PublicServerFrame) => void = () => undefined,
+  onEvent: (event: PublicOmpServerEvent) => void = () => undefined,
 ): DesktopTargetManager {
   return new DesktopTargetManager({
     cursorStore: new Store(),
@@ -205,7 +204,7 @@ function manager(
       return next as never;
     },
     capabilities: ["sessions.read"],
-    events: { onEvent: (_targetId, event) => onFrame(ompAppV1PublicFrameFromEvent(event)), onState: () => {}, onError: () => {} },
+    events: { onEvent: (_targetId, event) => onEvent(event), onState: () => {}, onError: () => {} },
   });
 }
 async function settlesBeforeTurnLimit<T>(promise: Promise<T>): Promise<T> {
@@ -383,12 +382,12 @@ describe("desktop target manager boundaries", () => {
     const transports = [first, second];
     const registry = new Registry();
     await registry.put(target("switch"));
-    const frames: PublicServerFrame[] = [];
+    const events: PublicOmpServerEvent[] = [];
     const runtime = new DesktopTargetManager({
       cursorStore: new Store(),
       registry,
       remoteTransportFactory: () => transports.shift() as never,
-      events: { onEvent: (_targetId, event) => frames.push(ompAppV1PublicFrameFromEvent(event)), onState: () => {}, onError: () => {} },
+      events: { onEvent: (_targetId, event) => events.push(event), onState: () => {}, onError: () => {} },
     });
 
     await runtime.connect("switch");
@@ -435,7 +434,7 @@ describe("desktop target manager boundaries", () => {
       accepted: true,
       result: { sessions: [] },
     });
-    expect(frames.some((frame) => frame.type === "response" && String(frame.requestId) === staleFrame.requestId)).toBe(false);
+    expect(events.some((event) => event.kind === "response" && String(event.payload.requestId) === staleFrame.requestId)).toBe(false);
     await runtime.close();
   });
 
@@ -737,8 +736,8 @@ describe("desktop target manager boundaries", () => {
   });
   it("forwards decoded command payloads needed by lease consumers", async () => {
     const transports: Transport[] = [];
-    const frames: PublicServerFrame[] = [];
-    const runtime = manager(transports, new Registry(), (frame) => frames.push(frame));
+    const events: PublicOmpServerEvent[] = [];
+    const runtime = manager(transports, new Registry(), (event) => events.push(event));
     await runtime.connect();
     const pending = runtime.command({
       hostId: "host-fixture",
@@ -796,17 +795,17 @@ describe("desktop target manager boundaries", () => {
         details: { recovery: "inspect transcript", diagnostic: "token=[redacted]" },
       },
     });
-    const responseFrame = frames.find((frame) => frame.type === "response" && !frame.ok);
-    expect(responseFrame).toMatchObject({
-      error: {
+    const responseEvent = events.find((event) => event.kind === "response" && !event.payload.ok);
+    expect(responseEvent).toMatchObject({
+      payload: { error: {
         code: "outcome_unknown",
         message: "command failed; [redacted]",
         details: { recovery: "inspect transcript", diagnostic: "token=[redacted]" },
-      },
+      } },
     });
-    expect(JSON.stringify(responseFrame)).not.toContain("live-message-token");
-    expect(JSON.stringify(responseFrame)).not.toContain("live-detail-token");
-    expect(JSON.stringify(responseFrame)).not.toContain("must-not-cross-renderer-ipc");
+    expect(JSON.stringify(responseEvent)).not.toContain("live-message-token");
+    expect(JSON.stringify(responseEvent)).not.toContain("live-detail-token");
+    expect(JSON.stringify(responseEvent)).not.toContain("must-not-cross-renderer-ipc");
     await runtime.close();
   });
   it("treats a host-acknowledged denial as a consumed confirmation decision", async () => {
