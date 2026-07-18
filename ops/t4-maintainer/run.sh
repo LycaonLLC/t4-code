@@ -42,6 +42,9 @@ LINUX_UPDATE_INSPECTOR=${T4_MAINTAINER_LINUX_UPDATE_INSPECTOR:-$DEFAULT_LINUX_UP
 REALPATH=${T4_MAINTAINER_REALPATH:-realpath}
 SYNC=${T4_MAINTAINER_SYNC:-/bin/sync}
 DATE=${T4_MAINTAINER_DATE:-/bin/date}
+UNAME=${T4_MAINTAINER_UNAME:-/usr/bin/uname}
+STAT=${T4_MAINTAINER_STAT:-stat}
+SETPRIV=${T4_MAINTAINER_SETPRIV:-/usr/bin/setpriv}
 PROC_ROOT=${T4_MAINTAINER_TEST_PROC_ROOT:-/proc}
 LOCAL_DEPLOY=${T4_MAINTAINER_LOCAL_DEPLOY:-"$SCRIPT_DIR/deploy-local.sh"}
 ATOMIC_PUBLISH=${T4_MAINTAINER_ATOMIC_PUBLISH:-"$SCRIPT_DIR/publish-omp-atomic.sh"}
@@ -56,6 +59,7 @@ CURRENT_TAG=
 CURRENT_COMMIT=
 CURRENT_RESULT_FILE=
 CURRENT_RECEIPT_FILE=
+HOST_PLATFORM=
 VERIFY_ATTEMPTS=${T4_MAINTAINER_VERIFY_ATTEMPTS:-91}
 VERIFY_INTERVAL_SECONDS=${T4_MAINTAINER_VERIFY_INTERVAL_SECONDS:-30}
 FORK_SYNC_ATTEMPTS=${T4_MAINTAINER_FORK_SYNC_ATTEMPTS:-3}
@@ -76,6 +80,9 @@ readonly T4_REPOSITORY="LycaonLLC/t4-code"
 readonly T4_SITE="https://t4code.net"
 T4_MAIN_GATE_SHA=
 T4_MAIN_SOL_SHA=
+VALIDATED_DEFERRAL_REASON=
+VALIDATED_DEFERRAL_PR_NUMBER=
+VALIDATED_DEFERRAL_OBSERVED_SHA=
 readonly T4_PACKAGE="t4-code"
 readonly OMP_TARGET="${T4_LOCAL_OMP_TARGET:-$HOME/bin/omp}"
 readonly OMP_SERVICE="${T4_LOCAL_OMP_SERVICE:-dev.oh-my-pi.appserver.service}"
@@ -2132,12 +2139,223 @@ adopt_current_public_release() {
     log "No current or active T4 publication targets $($JQ -r '.tag' <<<"$target"); starting the positive Sol release workflow."
     return 0
   fi
+
   fail "neither T4 main nor the latest public release matches the latest stable official OMP release"
 }
 
+marker_is_owned_regular_file() {
+  local marker=$1 owner file_type mode
+  [[ -f $marker && ! -L $marker ]] || return 1
+  file_type=$("$STAT" -c '%F' -- "$marker" 2>/dev/null) \
+    || file_type=$("$STAT" -f '%HT' "$marker" 2>/dev/null) \
+    || return 1
+  [[ $file_type == "regular file" || $file_type == "Regular File" ]] || return 1
+  owner=$("$STAT" -c '%u' -- "$marker" 2>/dev/null) \
+    || owner=$("$STAT" -f '%u' "$marker" 2>/dev/null) \
+    || return 1
+  [[ $owner == "$EUID" ]] || return 1
+  mode=$("$STAT" -c '%a' -- "$marker" 2>/dev/null) \
+    || mode=$("$STAT" -f '%Lp' "$marker" 2>/dev/null) \
+    || return 1
+  [[ $mode == 600 || $mode == 0600 ]]
+}
+
+critical_t4_pr_is_open() {
+  local prs=$1 number=$2 files release_declared critical_file
+  if "$JQ" -e --argjson number "$number" '
+    any(.[]; .number == $number and .draft == false
+      and (([.title] + (.labels | map(.name // "")))
+        | any(test("(^|[^[:alnum:]])(release|publish|version|cutover|deploy)([^[:alnum:]]|$)"; "i"))))
+  ' <<<"$prs" >/dev/null 2>&1; then
+    release_declared=true
+  else
+    release_declared=false
+  fi
+  files=$("$GH" api "repos/$T4_REPOSITORY/pulls/$number/files?per_page=100") || return 1
+  "$JQ" -e 'type == "array" and all(.[]; .filename | type == "string") and length < 100' \
+    <<<"$files" >/dev/null 2>&1 || return 1
+  critical_file=$("$JQ" -r '
+    first(.[] | .filename
+      | select(test("^(apps/|packages/|ops/t4-maintainer/|scripts/t4-maintainer|\\.github/workflows/(release|ci))|(^|/)(release|version|package)([^/]*)$|(^|/)package\\.json$"; "i")))
+    // empty
+  ' <<<"$files")
+  [[ $release_declared == true || -n $critical_file ]]
+}
+
+t4_pr_classification_is_incomplete() {
+  local prs number files release_declared critical_file
+  prs=$("$GH" api "repos/$T4_REPOSITORY/pulls?state=open&base=main&per_page=100") || return 0
+  "$JQ" -e '
+    type == "array" and length < 100
+    and all(.[];
+      (.number | type == "number")
+      and (.draft | type == "boolean")
+      and (.title | type == "string")
+      and (.labels | type == "array")
+      and all(.labels[]; .name | type == "string"))
+  ' <<<"$prs" >/dev/null 2>&1 || return 0
+  while read -r number; do
+    [[ -n $number ]] || continue
+    if "$JQ" -e --argjson number "$number" '
+      any(.[]; .number == $number and .draft == false
+        and (([.title] + (.labels | map(.name // "")))
+          | any(test("(^|[^[:alnum:]])(release|publish|version|cutover|deploy)([^[:alnum:]]|$)"; "i"))))
+    ' <<<"$prs" >/dev/null 2>&1; then
+      release_declared=true
+    else
+      release_declared=false
+    fi
+    files=$("$GH" api "repos/$T4_REPOSITORY/pulls/$number/files?per_page=100") || return 0
+    "$JQ" -e 'type == "array" and all(.[]; .filename | type == "string") and length < 100' \
+      <<<"$files" >/dev/null 2>&1 || return 0
+    critical_file=$("$JQ" -r '
+      first(.[] | .filename
+        | select(test("^(apps/|packages/|ops/t4-maintainer/|scripts/t4-maintainer|\\.github/workflows/(release|ci))|(^|/)(release|version|package)([^/]*)$|(^|/)package\\.json$"; "i")))
+      // empty
+    ' <<<"$files")
+    [[ $release_declared != true && -z $critical_file ]] || return 1
+  done < <("$JQ" -r '.[] | select(.draft == false) | .number' <<<"$prs")
+  return 1
+}
+
+validate_deferral_marker() {
+  local marker=$1 marker_json reason expected observed pr_number current validation_status prs
+  VALIDATED_DEFERRAL_REASON=
+  VALIDATED_DEFERRAL_PR_NUMBER=
+  VALIDATED_DEFERRAL_OBSERVED_SHA=
+  marker_is_owned_regular_file "$marker" || return 1
+  [[ $(wc -c <"$marker") -le 2048 ]] || return 1
+  marker_json=$("$JQ" -ce '
+    select(
+      type == "object"
+      and (keys_unsorted | sort == ["expectedT4MainSha","observedT4MainSha","prNumber","reason","schemaVersion"])
+      and .schemaVersion == 1
+      and (.reason == "t4-main-changed"
+        or .reason == "release-critical-pr"
+        or .reason == "classification-incomplete")
+      and (.expectedT4MainSha | type == "string" and test("^[0-9a-f]{40}$"))
+      and (.observedT4MainSha | type == "string" and test("^[0-9a-f]{40}$"))
+      and (.prNumber == null or (.prNumber | type == "number" and floor == . and . >= 1 and . <= 1000000))
+      and ((.reason == "t4-main-changed" and .prNumber == null)
+        or (.reason == "release-critical-pr" and (.prNumber | type == "number"))
+        or (.reason == "classification-incomplete" and .prNumber == null))
+    )
+  ' "$marker" 2>/dev/null) || return 1
+  reason=$("$JQ" -r '.reason' <<<"$marker_json")
+  expected=$("$JQ" -r '.expectedT4MainSha' <<<"$marker_json")
+  observed=$("$JQ" -r '.observedT4MainSha' <<<"$marker_json")
+  pr_number=$("$JQ" -r '.prNumber // empty' <<<"$marker_json")
+  current=$(t4_main_identity) || return 1
+  [[ $current == "$observed" ]] || return 1
+  case $reason in
+    t4-main-changed)
+      [[ -n $T4_MAIN_SOL_SHA && $expected == "$T4_MAIN_SOL_SHA" && $observed != "$expected" ]]
+      ;;
+    release-critical-pr)
+      [[ $expected == "$observed" && -n $pr_number ]] || return 1
+      prs=$("$GH" api "repos/$T4_REPOSITORY/pulls?state=open&base=main&per_page=100") || return 1
+      "$JQ" -e '
+        type == "array" and length < 100
+        and all(.[];
+          (.number | type == "number")
+          and (.draft | type == "boolean")
+          and (.title | type == "string")
+          and (.labels | type == "array")
+          and all(.labels[]; .name | type == "string"))
+      ' <<<"$prs" >/dev/null 2>&1 || return 1
+      "$JQ" -e --argjson number "$pr_number" 'any(.[]; .number == $number and .draft == false)' \
+        <<<"$prs" >/dev/null 2>&1 || return 1
+      critical_t4_pr_is_open "$prs" "$pr_number"
+      ;;
+    classification-incomplete)
+      [[ $expected == "$observed" && -z $pr_number ]] || return 1
+      t4_pr_classification_is_incomplete
+      ;;
+    *) return 1 ;;
+  esac
+  validation_status=$?
+  ((validation_status == 0)) || return "$validation_status"
+  VALIDATED_DEFERRAL_REASON=$reason
+  VALIDATED_DEFERRAL_PR_NUMBER=$pr_number
+  VALIDATED_DEFERRAL_OBSERVED_SHA=$observed
+}
+
+handle_valid_deferral() {
+  local marker=$1 reason=$VALIDATED_DEFERRAL_REASON blocker_key
+  case $reason in
+    t4-main-changed)
+      blocker_key=t4-main-race
+      ;;
+    release-critical-pr)
+      blocker_key="t4-pr-$VALIDATED_DEFERRAL_PR_NUMBER"
+      ;;
+    classification-incomplete)
+      blocker_key="t4-classification-$VALIDATED_DEFERRAL_OBSERVED_SHA"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  notify_blocker_once collaborator_defer publication "$blocker_key" \
+    "Sol deferred publication after the mandatory final T4 guard ($reason)." || true
+  log "Valid collaborator deferral marker accepted ($reason); preserving run files at $(dirname -- "$marker") and leaving publication state unchanged."
+}
+
+invoke_sol() {
+  case $HOST_PLATFORM in
+    Linux)
+      "$SETPRIV" --no-new-privs -- "$OMP" "$@"
+      ;;
+    Darwin)
+      "$OMP" "$@"
+      ;;
+    *)
+      fail "unsupported maintainer host platform: $HOST_PLATFORM"
+      ;;
+  esac
+}
+
+validate_platform_probe() {
+  local canonical_uname
+  if [[ ${T4_MAINTAINER_UNAME+x} == x ]]; then
+    [[ ${T4_MAINTAINER_TEST_MODE:-0} == 1 \
+      && ( ${canonical_maintainer_root:-} == /tmp/* || ${canonical_maintainer_root:-} == /private/tmp/* ) ]] \
+      || fail "platform probe override is restricted to an explicit temporary test root"
+    canonical_uname=$("$REALPATH" -e -- "$UNAME") \
+      || fail "test platform probe must exist and be canonical"
+    [[ $canonical_uname == "$canonical_maintainer_root"/* && -x $canonical_uname ]] \
+      || fail "test platform probe must remain inside the canonical temporary maintainer root"
+  fi
+  require_command "$UNAME"
+  HOST_PLATFORM=$("$UNAME" -s) || fail "maintainer host platform could not be determined"
+  [[ $HOST_PLATFORM == Linux || $HOST_PLATFORM == Darwin ]] \
+    || fail "unsupported maintainer host platform: $HOST_PLATFORM"
+}
+
+validate_privilege_runner() {
+  [[ $HOST_PLATFORM == Linux ]] || return 0
+  if [[ ${T4_MAINTAINER_SETPRIV+x} == x ]]; then
+    [[ ${T4_MAINTAINER_TEST_MODE:-0} == 1 \
+      && ( ${canonical_maintainer_root:-} == /tmp/* || ${canonical_maintainer_root:-} == /private/tmp/* ) ]] \
+      || fail "privilege runner override is restricted to an explicit temporary test root"
+    local canonical_setpriv
+    canonical_setpriv=$("$REALPATH" -e -- "$SETPRIV") \
+      || fail "test privilege runner must exist and be canonical"
+    [[ $canonical_setpriv == "$canonical_maintainer_root"/* && -x $canonical_setpriv ]] \
+      || fail "test privilege runner must remain inside the canonical temporary maintainer root"
+  fi
+  require_command "$SETPRIV"
+}
+
+preflight_privilege_runner() {
+  validate_platform_probe
+  validate_privilege_runner
+}
+
 run_live_maintenance() {
-  local target upstream_tag upstream_commit run_id run_dir workspace context_file result_file
+  local target upstream_tag upstream_commit run_id run_dir workspace context_file result_file deferral_file
   local omp_status release_instruction
+  local marker_present result_present
 
   target=$(latest_stable_release)
   upstream_tag=$($JQ -r '.tag' <<<"$target")
@@ -2165,9 +2383,11 @@ run_live_maintenance() {
   workspace="$run_dir/workspace"
   context_file="$run_dir/context.json"
   result_file="$run_dir/result.json"
+  deferral_file="$run_dir/deferral.json"
   CURRENT_RESULT_FILE=$result_file
   mkdir -p -- "$workspace"
   chmod 700 "$run_dir" "$workspace"
+  rm -f -- "$result_file" "$deferral_file"
 
 
   release_instruction="Publish T4 Code for official OMP $upstream_tag at $upstream_commit. Reuse and complete any compatible main commit, version, or tag already present. Use the wrapper-owned atomic publisher for the OMP base tag, product branch, and annotated integration tag."
@@ -2188,6 +2408,7 @@ run_live_maintenance() {
     --argjson upstream "$target" \
     --arg workspace "$workspace" \
     --arg result_file "$result_file" \
+    --arg deferral_file "$deferral_file" \
     --arg omp_upstream "$OMP_UPSTREAM_REPOSITORY" \
     --arg omp_integration "$OMP_INTEGRATION_REPOSITORY" \
     --arg omp_product_branch "$OMP_PRODUCT_BRANCH" \
@@ -2220,6 +2441,7 @@ run_live_maintenance() {
       },
       workspace: $workspace,
       resultFile: $result_file,
+      deferralFile: $deferral_file,
       resumablePublication: $resumable_publication,
       previousProcessed: $previous[0]
     }' >"$context_file"
@@ -2227,6 +2449,7 @@ run_live_maintenance() {
   set +e
   T4_MAINTENANCE_CONTEXT="$context_file" \
   T4_MAINTENANCE_RESULT="$result_file" \
+  T4_MAINTENANCE_DEFERRAL_FILE="$deferral_file" \
   T4_MAINTENANCE_WORKSPACE="$workspace" \
   T4_MAINTENANCE_UPSTREAM_TAG="$upstream_tag" \
   T4_MAINTENANCE_UPSTREAM_COMMIT="$upstream_commit" \
@@ -2234,7 +2457,7 @@ run_live_maintenance() {
   T4_ATOMIC_STATE_DIR="$ATOMIC_PUBLICATION_STATE_DIR" \
   T4_ATOMIC_EXPECTED_UPSTREAM_TAG="$upstream_tag" \
   T4_ATOMIC_EXPECTED_UPSTREAM_COMMIT="$upstream_commit" \
-    "$OMP" \
+    invoke_sol \
       --profile t4-maintainer \
       --cwd "$workspace" \
       --model openai-codex/gpt-5.6-sol \
@@ -2243,14 +2466,29 @@ run_live_maintenance() {
       --mode json \
       --approval-mode yolo \
       "@$PROMPT_FILE" \
-      "$release_instruction The run context is $context_file and the verified result belongs at $result_file." \
+      "$release_instruction The run context is $context_file, the verified result belongs at $result_file, and any valid final-guard deferral marker belongs at $deferral_file." \
       9>&- \
       >"$run_dir/omp.jsonl" 2>"$run_dir/omp.stderr.log"
   omp_status=$?
   set -e
+  marker_present=false
+  result_present=false
+  [[ -e $deferral_file || -L $deferral_file ]] && marker_present=true
+  [[ -e $result_file || -L $result_file ]] && result_present=true
+  if [[ $marker_present == true && $result_present == true ]]; then
+    fail "Sol produced both a result and a deferral marker; run files are retained at $run_dir"
+  fi
   if ((omp_status != 0)); then
     fail "the Sol maintainer exited with status $omp_status; run files are retained at $run_dir"
   fi
+  if [[ $marker_present == true ]]; then
+    validate_deferral_marker "$deferral_file" \
+      || fail "Sol produced an invalid or uncorroborated deferral marker; run files are retained at $run_dir"
+    handle_valid_deferral "$deferral_file"
+    return 0
+  fi
+  [[ $result_present == true ]] \
+    || fail "Sol exited successfully without a verified result or valid deferral marker; run files are retained at $run_dir"
 
   verify_result "$result_file" "$target"
   record_pending "$result_file" "$run_id"
@@ -2305,6 +2543,8 @@ main() {
   require_command "$REALPATH"
   require_command "$SYNC"
   require_command "$SLEEP"
+  require_command "$STAT"
+  require_command wc
   require_command awk
   require_command dirname
   require_command find
@@ -2315,6 +2555,7 @@ main() {
   require_command "$LOCAL_DEPLOY"
   require_command "$ATOMIC_PUBLISH"
   [[ -r $PROMPT_FILE ]] || fail "maintainer prompt is unavailable: $PROMPT_FILE"
+  preflight_privilege_runner
   prepare_directories
   acquire_lock
   sync_fork_main

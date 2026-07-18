@@ -77,6 +77,32 @@ test("runner preflights the configured date helper before creating state", async
   }
 });
 
+test("runner preflights the Linux Sol privilege runner before creating state", async () => {
+  const scratch = await mkdtemp(join(tmpdir(), "t4-maintainer-setpriv-"));
+  const stateRoot = join(scratch, "maintainer");
+  const uname = join(stateRoot, "uname");
+  const missingSetpriv = join(stateRoot, "missing-setpriv");
+  await mkdir(stateRoot, { mode: 0o700 });
+  await writeFile(uname, "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o700 });
+  try {
+    const result = spawnSync(bashPath, [resolve(maintainerRoot, "run.sh")], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        T4_MAINTAINER_TEST_MODE: "1",
+        T4_MAINTAINER_ROOT: stateRoot,
+        T4_MAINTAINER_UNAME: uname,
+        T4_MAINTAINER_SETPRIV: missingSetpriv,
+      },
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /test privilege runner must exist and be canonical/u);
+    await assert.rejects(access(join(stateRoot, "state")));
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
 test("direct deployer preflights every configured command used during cutover", async () => {
   const deployer = await source("deploy-local.sh");
   assert.match(
@@ -254,11 +280,12 @@ test("runner gives Sol the requested model, tools, and release ownership", async
   assert.match(runner, /--model openai-codex\/gpt-5\.6-sol/u);
   assert.match(runner, /--thinking max/u);
   assert.match(runner, /--approval-mode yolo/u);
+  assert.match(runner, /"\$SETPRIV" --no-new-privs -- "\$OMP"/u);
   assert.doesNotMatch(runner, /--no-tools|--tools=|--no-pty|\bbwrap\b/u);
   for (const responsibility of [
     "`lyc-aon/oh-my-pi` fork",
     "wrapper has already synchronized",
-    "Merge the exact official `vX.Y.Z` base into the durable `t4code/main` product branch",
+    "merge the exact official `vX.Y.Z` base into the durable `t4code/main` product branch",
     "reachable from `t4code/main`",
     "Use `$T4_ATOMIC_PUBLISH_HELPER` as the only OMP publication path",
     "atomic three-ref transaction",
@@ -267,6 +294,14 @@ test("runner gives Sol the requested model, tools, and release ownership", async
     "complete release gate",
     "Verify the public GitHub release",
     "deterministic wrapper will install the verified compatibility pair",
+    "`$T4_MAINTENANCE_DEFERRAL_FILE`",
+    "`t4-main-changed`",
+    "`release-critical-pr`",
+    "`classification-incomplete`",
+    "Never use `sudo`",
+    "never install, remove, upgrade, or downgrade a host package",
+    "The deterministic wrapper and `deploy-local.sh` alone own host mutation",
+    "Reuse the highest existing revision only when all of those facts exactly match",
   ]) {
     assert.ok(prompt.includes(responsibility), `maintainer prompt is missing: ${responsibility}`);
   }
@@ -499,7 +534,7 @@ test("pending publication is atomic and gates local deployment before processed 
 
   const main = shellFunction(runner, "main");
   assertOrdered(main, ["deploy_pending_publication", "run_live_maintenance"]);
-  assert.match(live, /"\$OMP" \\\n[\s\S]*--model openai-codex\/gpt-5\.6-sol/u);
+  assert.match(live, /invoke_sol \\\n[\s\S]*--model openai-codex\/gpt-5\.6-sol/u);
 });
 
 test("processed state is a receipt, not permission to ignore live workstation drift", async () => {
