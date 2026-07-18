@@ -135,6 +135,8 @@ export type {
   DesktopRuntimeErrorEntry,
   DesktopFrameFilter,
   DesktopFrameSubscription,
+  DesktopServerEventFilter,
+  DesktopServerEventSubscription,
   DesktopRuntimeSnapshot,
   DesktopRuntimeSnapshotListener,
   DesktopRuntimeOptions,

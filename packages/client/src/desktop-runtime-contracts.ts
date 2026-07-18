@@ -130,6 +130,15 @@ export interface DesktopFrameFilter {
 
 export type DesktopFrameSubscription = (event: RendererServerFrameEvent) => void;
 
+export interface DesktopServerEventFilter {
+  readonly targetId: string;
+  readonly hostId?: string;
+  readonly sessionId?: string;
+  readonly kinds?: readonly string[];
+}
+
+export type DesktopServerEventSubscription = (event: RendererServerEventEnvelope) => void;
+
 export interface DesktopRuntimeSnapshot {
   readonly version: 1;
   readonly platform: "linux" | "darwin";

@@ -804,9 +804,19 @@ describe("desktop runtime projection", () => {
     await runtime.start();
     shell.emitFrame({ targetId: "local", frame: welcome("host-a", [], []) });
     const received: RendererServerFrameEvent[] = [];
+    const normalized: RendererServerEventEnvelope[] = [];
     runtime.subscribeFrames((event) => {
       if (event.frame.type === "event") received.push(event);
     });
+    runtime.subscribeEvents(
+      {
+        targetId: "local",
+        hostId: "host-a",
+        sessionId: "session-a",
+        kinds: ["event"],
+      },
+      (event) => normalized.push(event),
+    );
     const rawOutput = `command-head\n${"x".repeat(300_000)}\ncommand-tail`;
     const rawFrame = {
       v: "omp-app/1" as const,
@@ -828,6 +838,15 @@ describe("desktop runtime projection", () => {
 
     expect(rawFrame.event.result.output).toHaveLength(rawOutput.length);
     expect(received).toHaveLength(1);
+    expect(normalized).toHaveLength(1);
+    const deliveredEvent = normalized[0]?.event;
+    if (deliveredEvent?.kind !== "event") throw new Error("expected a retained normalized event");
+    expect(Object.isFrozen(deliveredEvent.payload)).toBe(true);
+    expect(deliveredEvent.payload).not.toHaveProperty("v");
+    expect(deliveredEvent.payload).not.toHaveProperty("type");
+    expect(retainedJsonBytes(deliveredEvent.payload.event)).toBeLessThanOrEqual(
+      MAX_RETAINED_SESSION_EVENT_BYTES,
+    );
     const delivered = received[0]?.frame;
     if (delivered?.type !== "event") throw new Error("expected a retained event frame");
     expect(Object.isFrozen(delivered)).toBe(true);

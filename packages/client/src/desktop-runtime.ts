@@ -1,5 +1,6 @@
 import {
   decodeDesktopEvent,
+  rendererServerEventFromFrame,
   type BootstrapResult,
   type CommandRequest,
   type CommandResult,
@@ -45,6 +46,8 @@ import {
   type DesktopRuntimeSnapshot,
   type DesktopRuntimeSnapshotListener,
   type DesktopRuntimeTimerScheduler,
+  type DesktopServerEventFilter,
+  type DesktopServerEventSubscription,
   type DesktopShellPort,
 } from "./desktop-runtime-contracts.ts";
 import { DesktopRuntimeHostState } from "./desktop-runtime-hosts.ts";
@@ -71,6 +74,8 @@ export type {
   DesktopRuntimeSnapshotListener,
   DesktopRuntimeStartState,
   DesktopRuntimeTimerScheduler,
+  DesktopServerEventFilter,
+  DesktopServerEventSubscription,
   DesktopShellPort,
 } from "./desktop-runtime-contracts.ts";
 export const DEFAULT_SESSION_INVENTORY_REFRESH_MS = 20_000;
@@ -106,6 +111,10 @@ export class DesktopRuntimeController {
   private readonly maxRuntimeErrors: number;
   private readonly listeners = new Set<DesktopRuntimeSnapshotListener>();
   private readonly frameListeners = new Set<{ readonly listener: DesktopFrameSubscription; readonly filter?: DesktopFrameFilter }>();
+  private readonly serverEventListeners = new Set<{
+    readonly listener: DesktopServerEventSubscription;
+    readonly filter?: DesktopServerEventFilter;
+  }>();
   private unsubscribes: Unsubscribe[] = [];
   private current: DesktopRuntimeSnapshot;
   private startPromise: Promise<DesktopRuntimeSnapshot> | undefined;
@@ -166,6 +175,26 @@ export class DesktopRuntimeController {
     return () => { if (active) { active = false; this.frameListeners.delete(item); } };
   }
   onFrame(listener: DesktopFrameSubscription, filter?: DesktopFrameFilter): Unsubscribe { return this.subscribeFrames(listener, filter); }
+  subscribeEvents(listener: DesktopServerEventSubscription, filter?: DesktopServerEventFilter): Unsubscribe;
+  subscribeEvents(filter: DesktopServerEventFilter, listener: DesktopServerEventSubscription): Unsubscribe;
+  subscribeEvents(
+    first: DesktopServerEventSubscription | DesktopServerEventFilter,
+    second?: DesktopServerEventSubscription | DesktopServerEventFilter,
+  ): Unsubscribe {
+    const listener = typeof first === "function" ? first : second as DesktopServerEventSubscription;
+    const filter = typeof first === "function"
+      ? second as DesktopServerEventFilter | undefined
+      : first;
+    if (this.stopped || typeof listener !== "function") return noop;
+    const item = { listener, ...(filter === undefined ? {} : { filter }) };
+    this.serverEventListeners.add(item);
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      this.serverEventListeners.delete(item);
+    };
+  }
   async start(): Promise<DesktopRuntimeSnapshot> {
     if (this.startPromise !== undefined) return this.startPromise;
     if (this.stopped) return Promise.reject(new DesktopRuntimeError("stopped", "desktop runtime is stopped"));
@@ -197,6 +226,7 @@ export class DesktopRuntimeController {
     this.stopped = true;
     this.listeners.clear();
     this.frameListeners.clear();
+    this.serverEventListeners.clear();
     for (const unsubscribe of unsubscribes) {
       try { unsubscribe(); } catch { /* listener disposal is best effort */ }
     }
@@ -690,9 +720,14 @@ export class DesktopRuntimeController {
     const frame = transcriptFrame
       ? sanitizeRetainedTranscriptFrame(incomingFrame)
       : freezeClone(incomingFrame);
+    const rendererEvent: RendererServerEventEnvelope = {
+      targetId: event.targetId,
+      event: rendererServerEventFromFrame(frame),
+    };
     if (frame.type === "welcome") {
       if (!this.handleWelcome(event.targetId, frame)) return;
       this.applyProjectionEvent(event.targetId, event.event);
+      this.notifyServerEvents(rendererEvent);
     } else {
       const hostIdValue = frameId(frame, "hostId");
       const boundHost = this.current.targetHosts.get(event.targetId);
@@ -718,6 +753,7 @@ export class DesktopRuntimeController {
       if (hostIdValue === undefined || hostProjectionCurrent || frame.type === "response") {
         this.applyProjectionEvent(event.targetId, event.event);
       }
+      if (!hostProductResponse) this.notifyServerEvents(rendererEvent);
       if (!hostProductResponse) this.notifyFrames({ targetId: event.targetId, frame });
       return;
     }
@@ -844,6 +880,22 @@ export class DesktopRuntimeController {
     // eslint-disable-next-line unicorn/no-useless-spread -- preserve listener snapshot when callbacks may unsubscribe during dispatch.
     for (const { listener, filter } of [...this.frameListeners]) {
       if (filter !== undefined && (filter.targetId !== event.targetId || (filter.hostId !== undefined && filter.hostId !== hostIdValue) || (filter.sessionId !== undefined && filter.sessionId !== sessionIdValue) || (filter.types !== undefined && !filter.types.includes(event.frame.type)))) continue;
+      try { listener(event); } catch { /* subscriber isolation */ }
+    }
+  }
+  private notifyServerEvents(event: RendererServerEventEnvelope): void {
+    const payload = asRecord(event.event.payload) ?? {};
+    const hostIdValue = typeof payload.hostId === "string" ? payload.hostId : undefined;
+    const sessionIdValue = typeof payload.sessionId === "string" ? payload.sessionId : undefined;
+    // eslint-disable-next-line unicorn/no-useless-spread -- preserve listener snapshot when callbacks may unsubscribe during dispatch.
+    for (const { listener, filter } of [...this.serverEventListeners]) {
+      if (
+        filter !== undefined &&
+        (filter.targetId !== event.targetId ||
+          (filter.hostId !== undefined && filter.hostId !== hostIdValue) ||
+          (filter.sessionId !== undefined && filter.sessionId !== sessionIdValue) ||
+          (filter.kinds !== undefined && !filter.kinds.includes(event.event.kind)))
+      ) continue;
       try { listener(event); } catch { /* subscriber isolation */ }
     }
   }
