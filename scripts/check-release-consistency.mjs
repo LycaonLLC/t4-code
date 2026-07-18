@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
+import { load as parseYaml } from "js-yaml";
 
 export const RELEASE_CONTRACT_PATHS = [
   ".github/android-release-identity.json",
@@ -75,7 +76,10 @@ export function loadReleaseContractFiles(repoRoot) {
 
 function parseJson(files, path, errors) {
   try {
-    return JSON.parse(files.get(path) ?? "");
+    const source = files.get(path) ?? "";
+    const parsed = JSON.parse(source);
+    parseYaml(source);
+    return parsed;
   } catch (error) {
     errors.push(
       `${path} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,

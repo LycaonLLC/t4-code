@@ -54,6 +54,21 @@ test("current source tree has one consistent release version", () => {
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);
 });
 
+test("rejects duplicate keys in JSON release contracts", () => {
+  const duplicated = changed("compat/omp-app-matrix.json", (text) =>
+    text.replace(
+      '"appProtocol": "omp-app/1",',
+      '"appProtocol": "omp-app/1",\n  "appProtocol": "omp-app/1",',
+    ),
+  );
+
+  assert.ok(
+    collectReleaseConsistencyErrors(duplicated).some((error) =>
+      error.includes("duplicated mapping key"),
+    ),
+  );
+});
+
 test("keeps verified and published runtime records aligned after promotion", () => {
   const matrix = JSON.parse(files.get("compat/omp-app-matrix.json"));
   assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.4-appserver-4");
