@@ -214,7 +214,16 @@ describe("OmpProtocolProviderRegistry", () => {
         new OmpProtocolProviderRegistry([
           {
             ...futureProvider,
-            serverEventKinds: [...OMP_SERVER_EVENT_KINDS, "welcome"],
+            serverEventKinds: [...OMP_SERVER_EVENT_KINDS],
+          },
+        ]),
+    ).toThrow("server event kinds must be immutable");
+    expect(
+      () =>
+        new OmpProtocolProviderRegistry([
+          {
+            ...futureProvider,
+            serverEventKinds: Object.freeze([...OMP_SERVER_EVENT_KINDS, "welcome"]),
           },
         ]),
     ).toThrow("duplicate protocol provider server event kind");
@@ -223,9 +232,9 @@ describe("OmpProtocolProviderRegistry", () => {
         new OmpProtocolProviderRegistry([
           {
             ...futureProvider,
-            serverEventKinds: [
+            serverEventKinds: Object.freeze([
               "future.event",
-            ] as unknown as OmpProtocolProvider["serverEventKinds"],
+            ]) as unknown as OmpProtocolProvider["serverEventKinds"],
           },
         ]),
     ).toThrow("unknown protocol provider server event kind");

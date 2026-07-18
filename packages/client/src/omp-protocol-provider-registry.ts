@@ -21,6 +21,9 @@ function validateProvider(provider: OmpProtocolProvider): OmpProtocolProvider {
   if (!Array.isArray(provider.serverEventKinds) || provider.serverEventKinds.length === 0) {
     throw new Error(`protocol provider ${provider.id} must declare server event kinds`);
   }
+  if (!Object.isFrozen(provider.serverEventKinds)) {
+    throw new Error(`protocol provider ${provider.id} server event kinds must be immutable`);
+  }
   const eventKinds = new Set<string>();
   for (const kind of provider.serverEventKinds) {
     registryKey(kind, "server event kind");

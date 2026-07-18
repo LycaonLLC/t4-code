@@ -42,7 +42,7 @@ import { PendingRequests } from "./omp-client-pending.ts";
 import { ClientTimerRegistry } from "./omp-client-timers.ts";
 import { OmpClientEvents } from "./omp-client-events.ts";
 import { OmpClientConnection } from "./omp-client-connection.ts";
-import { OmpClientEventDispatcher, safeFrameDecodeFailure, sendClientHello } from "./omp-client-frames.ts";
+import { decodeProviderServerEvent, OmpClientEventDispatcher, safeFrameDecodeFailure, sendClientHello } from "./omp-client-frames.ts";
 import { OmpClientReconnectHealth } from "./omp-client-reconnect-health.ts";
 import { encodeOutgoingMessage } from "./omp-client-outbound.ts";
 import { resolveOmpProtocolProvider } from "./omp-protocol-provider-registry.ts";
@@ -440,7 +440,10 @@ export class OmpClient {
   private handleRaw(raw: string | Uint8Array, generation: number): void | Promise<void> {
     if (generation !== this.generation || this.closedByUser) return;
     try {
-      return this.inboundDispatcher.dispatch(this.protocol.decodeServerEvent(raw), generation);
+      return this.inboundDispatcher.dispatch(
+        decodeProviderServerEvent(this.protocol, raw),
+        generation,
+      );
     } catch (error) {
       if (generation === this.generation) this.protocolFailure(safeFrameDecodeFailure(error));
     }

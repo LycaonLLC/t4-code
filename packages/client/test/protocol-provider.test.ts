@@ -120,10 +120,13 @@ class HandshakeTransport implements OmpTransport {
     return () => undefined;
   }
   close(): void {}
+  emit(input: unknown): void {
+    for (const listener of this.messages) listener(JSON.stringify(input));
+  }
   send(data: string): void {
     const frame = decodeClientFrame(data);
     if (frame.type !== "hello") return;
-    for (const listener of this.messages) listener(JSON.stringify(welcomeFrame()));
+    this.emit(welcomeFrame());
   }
 }
 
@@ -278,6 +281,30 @@ describe("OmpProtocolProvider", () => {
     await expect(client.command({ hostId: "provider-host", command: "session.list" }))
       .rejects.toMatchObject({ code: "protocol" });
     expect(client.state).toBe("ready");
+    await client.close();
+  });
+
+  it("fails closed when a provider returns an undeclared server event", async () => {
+    const transport = new HandshakeTransport();
+    const provider: OmpProtocolProvider = {
+      ...ompAppV1ProtocolProvider,
+      serverEventKinds: Object.freeze(["welcome"]),
+    };
+    const client = new OmpClient({
+      hostId: "provider-host",
+      protocolProvider: provider,
+      transport: () => transport,
+    });
+
+    await client.connect();
+    transport.emit({
+      v: "omp-app/1",
+      type: "pong",
+      nonce: "unexpected",
+      timestamp: "2030-01-01T00:00:00.000Z",
+    });
+
+    expect(client.state).toBe("fatal");
     await client.close();
   });
 });
