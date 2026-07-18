@@ -8,6 +8,7 @@ import {
   type SessionRef,
   type SessionsFrame,
 } from "@oh-my-pi/app-wire";
+import type { OmpServerFrame } from "./server-event.ts";
 
 export * from "@oh-my-pi/app-wire";
 export * from "./app-update.ts";
@@ -210,11 +211,11 @@ function decodeResponse(input: Record<string, unknown>): ServerFrame {
  * present control shape that this client does not understand. The immutable
  * app-wire decoder stays strict; valid known frames retain their exact shape.
  */
-export function decodeServerFrame(input: unknown): ServerFrame {
+export function decodeServerFrame(input: unknown): OmpServerFrame {
   const value = materialize(input);
-  if (!isRecord(value)) return decodeAppWireServerFrame(value);
+  if (!isRecord(value)) return decodeAppWireServerFrame(value) as OmpServerFrame;
   if (value.type === "sessions") return decodeSessions(value);
-  if (value.type === "session.delta") return decodeSessionDelta(value);
-  if (value.type === "response") return decodeResponse(value);
-  return decodeAppWireServerFrame(value);
+  if (value.type === "session.delta") return decodeSessionDelta(value) as OmpServerFrame;
+  if (value.type === "response") return decodeResponse(value) as OmpServerFrame;
+  return decodeAppWireServerFrame(value) as OmpServerFrame;
 }

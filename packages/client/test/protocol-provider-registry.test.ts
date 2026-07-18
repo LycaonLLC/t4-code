@@ -1,4 +1,4 @@
-import { hostId } from "@t4-code/protocol";
+import { hostId, OMP_SERVER_EVENT_KINDS } from "@t4-code/protocol";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -59,6 +59,7 @@ function record(value: unknown): Record<string, unknown> {
 const futureProvider: OmpProtocolProvider = Object.freeze({
   id: FUTURE_ID,
   protocolVersion: FUTURE_PROTOCOL,
+  serverEventKinds: OMP_SERVER_EVENT_KINDS,
   encodeClientMessage(message: OmpClientMessage): string {
     return JSON.stringify({ protocol: FUTURE_PROTOCOL, message });
   },
@@ -201,6 +202,35 @@ describe("OmpProtocolProviderRegistry", () => {
     expect(() => new OmpProtocolProviderRegistry([futureProvider], "missing")).toThrow("unknown default");
   });
 
+  it("rejects incomplete, duplicate, and unknown event declarations", () => {
+    expect(
+      () =>
+        new OmpProtocolProviderRegistry([
+          { ...futureProvider, serverEventKinds: [] },
+        ]),
+    ).toThrow("must declare server event kinds");
+    expect(
+      () =>
+        new OmpProtocolProviderRegistry([
+          {
+            ...futureProvider,
+            serverEventKinds: [...OMP_SERVER_EVENT_KINDS, "welcome"],
+          },
+        ]),
+    ).toThrow("duplicate protocol provider server event kind");
+    expect(
+      () =>
+        new OmpProtocolProviderRegistry([
+          {
+            ...futureProvider,
+            serverEventKinds: [
+              "future.event",
+            ] as unknown as OmpProtocolProvider["serverEventKinds"],
+          },
+        ]),
+    ).toThrow("unknown protocol provider server event kind");
+  });
+
   it("connects through a selected provider with a different wire shape", async () => {
     const registry = new OmpProtocolProviderRegistry([ompAppV1ProtocolProvider, futureProvider]);
     const transport = new FutureTransport();
@@ -251,5 +281,12 @@ describe("OmpProtocolProviderRegistry", () => {
           protocolProviderRegistry: registry,
         }),
     ).toThrow("unknown protocol provider");
+    expect(
+      () =>
+        new OmpClient({
+          transport,
+          protocolProvider: { ...futureProvider, serverEventKinds: [] },
+        }),
+    ).toThrow("must declare server event kinds");
   });
 });

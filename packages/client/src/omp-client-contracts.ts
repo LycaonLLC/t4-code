@@ -1,4 +1,4 @@
-import type { PairOkFrame, RequestId, Cursor, ServerFrame } from "@t4-code/protocol";
+import type { PairOkFrame, RequestId, Cursor, OmpServerFrame } from "@t4-code/protocol";
 import type { ProjectionStore } from "./projection.ts";
 import type { OmpClientMessage, OmpPairOk, OmpProtocolProvider, OmpResponse } from "./omp-protocol-provider.ts";
 import type { OmpProtocolProviderRegistry } from "./omp-protocol-provider-registry.ts";
@@ -95,7 +95,7 @@ export interface TerminalInputIntent { hostId: string; sessionId: string; termin
 export interface TerminalResizeIntent { hostId: string; sessionId: string; terminalId: string; cols: number; rows: number; }
 export interface TerminalCloseIntent { hostId: string; sessionId: string; terminalId: string; reason?: string; }
 /** Pair credentials never cross this public subscription boundary. */
-export type PublicServerFrame = Exclude<ServerFrame, PairOkFrame>;
+export type PublicServerFrame = Exclude<OmpServerFrame, PairOkFrame>;
 
 export const MAX_SAVED = 128;
 export const MAX_PENDING = 256;

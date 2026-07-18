@@ -54,7 +54,16 @@ export function protocolProviderConformance(
         expect(decoded.payload).not.toHaveProperty("type");
         expect(Object.isFrozen(decoded)).toBe(true);
         expect(Object.isFrozen(decoded.payload)).toBe(true);
+        expect(options.provider.serverEventKinds).toContain(decoded.kind);
       }
+    });
+
+    it("declares one immutable normalized server event vocabulary", () => {
+      expect(options.provider.serverEventKinds.length).toBeGreaterThan(0);
+      expect(new Set(options.provider.serverEventKinds).size).toBe(
+        options.provider.serverEventKinds.length,
+      );
+      expect(Object.isFrozen(options.provider.serverEventKinds)).toBe(true);
     });
 
     it("declares the protocol selected by its welcome event", () => {

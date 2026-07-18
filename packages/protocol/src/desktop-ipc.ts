@@ -13,12 +13,12 @@ import {
   type ConfirmationId,
   type HostId,
   type ResultError,
-  type ServerFrame,
   type SessionId,
   type TerminalId,
 } from "@oh-my-pi/app-wire";
 import {
   ompServerEventFromFrame,
+  type OmpServerFrame,
   type PublicOmpServerEvent,
 } from "./server-event.ts";
 import {
@@ -32,7 +32,7 @@ export type { DesktopUpdatePhase, DesktopUpdateState } from "./app-update.ts";
 export type { PairLinkEvent } from "./pair-link.ts";
 
 export const DESKTOP_IPC_VERSION = PROTOCOL_VERSION;
-export type RendererServerFrame = Exclude<ServerFrame, { type: "pair.ok" }>;
+export type RendererServerFrame = Exclude<OmpServerFrame, { type: "pair.ok" }>;
 export type RendererServerEvent = PublicOmpServerEvent;
 
 export function rendererServerEventFromFrame(frame: RendererServerFrame): RendererServerEvent {

@@ -1,5 +1,6 @@
 import {
   COMMAND_DESCRIPTORS,
+  OMP_SERVER_EVENT_KINDS,
   PROTOCOL_VERSION,
   decodeClientFrame,
   decodeServerFrame,
@@ -115,6 +116,7 @@ function encodeAppV1ClientMessage(message: OmpClientMessage): string {
 export const ompAppV1ProtocolProvider: OmpProtocolProvider = Object.freeze({
   id: "omp-app-v1",
   protocolVersion: PROTOCOL_VERSION,
+  serverEventKinds: OMP_SERVER_EVENT_KINDS,
   encodeClientMessage: encodeAppV1ClientMessage,
   decodeServerEvent: (input: unknown) => ompServerEventFromFrame(decodeServerFrame(input)),
   commandDescriptor: (command: string) => COMMAND_DESCRIPTORS[command],

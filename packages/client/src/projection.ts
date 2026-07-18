@@ -2,9 +2,9 @@ import { isCursor } from "@t4-code/protocol";
 import type {
   Cursor,
   DurableEntry,
+  OmpServerFrame,
   SessionEvent,
   SessionRef,
-  ServerFrame,
 } from "@t4-code/protocol";
 import { ImmutableSet } from "./immutable-set.ts";
 import { ImmutableMap } from "./immutable-map.ts";
@@ -36,7 +36,7 @@ import {
 } from "./transcript-retention.ts";
 import type { PublicOmpServerEvent } from "./omp-protocol-provider.ts";
 
-export type ProjectionFrame = Exclude<ServerFrame, Extract<ServerFrame, { type: "pair.ok" }>>;
+export type ProjectionFrame = Exclude<OmpServerFrame, Extract<OmpServerFrame, { type: "pair.ok" }>>;
 type ProjectionEventFrameFromEvent<Event extends PublicOmpServerEvent> = Event extends PublicOmpServerEvent
   ? Readonly<{ type: Event["kind"] } & Event["payload"]>
   : never;

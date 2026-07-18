@@ -169,6 +169,7 @@ export function protocolProviderCorpus(options: {
         new Set(REPRESENTATIVE_INBOUND_KINDS),
       );
       for (const entry of corpus.inbound) {
+        expect(provider.serverEventKinds).toContain(entry.event.kind);
         const fromObject = provider.decodeServerEvent(entry.wire);
         const fromText = provider.decodeServerEvent(JSON.stringify(entry.wire));
         expect.soft(fromObject, entry.name).toEqual(entry.event);

@@ -89,6 +89,8 @@ export type OmpClientMessage =
 export interface OmpProtocolProvider {
   readonly id: string;
   readonly protocolVersion: string;
+  /** Normalized server events this adapter can validate and decode. */
+  readonly serverEventKinds: readonly OmpServerEvent["kind"][];
   /** Validate and encode one logical T4 message using this provider's wire format. */
   encodeClientMessage(message: OmpClientMessage): string;
   decodeServerEvent(input: unknown): OmpServerEvent;

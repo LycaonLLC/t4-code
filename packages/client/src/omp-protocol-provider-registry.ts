@@ -1,5 +1,8 @@
+import { OMP_SERVER_EVENT_KINDS } from "@t4-code/protocol";
 import { ompAppV1ProtocolProvider } from "./omp-app-v1-protocol-provider.ts";
 import type { OmpProtocolProvider } from "./omp-protocol-provider.ts";
+
+const knownServerEventKinds: ReadonlySet<string> = new Set(OMP_SERVER_EVENT_KINDS);
 
 function registryKey(value: string, label: string): string {
   const hasControlCharacter = Array.from(value).some((character) => {
@@ -10,6 +13,26 @@ function registryKey(value: string, label: string): string {
     throw new Error(`invalid protocol provider ${label}`);
   }
   return value;
+}
+
+function validateProvider(provider: OmpProtocolProvider): OmpProtocolProvider {
+  registryKey(provider.id, "id");
+  registryKey(provider.protocolVersion, "version");
+  if (!Array.isArray(provider.serverEventKinds) || provider.serverEventKinds.length === 0) {
+    throw new Error(`protocol provider ${provider.id} must declare server event kinds`);
+  }
+  const eventKinds = new Set<string>();
+  for (const kind of provider.serverEventKinds) {
+    registryKey(kind, "server event kind");
+    if (!knownServerEventKinds.has(kind)) {
+      throw new Error(`unknown protocol provider server event kind: ${kind}`);
+    }
+    if (eventKinds.has(kind)) {
+      throw new Error(`duplicate protocol provider server event kind: ${kind}`);
+    }
+    eventKinds.add(kind);
+  }
+  return provider;
 }
 
 /** Immutable lookup table for concrete protocol adapters. */
@@ -25,7 +48,8 @@ export class OmpProtocolProviderRegistry {
     }
     const byId = new Map<string, OmpProtocolProvider>();
     const byVersion = new Map<string, OmpProtocolProvider>();
-    for (const provider of providers) {
+    for (const candidate of providers) {
+      const provider = validateProvider(candidate);
       const id = registryKey(provider.id, "id");
       const version = registryKey(provider.protocolVersion, "version");
       if (byId.has(id)) throw new Error(`duplicate protocol provider id: ${id}`);
@@ -70,7 +94,7 @@ export function resolveOmpProtocolProvider(options: {
     if (options.protocolProviderId !== undefined || options.protocolProviderRegistry !== undefined) {
       throw new Error("direct protocol provider cannot be combined with registry selection");
     }
-    return options.protocolProvider;
+    return validateProvider(options.protocolProvider);
   }
   const registry = options.protocolProviderRegistry ?? defaultOmpProtocolProviderRegistry;
   return registry.requireById(options.protocolProviderId);
