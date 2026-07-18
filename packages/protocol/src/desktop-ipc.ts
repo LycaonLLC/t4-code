@@ -65,6 +65,8 @@ export const DESKTOP_IPC_CHANNELS = [
   "omp:speech:stop",
   "app:update:restart",
   "app:update:renderer-ready",
+  "app:projection-cache:load",
+  "app:projection-cache:save",
 ] as const;
 export type DesktopInvokeChannel = (typeof DESKTOP_IPC_CHANNELS)[number];
 export const DESKTOP_IPC_EVENTS = [
@@ -276,6 +278,18 @@ export interface SpeechResult {
   readonly error?: string;
 }
 
+export const MAX_PROJECTION_CACHE_BYTES = 2 * 1024 * 1024;
+export interface ProjectionCacheLoadRequest {}
+export interface ProjectionCacheLoadResult {
+  readonly available: boolean;
+  readonly value: string | null;
+}
+export interface ProjectionCacheSaveRequest {
+  readonly value: string;
+}
+export interface ProjectionCacheSaveResult {
+  readonly saved: boolean;
+}
 export interface DesktopUpdateRequest {}
 export interface DesktopUpdateRendererReadyResult {
   readonly openSettings: boolean;
@@ -453,6 +467,8 @@ export interface DesktopInvokeRequestMap {
   "app:update:download": DesktopUpdateRequest;
   "app:update:restart": DesktopUpdateRequest;
   "app:update:renderer-ready": DesktopUpdateRequest;
+  "app:projection-cache:load": ProjectionCacheLoadRequest;
+  "app:projection-cache:save": ProjectionCacheSaveRequest;
 }
 export interface DesktopInvokeResponseMap {
   "omp:targets:list": TargetListResult;
@@ -489,6 +505,8 @@ export interface DesktopInvokeResponseMap {
   "app:update:download": DesktopUpdateState;
   "app:update:restart": DesktopUpdateState;
   "app:update:renderer-ready": DesktopUpdateRendererReadyResult;
+  "app:projection-cache:load": ProjectionCacheLoadResult;
+  "app:projection-cache:save": ProjectionCacheSaveResult;
 }
 export interface RendererServerFrameEvent {
   targetId: string;
@@ -746,6 +764,50 @@ export function decodeSpeechText(value: unknown): string {
   }
   return value;
 }
+function projectionCacheSerialized(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || utf8ByteLength(value) > MAX_PROJECTION_CACHE_BYTES)
+    throw new Error("invalid projection cache value");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("invalid projection cache value");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    throw new Error("invalid projection cache value");
+  const root = object(parsed, "projection cache");
+  const data = root.data;
+  if (
+    root.kind !== "t4-code-projection" ||
+    root.version !== 1 ||
+    !data ||
+    typeof data !== "object" ||
+    Array.isArray(data)
+  )
+    throw new Error("invalid projection cache value");
+  return value;
+}
+export function decodeProjectionCacheLoadResult(value: unknown): ProjectionCacheLoadResult {
+  const result = object(value, "projection cache load result");
+  exact(result, ["available", "value"]);
+  const available = result.available;
+  const cacheValue = result.value;
+  if (typeof available !== "boolean" || (cacheValue !== null && typeof cacheValue !== "string"))
+    throw new Error("invalid projection cache load result");
+  if (cacheValue !== null) projectionCacheSerialized(cacheValue);
+  if (!available && cacheValue !== null) throw new Error("invalid projection cache load result");
+  return Object.freeze({ available, value: cacheValue });
+}
+export function decodeProjectionCacheSaveResult(value: unknown): ProjectionCacheSaveResult {
+  const result = object(value, "projection cache save result");
+  exact(result, ["saved"]);
+  const saved = result.saved;
+  if (typeof saved !== "boolean") throw new Error("invalid projection cache save result");
+  return Object.freeze({ saved });
+}
+export function decodeProjectionCacheSaveRequestValue(value: unknown): string {
+  return projectionCacheSerialized(value);
+}
 export function decodeDesktopInvokeRequest(input: unknown): DesktopInvokeRequest {
   const frame = inputObject(input);
   exact(frame, ["channel", "payload"]);
@@ -813,6 +875,12 @@ export function decodeDesktopInvokeRequest(input: unknown): DesktopInvokeRequest
     case "app:update:renderer-ready":
       exact(payload, []);
       return { channel, payload: {} };
+    case "app:projection-cache:load":
+      exact(payload, []);
+      return { channel, payload: {} };
+    case "app:projection-cache:save":
+      exact(payload, ["value"]);
+      return { channel, payload: { value: projectionCacheSerialized(payload.value) } };
     case "omp:command":
       exact(payload, ["targetId", "intent"]);
       {

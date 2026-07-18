@@ -107,6 +107,42 @@ describe("desktop IPC lifecycle proof", () => {
     await expect(handler(event, request("omp:targets:list", { extra: true }))).rejects.toThrow();
     await expect(handler(event, request("omp:connect", {}))).rejects.toThrow();
   });
+  it("routes projection cache load/save through the trusted shell service", async () => {
+    const ipc = new FakeIpc();
+    const { runtime: baseRuntime } = makeRuntime();
+    const value = JSON.stringify({
+      kind: "t4-code-projection",
+      version: 1,
+      data: { sessions: [], sessionIndex: [], lru: [], freshness: "cached" },
+    });
+    const saves: string[] = [];
+    const runtime: IpcRuntime = {
+      ...baseRuntime,
+      projectionCache: {
+        load: () => ({ available: true, value }),
+        save: (serialized) => {
+          saves.push(serialized);
+          return { saved: true };
+        },
+      },
+    };
+    new DesktopIpcRegistry(runtime, ipc).install();
+    const event = { sender: runtime.window.webContents, senderFrame: runtime.window.webContents.mainFrame };
+    expect(await ipc.handlers.get("app:projection-cache:load")!(
+      event,
+      request("app:projection-cache:load"),
+    )).toEqual({ available: true, value });
+    expect(await ipc.handlers.get("app:projection-cache:save")!(
+      event,
+      request("app:projection-cache:save", { value }),
+    )).toEqual({ saved: true });
+    expect(saves).toEqual([value]);
+    await expect(ipc.handlers.get("app:projection-cache:save")!(
+      event,
+      request("app:projection-cache:save", { value, storageKey: "renderer-selected-file" }),
+    )).rejects.toThrow();
+    expect(saves).toEqual([value]);
+  });
   it("serializes concurrent service actions", async () => {
     const ipc = new FakeIpc();
     const order: string[] = [];

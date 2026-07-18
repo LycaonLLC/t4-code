@@ -5,9 +5,11 @@
 // mode has no shell and keeps the fixture path.
 import {
   createDesktopRuntimeController,
+  createProjectionStore,
   type DesktopRuntimeController,
   type DesktopRuntimeSnapshot,
   type DesktopShellPort,
+  type ProjectionCacheStore,
 } from "@t4-code/client";
 import { useSyncExternalStore } from "react";
 
@@ -31,6 +33,22 @@ export interface RuntimePageLifecycleTarget {
 /** Anything that can carry the window's runtime slot (globalThis in prod). */
 export type RuntimeSlotHolder = object & { [RUNTIME_SLOT]?: RuntimeSlot };
 
+function projectionCacheStore(shell: DesktopShellPort): ProjectionCacheStore | undefined {
+  const load = shell.loadProjectionCache?.bind(shell);
+  const save = shell.saveProjectionCache?.bind(shell);
+  if (load === undefined || save === undefined) return undefined;
+  return {
+    load: async () => {
+      const result = await load();
+      return result.available ? result.value : null;
+    },
+    save: async (value) => {
+      const result = await save({ value });
+      if (!result.saved) throw new Error("projection cache save failed");
+    },
+  };
+}
+
 /**
  * The holder's controller, created on first acquisition and reused for
  * every later call — including StrictMode's doubled render pass and HMR
@@ -42,7 +60,13 @@ export function acquireRuntimeController(
 ): DesktopRuntimeController {
   let slot = holder[RUNTIME_SLOT];
   if (slot === undefined) {
-    const controller = createDesktopRuntimeController({ shell });
+    const cacheStore = projectionCacheStore(shell);
+    const controller = createDesktopRuntimeController({
+      shell,
+      ...(cacheStore === undefined
+        ? {}
+        : { projection: createProjectionStore({ cacheStore }) }),
+    });
     slot = {
       controller,
       disposeComposerCleanup: bindAuthoritativeComposerCleanup(controller),
