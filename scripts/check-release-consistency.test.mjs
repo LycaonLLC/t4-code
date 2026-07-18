@@ -43,7 +43,7 @@ function resolveWorkflowExpression(expression, context) {
 }
 
 test("current source tree has one consistent release version", () => {
-  assert.deepEqual(collectReleaseConsistencyErrors(files, "v0.1.22"), []);
+  assert.deepEqual(collectReleaseConsistencyErrors(files), []);
 });
 
 test("rejects a tag that differs from the package version", () => {
@@ -52,6 +52,19 @@ test("rejects a tag that differs from the package version", () => {
       error.includes("release tag v9.9.9 does not match v0.1.22"),
     ),
   );
+});
+
+test("tagged releases require published app-wire provenance to match the vendored contract", () => {
+  const errors = collectReleaseConsistencyErrors(files, "v0.1.22");
+  for (const field of ["version", "commit", "source tree"]) {
+    assert.ok(
+      errors.some((error) =>
+        error.includes(
+          `published app-wire ${field} must match current app-wire for tagged releases`,
+        ),
+      ),
+    );
+  }
 });
 
 test("rejects workspace, site, README, and runtime version drift", () => {
@@ -196,14 +209,21 @@ test("historical repair runs CI authority from trusted control while querying ol
   assert.notEqual(checkoutSha, queriedSha);
 });
 
-test("rejects app-wire matrix changes until the release surfaces agree", () => {
+test("rejects published app-wire version drift until release surfaces agree", () => {
   const drifted = changed("compat/omp-app-matrix.json", (text) =>
-    text.replace('"version": "0.5.8"', '"version": "0.5.1"'),
+    text.replace(
+      '"publishedAppWire": {\n    "package": "@oh-my-pi/app-wire",\n    "version": "0.5.8"',
+      '"publishedAppWire": {\n    "package": "@oh-my-pi/app-wire",\n    "version": "0.5.1"',
+    ),
   );
-  assert.ok(collectReleaseConsistencyErrors(drifted).length > 0);
+  assert.ok(
+    collectReleaseConsistencyErrors(drifted).some(
+      (error) => error.startsWith("README.md") || error.startsWith("apps/site/src/release.ts"),
+    ),
+  );
 });
 
-test("rejects app-wire provenance changes until the release surfaces agree", () => {
+test("rejects published app-wire provenance drift until release surfaces agree", () => {
   const drifted = changed("compat/omp-app-matrix.json", (text) =>
     text.replace(
       '"sourceCommit": "33615123ff986fc9cadf645463b4fed17e8b9f35"',
@@ -220,13 +240,24 @@ test("rejects app-wire provenance changes until the release surfaces agree", () 
 test("rejects drift between the compatibility matrix and vendored app-wire manifest", () => {
   const drifted = changed("vendor/app-wire/manifest.json", (text) =>
     text.replace(
-      '"sourceTreeHash": "e36475dc81dd4c3703eb207ae466f85947b33525"',
+      '"sourceTreeHash": "4d8794bad6fc57d86058a46dc4698fcca14263e5"',
       '"sourceTreeHash": "0000000000000000000000000000000000000000"',
     ),
   );
   assert.ok(
     collectReleaseConsistencyErrors(drifted).some((error) =>
       error.includes("vendor/app-wire/manifest.json sourceTreeHash must match"),
+    ),
+  );
+});
+
+test("rejects a stale app-wire third-party notice", () => {
+  const drifted = changed("THIRD_PARTY_NOTICES.md", (text) =>
+    text.replace("@oh-my-pi/app-wire@0.5.9", "@oh-my-pi/app-wire@0.5.8"),
+  );
+  assert.ok(
+    collectReleaseConsistencyErrors(drifted).some((error) =>
+      error.startsWith("THIRD_PARTY_NOTICES.md is missing"),
     ),
   );
 });
@@ -257,37 +288,54 @@ test("rejects drift in verified OMP runtime provenance", () => {
   }
 });
 
-test("accepts a coordinated app-wire provenance update without editing the workflow", () => {
+test("accepts a current app-wire update without rewriting published release surfaces", () => {
   const coordinated = new Map(files);
+  for (const path of ["compat/omp-app-matrix.json", "vendor/app-wire/manifest.json"]) {
+    coordinated.set(
+      path,
+      coordinated
+        .get(path)
+        .replace('"version": "0.5.9"', '"version": "0.6.0"')
+        .replace(
+          '"sourceCommit": "5633bdd7e5f9062d1822eeeddb9311b2d942bf6f"',
+          '"sourceCommit": "1111111111111111111111111111111111111111"',
+        )
+        .replace(
+          '"sourceTreeHash": "4d8794bad6fc57d86058a46dc4698fcca14263e5"',
+          '"sourceTreeHash": "2222222222222222222222222222222222222222"',
+        )
+        .replace("oh-my-pi-app-wire-0.5.9.tgz", "oh-my-pi-app-wire-0.6.0.tgz")
+        .replace(
+          '"tarballSha256": "b3a891610e919833d16302b1893831f509d264322c3869d28f17adbbff6116f0"',
+          '"tarballSha256": "3333333333333333333333333333333333333333333333333333333333333333"',
+        )
+        .replace(
+          '"goldenCorpusSha256": "50b087a3a22bb48908718b7786eff6ce618bbd6b6123c055e40c957ef47a805c"',
+          '"goldenCorpusSha256": "4444444444444444444444444444444444444444444444444444444444444444"',
+        ),
+    );
+  }
   coordinated.set(
-    "compat/omp-app-matrix.json",
+    "THIRD_PARTY_NOTICES.md",
     coordinated
-      .get("compat/omp-app-matrix.json")
-      .replace('"version": "0.5.8"', '"version": "0.5.9"')
-      .replace("oh-my-pi-app-wire-0.5.8.tgz", "oh-my-pi-app-wire-0.5.9.tgz"),
-  );
-  coordinated.set(
-    "apps/site/src/release.ts",
-    coordinated
-      .get("apps/site/src/release.ts")
-      .replace('APP_WIRE_VERSION = "0.5.8"', 'APP_WIRE_VERSION = "0.5.9"'),
-  );
-  coordinated.set(
-    "README.md",
-    coordinated
-      .get("README.md")
-      .replace("`@oh-my-pi/app-wire` 0.5.8", "`@oh-my-pi/app-wire` 0.5.9"),
-  );
-  coordinated.set(
-    "docs/CURRENT_RELEASE_NOTES.md",
-    coordinated.get("docs/CURRENT_RELEASE_NOTES.md").replace("app-wire 0.5.8", "app-wire 0.5.9"),
-  );
-  coordinated.set(
-    "vendor/app-wire/manifest.json",
-    coordinated
-      .get("vendor/app-wire/manifest.json")
-      .replace('"version": "0.5.8"', '"version": "0.5.9"')
-      .replace("oh-my-pi-app-wire-0.5.8.tgz", "oh-my-pi-app-wire-0.5.9.tgz"),
+      .get("THIRD_PARTY_NOTICES.md")
+      .replace("@oh-my-pi/app-wire@0.5.9", "@oh-my-pi/app-wire@0.6.0")
+      .replace(
+        "5633bdd7e5f9062d1822eeeddb9311b2d942bf6f",
+        "1111111111111111111111111111111111111111",
+      )
+      .replace(
+        "4d8794bad6fc57d86058a46dc4698fcca14263e5",
+        "2222222222222222222222222222222222222222",
+      )
+      .replace(
+        "b3a891610e919833d16302b1893831f509d264322c3869d28f17adbbff6116f0",
+        "3333333333333333333333333333333333333333333333333333333333333333",
+      )
+      .replace(
+        "50b087a3a22bb48908718b7786eff6ce618bbd6b6123c055e40c957ef47a805c",
+        "4444444444444444444444444444444444444444444444444444444444444444",
+      ),
   );
 
   assert.deepEqual(collectReleaseConsistencyErrors(coordinated), []);
