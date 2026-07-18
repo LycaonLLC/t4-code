@@ -118,7 +118,8 @@ test(
         heapGrowthBytes: Math.max(0, process.memoryUsage().heapUsed - heapBefore),
       });
       const session = state.sessions.values().next().value;
-      if (session?.events.length !== 512 || session.entries.length !== ENTRY_COUNT) {
+      const expectedRetainedEvents = Math.min(EVENT_COUNT, 512);
+      if (session?.events.length !== expectedRetainedEvents || session.entries.length !== ENTRY_COUNT) {
         throw new Error("event throughput benchmark violated bounded retention");
       }
     }
