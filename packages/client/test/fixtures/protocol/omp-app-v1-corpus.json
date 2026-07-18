@@ -1,0 +1,561 @@
+{
+  "schemaVersion": 1,
+  "provider": {
+    "id": "omp-app-v1",
+    "protocolVersion": "omp-app/1"
+  },
+  "outbound": [
+    {
+      "name": "hello-with-resume-and-authentication",
+      "message": {
+        "kind": "hello",
+        "client": {
+          "name": "t4-code",
+          "version": "0.1.22",
+          "build": "corpus",
+          "platform": "linux"
+        },
+        "requestedFeatures": ["resume"],
+        "savedCursors": [
+          {
+            "hostId": "host-a",
+            "sessionId": "session-a",
+            "cursor": { "epoch": "epoch-1", "seq": 42 }
+          }
+        ],
+        "capabilities": ["sessions.read"],
+        "authentication": {
+          "deviceId": "device-1",
+          "deviceToken": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      },
+      "wire": {
+        "v": "omp-app/1",
+        "type": "hello",
+        "protocol": { "min": "omp-app/1", "max": "omp-app/1" },
+        "client": {
+          "name": "t4-code",
+          "version": "0.1.22",
+          "build": "corpus",
+          "platform": "linux"
+        },
+        "requestedFeatures": ["resume"],
+        "savedCursors": [
+          {
+            "hostId": "host-a",
+            "sessionId": "session-a",
+            "cursor": { "epoch": "epoch-1", "seq": 42 }
+          }
+        ],
+        "capabilities": { "client": ["sessions.read"] },
+        "authentication": {
+          "deviceId": "device-1",
+          "deviceToken": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      }
+    },
+    {
+      "name": "session-prompt-command",
+      "message": {
+        "kind": "command",
+        "requestId": "request-command",
+        "commandId": "command-command",
+        "hostId": "host-a",
+        "sessionId": "session-a",
+        "command": "session.prompt",
+        "expectedRevision": "revision-1",
+        "args": { "text": "hello" }
+      },
+      "wire": {
+        "v": "omp-app/1",
+        "type": "command",
+        "requestId": "request-command",
+        "commandId": "command-command",
+        "hostId": "host-a",
+        "sessionId": "session-a",
+        "command": "session.prompt",
+        "expectedRevision": "revision-1",
+        "args": { "message": "hello" }
+      }
+    },
+    {
+      "name": "approved-confirmation",
+      "message": {
+        "kind": "confirm",
+        "requestId": "request-confirm",
+        "confirmationId": "confirmation-1",
+        "commandId": "command-confirm",
+        "hostId": "host-a",
+        "sessionId": "session-a",
+        "decision": "approve"
+      },
+      "wire": {
+        "v": "omp-app/1",
+        "type": "confirm",
+        "requestId": "request-confirm",
+        "confirmationId": "confirmation-1",
+        "commandId": "command-confirm",
+        "hostId": "host-a",
+        "sessionId": "session-a",
+        "decision": "approve"
+      }
+    },
+    {
+      "name": "pair-start",
+      "message": {
+        "kind": "pair-start",
+        "requestId": "request-pair",
+        "code": "483921",
+        "deviceId": "device-1",
+        "deviceName": "Corpus device",
+        "platform": "linux",
+        "requestedCapabilities": ["sessions.read"]
+      },
+      "wire": {
+        "v": "omp-app/1",
+        "type": "pair.start",
+        "requestId": "request-pair",
+        "code": "483921",
+        "deviceId": "device-1",
+        "deviceName": "Corpus device",
+        "platform": "linux",
+        "requestedCapabilities": ["sessions.read"]
+      }
+    },
+    {
+      "name": "terminal-input-base64",
+      "message": {
+        "kind": "terminal-input",
+        "hostId": "host-a",
+        "sessionId": "session-a",
+        "terminalId": "terminal-1",
+        "data": "aGVsbG8=",
+        "encoding": "base64"
+      },
+      "wire": {
+        "v": "omp-app/1",
+        "type": "terminal.input",
+        "hostId": "host-a",
+        "sessionId": "session-a",
+        "terminalId": "terminal-1",
+        "data": "aGVsbG8=",
+        "encoding": "base64"
+      }
+    },
+    {
+      "name": "terminal-resize",
+      "message": {
+        "kind": "terminal-resize",
+        "hostId": "host-a",
+        "sessionId": "session-a",
+        "terminalId": "terminal-1",
+        "cols": 120,
+        "rows": 40
+      },
+      "wire": {
+        "v": "omp-app/1",
+        "type": "terminal.resize",
+        "hostId": "host-a",
+        "sessionId": "session-a",
+        "terminalId": "terminal-1",
+        "cols": 120,
+        "rows": 40
+      }
+    },
+    {
+      "name": "terminal-close",
+      "message": {
+        "kind": "terminal-close",
+        "hostId": "host-a",
+        "sessionId": "session-a",
+        "terminalId": "terminal-1",
+        "reason": "corpus complete"
+      },
+      "wire": {
+        "v": "omp-app/1",
+        "type": "terminal.close",
+        "hostId": "host-a",
+        "sessionId": "session-a",
+        "terminalId": "terminal-1",
+        "reason": "corpus complete"
+      }
+    },
+    {
+      "name": "heartbeat-ping",
+      "message": {
+        "kind": "ping",
+        "nonce": "nonce-1",
+        "timestamp": "2030-01-01T00:00:00.000Z"
+      },
+      "wire": {
+        "v": "omp-app/1",
+        "type": "ping",
+        "nonce": "nonce-1",
+        "timestamp": "2030-01-01T00:00:00.000Z"
+      }
+    }
+  ],
+  "inbound": [
+    {
+      "name": "welcome",
+      "wire": {
+        "v": "omp-app/1",
+        "type": "welcome",
+        "selectedProtocol": "omp-app/1",
+        "hostId": "host-a",
+        "ompVersion": "1.0",
+        "ompBuild": "corpus",
+        "appserverVersion": "1.0",
+        "appserverBuild": "corpus",
+        "epoch": "epoch-2",
+        "authentication": "local",
+        "grantedCapabilities": ["sessions.read", "sessions.prompt"],
+        "grantedFeatures": ["resume"],
+        "negotiatedLimits": { "maxInputBytes": 1048576 },
+        "resumed": false
+      },
+      "event": {
+        "kind": "welcome",
+        "payload": {
+          "selectedProtocol": "omp-app/1",
+          "hostId": "host-a",
+          "ompVersion": "1.0",
+          "ompBuild": "corpus",
+          "appserverVersion": "1.0",
+          "appserverBuild": "corpus",
+          "epoch": "epoch-2",
+          "authentication": "local",
+          "grantedCapabilities": ["sessions.read", "sessions.prompt"],
+          "grantedFeatures": ["resume"],
+          "negotiatedLimits": { "maxInputBytes": 1048576 },
+          "resumed": false
+        }
+      }
+    },
+    {
+      "name": "successful-response",
+      "wire": {
+        "v": "omp-app/1",
+        "type": "response",
+        "requestId": "request-1",
+        "commandId": "command-1",
+        "hostId": "host-a",
+        "sessionId": "session-a",
+        "command": "session.prompt",
+        "ok": true,
+        "result": { "accepted": true }
+      },
+      "event": {
+        "kind": "response",
+        "payload": {
+          "requestId": "request-1",
+          "commandId": "command-1",
+          "hostId": "host-a",
+          "sessionId": "session-a",
+          "command": "session.prompt",
+          "ok": true,
+          "result": { "accepted": true }
+        }
+      }
+    },
+    {
+      "name": "authorization-error",
+      "wire": {
+        "v": "omp-app/1",
+        "type": "error",
+        "code": "NOT_AUTHORIZED",
+        "message": "pairing required",
+        "requestId": "request-1",
+        "details": { "retryable": false }
+      },
+      "event": {
+        "kind": "error",
+        "payload": {
+          "code": "NOT_AUTHORIZED",
+          "message": "pairing required",
+          "requestId": "request-1",
+          "details": { "retryable": false }
+        }
+      }
+    },
+    {
+      "name": "session-list",
+      "wire": {
+        "v": "omp-app/1",
+        "type": "sessions",
+        "hostId": "host-a",
+        "cursor": { "epoch": "epoch-2", "seq": 3 },
+        "sessions": [
+          {
+            "hostId": "host-a",
+            "sessionId": "session-a",
+            "project": { "projectId": "project-a", "name": "Corpus" },
+            "revision": "revision-10",
+            "title": "Corpus session",
+            "status": "active",
+            "updatedAt": "2030-01-01T00:00:00.000Z",
+            "liveState": {
+              "phase": "work",
+              "sessionControl": {
+                "mode": "observer",
+                "lockStatus": "live",
+                "transcript": "live"
+              }
+            },
+            "pendingApproval": false,
+            "pendingUserInput": false
+          }
+        ]
+      },
+      "event": {
+        "kind": "sessions",
+        "payload": {
+          "hostId": "host-a",
+          "cursor": { "epoch": "epoch-2", "seq": 3 },
+          "sessions": [
+            {
+              "hostId": "host-a",
+              "sessionId": "session-a",
+              "project": { "projectId": "project-a", "name": "Corpus" },
+              "revision": "revision-10",
+              "title": "Corpus session",
+              "status": "active",
+              "updatedAt": "2030-01-01T00:00:00.000Z",
+              "liveState": {
+                "phase": "work",
+                "sessionControl": {
+                  "mode": "observer",
+                  "lockStatus": "live",
+                  "transcript": "live"
+                }
+              },
+              "pendingApproval": false,
+              "pendingUserInput": false
+            }
+          ],
+          "totalCount": 1,
+          "truncated": false
+        }
+      }
+    },
+    {
+      "name": "transcript-snapshot",
+      "wire": {
+        "v": "omp-app/1",
+        "type": "snapshot",
+        "cursor": { "epoch": "epoch-2", "seq": 9 },
+        "revision": "revision-10",
+        "hostId": "host-a",
+        "sessionId": "session-a",
+        "entries": [
+          {
+            "id": "entry-1",
+            "parentId": null,
+            "hostId": "host-a",
+            "sessionId": "session-a",
+            "kind": "message",
+            "timestamp": "2030-01-01T00:00:00.000Z",
+            "data": { "role": "user", "text": "hello" }
+          }
+        ],
+        "continuity": { "epoch": "epoch-2" }
+      },
+      "event": {
+        "kind": "snapshot",
+        "payload": {
+          "cursor": { "epoch": "epoch-2", "seq": 9 },
+          "revision": "revision-10",
+          "hostId": "host-a",
+          "sessionId": "session-a",
+          "entries": [
+            {
+              "id": "entry-1",
+              "parentId": null,
+              "hostId": "host-a",
+              "sessionId": "session-a",
+              "kind": "message",
+              "timestamp": "2030-01-01T00:00:00.000Z",
+              "data": { "role": "user", "text": "hello" }
+            }
+          ],
+          "continuity": { "epoch": "epoch-2" }
+        }
+      }
+    },
+    {
+      "name": "streaming-event",
+      "wire": {
+        "v": "omp-app/1",
+        "type": "event",
+        "cursor": { "epoch": "epoch-2", "seq": 11 },
+        "hostId": "host-a",
+        "sessionId": "session-a",
+        "event": {
+          "type": "message.delta",
+          "entryId": "entry-1",
+          "text": " world"
+        }
+      },
+      "event": {
+        "kind": "event",
+        "payload": {
+          "cursor": { "epoch": "epoch-2", "seq": 11 },
+          "hostId": "host-a",
+          "sessionId": "session-a",
+          "event": {
+            "type": "message.delta",
+            "entryId": "entry-1",
+            "text": " world"
+          }
+        }
+      }
+    },
+    {
+      "name": "confirmation-challenge",
+      "wire": {
+        "v": "omp-app/1",
+        "type": "confirmation",
+        "confirmationId": "confirmation-1",
+        "commandId": "command-1",
+        "hostId": "host-a",
+        "sessionId": "session-a",
+        "commandHash": "sha256:abc",
+        "revision": "revision-1",
+        "expiresAt": "2030-01-01T00:10:00.000Z",
+        "summary": "Write src/index.ts",
+        "preview": "export {}\n"
+      },
+      "event": {
+        "kind": "confirmation",
+        "payload": {
+          "confirmationId": "confirmation-1",
+          "commandId": "command-1",
+          "hostId": "host-a",
+          "sessionId": "session-a",
+          "commandHash": "sha256:abc",
+          "revision": "revision-1",
+          "expiresAt": "2030-01-01T00:10:00.000Z",
+          "summary": "Write src/index.ts",
+          "preview": "export {}\n"
+        }
+      }
+    },
+    {
+      "name": "terminal-output",
+      "wire": {
+        "v": "omp-app/1",
+        "type": "terminal.output",
+        "hostId": "host-a",
+        "sessionId": "session-a",
+        "terminalId": "terminal-1",
+        "cursor": { "epoch": "epoch-2", "seq": 12 },
+        "stream": "stdout",
+        "data": "ready\n"
+      },
+      "event": {
+        "kind": "terminal.output",
+        "payload": {
+          "hostId": "host-a",
+          "sessionId": "session-a",
+          "terminalId": "terminal-1",
+          "cursor": { "epoch": "epoch-2", "seq": 12 },
+          "stream": "stdout",
+          "data": "ready\n"
+        }
+      }
+    },
+    {
+      "name": "continuity-gap",
+      "wire": {
+        "v": "omp-app/1",
+        "type": "gap",
+        "hostId": "host-a",
+        "sessionId": "session-a",
+        "from": { "epoch": "epoch-2", "seq": 13 },
+        "to": { "epoch": "epoch-2", "seq": 18 },
+        "reason": "reconnect"
+      },
+      "event": {
+        "kind": "gap",
+        "payload": {
+          "hostId": "host-a",
+          "sessionId": "session-a",
+          "from": { "epoch": "epoch-2", "seq": 13 },
+          "to": { "epoch": "epoch-2", "seq": 18 },
+          "reason": "reconnect"
+        }
+      }
+    },
+    {
+      "name": "heartbeat-pong",
+      "wire": {
+        "v": "omp-app/1",
+        "type": "pong",
+        "nonce": "nonce-1",
+        "timestamp": "2030-01-01T00:00:01.000Z"
+      },
+      "event": {
+        "kind": "pong",
+        "payload": {
+          "nonce": "nonce-1",
+          "timestamp": "2030-01-01T00:00:01.000Z"
+        }
+      }
+    },
+    {
+      "name": "pair-ok",
+      "wire": {
+        "v": "omp-app/1",
+        "type": "pair.ok",
+        "requestId": "request-pair",
+        "pairingId": "pairing-1",
+        "deviceId": "device-1",
+        "deviceName": "Corpus device",
+        "platform": "linux",
+        "requestedCapabilities": ["sessions.read"],
+        "grantedCapabilities": ["sessions.read"],
+        "deviceToken": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "expiresAt": "2030-01-01T00:10:00.000Z"
+      },
+      "event": {
+        "kind": "pair.ok",
+        "payload": {
+          "requestId": "request-pair",
+          "pairingId": "pairing-1",
+          "deviceId": "device-1",
+          "deviceName": "Corpus device",
+          "platform": "linux",
+          "requestedCapabilities": ["sessions.read"],
+          "grantedCapabilities": ["sessions.read"],
+          "deviceToken": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "expiresAt": "2030-01-01T00:10:00.000Z"
+        }
+      }
+    }
+  ],
+  "invalidInbound": [
+    { "name": "null", "wire": null },
+    { "name": "empty-object", "wire": {} },
+    {
+      "name": "wrong-protocol-version",
+      "wire": {
+        "v": "omp-app/2",
+        "type": "welcome",
+        "selectedProtocol": "omp-app/2",
+        "hostId": "host-a"
+      }
+    },
+    {
+      "name": "unknown-frame-kind",
+      "wire": { "v": "omp-app/1", "type": "future.event" }
+    },
+    {
+      "name": "incomplete-welcome",
+      "wire": {
+        "v": "omp-app/1",
+        "type": "welcome",
+        "selectedProtocol": "omp-app/1"
+      }
+    }
+  ]
+}
