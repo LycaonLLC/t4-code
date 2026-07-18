@@ -77,6 +77,7 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
   // never read as streamed output, and it never re-pins the view.
   const [disclosureActive, setDisclosureActive] = useState(false);
   const following = atEnd && !disclosureActive;
+  const [listMounted, setListMounted] = useState(false);
 
   // Synchronous mirrors for the pre-paint pin: scroll events and disclosure
   // begin/settle update these in the same task, so a ResizeObserver callback
@@ -186,14 +187,14 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
   // `rows` identity matters: streamed text grows within a row without
   // changing the count.
   useLayoutEffect(() => {
-    if (!following) return;
+    if (!listMounted || !following) return;
     pinToEnd();
     const frame = requestAnimationFrame(pinToEnd);
     return () => cancelAnimationFrame(frame);
-  }, [following, rows, bottomInset, pinToEnd]);
+  }, [following, listMounted, rows, bottomInset, pinToEnd]);
 
   useEffect(() => {
-    if (!following) return;
+    if (!listMounted || !following) return;
     const scroller = locateScroller();
     if (scroller === null) return;
     const observer = new ResizeObserver(pinToEnd);
@@ -201,7 +202,7 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
     const content = scroller.firstElementChild;
     if (content !== null) observer.observe(content);
     return () => observer.disconnect();
-  }, [following, locateScroller, pinToEnd]);
+  }, [following, listMounted, locateScroller, pinToEnd]);
 
   const renderItem = useCallback(
     ({ item }: { item: TranscriptRow }) => (
@@ -247,7 +248,6 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
   // delayed list remeasure without holding the warm copy for eight display cycles.
   const REVEAL_STABILITY_FRAMES = 4;
   const [coldMount, setColdMount] = useState(true);
-  const [listMounted, setListMounted] = useState(false);
   useEffect(() => {
     const frame = requestAnimationFrame(() => setListMounted(true));
     return () => cancelAnimationFrame(frame);

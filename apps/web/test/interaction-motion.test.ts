@@ -132,6 +132,8 @@ describe("session refresh renders without flicker", () => {
     expect(timeline).toContain("coldMount");
     expect(timeline).toMatch(/\{listMounted && \(\s*<LegendList/);
     expect(timeline).toContain("requestAnimationFrame(() => setListMounted(true))");
+    expect(timeline).toContain("[following, listMounted, rows, bottomInset, pinToEnd]");
+    expect(timeline).toContain("[following, listMounted, locateScroller, pinToEnd]");
     expect(timeline).toContain("legend-list-content-container");
     expect(timeline).toContain("REVEAL_STABILITY_FRAMES = 4");
     expect(timeline).not.toMatch(/setTimeout\([^)]*coldMount/i);
