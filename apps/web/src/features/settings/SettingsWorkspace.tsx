@@ -16,6 +16,8 @@ import {
 import { UpdateSettingsPanel } from "../updates/UpdateSettingsPanel.tsx";
 import { useAppUpdateState } from "../updates/update-store.ts";
 import { AccentRow } from "./AccentRow.tsx";
+import { CatalogExplorerBlock } from "./CatalogExplorerBlock.tsx";
+import type { CatalogExplorerInput } from "./settings-presentation.ts";
 import { FIELD_CLASS } from "./controls.tsx";
 import { BrokerStatusLine, HostSelector, type BrokerStatusAction, type HostSelection } from "./HostSelector.tsx";
 import { buildDiagnosticsExport } from "./diagnostics.ts";
@@ -300,6 +302,7 @@ export function SettingsWorkspace({
   scopes = EDITABLE_SCOPES,
   restartAction,
   catalogChoices = NO_CHOICES,
+  catalogExplorer,
   hostSelection,
   brokerStatus,
 }: {
@@ -314,6 +317,8 @@ export function SettingsWorkspace({
   readonly restartAction?: RestartAction;
   /** Models and agents the host advertises, for the roles/agents editors. */
   readonly catalogChoices?: SettingsCatalogChoices;
+  /** The active host's read-only capability catalog. */
+  readonly catalogExplorer?: CatalogExplorerInput;
   /** Connected hosts to switch between; the shell owns the selection. */
   readonly hostSelection?: HostSelection;
   /** The active host's account-broker status, when the shell tracks it. */
@@ -565,6 +570,8 @@ export function SettingsWorkspace({
                   </select>
                 </label>
               )}
+
+              {catalogExplorer !== undefined && <CatalogExplorerBlock input={catalogExplorer} />}
 
               {searching && shownSections.length === 0 && !shownUpdate && (
                 <p className="py-8 text-center text-muted-foreground text-sm">

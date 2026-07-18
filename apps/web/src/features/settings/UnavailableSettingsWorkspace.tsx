@@ -5,6 +5,8 @@ import { RAIL_OVERLAY_QUERY, useMediaQuery } from "../../hooks/useMediaQuery.ts"
 import { updateIsAvailable, type AppUpdateState } from "../updates/update-model.ts";
 import { UpdateSettingsPanel } from "../updates/UpdateSettingsPanel.tsx";
 import { HostSelector, type HostSelection } from "./HostSelector.tsx";
+import { CatalogExplorerBlock } from "./CatalogExplorerBlock.tsx";
+import type { CatalogExplorerInput } from "./settings-presentation.ts";
 
 export interface UnavailableSettingsCopy {
   readonly title: string;
@@ -20,13 +22,16 @@ export function UnavailableSettingsWorkspace({
   onOpenHosts,
   update,
   hostSelection,
+  catalogExplorer,
 }: {
   readonly copy: UnavailableSettingsCopy;
   readonly onBack: () => void;
   readonly onOpenHosts: () => void;
   readonly update: AppUpdateState;
-  /** Other connected hosts the user can switch to while this one is out. */
+  /** Other connected hosts to switch to while this one is out. */
   readonly hostSelection?: HostSelection;
+  /** The active host's read-only catalog state, when its identity is known. */
+  readonly catalogExplorer?: CatalogExplorerInput;
 }) {
   const railOverlaid = useMediaQuery(RAIL_OVERLAY_QUERY);
   return (
@@ -82,6 +87,7 @@ export function UnavailableSettingsWorkspace({
               </label>
             )}
             <UpdateSettingsPanel state={update} />
+            {catalogExplorer !== undefined && <CatalogExplorerBlock input={catalogExplorer} />}
 
             <section aria-labelledby="host-settings-unavailable">
               <div className="mb-2 flex flex-col gap-0.5">
