@@ -11,6 +11,7 @@ export const RELEASE_CONTRACT_PATHS = [
   "electron-builder.config.mjs",
   "README.md",
   "SECURITY.md",
+  "THIRD_PARTY_NOTICES.md",
   "apps/desktop/src/target-manager.ts",
   "apps/site/src/docs/content.ts",
   "apps/site/src/release.ts",
@@ -264,6 +265,13 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   ) {
     errors.push(`${appWireManifestPath} createdAt must be a canonical ISO timestamp`);
   }
+
+  requireText(
+    files.get("THIRD_PARTY_NOTICES.md") ?? "",
+    `The vendored \`@oh-my-pi/app-wire@${appWireVersion}\` package is packed from the public \`lyc-aon/oh-my-pi\` integration commit \`${appWireSourceCommit}\`, source tree \`${appWireSourceTree}\`; tarball SHA-256 \`${appWire?.tarballSha256}\`; golden corpus SHA-256 \`${appWire?.goldenCorpusSha256}\`.`,
+    "THIRD_PARTY_NOTICES.md",
+    errors,
+  );
 
   const verifiedRuntime = matrix?.verifiedRuntime;
   const ompRuntimeVersion = verifiedRuntime?.version;

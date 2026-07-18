@@ -251,6 +251,17 @@ test("rejects drift between the compatibility matrix and vendored app-wire manif
   );
 });
 
+test("rejects a stale app-wire third-party notice", () => {
+  const drifted = changed("THIRD_PARTY_NOTICES.md", (text) =>
+    text.replace("@oh-my-pi/app-wire@0.5.9", "@oh-my-pi/app-wire@0.5.8"),
+  );
+  assert.ok(
+    collectReleaseConsistencyErrors(drifted).some((error) =>
+      error.startsWith("THIRD_PARTY_NOTICES.md is missing"),
+    ),
+  );
+});
+
 test("rejects drift in verified OMP runtime provenance", () => {
   const cases = [
     (text) =>
@@ -304,6 +315,28 @@ test("accepts a current app-wire update without rewriting published release surf
         ),
     );
   }
+  coordinated.set(
+    "THIRD_PARTY_NOTICES.md",
+    coordinated
+      .get("THIRD_PARTY_NOTICES.md")
+      .replace("@oh-my-pi/app-wire@0.5.9", "@oh-my-pi/app-wire@0.6.0")
+      .replace(
+        "5633bdd7e5f9062d1822eeeddb9311b2d942bf6f",
+        "1111111111111111111111111111111111111111",
+      )
+      .replace(
+        "4d8794bad6fc57d86058a46dc4698fcca14263e5",
+        "2222222222222222222222222222222222222222",
+      )
+      .replace(
+        "b3a891610e919833d16302b1893831f509d264322c3869d28f17adbbff6116f0",
+        "3333333333333333333333333333333333333333333333333333333333333333",
+      )
+      .replace(
+        "50b087a3a22bb48908718b7786eff6ce618bbd6b6123c055e40c957ef47a805c",
+        "4444444444444444444444444444444444444444444444444444444444444444",
+      ),
+  );
 
   assert.deepEqual(collectReleaseConsistencyErrors(coordinated), []);
   assert.equal(
