@@ -19,14 +19,14 @@
   },
   "publishedRuntime": {
     "package": "omp",
-    "version": "17.0.0",
+    "version": "17.0.4",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "f909a2895bc1a352d1d3c27c45d59622bc1c0a36",
-    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/f909a2895bc1a352d1d3c27c45d59622bc1c0a36",
-    "sourceTag": "t4code-17.0.0-appserver-6",
+    "sourceCommit": "be0301f566ef172b6a7e1864853b3f04d6545758",
+    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/be0301f566ef172b6a7e1864853b3f04d6545758",
+    "sourceTag": "t4code-17.0.4-appserver-4",
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
-    "upstreamTag": "v17.0.0",
-    "upstreamCommit": "d5cd24f39a951bfbd50dc8f50bcf095d59694d6c",
+    "upstreamTag": "v17.0.4",
+    "upstreamCommit": "3fdd85ab6c6bab6c0cdee80abbbec0981740a5c0",
     "integrationPatches": [
       "bounded-growing-session-replay",
       "complete-session-event-projection",
@@ -75,7 +75,12 @@
       "complete-line-transcript-reconciliation",
       "missing-lock-only-session-promotion",
       "cooperative-tui-to-t4-handoff",
-      "deterministic-session-file-ordering"
+      "deterministic-session-file-ordering",
+      "macos-system-temp-alias-support",
+      "workspace-native-build-artifact-preference",
+      "retry-safe-integration-release-metadata",
+      "versioned-agent-view-lifecycle-corpus",
+      "session-owned-agent-cancellation"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },

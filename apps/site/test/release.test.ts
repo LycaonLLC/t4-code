@@ -61,14 +61,14 @@ describe("release assets", () => {
 
 describe("OMP integration contract", () => {
   it("pins the verified runtime tag, commit, and app-wire package", () => {
-    expect(OMP_RUNTIME_TAG).toBe("t4code-17.0.0-appserver-6");
-    expect(OMP_RUNTIME_COMMIT).toBe("f909a2895bc1a352d1d3c27c45d59622bc1c0a36");
+    expect(OMP_RUNTIME_TAG).toBe("t4code-17.0.4-appserver-4");
+    expect(OMP_RUNTIME_COMMIT).toBe("be0301f566ef172b6a7e1864853b3f04d6545758");
     expect(OMP_RUNTIME_URL).toBe(
-      "https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.0-appserver-6",
+      "https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.4-appserver-4",
     );
-    expect(OMP_UPSTREAM_TAG).toBe("v17.0.0");
-    expect(OMP_UPSTREAM_COMMIT).toBe("d5cd24f39a951bfbd50dc8f50bcf095d59694d6c");
-    expect(OMP_UPSTREAM_URL).toBe("https://github.com/can1357/oh-my-pi/tree/v17.0.0");
+    expect(OMP_UPSTREAM_TAG).toBe("v17.0.4");
+    expect(OMP_UPSTREAM_COMMIT).toBe("3fdd85ab6c6bab6c0cdee80abbbec0981740a5c0");
+    expect(OMP_UPSTREAM_URL).toBe("https://github.com/can1357/oh-my-pi/tree/v17.0.4");
     expect(APP_WIRE_VERSION).toBe("0.5.8");
   });
 });
