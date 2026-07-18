@@ -31,7 +31,7 @@ import type {
   PairRequest,
   PairResult,
   RendererServerEventEnvelope,
-  RendererServerFrameEvent,
+  RendererServerFrame,
   RuntimeErrorEvent,
   TargetAddRequest,
   TargetAddResult,
@@ -385,7 +385,7 @@ class FakeShell implements DesktopShellPort {
   emitFrame(event: { targetId: string; frame: unknown }): void {
     // decodeDesktopEvent revalidates every frame field on delivery; this
     // cast only satisfies the listener signature at the fake IPC seam.
-    const typed = event as RendererServerFrameEvent;
+    const typed = event as { targetId: string; frame: RendererServerFrame };
     const envelope = {
       targetId: typed.targetId,
       event: rendererServerEventFromFrame(typed.frame),

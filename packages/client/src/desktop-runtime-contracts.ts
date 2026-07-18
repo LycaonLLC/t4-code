@@ -21,9 +21,8 @@ import type {
   PairRequest,
   PairResult,
   PairLinksDrainResult,
-  RendererServerFrame,
   RendererServerEventEnvelope,
-  RendererServerFrameEvent,
+  RendererServerEvent,
   RuntimeErrorEvent,
   ServiceActionResult,
   ServiceInspection,
@@ -42,7 +41,7 @@ import type {
   ProjectionCacheSaveRequest,
   ProjectionCacheSaveResult,
 } from "@t4-code/protocol/desktop-ipc";
-import type { CatalogFrame, SettingsFrame, WelcomeFrame } from "@t4-code/protocol";
+import type { CatalogFrame, SettingsFrame } from "@t4-code/protocol";
 import { ImmutableMap } from "./immutable-map.ts";
 import type { ProjectionOptions, ProjectionSnapshot, ProjectionStore } from "./projection.ts";
 
@@ -99,6 +98,11 @@ export interface DesktopShellPort {
 
 export type DesktopRuntimeStartState = "idle" | "starting" | "started" | "stopped" | "error";
 
+export type DesktopWelcomePayload = Extract<
+  RendererServerEvent,
+  { kind: "welcome" }
+>["payload"];
+
 export interface DesktopHostMetadata {
   readonly targetId: string;
   readonly hostId: string;
@@ -110,7 +114,7 @@ export interface DesktopHostMetadata {
   readonly grantedCapabilities: readonly string[];
   readonly grantedFeatures: readonly string[];
   readonly negotiatedLimits: Readonly<Record<string, unknown>>;
-  readonly authentication: WelcomeFrame["authentication"];
+  readonly authentication: DesktopWelcomePayload["authentication"];
   readonly resumed: boolean;
 }
 
@@ -120,15 +124,6 @@ export interface DesktopRuntimeErrorEntry {
   readonly message: string;
   readonly at: number;
 }
-
-export interface DesktopFrameFilter {
-  readonly targetId: string;
-  readonly hostId?: string;
-  readonly sessionId?: string;
-  readonly types?: readonly string[];
-}
-
-export type DesktopFrameSubscription = (event: RendererServerFrameEvent) => void;
 
 export interface DesktopServerEventFilter {
   readonly targetId: string;
@@ -221,12 +216,6 @@ export function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>;
 }
 
-export function frameId(frame: RendererServerFrame, name: "hostId" | "sessionId"): string | undefined {
-  const record = asRecord(frame);
-  const value = record?.[name];
-  return typeof value === "string" ? value : undefined;
-}
-
 export function redactedMessage(message: string, maxLength = 512): string {
   const limit = Number.isSafeInteger(maxLength) && maxLength > 0
     ? Math.min(maxLength, 2_048)
@@ -271,7 +260,7 @@ export function targetCopy(target: DesktopTarget): DesktopTarget {
   });
 }
 
-export function hostMetadata(targetId: string, frame: WelcomeFrame): DesktopHostMetadata {
+export function hostMetadata(targetId: string, frame: DesktopWelcomePayload): DesktopHostMetadata {
   return freezeClone({
     targetId,
     hostId: String(frame.hostId),

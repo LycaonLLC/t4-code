@@ -21,7 +21,6 @@ import type {
   PairResult,
   RendererServerFrame,
   RendererServerEventEnvelope,
-  RendererServerFrameEvent,
   RuntimeErrorEvent,
   SpeechResult,
   TargetAddRequest,
@@ -34,6 +33,11 @@ import type {
   TerminalResizeRequest,
   TerminalResult,
 } from "@t4-code/protocol/desktop-ipc";
+
+interface TestServerFrameEnvelope {
+  readonly targetId: string;
+  readonly frame: RendererServerFrame;
+}
 import { createDesktopRuntimeController, type DesktopRuntimeController, type DesktopShellPort } from "../src/desktop-runtime.ts";
 import { redactedMessage } from "../src/desktop-runtime-contracts.ts";
 import {
@@ -100,7 +104,7 @@ class FakeShell implements DesktopShellPort {
   stopSpeakingCalls = 0;
   bootstrapCalls = 0;
   connectCalls = 0;
-  emitWelcomeOnBootstrap: RendererServerFrameEvent | undefined;
+  emitWelcomeOnBootstrap: TestServerFrameEnvelope | undefined;
   listedTargets: DesktopTarget[] = [target("local")];
   sessionListAccepted = true;
   sessionListResult: unknown = { cursor: { epoch: "epoch-1", seq: 7 }, sessions: [], totalCount: 0, truncated: false };
@@ -197,7 +201,7 @@ class FakeShell implements DesktopShellPort {
   onConnectionState(listener: (event: ConnectionStateEvent) => void): () => void { this.states.add(listener); return () => this.states.delete(listener); }
   onRuntimeError(listener: (event: RuntimeErrorEvent) => void): () => void { this.errors.add(listener); return () => this.errors.delete(listener); }
   onWake(listener: () => void): () => void { this.wakes.add(listener); return () => this.wakes.delete(listener); }
-  emitFrame(event: RendererServerFrameEvent): void {
+  emitFrame(event: TestServerFrameEnvelope): void {
     const envelope = {
       targetId: event.targetId,
       event: rendererServerEventFromFrame(event.frame),
@@ -791,7 +795,7 @@ describe("desktop runtime projection", () => {
     const runtime = createDesktopRuntimeController({ shell });
     await runtime.start();
     const seen: string[] = [];
-    runtime.subscribeFrames((event) => seen.push(event.targetId));
+    runtime.subscribeEvents((event) => seen.push(event.targetId));
     shell.emitFrame({ targetId: "one", frame: welcome("host-one", [], []) });
     shell.emitFrame({ targetId: "two", frame: welcome("host-two", [], []) });
     shell.emitFrame({ targetId: "one", frame: { v: "omp-app/1", type: "catalog", hostId: hostId("host-two"), revision: revision("revision-1"), items: [] } });
@@ -803,11 +807,7 @@ describe("desktop runtime projection", () => {
     const runtime = createDesktopRuntimeController({ shell });
     await runtime.start();
     shell.emitFrame({ targetId: "local", frame: welcome("host-a", [], []) });
-    const received: RendererServerFrameEvent[] = [];
     const normalized: RendererServerEventEnvelope[] = [];
-    runtime.subscribeFrames((event) => {
-      if (event.frame.type === "event") received.push(event);
-    });
     runtime.subscribeEvents(
       {
         targetId: "local",
@@ -837,7 +837,6 @@ describe("desktop runtime projection", () => {
     shell.emitFrame({ targetId: "local", frame: rawFrame });
 
     expect(rawFrame.event.result.output).toHaveLength(rawOutput.length);
-    expect(received).toHaveLength(1);
     expect(normalized).toHaveLength(1);
     const deliveredEvent = normalized[0]?.event;
     if (deliveredEvent?.kind !== "event") throw new Error("expected a retained normalized event");
@@ -847,16 +846,9 @@ describe("desktop runtime projection", () => {
     expect(retainedJsonBytes(deliveredEvent.payload.event)).toBeLessThanOrEqual(
       MAX_RETAINED_SESSION_EVENT_BYTES,
     );
-    const delivered = received[0]?.frame;
-    if (delivered?.type !== "event") throw new Error("expected a retained event frame");
-    expect(Object.isFrozen(delivered)).toBe(true);
-    expect(Object.isFrozen(delivered.event)).toBe(true);
-    expect(retainedJsonBytes(delivered.event)).toBeLessThanOrEqual(
-      MAX_RETAINED_SESSION_EVENT_BYTES,
-    );
-    expect(JSON.stringify(delivered.event)).toContain("retained value truncated");
-    expect(JSON.stringify(delivered.event)).toContain("command-tail");
-    expect(JSON.stringify(delivered.event)).toContain("image/png");
+    expect(JSON.stringify(deliveredEvent.payload.event)).toContain("retained value truncated");
+    expect(JSON.stringify(deliveredEvent.payload.event)).toContain("command-tail");
+    expect(JSON.stringify(deliveredEvent.payload.event)).toContain("image/png");
 
     const projectedEvents = runtime.getSnapshot().projection.sessions.get("host-a\u0000session-a")?.events;
     expect(projectedEvents).toHaveLength(1);
@@ -1148,8 +1140,8 @@ describe("desktop runtime projection", () => {
     shell.emitState({ targetId: "remote", state: "connected" });
     shell.emitFrame({ targetId: "remote", frame: welcome("host-remote", ["sessions.read"], [], "epoch-1") });
     for (let index = 0; index < 8; index += 1) await Promise.resolve();
-    const responses: RendererServerFrameEvent[] = [];
-    runtime.subscribeFrames((event) => { if (event.frame.type === "response") responses.push(event); });
+    const responses: RendererServerEventEnvelope[] = [];
+    runtime.subscribeEvents((event) => { if (event.event.kind === "response") responses.push(event); });
     shell.emitFrame({
       targetId: "remote",
       frame: ({
@@ -1165,7 +1157,10 @@ describe("desktop runtime projection", () => {
     expect(responses).toHaveLength(0);
     await runtime.command("remote", { hostId: hostId("host-remote"), command: "session.list", args: {} });
     expect(responses).toHaveLength(1);
-    expect(responses[0]?.frame).toMatchObject({ type: "response", command: "session.list" });
+    expect(responses[0]?.event).toMatchObject({
+      kind: "response",
+      payload: { command: "session.list" },
+    });
   });
   it("keeps duplicate same-host target metadata and lease capabilities target-scoped", async () => {
     const shell = new FakeShell();
@@ -1258,8 +1253,8 @@ describe("desktop runtime projection", () => {
     const started = runtime.start();
     for (let index = 0; index < 8; index += 1) await Promise.resolve();
     shell.emitState({ targetId: "local", state: "disconnected" });
-    const responses: RendererServerFrameEvent[] = [];
-    runtime.subscribeFrames((event) => { if (event.frame.type === "response") responses.push(event); });
+    const responses: RendererServerEventEnvelope[] = [];
+    runtime.subscribeEvents((event) => { if (event.event.kind === "response") responses.push(event); });
     shell.resolveSessionList();
     await started;
     for (let index = 0; index < 8; index += 1) await Promise.resolve();
@@ -1276,9 +1271,9 @@ describe("desktop runtime projection", () => {
     shell.emitFrame({ targetId: "local", frame: welcome("host-a", capabilities, features, "epoch-1") });
     await runtime.command("local", { hostId: hostId("host-a"), command: "catalog.get", args: {} });
     await runtime.command("local", { hostId: hostId("host-a"), command: "settings.read", args: {} });
-    const products: RendererServerFrameEvent[] = [];
-    runtime.subscribeFrames((event) => {
-      if (event.frame.type === "catalog" || event.frame.type === "settings") products.push(event);
+    const products: RendererServerEventEnvelope[] = [];
+    runtime.subscribeEvents((event) => {
+      if (event.event.kind === "catalog" || event.event.kind === "settings") products.push(event);
     });
     const emitProducts = (suffix: string) => {
       shell.emitFrame({
@@ -1337,8 +1332,8 @@ describe("desktop runtime projection", () => {
     await runtime.addTarget(remoteTargetRequest("remote"));
     await runtime.removeTarget("remote");
     const commandsBeforeWelcome = shell.commands.length;
-    const frames: RendererServerFrameEvent[] = [];
-    runtime.subscribeFrames((event) => frames.push(event));
+    const events: RendererServerEventEnvelope[] = [];
+    runtime.subscribeEvents((event) => events.push(event));
     shell.emitFrame({
       targetId: "remote",
       frame: welcome("removed-host", ["sessions.read"], [], "epoch-removed"),
@@ -1347,7 +1342,7 @@ describe("desktop runtime projection", () => {
     expect(runtime.getSnapshot().targetHosts.has("remote")).toBe(false);
     expect(runtime.getSnapshot().hosts.has("removed-host")).toBe(false);
     expect(shell.commands).toHaveLength(commandsBeforeWelcome);
-    expect(frames).toHaveLength(0);
+    expect(events).toHaveLength(0);
   });
   it("forgets a newly acquired controller lease when the dispatch gate closes", async () => {
     const { shell, runtime } = await leaseRuntime(["controller.lease"]);

@@ -11,9 +11,8 @@ import {
   type DisconnectResult,
   type DesktopTarget,
   type PairResult,
-  type RendererServerFrame,
+  type RendererServerEvent,
   type RendererServerEventEnvelope,
-  type RendererServerFrameEvent,
   type RuntimeErrorEvent,
   type TargetAddRequest,
   type TargetListResult,
@@ -23,14 +22,12 @@ import {
   type TerminalResizeRequest,
   type TerminalResult,
 } from "@t4-code/protocol/desktop-ipc";
-import { decodeCatalog, decodeSessions, hostId, revision, sessionId, type CatalogFrame, type Cursor, type SettingsFrame, type WelcomeFrame } from "@t4-code/protocol";
+import { decodeCatalog, decodeSessions, hostId, revision, sessionId, type CatalogFrame, type Cursor, type SettingsFrame } from "@t4-code/protocol";
 import type { Unsubscribe } from "./index.ts";
-import { ompAppV1PublicFrameFromEvent } from "./omp-app-v1-protocol-provider.ts";
-import { ProjectionStore, type ProjectionFrame } from "./projection.ts";
+import { ProjectionStore } from "./projection.ts";
 import {
   DesktopRuntimeError,
   asRecord,
-  frameId,
   freezeClone,
   mapValue,
   redactedMessage,
@@ -38,8 +35,6 @@ import {
   type DesktopControllerLease,
   type DesktopControllerLeaseAcquireResult,
   type DesktopControllerLeaseOperationResult,
-  type DesktopFrameFilter,
-  type DesktopFrameSubscription,
   type DesktopHostMetadata,
   type DesktopRuntimeErrorEntry,
   type DesktopRuntimeOptions,
@@ -49,14 +44,15 @@ import {
   type DesktopServerEventFilter,
   type DesktopServerEventSubscription,
   type DesktopShellPort,
+  type DesktopWelcomePayload,
 } from "./desktop-runtime-contracts.ts";
 import { DesktopRuntimeHostState } from "./desktop-runtime-hosts.ts";
 import { boundedText, commandFailure, DEFAULT_MAX_RUNTIME_ERRORS, leasePayload, type DesktopControllerLeaseEntry } from "./desktop-runtime-policy.ts";
 import { bootstrapDesktopHost } from "./desktop-runtime-bootstrap.ts";
 import { PromptLeaseStore } from "./prompt-lease.ts";
 import {
-  sanitizeRetainedTranscriptFrame,
-  type RetainedTranscriptFrame,
+  sanitizeRetainedTranscriptEvent,
+  type RetainedTranscriptEvent,
 } from "./transcript-retention.ts";
 export { DesktopRuntimeError } from "./desktop-runtime-contracts.ts";
 export type {
@@ -65,8 +61,6 @@ export type {
   DesktopControllerLeaseOperationResult,
   DesktopControllerLeaseOptions,
   DesktopControllerLeaseResult,
-  DesktopFrameFilter,
-  DesktopFrameSubscription,
   DesktopHostMetadata,
   DesktopRuntimeErrorEntry,
   DesktopRuntimeOptions,
@@ -110,7 +104,6 @@ export class DesktopRuntimeController {
   private readonly settingsReadyByTarget = new Set<string>();
   private readonly maxRuntimeErrors: number;
   private readonly listeners = new Set<DesktopRuntimeSnapshotListener>();
-  private readonly frameListeners = new Set<{ readonly listener: DesktopFrameSubscription; readonly filter?: DesktopFrameFilter }>();
   private readonly serverEventListeners = new Set<{
     readonly listener: DesktopServerEventSubscription;
     readonly filter?: DesktopServerEventFilter;
@@ -163,18 +156,6 @@ export class DesktopRuntimeController {
     let active = true;
     return () => { if (active) { active = false; this.listeners.delete(listener); } };
   }
-  subscribeFrames(listener: DesktopFrameSubscription, filter?: DesktopFrameFilter): Unsubscribe;
-  subscribeFrames(filter: DesktopFrameFilter, listener: DesktopFrameSubscription): Unsubscribe;
-  subscribeFrames(first: DesktopFrameSubscription | DesktopFrameFilter, second?: DesktopFrameSubscription | DesktopFrameFilter): Unsubscribe {
-    const listener = typeof first === "function" ? first : second as DesktopFrameSubscription;
-    const filter = typeof first === "function" ? second as DesktopFrameFilter | undefined : first;
-    if (this.stopped || typeof listener !== "function") return noop;
-    const item = { listener, ...(filter === undefined ? {} : { filter }) };
-    this.frameListeners.add(item);
-    let active = true;
-    return () => { if (active) { active = false; this.frameListeners.delete(item); } };
-  }
-  onFrame(listener: DesktopFrameSubscription, filter?: DesktopFrameFilter): Unsubscribe { return this.subscribeFrames(listener, filter); }
   subscribeEvents(listener: DesktopServerEventSubscription, filter?: DesktopServerEventFilter): Unsubscribe;
   subscribeEvents(filter: DesktopServerEventFilter, listener: DesktopServerEventSubscription): Unsubscribe;
   subscribeEvents(
@@ -225,7 +206,6 @@ export class DesktopRuntimeController {
     const unsubscribes = this.unsubscribes.splice(0);
     this.stopped = true;
     this.listeners.clear();
-    this.frameListeners.clear();
     this.serverEventListeners.clear();
     for (const unsubscribe of unsubscribes) {
       try { unsubscribe(); } catch { /* listener disposal is best effort */ }
@@ -712,55 +692,60 @@ export class DesktopRuntimeController {
     }
   }
   private handleServerEvent(event: RendererServerEventEnvelope): void {
-    const incomingFrame = ompAppV1PublicFrameFromEvent(event.event);
-    const transcriptFrame = this.isRetainedTranscriptFrame(incomingFrame);
+    const incomingEvent = event.event;
+    const transcriptEvent = this.isRetainedTranscriptEvent(incomingEvent);
     // Do not deep-clone a potentially large transcript payload before applying
-    // retention. The shared projection consumes the decoded frame directly;
+    // retention. The shared projection consumes the decoded event directly;
     // renderer subscribers receive only the bounded immutable copy.
-    const frame = transcriptFrame
-      ? sanitizeRetainedTranscriptFrame(incomingFrame)
-      : freezeClone(incomingFrame);
     const rendererEvent: RendererServerEventEnvelope = {
       targetId: event.targetId,
-      event: rendererServerEventFromFrame(frame),
+      event: transcriptEvent
+        ? sanitizeRetainedTranscriptEvent(incomingEvent)
+        : freezeClone(incomingEvent),
     };
-    if (frame.type === "welcome") {
-      if (!this.handleWelcome(event.targetId, frame)) return;
-      this.applyProjectionEvent(event.targetId, event.event);
+    if (incomingEvent.kind === "welcome") {
+      if (!this.handleWelcome(event.targetId, incomingEvent.payload)) return;
+      this.applyProjectionEvent(event.targetId, incomingEvent);
       this.notifyServerEvents(rendererEvent);
     } else {
-      const hostIdValue = frameId(frame, "hostId");
+      const payload = asRecord(incomingEvent.payload) ?? {};
+      const hostIdValue = typeof payload.hostId === "string" ? payload.hostId : undefined;
       const boundHost = this.current.targetHosts.get(event.targetId);
       if (hostIdValue !== undefined && boundHost !== hostIdValue) {
-        this.recordError({ targetId: event.targetId, code: "protocol", message: "frame host does not match target binding" });
+        this.recordError({ targetId: event.targetId, code: "protocol", message: "event host does not match target binding" });
         return;
       }
       const targetMetadata = this.hostState.metadataForTarget(event.targetId);
       const hostMetadata = hostIdValue === undefined ? undefined : this.current.hosts.get(hostIdValue);
       const hostProjectionCurrent = targetMetadata !== undefined && hostMetadata !== undefined && hostMetadata.targetId === event.targetId && targetMetadata.epoch === hostMetadata.epoch;
-      const hostProductResponse = frame.type === "response" && frame.ok && (frame.command === "session.list" || frame.command === "host.list" || frame.command === "catalog.get" || frame.command === "settings.read");
+      const hostProductResponse = incomingEvent.kind === "response" && incomingEvent.payload.ok && (incomingEvent.payload.command === "session.list" || incomingEvent.payload.command === "host.list" || incomingEvent.payload.command === "catalog.get" || incomingEvent.payload.command === "settings.read");
       const modernInventory = targetMetadata?.grantedCapabilities.includes("sessions.read") === true;
       if (hostIdValue !== undefined && !hostProjectionCurrent) return;
-      if (frame.type === "sessions" && modernInventory && (this.sessionInventoryEpochByTarget.get(event.targetId) !== frame.cursor.epoch)) return;
+      if (incomingEvent.kind === "sessions" && modernInventory && (this.sessionInventoryEpochByTarget.get(event.targetId) !== incomingEvent.payload.cursor.epoch)) return;
       const modernCatalog = targetMetadata?.grantedCapabilities.includes("catalog.read") === true && targetMetadata.grantedFeatures.includes("catalog.metadata");
       const modernSettings = targetMetadata?.grantedCapabilities.includes("config.read") === true && targetMetadata.grantedFeatures.includes("settings.metadata");
-      if (frame.type === "catalog" && modernCatalog && !this.catalogReadyByTarget.has(event.targetId)) return;
-      if (frame.type === "settings" && modernSettings && !this.settingsReadyByTarget.has(event.targetId)) return;
-      if (hostIdValue !== undefined && (frame.type === "catalog" || frame.type === "settings") && hostProjectionCurrent) {
-        if (frame.type === "catalog") this.replace({ catalogs: mapValue(new Map(this.current.catalogs).set(hostIdValue, frame as CatalogFrame)) });
-        else this.replace({ settings: mapValue(new Map(this.current.settings).set(hostIdValue, frame as SettingsFrame)) });
+      if (incomingEvent.kind === "catalog" && modernCatalog && !this.catalogReadyByTarget.has(event.targetId)) return;
+      if (incomingEvent.kind === "settings" && modernSettings && !this.settingsReadyByTarget.has(event.targetId)) return;
+      if (hostIdValue !== undefined && (incomingEvent.kind === "catalog" || incomingEvent.kind === "settings") && hostProjectionCurrent) {
+        if (incomingEvent.kind === "catalog") {
+          const catalog = decodeCatalog({ v: "omp-app/1", type: "catalog", ...incomingEvent.payload });
+          if (catalog.type !== "catalog") throw new DesktopRuntimeError("protocol", "catalog event decoded as settings");
+          this.replace({ catalogs: mapValue(new Map(this.current.catalogs).set(hostIdValue, catalog)) });
+        } else {
+          const settings = decodeCatalog({ v: "omp-app/1", type: "settings", ...incomingEvent.payload });
+          if (settings.type !== "settings") throw new DesktopRuntimeError("protocol", "settings event decoded as catalog");
+          this.replace({ settings: mapValue(new Map(this.current.settings).set(hostIdValue, settings)) });
+        }
       }
-      if (hostIdValue === undefined || hostProjectionCurrent || frame.type === "response") {
-        this.applyProjectionEvent(event.targetId, event.event);
+      if (hostIdValue === undefined || hostProjectionCurrent || incomingEvent.kind === "response") {
+        this.applyProjectionEvent(event.targetId, incomingEvent);
       }
       if (!hostProductResponse) this.notifyServerEvents(rendererEvent);
-      if (!hostProductResponse) this.notifyFrames({ targetId: event.targetId, frame });
       return;
     }
-    this.notifyFrames({ targetId: event.targetId, frame });
   }
-  private isRetainedTranscriptFrame(frame: RendererServerFrame): frame is RetainedTranscriptFrame {
-    return frame.type === "snapshot" || frame.type === "entry" || frame.type === "event" || frame.type === "gap" || frame.type === "agent.transcript";
+  private isRetainedTranscriptEvent(event: RendererServerEvent): event is RetainedTranscriptEvent {
+    return event.kind === "snapshot" || event.kind === "entry" || event.kind === "event" || event.kind === "gap" || event.kind === "agent.transcript";
   }
   private applySessionListResult(targetId: string, hostValue: string, result: Record<string, unknown>, expectedIdentity?: DesktopTargetIdentity): void {
     try {
@@ -774,7 +759,7 @@ export class DesktopRuntimeController {
         truncated: result.truncated,
       });
       if (expectedIdentity !== undefined) this.sessionInventoryEpochByTarget.set(targetId, sessions.cursor.epoch);
-      this.applyProjection(targetId, sessions);
+      this.applyProjectionEvent(targetId, rendererServerEventFromFrame(sessions));
     } catch (error) {
       if (error instanceof DesktopRuntimeError) throw error;
       throw new DesktopRuntimeError("protocol", error instanceof Error ? error.message : "invalid session inventory result");
@@ -796,18 +781,20 @@ export class DesktopRuntimeController {
     }
   }
   private notifyValidatedHostCommand(targetId: string, hostValue: string, command: string, response: CommandResult): void {
-    const frame = {
-      v: "omp-app/1",
-      type: "response",
-      requestId: response.requestId,
-      hostId: hostId(hostValue),
-      ok: true,
-      command,
-      result: response.result,
-    } as unknown as RendererServerFrame;
-    this.notifyFrames({ targetId, frame });
+    const event = Object.freeze({
+      kind: "response" as const,
+      payload: Object.freeze({
+        requestId: response.requestId,
+        commandId: response.commandId,
+        hostId: hostId(hostValue),
+        ok: true as const,
+        command,
+        result: response.result,
+      }),
+    }) as RendererServerEvent;
+    this.notifyServerEvents({ targetId, event });
   }
-  private handleWelcome(targetId: string, frame: WelcomeFrame): boolean {
+  private handleWelcome(targetId: string, frame: DesktopWelcomePayload): boolean {
     if (this.removedTargetIds.has(targetId)) return false;
     const reconciled = this.hostState.acceptWelcome(
       targetId,
@@ -835,7 +822,7 @@ export class DesktopRuntimeController {
     void this.bootstrapHost(targetId, frame);
     return true;
   }
-  private bootstrapHost(targetId: string, frame: WelcomeFrame): void {
+  private bootstrapHost(targetId: string, frame: DesktopWelcomePayload): void {
     const generationAtDispatch =
       this.generationFor(targetId) + (this.current.connections.get(targetId) === "connected" ? 0 : 1);
     // Welcome may precede the shell's connected event, which advances this generation once.
@@ -859,11 +846,6 @@ export class DesktopRuntimeController {
       }
     });
   }
-  private applyProjection(targetId: string, frame: RendererServerFrame): void {
-    if (this.stopped) return;
-    this.projection.applyPublicFrame(frame as ProjectionFrame);
-    if (this.current.targets.has(targetId)) this.replace({ projection: this.projection.getSnapshot() });
-  }
   private applyProjectionEvent(
     targetId: string,
     event: RendererServerEventEnvelope["event"],
@@ -872,15 +854,6 @@ export class DesktopRuntimeController {
     this.projection.applyPublicEvent(event);
     if (this.current.targets.has(targetId)) {
       this.replace({ projection: this.projection.getSnapshot() });
-    }
-  }
-  private notifyFrames(event: RendererServerFrameEvent): void {
-    const hostIdValue = frameId(event.frame, "hostId");
-    const sessionIdValue = frameId(event.frame, "sessionId");
-    // eslint-disable-next-line unicorn/no-useless-spread -- preserve listener snapshot when callbacks may unsubscribe during dispatch.
-    for (const { listener, filter } of [...this.frameListeners]) {
-      if (filter !== undefined && (filter.targetId !== event.targetId || (filter.hostId !== undefined && filter.hostId !== hostIdValue) || (filter.sessionId !== undefined && filter.sessionId !== sessionIdValue) || (filter.types !== undefined && !filter.types.includes(event.frame.type)))) continue;
-      try { listener(event); } catch { /* subscriber isolation */ }
     }
   }
   private notifyServerEvents(event: RendererServerEventEnvelope): void {

@@ -133,8 +133,6 @@ export type {
   DesktopRuntimeStartState,
   DesktopHostMetadata,
   DesktopRuntimeErrorEntry,
-  DesktopFrameFilter,
-  DesktopFrameSubscription,
   DesktopServerEventFilter,
   DesktopServerEventSubscription,
   DesktopRuntimeSnapshot,

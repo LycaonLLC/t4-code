@@ -537,11 +537,6 @@ export interface RendererServerEventEnvelope {
   targetId: string;
   event: RendererServerEvent;
 }
-/** Compatibility envelope used by renderer-side subscribers during migration. */
-export interface RendererServerFrameEvent {
-  targetId: string;
-  frame: RendererServerFrame;
-}
 export interface DesktopEventPayloadMap {
   "omp:server-event": RendererServerEventEnvelope;
   "omp:connection-state": ConnectionStateEvent;

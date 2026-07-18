@@ -20,7 +20,7 @@ import type {
   PairRequest,
   PairResult,
   RendererServerEventEnvelope,
-  RendererServerFrameEvent,
+  RendererServerFrame,
   RuntimeErrorEvent,
   ServiceActionResult,
   ServiceInspection,
@@ -34,6 +34,11 @@ import type {
   TerminalResizeRequest,
   TerminalResult,
 } from "@t4-code/protocol/desktop-ipc";
+
+interface TestServerFrameEnvelope {
+  readonly targetId: string;
+  readonly frame: RendererServerFrame;
+}
 
 export interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -213,7 +218,7 @@ export class FakeShell implements DesktopShellPort {
     return () => this.errors.delete(listener);
   }
 
-  emitFrame(event: RendererServerFrameEvent): void {
+  emitFrame(event: TestServerFrameEnvelope): void {
     const envelope = {
       targetId: event.targetId,
       event: rendererServerEventFromFrame(event.frame),
