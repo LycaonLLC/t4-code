@@ -624,7 +624,9 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   let attaching = false;
   let retryAfterAttach = false;
   let connectionGeneration = 0;
-  let previousConnected = controller.getSnapshot().connections.get(targetId) === "connected";
+  let previousAttachAuthority =
+    controller.getSnapshot().connections.get(targetId) === "connected" &&
+    controller.getSnapshot().targetHosts.get(targetId) === options.hostId;
   const initialAuthoritativeWorking = authoritativeWorkingState(
     controller.getSnapshot(),
     targetId,
@@ -646,19 +648,21 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     // turn/compaction whose active ref delta has not arrived yet.
     transcript = settleTranscriptTurn(transcript);
   }
-  const attachIfConnected = (runtime: DesktopRuntimeSnapshot) => {
+  const attachIfAuthoritative = (runtime: DesktopRuntimeSnapshot) => {
     if (disposed) return;
-    const connected = runtime.connections.get(targetId) === "connected";
-    if (connected !== previousConnected) {
-      previousConnected = connected;
+    const hasAttachAuthority =
+      runtime.connections.get(targetId) === "connected" &&
+      runtime.targetHosts.get(targetId) === options.hostId;
+    if (hasAttachAuthority !== previousAttachAuthority) {
+      previousAttachAuthority = hasAttachAuthority;
       connectionGeneration += 1;
-      if (!connected) {
+      if (!hasAttachAuthority) {
         attached = false;
         transcriptImagesAttached = false;
         syncTranscriptImageAvailability(runtime);
       }
     }
-    if (!connected) return;
+    if (!hasAttachAuthority) return;
     if (attached) return;
     if (attaching) {
       retryAfterAttach = true;
@@ -688,7 +692,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
         if (disposed) return;
         if (retryAfterAttach && generation !== connectionGeneration) {
           retryAfterAttach = false;
-          attachIfConnected(controller.getSnapshot());
+          attachIfAuthoritative(controller.getSnapshot());
         } else {
           retryAfterAttach = false;
         }
@@ -715,7 +719,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   const unsubscribeRuntime = controller.subscribe((runtime) => {
     const retainedTranscript = withWarmHistoryTruncation(transcript, runtime);
     if (retainedTranscript !== transcript) transcript = retainedTranscript;
-    attachIfConnected(runtime);
+    attachIfAuthoritative(runtime);
     const authoritativeWorking = authoritativeWorkingState(
       runtime,
       targetId,
@@ -750,7 +754,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   // part of the attach round-trip; no replay frame may land in the gap between
   // runtime construction and listener registration.
   syncTranscriptImageAvailability(controller.getSnapshot());
-  attachIfConnected(controller.getSnapshot());
+  attachIfAuthoritative(controller.getSnapshot());
 
   const pendingChallenge = (runtime: DesktopRuntimeSnapshot): PendingChallenge | null => {
     const confirmations = warmSession(runtime)?.confirmations;

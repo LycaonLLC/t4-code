@@ -8,6 +8,7 @@ import type {
   ReviewFrame,
   SessionRef,
 } from "@t4-code/protocol";
+import { MAX_PROJECTION_CACHE_BYTES } from "@t4-code/protocol/desktop-ipc";
 import { MAX_INDEXED_SESSION_REFS } from "./projection.ts";
 import type {
   AgentTranscriptProjection,
@@ -23,7 +24,7 @@ import { ImmutableMap } from "./immutable-map.ts";
 import { retainedJsonBytes } from "./transcript-retention.ts";
 
 export const PROJECTION_CACHE_VERSION = 1 as const;
-export const MAX_PROJECTION_CACHE_BYTES = 2 * 1024 * 1024;
+export { MAX_PROJECTION_CACHE_BYTES };
 export const MAX_PROJECTION_CACHE_SESSIONS = 8;
 const MAX_PROJECTION_CACHE_TRANSCRIPT_BYTES = Math.floor(MAX_PROJECTION_CACHE_BYTES * 0.75);
 

@@ -11,6 +11,7 @@ import {
   applyPublicFrame,
   createDesktopRuntimeController,
   createProjectionSnapshot,
+  decodeProjectionCache,
   encodeProjectionCache,
   type DesktopRuntimeController,
   type DesktopRuntimeSnapshot,
@@ -2933,6 +2934,93 @@ describe("window runtime slot", () => {
     expect(shell.bootstrapCalls).toBe(1);
     expect(shell.connectCalls).toBe(1);
     await first.stop();
+  });
+  it("hydrates the renderer projection from shell cache and persists later mutations", async () => {
+    let warm = applyPublicFrame(
+      createProjectionSnapshot(),
+      snapshotFrame(1, [entry("cached", "from shell cache")]),
+    );
+    warm = applyPublicFrame(warm, pendingPromptsSessionsFrame([], 1, "idle"));
+    const cachedValue = encodeProjectionCache(warm);
+    const saves: string[] = [];
+    let loads = 0;
+    const cacheLoad = deferred<{ available: boolean; value: string | null }>();
+    type CacheShell = FakeShell & {
+      loadProjectionCache: () => Promise<{ available: boolean; value: string | null }>;
+      saveProjectionCache: (request: { value: string }) => Promise<{ saved: boolean }>;
+    };
+    const shell = new FakeShell() as CacheShell;
+    shell.loadProjectionCache = () => {
+      loads += 1;
+      return cacheLoad.promise;
+    };
+    shell.saveProjectionCache = async ({ value }) => {
+      saves.push(value);
+      return { saved: true };
+    };
+    const holder: RuntimeSlotHolder = {};
+    const controller = acquireRuntimeController(shell, holder);
+    const starting = controller.start();
+    await settle();
+    expect(loads).toBe(1);
+    expect(shell.bootstrapCalls).toBe(0);
+    cacheLoad.resolve({ available: true, value: cachedValue });
+    await starting;
+    expect(shell.bootstrapCalls).toBe(1);
+    const cachedSession = controller.getSnapshot().projection.sessions.get(`${HOST}\u0000${SESSION}`);
+    expect(cachedSession?.entries.map((item) => item.data)).toContainEqual({
+      role: "assistant",
+      text: "from shell cache",
+    });
+    const cachedGroups = buildProjectGroups(
+      deriveWorkspaceData(controller.getSnapshot()),
+      {},
+      {},
+    );
+    expect(cachedGroups).toHaveLength(1);
+    expect(cachedGroups[0]?.sessions.map((row) => row.session.id)).toContain(
+      sessionViewId(HOST, SESSION),
+    );
+    expect(cachedGroups[0]?.host).toMatchObject({
+      id: HOST,
+      name: HOST,
+      kind: "remote",
+    });
+    const cachedRow = cachedGroups[0]?.sessions[0];
+    expect(cachedRow?.session.freshness).toBe("offline");
+    const cachedRuntime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    expect(cachedRuntime.getSnapshot()).toMatchObject({
+      link: "cached",
+      canPrompt: false,
+      canCancel: false,
+    });
+    expect(shell.commandCount("session.attach")).toBe(0);
+
+    expect(shell.connectCalls).toBe(1);
+    shell.emitFrame({
+      targetId: "local",
+      frame: makeWelcome(HOST, ["sessions.prompt"]),
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: durableEntryFrame(2, entry("live", "persist this mutation")),
+    });
+    await settle();
+    expect(shell.commandCount("session.attach")).toBe(1);
+    cachedRuntime.dispose();
+    expect(saves.length).toBeGreaterThan(0);
+    const persisted = decodeProjectionCache(saves.at(-1)!);
+    const persistedSession = persisted.sessions.get(`${HOST}\u0000${SESSION}`);
+    expect(persistedSession?.entries.map((item) => item.data)).toContainEqual({
+      role: "assistant",
+      text: "persist this mutation",
+    });
+    await controller.stop();
   });
 
   it("retains one live controller across a persisted pagehide/pageshow", async () => {

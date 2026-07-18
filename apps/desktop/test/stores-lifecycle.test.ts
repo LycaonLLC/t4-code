@@ -3,7 +3,7 @@ import type { CursorStore, OmpTransport } from "@t4-code/client";
 import { hostId, type WelcomeFrame } from "@t4-code/protocol";
 import { DeviceCredentialStore, type CredentialCiphertextStore, type RemoteTargetRecord, type RemoteTargetRegistry } from "../src/remote-runtime/index.ts";
 import { DesktopTargetManager } from "../src/target-manager.ts";
-import { ElectronCredentialCiphertextStore, ElectronRemoteTargetStore, loadDeviceIdentity } from "../src/stores.ts";
+import { ElectronCredentialCiphertextStore, ElectronProjectionCacheStore, ElectronRemoteTargetStore, loadDeviceIdentity } from "../src/stores.ts";
 
 type State = Record<string, unknown>;
 class MemoryStore<T extends State> {
@@ -98,6 +98,81 @@ describe("desktop persisted lifecycle stores", () => {
     const store: CredentialCiphertextStore = { read: () => ({ version: 1, ciphertexts: {} }), write: () => {} };
     expect(() => new DeviceCredentialStore(store, { isEncryptionAvailable: () => false, encryptString: (_value: string) => Buffer.alloc(0), decryptString: (_value: Buffer) => "" })).toThrow();
     expect(() => new DeviceCredentialStore(store, { isEncryptionAvailable: () => true, selectedStorageBackend: () => "basic_text", encryptString: (_value: string) => Buffer.alloc(0), decryptString: (_value: Buffer) => "" })).toThrow();
+  });
+  it("stores only safeStorage ciphertext and restores valid projection cache", async () => {
+    const backing = new MemoryStore({ version: 1 as const, ciphertext: null as string | null });
+    const safeStorage = {
+      isEncryptionAvailable: () => true,
+      encryptString: (value: string) => Buffer.from(`ciphertext:${value}`),
+      decryptString: (value: Buffer) => {
+        const encoded = value.toString();
+        if (!encoded.startsWith("ciphertext:")) throw new Error("corrupt ciphertext");
+        return encoded.slice("ciphertext:".length);
+      },
+    };
+    const store = new ElectronProjectionCacheStore(backing as never, safeStorage);
+    const value = JSON.stringify({
+      kind: "t4-code-projection",
+      version: 1,
+      data: { sessions: [], sessionIndex: [], lru: [], freshness: "cached" },
+    });
+    expect(await store.save(value)).toEqual({ saved: true });
+    expect(backing.store.ciphertext).not.toContain(value);
+    expect(store.load()).toEqual({ available: true, value });
+  });
+  it("degrades when safeStorage is unavailable and clears incompatible state", async () => {
+    const unavailableBacking = new MemoryStore({ version: 1 as const, ciphertext: null as string | null });
+    const unavailable = new ElectronProjectionCacheStore(unavailableBacking as never, {
+      isEncryptionAvailable: () => false,
+      encryptString: () => Buffer.from("unused"),
+      decryptString: () => "unused",
+    });
+    expect(unavailable.load()).toEqual({ available: false, value: null });
+    expect(await unavailable.save(JSON.stringify({
+      kind: "t4-code-projection",
+      version: 1,
+      data: {},
+    }))).toEqual({ saved: false });
+
+    const corruptBacking = new MemoryStore({ version: 2 as never, ciphertext: "not-valid" });
+    const corrupt = new ElectronProjectionCacheStore(corruptBacking as never, {
+      isEncryptionAvailable: () => true,
+      encryptString: (value: string) => Buffer.from(value),
+      decryptString: (value: Buffer) => value.toString(),
+    });
+    expect(corrupt.load()).toEqual({ available: true, value: null });
+    expect(corruptBacking.store).toEqual({ version: 1, ciphertext: null });
+    const payloadBacking = new MemoryStore({
+      version: 1 as const,
+      ciphertext: Buffer.from("encrypted").toString("base64"),
+    });
+    const payloadCorrupt = new ElectronProjectionCacheStore(payloadBacking as never, {
+      isEncryptionAvailable: () => true,
+      encryptString: (value: string) => Buffer.from(value),
+      decryptString: () => JSON.stringify({ kind: "t4-code-projection", version: 2, data: {} }),
+    });
+    expect(payloadCorrupt.load()).toEqual({ available: true, value: null });
+    expect(payloadBacking.store).toEqual({ version: 1, ciphertext: null });
+  });
+  it("serializes concurrent projection cache writes", async () => {
+    const backing = new MemoryStore({ version: 1 as const, ciphertext: null as string | null });
+    const store = new ElectronProjectionCacheStore(backing as never, {
+      isEncryptionAvailable: () => true,
+      encryptString: (value: string) => Buffer.from(value),
+      decryptString: (value: Buffer) => value.toString(),
+    });
+    const makeValue = (marker: string) => JSON.stringify({
+      kind: "t4-code-projection",
+      version: 1,
+      data: { marker },
+    });
+    const first = makeValue("first");
+    const second = makeValue("second");
+    expect(await Promise.all([store.save(first), store.save(second)])).toEqual([
+      { saved: true },
+      { saved: true },
+    ]);
+    expect(store.load()).toEqual({ available: true, value: second });
   });
 });
 

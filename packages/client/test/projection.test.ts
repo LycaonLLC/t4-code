@@ -1603,10 +1603,15 @@ describe("client projections", () => {
     store.applyPublicFrame(frame("snapshot"));
     store.applyPublicFrame(frame("event"));
     expect(saves).toHaveLength(1);
+    const shutdown = store.dispose();
+    expect(saves).toHaveLength(1);
     release?.();
     await Promise.resolve();
     await Promise.resolve();
     expect(saves).toHaveLength(2);
+    expect(saves[1]).not.toBe(saves[0]);
+    release?.();
+    await shutdown;
     dispose();
     store.applyPublicFrame({ ...frame("event"), cursor: { epoch: "e1", seq: 3 } });
     expect(calls).toBe(2);
