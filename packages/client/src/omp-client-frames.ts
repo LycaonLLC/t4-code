@@ -42,8 +42,9 @@ export class OmpClientFrameDispatcher {
     }
   }
 }
-import { hostId, sessionId, type ClientFrame, type SavedCursor } from "@t4-code/protocol";
+import type { ClientFrame } from "@t4-code/protocol";
 import type { CursorRecord, OmpClientOptions } from "./omp-client-contracts.ts";
+import { buildOutgoingFrame } from "./omp-client-outbound.ts";
 import type { OmpProtocolProvider } from "./omp-protocol-provider.ts";
 
 export function sendClientHello(
@@ -51,18 +52,11 @@ export function sendClientHello(
   options: OmpClientOptions,
   records: readonly CursorRecord[],
   send: (encoded: string) => void,
-  decodeOutgoing: (input: Record<string, unknown>) => ClientFrame | undefined,
   fatal: () => void,
   protocolFailure: () => void,
   transportFailure: (error: unknown) => void,
 ): void {
-  let savedCursors: SavedCursor[];
-  try {
-    savedCursors = records.slice(0, 128).map((record) => ({ hostId: hostId(record.hostId), sessionId: sessionId(record.sessionId), cursor: record.cursor }));
-  } catch {
-    protocolFailure();
-    return;
-  }
+  const savedCursors = records.slice(0, 128).map((record) => ({ ...record }));
   let authentication: { deviceId: string; deviceToken: string } | undefined;
   try {
     const provided = options.authentication?.();
@@ -73,14 +67,12 @@ export function sendClientHello(
   } catch { fatal(); return; }
   let hello: ClientFrame | undefined;
   try {
-    hello = decodeOutgoing({
-      v: provider.protocolVersion,
-      type: "hello",
-      protocol: { min: provider.protocolVersion, max: provider.protocolVersion },
+    hello = buildOutgoingFrame(provider, {
+      kind: "hello",
       client: options.client ?? { name: "t4-code", version: "0.1.22", build: "client", platform: "electron" },
       requestedFeatures: [...(options.requestedFeatures ?? ["resume"])],
       savedCursors,
-      ...(options.capabilities === undefined ? {} : { capabilities: { client: [...options.capabilities] } }),
+      ...(options.capabilities === undefined ? {} : { capabilities: options.capabilities }),
       ...(authentication === undefined ? {} : { authentication }),
     });
   } catch {
@@ -90,8 +82,7 @@ export function sendClientHello(
   if (hello === undefined || hello.type !== "hello") { protocolFailure(); return; }
   let encoded: string;
   try {
-    encoded = JSON.stringify(hello);
-    provider.decodeClientFrame(encoded);
+    encoded = provider.encodeClientFrame(hello);
   } catch {
     protocolFailure();
     return;

@@ -41,7 +41,7 @@ export class PendingRequests {
     options: CommandOptions,
     kind: Pending["kind"],
     intent: CommandIntent | undefined,
-    send: (encoded: string, pending: Pending) => void,
+    send: (frame: ClientFrame, pending: Pending) => void,
   ): Promise<PendingResult> {
     if (this.entries.size >= this.max) return Promise.reject(this.makeError("invalid_state", "pending request limit reached"));
     let resolvePromise: (result: PendingResult) => void = () => undefined;
@@ -71,7 +71,7 @@ export class PendingRequests {
       }
     }
     if (!this.entries.has(requestText)) return promise;
-    try { send(JSON.stringify(frame), pending); }
+    try { send(frame, pending); }
     catch (error) {
       if (this.entries.has(requestText)) {
         pending.handedToTransport = false;

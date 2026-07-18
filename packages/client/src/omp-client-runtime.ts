@@ -49,11 +49,12 @@ import { OmpClientEvents } from "./omp-client-events.ts";
 import { OmpClientConnection } from "./omp-client-connection.ts";
 import { OmpClientFrameDispatcher, safeFrameDecodeFailure, sendClientHello } from "./omp-client-frames.ts";
 import { OmpClientReconnectHealth } from "./omp-client-reconnect-health.ts";
+import { ompAppV1ProtocolProvider } from "./omp-app-v1-protocol-provider.ts";
+import { buildOutgoingFrame } from "./omp-client-outbound.ts";
 import {
-  buildCommandFrameInput,
-  decodeOutgoingFrame,
-} from "./omp-client-outbound.ts";
-import { ompAppV1ProtocolProvider, type OmpProtocolProvider } from "./omp-protocol-provider.ts";
+  type OmpClientMessage,
+  type OmpProtocolProvider,
+} from "./omp-protocol-provider.ts";
 import { handleResponseFrame } from "./omp-client-response.ts";
 import { isLegalClientTransition } from "./omp-client-state.ts";
 export * from "./omp-client-contracts.ts";
@@ -309,9 +310,8 @@ export class OmpClient {
   confirm(intent: ConfirmIntent, options: CommandOptions = {}): Promise<ResultFrame> {
     if (this.stateValue !== "ready") return Promise.reject(this.error("invalid_state", "client is not ready"));
     const request = this.ids.next("request");
-    const frame = decodeOutgoingFrame(this.protocol, {
-      v: this.protocol.protocolVersion,
-      type: "confirm",
+    const frame = buildOutgoingFrame(this.protocol, {
+      kind: "confirm",
       requestId: request,
       confirmationId: intent.confirmationId,
       commandId: intent.commandId,
@@ -326,21 +326,20 @@ export class OmpClient {
     });
   }
   terminalInput(intent: TerminalInputIntent): void {
-    this.sendTerminalFrame({ v: this.protocol.protocolVersion, type: "terminal.input", ...intent });
+    this.sendTerminalFrame({ kind: "terminal-input", ...intent });
   }
   terminalResize(intent: TerminalResizeIntent): void {
-    this.sendTerminalFrame({ v: this.protocol.protocolVersion, type: "terminal.resize", ...intent });
+    this.sendTerminalFrame({ kind: "terminal-resize", ...intent });
   }
   terminalClose(intent: TerminalCloseIntent): void {
-    this.sendTerminalFrame({ v: this.protocol.protocolVersion, type: "terminal.close", ...intent });
+    this.sendTerminalFrame({ kind: "terminal-close", ...intent });
   }
 
   pairStart(intent: PairStartIntent, options: CommandOptions = {}): Promise<PairOkFrame> {
     if (this.stateValue !== "pairing") return Promise.reject(this.error("invalid_state", "pairing is not required"));
     const request = this.ids.next("request");
-    const frame = decodeOutgoingFrame(this.protocol, {
-      v: this.protocol.protocolVersion,
-      type: "pair.start",
+    const frame = buildOutgoingFrame(this.protocol, {
+      kind: "pair-start",
       requestId: request,
       code: intent.code,
       deviceId: intent.deviceId,
@@ -365,8 +364,12 @@ export class OmpClient {
     }
     const request = this.ids.next("request");
     const command = this.ids.next("command");
-    const rawFrame = buildCommandFrameInput(intent, request, command, this.protocol.protocolVersion);
-    const frame = decodeOutgoingFrame(this.protocol, rawFrame);
+    const frame = buildOutgoingFrame(this.protocol, {
+      kind: "command",
+      requestId: request,
+      commandId: command,
+      ...intent,
+    });
     if (frame === undefined || frame.type !== "command") return Promise.reject(this.error("protocol", "invalid command intent"));
     const kind = intent.command === "session.attach" ? "attach" : "command";
     return this.sendPending(frame, request, options, kind, intent).then((result) => {
@@ -374,14 +377,13 @@ export class OmpClient {
       return result;
     });
   }
-  private sendTerminalFrame(input: Record<string, unknown>): void {
+  private sendTerminalFrame(message: Extract<OmpClientMessage, { kind: "terminal-input" | "terminal-resize" | "terminal-close" }>): void {
     if (this.stateValue !== "ready") throw this.error("invalid_state", "client is not ready");
-    const frame = decodeOutgoingFrame(this.protocol, input);
+    const frame = buildOutgoingFrame(this.protocol, message);
     if (frame === undefined || (frame.type !== "terminal.input" && frame.type !== "terminal.resize" && frame.type !== "terminal.close"))
       throw this.error("protocol", "invalid terminal intent");
-    const encoded = JSON.stringify(frame);
     try {
-      this.protocol.decodeClientFrame(encoded);
+      const encoded = this.protocol.encodeClientFrame(frame);
       this.connection.send(encoded);
     } catch (error) {
       if (error instanceof OmpClientError) throw error;
@@ -396,9 +398,9 @@ export class OmpClient {
     kind: Pending["kind"],
     intent?: CommandIntent,
   ): Promise<PendingResult> {
-    return this.pendingRequests.begin(frame, requestText, options, kind, intent, (encoded, pending) => {
+    return this.pendingRequests.begin(frame, requestText, options, kind, intent, (pendingFrame, pending) => {
       try {
-        this.protocol.decodeClientFrame(encoded);
+        const encoded = this.protocol.encodeClientFrame(pendingFrame);
         pending.handedToTransport = true;
         this.connection.send(encoded);
       } catch (error) {
@@ -432,7 +434,6 @@ export class OmpClient {
       helloOptions,
       [...this.cursorJournal.records.values()],
       (encoded) => this.connection.send(encoded),
-      (input) => decodeOutgoingFrame(this.protocol, input),
       () => this.fatal(this.error("auth", "authentication provider failed")),
       () => this.protocolFailure("hello could not be encoded"),
       (error) => this.handleTransportError(error),
@@ -648,16 +649,14 @@ export class OmpClient {
       () => {
         const nonce = this.ids.next("ping");
         this.heartbeatNonce = nonce;
-        const frame = decodeOutgoingFrame(this.protocol, {
-          v: this.protocol.protocolVersion,
-          type: "ping",
+        const frame = buildOutgoingFrame(this.protocol, {
+          kind: "ping",
           nonce,
           timestamp: new Date(this.clock.now()).toISOString(),
         });
         try {
           if (frame === undefined) throw new Error("invalid ping");
-          const encoded = JSON.stringify(frame);
-          this.protocol.decodeClientFrame(encoded);
+          const encoded = this.protocol.encodeClientFrame(frame);
           this.connection.send(encoded);
           return true;
         } catch {
