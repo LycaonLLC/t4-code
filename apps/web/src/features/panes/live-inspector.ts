@@ -15,7 +15,7 @@ import {
   sessionId as brandSessionId,
   type Revision,
 } from "@t4-code/protocol";
-import type { CommandIntent, CommandResult } from "@t4-code/protocol/desktop-ipc";
+import type { CommandResult } from "@t4-code/protocol/desktop-ipc";
 
 import { resolveLiveSession } from "../../platform/live-workspace.ts";
 import {
@@ -23,6 +23,10 @@ import {
   readSessionControl,
 } from "../session-runtime/session-observer.ts";
 import { sessionWriteLink } from "../session-runtime/session-inventory.ts";
+import {
+  cancelConfirmedAgent,
+  type AgentCancelRuntime,
+} from "../session-runtime/agent-cancel.ts";
 import {
   createInspectorStore,
   installInspectorStoreFactory,
@@ -57,10 +61,9 @@ import type {
  * tests can drive the seam with recorded snapshots and a scripted command
  * port instead of a full Electron shell.
  */
-export interface LiveInspectorRuntime {
+export interface LiveInspectorRuntime extends AgentCancelRuntime {
   getSnapshot(): DesktopRuntimeSnapshot;
   subscribe(listener: (snapshot: DesktopRuntimeSnapshot) => void): () => void;
-  command(targetId: string, intent: CommandIntent): Promise<CommandResult>;
 }
 
 const ENABLED: PaneActionAvailability = Object.freeze({ enabled: true, reason: null });
@@ -264,6 +267,21 @@ export function createLiveInspectorStore(
     sessionWriteLink(snapshot, address.targetId, address.hostId, address.sessionId) === "live" &&
     sessionControlNow(snapshot) === null;
 
+  const assertAgentCancelWritable = (): void => {
+    const snapshot = runtime.getSnapshot();
+    const support = commandAvailability(
+      snapshot,
+      address.targetId,
+      address.hostId,
+      "agent.cancel",
+    );
+    if (!support.enabled) throw new Error(support.reason ?? "Agent cancellation is unavailable.");
+    if (writableNow(snapshot)) return;
+    const control = sessionControlNow(snapshot);
+    if (control !== null) throw new Error(presentSessionControl(control).controlReason);
+    throw new Error(SYNCING_WRITE.reason ?? "This session is still syncing from the host.");
+  };
+
   const sendCommand = (
     command: string,
     args: Record<string, unknown>,
@@ -283,14 +301,16 @@ export function createLiveInspectorStore(
     kind: "desktop",
     performControl(scope) {
       if (scope.action !== "cancel") return;
-      const snapshot = runtime.getSnapshot();
-      if (
-        !commandAvailability(snapshot, address.targetId, address.hostId, "agent.cancel").enabled
-      ) {
-        return;
-      }
-      if (!writableNow(snapshot)) return;
-      void sendCommand("agent.cancel", { agentId: scope.agentId }, true).catch(() => {
+      void cancelConfirmedAgent(runtime, {
+        address,
+        agentId: scope.agentId,
+        assertWritable: assertAgentCancelWritable,
+        currentRevision() {
+          const current = expectedRevision();
+          if (current === undefined) throw new Error("Waiting for this session's latest state.");
+          return String(current);
+        },
+      }).catch(() => {
         // Outcome unknown: never resent. The next agent frame carries truth.
       });
     },

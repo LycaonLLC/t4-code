@@ -24,6 +24,7 @@ import { useEffect, useState } from "react";
 import { AppShell } from "./components/AppShell.tsx";
 import { HomePane } from "./components/HomePane.tsx";
 import { SessionScreen } from "./components/SessionScreen.tsx";
+import { AgentViewScreen } from "./features/agent-view/AgentViewScreen.tsx";
 import { SettingsWorkspace } from "./features/settings/index.ts";
 import { LiveSettingsScreen } from "./features/settings/LiveSettingsScreen.tsx";
 import { TargetsScreen } from "./features/targets/TargetsScreen.tsx";
@@ -45,6 +46,7 @@ import { useShellData } from "./state/shell-data.ts";
 import { RAIL_OVERLAY_QUERY, useMediaQuery } from "./hooks/useMediaQuery.ts";
 import { fixtureSettingsStore } from "./state/settings-instance.ts";
 import { rendererPlatform, useWorkspace, workspaceStore } from "./state/store-instance.ts";
+import { selectSessionView } from "./state/workspace-store.ts";
 
 const rootRoute = createRootRoute({ component: AppShell });
 
@@ -204,6 +206,35 @@ const sessionRoute = createRoute({
   component: SessionRoute,
 });
 
+function AgentViewRoute() {
+  const navigate = useNavigate();
+  const activeSessionId = useWorkspace((state) => state.activeSessionId);
+  const snapshot = useDesktopRuntimeSnapshot();
+  return (
+    <AgentViewScreen
+      controller={desktopRuntime()}
+      onBack={() => {
+        if (activeSessionId === null) void navigate({ to: "/" });
+        else void navigate({ params: { sessionId: activeSessionId }, to: "/sessions/$sessionId" });
+      }}
+      onOpenSession={(sessionId) => {
+        const state = workspaceStore.getState();
+        const view = selectSessionView(state, sessionId);
+        if (view.paneFamily === "agents") state.setPaneOpen(sessionId, true);
+        else state.togglePaneFamily(sessionId, "agents");
+        void navigate({ params: { sessionId }, to: "/sessions/$sessionId" });
+      }}
+      snapshot={snapshot}
+    />
+  );
+}
+
+const agentViewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/agents",
+  component: AgentViewRoute,
+});
+
 // Settings keeps the shell frame: the rail and titlebar stay put, and
 // leaving returns to "/" which resumes the previously active session.
 // Desktop mode binds to the live runtime; the browser keeps the fixture
@@ -342,6 +373,7 @@ const usageRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   sessionRoute,
+  agentViewRoute,
   settingsRoute,
   hostsRoute,
   usageRoute,

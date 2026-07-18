@@ -20,6 +20,7 @@ interface PaletteItem {
 function buildItems(
   groups: readonly ProjectGroup[],
   navigate: (sessionId: string) => void,
+  openAgentView: () => void,
   openSettings: () => void,
 ): PaletteItem[] {
   const items: PaletteItem[] = [];
@@ -58,6 +59,13 @@ function buildItems(
       run: () => workspaceStore.getState().setRailCollapsed(!state.railCollapsed),
     },
     {
+      id: "action:agents",
+      label: "Open Agent View",
+      hint: "Agents",
+      status: null,
+      run: openAgentView,
+    },
+    {
       id: "action:settings",
       label: "Open settings",
       hint: "App",
@@ -81,6 +89,9 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
         groups,
         (sessionId) => {
           void navigate({ params: { sessionId }, to: "/sessions/$sessionId" });
+        },
+        () => {
+          void navigate({ to: "/agents" });
         },
         () => {
           void navigate({ to: "/settings" });
