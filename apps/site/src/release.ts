@@ -5,16 +5,16 @@ export const SITE_URL = "https://t4code.net";
 export const DOCS_URL = `${SITE_URL}/docs`;
 export const REPO_URL = "https://github.com/LycaonLLC/t4-code";
 export const OMP_URL = "https://github.com/can1357/oh-my-pi";
-export const OMP_RUNTIME_VERSION = "17.0.0";
-export const OMP_RUNTIME_COMMIT = "f909a2895bc1a352d1d3c27c45d59622bc1c0a36";
-export const OMP_RUNTIME_TAG = "t4code-17.0.0-appserver-6";
+export const OMP_RUNTIME_VERSION = "17.0.4";
+export const OMP_RUNTIME_COMMIT = "469bf579dca26c86ffe760a4a4e102d026279ed8";
+export const OMP_RUNTIME_TAG = "t4code-17.0.4-appserver-2";
 export const OMP_RUNTIME_URL = `https://github.com/lyc-aon/oh-my-pi/tree/${OMP_RUNTIME_TAG}`;
-export const OMP_UPSTREAM_TAG = "v17.0.0";
-export const OMP_UPSTREAM_COMMIT = "d5cd24f39a951bfbd50dc8f50bcf095d59694d6c";
+export const OMP_UPSTREAM_TAG = "v17.0.4";
+export const OMP_UPSTREAM_COMMIT = "3fdd85ab6c6bab6c0cdee80abbbec0981740a5c0";
 export const OMP_UPSTREAM_URL = `${OMP_URL}/tree/${OMP_UPSTREAM_TAG}`;
 export const APP_WIRE_VERSION = "0.5.8";
-export const RELEASE_TAG = "v0.1.22";
-export const RELEASE_VERSION = "0.1.22";
+export const RELEASE_TAG = "v0.1.23";
+export const RELEASE_VERSION = "0.1.23";
 export const RELEASES_URL = `${REPO_URL}/releases/tag/${RELEASE_TAG}`;
 export const RELEASE_MANIFEST_URL = `${SITE_URL}/releases/latest.json`;
 
@@ -49,11 +49,11 @@ function asset(
 }
 
 export const RELEASE_ASSETS: readonly ReleaseAsset[] = [
-  asset("android", "apk", "universal", "T4-Code-0.1.22-android.apk", "Android APK"),
-  asset("linux", "deb", "x86_64", "T4-Code-0.1.22-linux-amd64.deb", "Linux .deb"),
-  asset("linux", "appimage", "x86_64", "T4-Code-0.1.22-linux-x86_64.AppImage", "Linux AppImage"),
-  asset("mac", "dmg", "arm64", "T4-Code-0.1.22-mac-arm64.dmg", "macOS .dmg"),
-  asset("mac", "zip", "arm64", "T4-Code-0.1.22-mac-arm64.zip", "macOS .zip"),
+  asset("android", "apk", "universal", "T4-Code-0.1.23-android.apk", "Android APK"),
+  asset("linux", "deb", "x86_64", "T4-Code-0.1.23-linux-amd64.deb", "Linux .deb"),
+  asset("linux", "appimage", "x86_64", "T4-Code-0.1.23-linux-x86_64.AppImage", "Linux AppImage"),
+  asset("mac", "dmg", "arm64", "T4-Code-0.1.23-mac-arm64.dmg", "macOS .dmg"),
+  asset("mac", "zip", "arm64", "T4-Code-0.1.23-mac-arm64.zip", "macOS .zip"),
 ];
 
 export function assetsFor(platform: Platform): readonly ReleaseAsset[] {

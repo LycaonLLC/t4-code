@@ -15,8 +15,8 @@ import { OmpAppserverCompatibilityError } from "../src/service.ts";
 const contract: SourceContract = {
   nodeEngine: "^24.13.1",
   pnpmVersion: "11.10.0",
-  ompVersion: "17.0.0",
-  ompTag: "t4code-17.0.0-appserver-6",
+  ompVersion: "17.0.4",
+  ompTag: "t4code-17.0.4-appserver-2",
   ompUrl: "https://example.test/verified-omp",
 };
 

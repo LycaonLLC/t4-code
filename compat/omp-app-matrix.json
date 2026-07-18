@@ -19,14 +19,14 @@
   },
   "verifiedRuntime": {
     "package": "omp",
-    "version": "17.0.0",
+    "version": "17.0.4",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "f909a2895bc1a352d1d3c27c45d59622bc1c0a36",
-    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/f909a2895bc1a352d1d3c27c45d59622bc1c0a36",
-    "sourceTag": "t4code-17.0.0-appserver-6",
+    "sourceCommit": "469bf579dca26c86ffe760a4a4e102d026279ed8",
+    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/469bf579dca26c86ffe760a4a4e102d026279ed8",
+    "sourceTag": "t4code-17.0.4-appserver-2",
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
-    "upstreamTag": "v17.0.0",
-    "upstreamCommit": "d5cd24f39a951bfbd50dc8f50bcf095d59694d6c",
+    "upstreamTag": "v17.0.4",
+    "upstreamCommit": "3fdd85ab6c6bab6c0cdee80abbbec0981740a5c0",
     "integrationPatches": [
       "bounded-growing-session-replay",
       "complete-session-event-projection",
@@ -75,12 +75,14 @@
       "complete-line-transcript-reconciliation",
       "missing-lock-only-session-promotion",
       "cooperative-tui-to-t4-handoff",
-      "deterministic-session-file-ordering"
+      "deterministic-session-file-ordering",
+      "clone-safe-session-lock-transfer",
+      "patch-aware-bun-ci-cache"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },
   "desktop": {
     "package": "@t4-code/protocol",
-    "version": "0.1.22"
+    "version": "0.1.23"
   }
 }
