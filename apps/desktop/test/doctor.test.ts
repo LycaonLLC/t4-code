@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
+import type { ProcessRunner } from "@t4-code/remote";
+
 import {
   collectDoctorReport,
   formatDoctorReport,
+  inspectTailnet,
   satisfiesCaretVersion,
   type DoctorRuntime,
   type SourceContract,
@@ -52,7 +55,7 @@ describe("T4 setup doctor", () => {
   it("explains incompatible tools without exposing executable paths or raw errors", async () => {
     const report = await collectDoctorReport(
       runtime({
-        nodeVersion: "25.2.1",
+        nodeVersion: "24.17.0",
         pnpmVersion: async () => "10.0.0",
         discoverOmp: async () => {
           throw new OmpAppserverCompatibilityError();
@@ -64,10 +67,7 @@ describe("T4 setup doctor", () => {
       }),
     );
     const rendered = formatDoctorReport(report);
-
-    expect(report.ok).toBe(false);
     expect(report.checks.filter((item) => item.status === "fail").map((item) => item.id)).toEqual([
-      "node",
       "pnpm",
       "omp",
     ]);
@@ -75,6 +75,62 @@ describe("T4 setup doctor", () => {
     expect(rendered).toContain(contract.ompTag);
     expect(rendered).not.toContain("/private/example");
     expect(rendered).not.toContain("REDACT_ME");
+  });
+
+  it("skips subprocess-backed probes when Node.js is unsupported", async () => {
+    let probeCalls = 0;
+    const blocked = async (): Promise<never> => {
+      probeCalls += 1;
+      throw new Error("probe should not run");
+    };
+    const report = await collectDoctorReport(
+      runtime({
+        nodeVersion: "20.19.0",
+        pnpmVersion: blocked,
+        discoverOmp: blocked,
+        profileCount: blocked,
+        inspectTailnet: blocked,
+      }),
+    );
+
+    expect(report.ok).toBe(false);
+    expect(probeCalls).toBe(0);
+    expect(report.checks.map((item) => item.id)).toEqual(["platform", "node"]);
+    expect(formatDoctorReport(report)).not.toContain("pnpm");
+  });
+
+  it("runs the Tailscale status command with a scrubbed environment", async () => {
+    let capturedEnvironment: NodeJS.ProcessEnv | undefined;
+    const runner: ProcessRunner = {
+      spawn(spec) {
+        capturedEnvironment = spec.env;
+        return Promise.resolve({
+          result: Promise.resolve({
+            exitCode: 0,
+            signal: null,
+            stdout: JSON.stringify({
+              Self: { DNSName: "desktop.example.ts.net.", TailscaleIPs: ["100.64.0.7"] },
+            }),
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          }),
+          kill: () => undefined,
+        });
+      },
+    };
+
+    const inspection = await inspectTailnet({
+      executable: "/usr/bin/tailscale",
+      environment: {
+        HOME: "/tmp/t4-doctor",
+        PATH: "/usr/bin",
+        PROVIDER_TOKEN: "must-not-reach-tailscale",
+      },
+      runner,
+    });
+    expect(inspection).toBe("ready");
+    expect(capturedEnvironment).toEqual({ HOME: "/tmp/t4-doctor", PATH: "/usr/bin" });
   });
 
   it("treats an optional stopped appserver and missing Tailscale as warnings", async () => {

@@ -8,6 +8,7 @@ import {
   readTailscaleStatus,
   runProcess,
   TailscaleCliNotFoundError,
+  type ProcessRunner,
 } from "@t4-code/remote";
 
 import { discoverNativeOmpProfiles } from "./local-profiles.ts";
@@ -140,11 +141,37 @@ async function installedPnpmVersion(): Promise<string | null> {
   }
 }
 
-async function inspectTailnet(): Promise<TailnetInspection> {
-  const runner = new NodeProcessRunner();
+export interface TailnetProbeOptions {
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly executable?: string;
+  readonly runner?: ProcessRunner;
+}
+
+function createScrubbedProcessRunner(
+  runner: ProcessRunner,
+  environment: NodeJS.ProcessEnv,
+): ProcessRunner {
+  return {
+    spawn(spec, signal) {
+      return runner.spawn(
+        { ...spec, env: createSafeServiceEnvironment(spec.env ?? environment) },
+        signal,
+      );
+    },
+  };
+}
+
+export async function inspectTailnet(
+  options: TailnetProbeOptions = {},
+): Promise<TailnetInspection> {
+  const baseRunner = options.runner ?? new NodeProcessRunner();
+  const environment = createSafeServiceEnvironment(options.environment);
+  const runner = createScrubbedProcessRunner(baseRunner, environment);
   let executable: string;
   try {
-    executable = await discoverTailscaleExecutable();
+    executable =
+      options.executable ??
+      (await discoverTailscaleExecutable());
   } catch (error) {
     return error instanceof TailscaleCliNotFoundError ? "not-installed" : "unavailable";
   }
@@ -222,8 +249,9 @@ export async function collectDoctorReport(
         ),
   );
 
+  const nodeCompatible = satisfiesCaretVersion(runtime.nodeVersion, contract.nodeEngine);
   checks.push(
-    satisfiesCaretVersion(runtime.nodeVersion, contract.nodeEngine)
+    nodeCompatible
       ? check(
           "node",
           "Node.js",
@@ -238,6 +266,9 @@ export async function collectDoctorReport(
           `Select a ${contract.nodeEngine} Node release with your version manager, then reinstall dependencies.`,
         ),
   );
+  if (!nodeCompatible) {
+    return Object.freeze({ schemaVersion: 1, ok: false, checks: Object.freeze(checks) });
+  }
 
   const pnpmVersion = await runtime.pnpmVersion();
   checks.push(
