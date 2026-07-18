@@ -8,8 +8,9 @@ import { positiveInteger, summarize, writeReport } from "./report.mjs";
 const require = createRequire(import.meta.url);
 const playwrightCli = require.resolve("@playwright/test/cli");
 const repetitions = positiveInteger(process.env.T4_PERF_REPETITIONS, 3, "repetitions");
-const durations = [];
+const scenarioDurations = [];
 const phaseSamples = {
+  mountDuration: [],
   navigationDomContentLoaded: [],
   connectedAfterDomContentLoaded: [],
   sessionClickToTranscriptVisible: [],
@@ -72,7 +73,10 @@ function executeOnce(index) {
         }
         resolveRun({ duration: resultDurations[0], phases });
       } catch (error) {
-        reject(new Error(`could not decode Playwright JSON report: ${error}\n${stdout.slice(-4000)}`));
+        reject(new Error(
+          `could not decode UI benchmark outputs (Playwright report and phase file ${phaseOutput}): ${error}`
+          + `\nstderr:\n${stderr.slice(-4000)}\nstdout:\n${stdout.slice(-4000)}`,
+        ));
       }
     });
   });
@@ -81,7 +85,7 @@ function executeOnce(index) {
 try {
   for (let index = 0; index < repetitions; index += 1) {
     const result = await executeOnce(index);
-    durations.push(result.duration);
+    scenarioDurations.push(result.duration);
     for (const phaseName of Object.keys(phaseSamples)) {
       phaseSamples[phaseName].push(result.phases[phaseName]);
     }
@@ -93,7 +97,16 @@ try {
 writeReport(
   "ui",
   [
-    { name: "ui.mount-bounded-10k", direction: "lower", ...summarize(durations) },
+    {
+      name: "ui.mount-bounded-10k",
+      direction: "lower",
+      ...summarize(phaseSamples.mountDuration),
+    },
+    {
+      name: "ui.playwright-scenario-instrumented",
+      direction: "lower",
+      ...summarize(scenarioDurations),
+    },
     {
       name: "browser.navigation-dom-content-loaded",
       direction: "lower",

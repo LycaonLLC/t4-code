@@ -26,6 +26,12 @@ paint sample is taken after the real list replaces its warm loading copy and two
 frames have elapsed. These numbers show where a slowdown occurs; they are not a claim about a
 physical display's pixel response time.
 
+`ui.mount-bounded-10k` stops after the original mount assertions, before the paint-only wait and
+phase-file write. `ui.playwright-scenario-instrumented` records the full instrumented test duration
+under a new name so paint instrumentation cannot silently change an existing comparison boundary.
+The mount timer starts with the test body's monotonic `performance.now()` clock. Do not derive it
+from Playwright `TestInfo`: reporter results expose a start time, but the in-test object does not.
+
 When source is mirrored without its Git directory, set `T4_PERF_SOURCE_COMMIT` and
 `T4_PERF_SOURCE_DIRTY` so the report identifies the local source that was transferred.
 
