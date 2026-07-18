@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 import type { AddressInfo } from "node:net";
 import { expect, test, type Page } from "@playwright/test";
 import type { SessionRef } from "@t4-code/protocol";
+import {
+  MOBILE_BACKEND_STORAGE_KEY,
+  parseTailnetBackend,
+} from "../apps/web/src/platform/native-mobile-backend.ts";
 import type { ScenarioId } from "../packages/fixture-server/src/index.ts";
 import { installColdMountObserver, readColdMountSamples } from "./cold-mount-observer.ts";
 
@@ -23,12 +27,11 @@ const SESSION_TITLE = "stream-v1 fixture";
 const MIN_TOUCH_TARGET_PX = 43.99;
 const CONNECTED_COPY =
   "This Tailnet connection is live. Choose a session from the list on the left to inspect it.";
-const MOBILE_BACKEND_STORAGE_KEY = "t4-code:mobile-backends:v3";
-const TAILNET_ORIGIN = "https://fixture.tailnet.ts.net";
-const DEFAULT_ENDPOINT_KEY = `${TAILNET_ORIGIN}#profile=default`;
-const PROFILE_ENDPOINT_KEY = `${TAILNET_ORIGIN}#profile=fable-swarm`;
-const DEFAULT_LOGICAL_WS_URL = "wss://fixture.tailnet.ts.net/v1/ws";
-const PROFILE_LOGICAL_WS_URL = "wss://fixture.tailnet.ts.net/v1/profiles/fable-swarm/ws";
+const DEFAULT_MOBILE_BACKEND = parseTailnetBackend("https://fixture.tailnet.ts.net");
+const PROFILE_MOBILE_BACKEND = parseTailnetBackend(
+  "https://fixture.tailnet.ts.net",
+  "fable-swarm",
+);
 
 const MIME_TYPES: Readonly<Record<string, string>> = {
   ".css": "text/css; charset=utf-8",
@@ -245,13 +248,12 @@ class FixtureProcess {
 }
 
 let fixture: FixtureProcess;
-let profileFixture: FixtureProcess;
+let profileFixture: FixtureProcess | undefined;
 let web: BuiltWebServer;
 
 test.beforeAll(async () => {
   fixture = new FixtureProcess("stream-v1");
-  profileFixture = new FixtureProcess("basic-v1");
-  await Promise.all([fixture.start(), profileFixture.start()]);
+  await fixture.start();
   web = new BuiltWebServer(fixture.wsUrl);
   await web.start();
 });
@@ -261,16 +263,16 @@ test.afterAll(async () => {
   await Promise.all([fixture?.stop(), profileFixture?.stop()]);
 });
 
-async function installHeadlessAndroidProfiles(page: Page): Promise<void> {
+async function installHeadlessAndroidProfiles(page: Page): Promise<FixtureProcess> {
+  const selectedProfileFixture = new FixtureProcess("basic-v1");
+  await selectedProfileFixture.start();
+  profileFixture = selectedProfileFixture;
   await page.addInitScript(
     ({
-      defaultEndpointKey,
-      defaultLogicalWsUrl,
+      defaultBackend,
       defaultWsUrl,
       mobileBackendStorageKey,
-      origin,
-      profileEndpointKey,
-      profileLogicalWsUrl,
+      profileBackend,
       profileWsUrl,
     }) => {
       const NativeWebSocket = window.WebSocket;
@@ -278,9 +280,9 @@ async function installHeadlessAndroidProfiles(page: Page): Promise<void> {
         constructor(url: string | URL, protocols?: string | string[]) {
           const requested = String(url);
           const routed =
-            requested === defaultLogicalWsUrl
+            requested === defaultBackend.wsUrl
               ? defaultWsUrl
-              : requested === profileLogicalWsUrl
+              : requested === profileBackend.wsUrl
                 ? profileWsUrl
                 : requested;
           super(routed, protocols);
@@ -297,25 +299,8 @@ async function installHeadlessAndroidProfiles(page: Page): Promise<void> {
           mobileBackendStorageKey,
           JSON.stringify({
             version: 3,
-            activeEndpointKey: profileEndpointKey,
-            backends: [
-              {
-                version: 3,
-                endpointKey: defaultEndpointKey,
-                origin,
-                profileId: "default",
-                wsUrl: defaultLogicalWsUrl,
-                label: "T4 on fixture",
-              },
-              {
-                version: 3,
-                endpointKey: profileEndpointKey,
-                origin,
-                profileId: "fable-swarm",
-                wsUrl: profileLogicalWsUrl,
-                label: "T4 on fixture",
-              },
-            ],
+            activeEndpointKey: profileBackend.endpointKey,
+            backends: [defaultBackend, profileBackend],
           }),
         );
       }
@@ -334,16 +319,14 @@ async function installHeadlessAndroidProfiles(page: Page): Promise<void> {
       });
     },
     {
-      defaultEndpointKey: DEFAULT_ENDPOINT_KEY,
-      defaultLogicalWsUrl: DEFAULT_LOGICAL_WS_URL,
+      defaultBackend: DEFAULT_MOBILE_BACKEND,
       defaultWsUrl: fixture.wsUrl,
       mobileBackendStorageKey: MOBILE_BACKEND_STORAGE_KEY,
-      origin: TAILNET_ORIGIN,
-      profileEndpointKey: PROFILE_ENDPOINT_KEY,
-      profileLogicalWsUrl: PROFILE_LOGICAL_WS_URL,
-      profileWsUrl: profileFixture.wsUrl,
+      profileBackend: PROFILE_MOBILE_BACKEND,
+      profileWsUrl: selectedProfileFixture.wsUrl,
     },
   );
+  return selectedProfileFixture;
 }
 
 async function openConnectedRoot(page: Page): Promise<void> {
@@ -392,11 +375,11 @@ test("routes mobile session creation to the selected profile and preserves both 
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await installHeadlessAndroidProfiles(page);
+  const selectedProfileFixture = await installHeadlessAndroidProfiles(page);
 
   const [defaultBefore, profileBefore] = await Promise.all([
     fixture.state(),
-    profileFixture.state(),
+    selectedProfileFixture.state(),
   ]);
   expect(defaultBefore.scenario).toBe("stream-v1");
   expect(profileBefore.scenario).toBe("basic-v1");
@@ -417,7 +400,7 @@ test("routes mobile session creation to the selected profile and preserves both 
   expect(createdViewId).not.toBe("host-basic/session-basic");
 
   await expect
-    .poll(async () => (await profileFixture.state()).sessions.length)
+    .poll(async () => (await selectedProfileFixture.state()).sessions.length)
     .toBe(profileBefore.sessions.length + 1);
   expect((await fixture.state()).sessions).toHaveLength(defaultBefore.sessions.length);
 
@@ -448,9 +431,11 @@ test("routes mobile session creation to the selected profile and preserves both 
       ? null
       : (JSON.parse(raw) as { activeEndpointKey: string; backends: unknown[] });
   }, MOBILE_BACKEND_STORAGE_KEY);
-  expect(storedDirectory?.activeEndpointKey).toBe(DEFAULT_ENDPOINT_KEY);
+  expect(storedDirectory?.activeEndpointKey).toBe(DEFAULT_MOBILE_BACKEND.endpointKey);
   expect(storedDirectory?.backends).toHaveLength(2);
-  expect((await profileFixture.state()).sessions).toHaveLength(profileBefore.sessions.length + 1);
+  expect((await selectedProfileFixture.state()).sessions).toHaveLength(
+    profileBefore.sessions.length + 1,
+  );
 });
 
 test("@soak mounts the bounded tail of a 10k history on a phone viewport", async ({ page }) => {

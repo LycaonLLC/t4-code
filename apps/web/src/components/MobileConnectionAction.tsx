@@ -30,7 +30,7 @@ type ManagerView = { kind: "hosts" } | { kind: "add" } | { kind: "remove"; endpo
 
 /**
  * Switch the active host without removing any saved host or credential.
- * Reloads only after the selection reports success.
+ * Restarts on the all-sessions route only after the selection reports success.
  */
 export function performHostSwitch(
   endpointKey: string,
