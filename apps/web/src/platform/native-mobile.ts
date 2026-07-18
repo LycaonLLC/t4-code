@@ -456,6 +456,9 @@ export async function removeNativeMobileBackend(
 
   try {
     await plugin.clearCredentials({ hostKey: backend.endpointKey });
+    if (backend.profileId === DEFAULT_PROFILE_ID) {
+      await plugin.clearCredentials({ hostKey: backend.origin });
+    }
   } catch (error) {
     try {
       writeStoredMobileBackendDirectory(directory, storage);

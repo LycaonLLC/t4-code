@@ -446,7 +446,7 @@ describe("native mobile connection", () => {
     ]);
 
     await removeNativeMobileBackend(laptop.endpointKey, storage);
-    expect(clears).toEqual([laptop.endpointKey]);
+    expect(clears).toEqual([laptop.endpointKey, laptop.origin]);
     expect(readStoredMobileBackendDirectory(storage)).toEqual({
       version: 3,
       activeEndpointKey: bunker.endpointKey,
@@ -535,7 +535,12 @@ describe("native mobile connection", () => {
     await removeNativeMobileBackend(bunker.endpointKey, storage);
     expect(readStoredMobileBackendDirectory(storage)).toBeNull();
     expect(storage.getItem(MOBILE_BACKEND_STORAGE_KEY)).toBeNull();
-    expect(clears).toEqual([laptop.endpointKey, bunker.endpointKey]);
+    expect(clears).toEqual([
+      laptop.endpointKey,
+      laptop.origin,
+      bunker.endpointKey,
+      bunker.origin,
+    ]);
   });
 
   it("does not clear the active profile when removing another profile on the same origin", async () => {
