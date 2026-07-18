@@ -11,6 +11,7 @@ import type { ModelChoice } from "./live-catalog.ts";
 import {
   agentDisplayName,
   aliasRoleOf,
+  catalogExplorerState,
   formatAlias,
   humanizeIdentifier,
   modelOptionLabel,
@@ -217,5 +218,75 @@ describe("routing search text", () => {
     }
     expect(text.disabled).toContain("scribe");
     expect(text.disabled).not.toContain("scout");
+  });
+});
+
+describe("host catalog explorer", () => {
+  const host = { hostLabel: "Work Mac", hostId: "host-work" };
+
+  it("groups supported host entries by kind and keeps only bounded safe metadata", () => {
+    const { catalog } = frames({}, [
+      {
+        id: "model:anthropic/claude",
+        kind: "model",
+        name: "Claude",
+        description: "A hosted model.",
+        metadata: { provider: "anthropic", modelId: "claude", contextWindow: 200_000, nested: { hidden: true } },
+      },
+      {
+        id: "tool:search",
+        kind: "tool",
+        name: "Search",
+        capabilities: ["catalog.read"],
+        metadata: { aliases: ["find", "lookup"] },
+      },
+      { id: "command:compact", kind: "command", name: "Compact" },
+      { id: "setting:secret", kind: "setting", name: "Not a capability" },
+      { id: "future:item", kind: "future", name: "Unknown kind" },
+    ]);
+
+    const state = catalogExplorerState({ host, catalog });
+    expect(state.status).toBe("ready");
+    if (state.status !== "ready") return;
+    expect(state.groups.map((group) => group.kind)).toEqual(["command", "tool", "model"]);
+    expect(state.groups.map((group) => group.entries.map((entry) => entry.name))).toEqual([
+      ["Compact"],
+      ["Search"],
+      ["Claude"],
+    ]);
+    expect(state.groups[2]?.entries[0]?.metadata).toEqual([
+      { key: "provider", value: "anthropic" },
+      { key: "modelId", value: "claude" },
+      { key: "contextWindow", value: "200000" },
+    ]);
+    expect(state.groups[1]?.entries[0]?.metadata).toEqual([
+      { key: "capabilities", value: "catalog.read" },
+      { key: "aliases", value: "find, lookup" },
+    ]);
+  });
+
+  it("names waiting and unavailable host catalog states precisely", () => {
+    expect(catalogExplorerState({ host, phase: "waiting" })).toMatchObject({
+      status: "waiting",
+      title: "Waiting for host catalog",
+      detail: expect.stringContaining("Work Mac"),
+    });
+    expect(catalogExplorerState({ host, phase: "unavailable" })).toMatchObject({
+      status: "unavailable",
+      title: "Host catalog unavailable",
+      detail: expect.stringContaining("Work Mac"),
+    });
+  });
+
+  it("distinguishes an empty catalog from a catalog that is not ready", () => {
+    const { catalog } = frames({}, [{ id: "setting:one", kind: "setting", name: "Setting only" }]);
+    expect(catalogExplorerState({ host, catalog })).toMatchObject({
+      status: "empty",
+      title: "No capability entries published",
+    });
+    expect(catalogExplorerState({ host })).toMatchObject({
+      status: "unavailable",
+      title: "Host catalog unavailable",
+    });
   });
 });
