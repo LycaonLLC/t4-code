@@ -30,11 +30,11 @@ export const validRemoteTargetFixtures = [
     expectedAddress: "bunker.example.ts.net",
   },
   {
-    name: "Tailscale Serve",
+    name: "Tailscale Serve with an explicit default port",
     target: {
       ...remoteTarget("serve"),
       mode: "serve",
-      address: "wss://bunker.example.ts.net/",
+      address: "wss://bunker.example.ts.net:443/",
       port: 443,
     },
     expectedAddress: "wss://bunker.example.ts.net/",

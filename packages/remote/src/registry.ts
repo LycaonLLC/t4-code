@@ -81,19 +81,20 @@ function hasControlCharacter(value: string): boolean {
   return false;
 }
 
-function record(value: unknown): UnknownRecord {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("invalid persisted remote state");
+function record(value: unknown, errorMessage = "invalid persisted remote state"): UnknownRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(errorMessage);
   const prototype = Object.getPrototypeOf(value) as unknown;
-  if (prototype !== Object.prototype && prototype !== null)
-    throw new Error("invalid persisted remote state");
+  if (prototype !== Object.prototype && prototype !== null) throw new Error(errorMessage);
   return value as UnknownRecord;
 }
 
-function exactKeys(value: UnknownRecord, keys: readonly string[]): void {
+function exactKeys(
+  value: UnknownRecord,
+  keys: readonly string[],
+  errorMessage = "invalid persisted remote state",
+): void {
   const allowed = new Set(keys);
-  if (Object.keys(value).some((key) => !allowed.has(key)))
-    throw new Error("invalid persisted remote state");
+  if (Object.keys(value).some((key) => !allowed.has(key))) throw new Error(errorMessage);
 }
 
 function requiredText(value: unknown, name: string, max = 256): string {
@@ -374,11 +375,11 @@ export class VersionedRemoteTargetRegistry implements RemoteTargetRegistry {
 }
 
 function decodeCiphertexts(value: unknown): Record<string, string> {
-  const root = record(value);
-  exactKeys(root, ["version", "ciphertexts"]);
+  const root = record(value, "invalid credential store");
+  exactKeys(root, ["version", "ciphertexts"], "invalid credential store");
   if (root.version !== DEVICE_CREDENTIAL_SCHEMA_VERSION)
     throw new Error("invalid credential store");
-  const ciphertexts = record(root.ciphertexts);
+  const ciphertexts = record(root.ciphertexts, "invalid credential store");
   const result: Record<string, string> = {};
   for (const [key, raw] of Object.entries(ciphertexts)) {
     if (
@@ -444,8 +445,8 @@ export class DeviceCredentialStore implements CredentialStore {
     } catch {
       throw new Error("credential decryption failed");
     }
-    const item = record(value);
-    exactKeys(item, ["token", "deviceId"]);
+    const item = record(value, "corrupt device credential");
+    exactKeys(item, ["token", "deviceId"], "corrupt device credential");
     if (
       typeof item.token !== "string" ||
       typeof item.deviceId !== "string" ||

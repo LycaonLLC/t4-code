@@ -115,6 +115,24 @@ describe("versioned remote target registry", () => {
       "duplicate remote target",
     );
     await expect(registry.put(remoteTarget("second"))).rejects.toThrow("duplicate remote target");
+
+    const serveRegistry = new VersionedRemoteTargetRegistry(
+      new MemoryStore({ version: 1, records: [] }),
+    );
+    await serveRegistry.put({
+      ...remoteTarget("serve-one"),
+      mode: "serve",
+      address: "https://bunker.example.ts.net/",
+      port: 443,
+    });
+    await expect(
+      serveRegistry.put({
+        ...remoteTarget("serve-two"),
+        mode: "serve",
+        address: "https://bunker.example.ts.net:443/",
+        port: 443,
+      }),
+    ).rejects.toThrow("duplicate remote target");
   });
 
   it("serializes simultaneous mutations without losing records", async () => {
@@ -162,8 +180,23 @@ describe("device credential store", () => {
         new MemoryStore(fixture),
         new TestSafeStorage(),
       );
-      expect(() => credentials.withCredential("remote", (value) => value.deviceId)).toThrow();
+      expect(() => credentials.withCredential("remote", (value) => value.deviceId)).toThrow(
+        "invalid credential store",
+      );
     }
+  });
+
+  it("reports corrupt decrypted credential payloads accurately", () => {
+    const encoded = Buffer.from(JSON.stringify({ token, deviceId, extra: true }), "utf8").toString(
+      "base64",
+    );
+    const credentials = new DeviceCredentialStore(
+      new MemoryStore({ version: 1, ciphertexts: { remote: encoded } }),
+      new TestSafeStorage(),
+    );
+    expect(() => credentials.withCredential("remote", (value) => value.deviceId)).toThrow(
+      "corrupt device credential",
+    );
   });
 
   it("encrypts, reads synchronously, and revokes credentials", async () => {
