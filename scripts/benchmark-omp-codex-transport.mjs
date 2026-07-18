@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const defaults = Object.freeze({
   model: "openai-codex/gpt-5.4-mini",
@@ -22,12 +23,8 @@ function positiveInteger(name, value) {
   return parsed;
 }
 
-function parseArgs(argv) {
-  const options = { ...defaults };
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index];
-    if (argument === "--help") {
-      console.log(`Usage: node scripts/benchmark-omp-codex-transport.mjs [options]
+export function helpText() {
+  return `Usage: node scripts/benchmark-omp-codex-transport.mjs [options]
 
 Runs the same tool-heavy OMP workload with ChatGPT OAuth while forcing the
 OpenAI Codex transport to WebSocket and SSE in alternating order.
@@ -42,8 +39,16 @@ Options:
   --help                   Show this help
 
 The harness never reads or prints OAuth credentials. It records only timings,
-token counts, tool counts, transport policy, and bounded error messages.`);
-      process.exit(0);
+token counts, tool counts, transport policy, and bounded error messages.`;
+}
+
+export function parseArgs(argv) {
+  const options = { ...defaults, help: false };
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--help") {
+      options.help = true;
+      continue;
     }
     const value = argv[index + 1];
     if (value === undefined) throw new Error(`missing value for ${argument}`);
@@ -81,7 +86,7 @@ function summarize(values) {
   };
 }
 
-function benchmarkPrompt(toolCalls) {
+export function benchmarkPrompt(toolCalls) {
   const calls = Array.from({ length: toolCalls }, (_, index) => {
     const marker = String(index + 1).padStart(3, "0");
     return `${index + 1}. Run printf 'marker-${marker}\\n' in one bash tool call.`;
@@ -89,12 +94,8 @@ function benchmarkPrompt(toolCalls) {
   return `This is a deterministic transport benchmark. Make exactly ${toolCalls} bash tool calls, sequentially and never in parallel. Wait for each result before making the next call. Do not inspect files and do not run any other command.\n\n${calls}\n\nAfter every result has arrived, reply only BENCHMARK_COMPLETE.`;
 }
 
-function boundedError(stderr, stdout) {
-  const text = `${stderr}\n${stdout}`
-    .replace(/(authorization|bearer|token|api[_-]?key)\s*[:=]?\s*[^\s,;}]+/giu, "$1=[REDACTED]")
-    .replace(/\s+/gu, " ")
-    .trim();
-  return text.slice(0, 500) || "OMP benchmark process failed";
+export function boundedError() {
+  return "OMP benchmark process failed; inspect local OMP logs for details";
 }
 
 async function readTransportDiagnostics(processId, processStartedAtMs) {
@@ -150,7 +151,7 @@ async function readTransportDiagnostics(processId, processStartedAtMs) {
   };
 }
 
-function parseEvents(stdout) {
+export function parseEvents(stdout) {
   const events = [];
   for (const line of stdout.split(/\r?\n/u)) {
     if (!line.trim()) continue;
@@ -164,13 +165,23 @@ function parseEvents(stdout) {
   return events;
 }
 
-function analyzeEvents(events, expectedToolCalls) {
+function messageText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((block) => block?.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("");
+}
+
+export function analyzeEvents(events, expectedToolCalls) {
   const assistantTurns = events
     .filter((event) => event.type === "message_end" && event.message?.role === "assistant")
     .map((event) => event.message);
   const toolCalls = events.filter((event) => event.type === "tool_execution_start").length;
   const toolResults = events.filter((event) => event.type === "tool_execution_end").length;
-  const completed = JSON.stringify(events).includes("BENCHMARK_COMPLETE");
+  const completed = assistantTurns.some((message) =>
+    messageText(message.content).trim() === "BENCHMARK_COMPLETE");
   const continuationTurns = assistantTurns.slice(1);
   const usage = assistantTurns.map((message) => message.usage ?? {});
 
@@ -243,7 +254,7 @@ async function runOmp(options, transport, pairIndex, orderIndex) {
         exitCode: result.code,
         signal: result.signal,
         transportDiagnostics,
-        error: boundedError(result.stderr, result.stdout),
+        error: boundedError(),
       };
     }
     return {
@@ -261,7 +272,7 @@ async function runOmp(options, transport, pairIndex, orderIndex) {
   }
 }
 
-function aggregate(runs, transport) {
+export function aggregate(runs, transport) {
   const selected = runs.filter((run) => run.transport === transport && run.valid);
   const diagnosticRuns = selected.filter((run) => run.transportDiagnostics?.available);
   return {
@@ -285,52 +296,77 @@ function aggregate(runs, transport) {
   };
 }
 
-const options = parseArgs(process.argv.slice(2));
-const versionResult = await new Promise((resolvePromise) => {
-  const child = spawn("omp", ["--version"], { stdio: ["ignore", "pipe", "ignore"] });
-  let stdout = "";
-  child.stdout.setEncoding("utf8");
-  child.stdout.on("data", (chunk) => { stdout += chunk; });
-  child.on("close", () => resolvePromise(stdout.trim()));
-});
-const runs = [];
+async function readOmpVersion() {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn("omp", ["--version"], { stdio: ["ignore", "pipe", "ignore"] });
+    let stdout = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.on("error", rejectPromise);
+    child.on("close", (code) => {
+      if (code === 0) resolvePromise(stdout.trim());
+      else rejectPromise(new Error(`omp --version exited with code ${code ?? "unknown"}`));
+    });
+  });
+}
 
-for (let pairIndex = 0; pairIndex < options.runs; pairIndex += 1) {
-  const order = pairIndex % 2 === 0 ? ["websocket", "sse"] : ["sse", "websocket"];
-  for (let orderIndex = 0; orderIndex < order.length; orderIndex += 1) {
-    const transport = order[orderIndex];
-    console.error(`pair ${pairIndex + 1}/${options.runs}: ${transport}`);
-    const run = await runOmp(options, transport, pairIndex, orderIndex);
-    runs.push(run);
-    console.error(`  ${run.valid ? "ok" : "invalid"} ${Math.round(run.wallClockMs)} ms, ${run.toolCalls ?? 0} tools`);
+export async function main(argv = process.argv.slice(2)) {
+  const options = parseArgs(argv);
+  if (options.help) {
+    process.stdout.write(`${helpText()}\n`);
+    return;
+  }
+
+  const versionResult = await readOmpVersion();
+  const runs = [];
+  for (let pairIndex = 0; pairIndex < options.runs; pairIndex += 1) {
+    const order = pairIndex % 2 === 0 ? ["websocket", "sse"] : ["sse", "websocket"];
+    for (let orderIndex = 0; orderIndex < order.length; orderIndex += 1) {
+      const transport = order[orderIndex];
+      console.error(`pair ${pairIndex + 1}/${options.runs}: ${transport}`);
+      const run = await runOmp(options, transport, pairIndex, orderIndex);
+      runs.push(run);
+      console.error(`  ${run.valid ? "ok" : "invalid"} ${Math.round(run.wallClockMs)} ms, ${run.toolCalls ?? 0} tools`);
+    }
+  }
+
+  const result = {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    harness: "OMP ChatGPT OAuth transport benchmark",
+    proofBoundary: "Measures the installed OMP openai-codex implementation, not the public OpenAI API endpoint.",
+    ompVersion: versionResult,
+    model: options.model,
+    thinking: options.thinking,
+    pairedRuns: options.runs,
+    expectedToolCallsPerRun: options.toolCalls,
+    ordering: "alternating websocket-first and sse-first pairs",
+    transports: {
+      websocket: "forced with PI_CODEX_WEBSOCKET=1; OMP may still fall back internally after transport failures",
+      sse: "forced with PI_CODEX_WEBSOCKET=0",
+    },
+    runs,
+    summary: {
+      websocket: aggregate(runs, "websocket"),
+      sse: aggregate(runs, "sse"),
+    },
+  };
+
+  const serialized = `${JSON.stringify(result, null, 2)}\n`;
+  if (options.output) {
+    await writeFile(options.output, serialized, { encoding: "utf8", mode: 0o600 });
+    console.error(`wrote ${options.output}`);
+  }
+  process.stdout.write(serialized);
+}
+
+const isMain =
+  process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
+if (isMain) {
+  try {
+    await main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
   }
 }
-
-const result = {
-  schemaVersion: 1,
-  generatedAt: new Date().toISOString(),
-  harness: "OMP ChatGPT OAuth transport benchmark",
-  proofBoundary: "Measures the installed OMP openai-codex implementation, not the public OpenAI API endpoint.",
-  ompVersion: versionResult,
-  model: options.model,
-  thinking: options.thinking,
-  pairedRuns: options.runs,
-  expectedToolCallsPerRun: options.toolCalls,
-  ordering: "alternating websocket-first and sse-first pairs",
-  transports: {
-    websocket: "forced with PI_CODEX_WEBSOCKET=1; OMP may still fall back internally after transport failures",
-    sse: "forced with PI_CODEX_WEBSOCKET=0",
-  },
-  runs,
-  summary: {
-    websocket: aggregate(runs, "websocket"),
-    sse: aggregate(runs, "sse"),
-  },
-};
-
-const serialized = `${JSON.stringify(result, null, 2)}\n`;
-if (options.output) {
-  await writeFile(options.output, serialized, { encoding: "utf8", mode: 0o600 });
-  console.error(`wrote ${options.output}`);
-}
-process.stdout.write(serialized);
