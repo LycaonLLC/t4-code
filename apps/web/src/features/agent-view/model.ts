@@ -1,10 +1,4 @@
 import type { DesktopRuntimeSnapshot } from "@t4-code/client";
-import {
-  hostId as brandHostId,
-  revision as brandRevision,
-  sessionId as brandSessionId,
-} from "@t4-code/protocol";
-import type { CommandIntent, CommandResult } from "@t4-code/protocol/desktop-ipc";
 
 import type { WorkspaceSession } from "../../lib/workspace-data.ts";
 import {
@@ -12,6 +6,10 @@ import {
   resolveLiveSession,
   sessionViewId,
 } from "../../platform/live-workspace.ts";
+import {
+  cancelConfirmedAgent,
+  type AgentCancelRuntime,
+} from "../session-runtime/agent-cancel.ts";
 import { sessionWriteLink } from "../session-runtime/session-inventory.ts";
 import { readSessionControl } from "../session-runtime/session-observer.ts";
 import {
@@ -120,32 +118,33 @@ export function agentCancelAvailability(
   return { enabled: true, reason: null };
 }
 
-export interface AgentViewRuntime {
+export interface AgentViewRuntime extends AgentCancelRuntime {
   getSnapshot(): DesktopRuntimeSnapshot;
-  command(targetId: string, intent: CommandIntent): Promise<CommandResult>;
 }
 
-/** Recheck every gate, then send one revision-bound cancellation request. */
+/** Recheck every gate, then approve the host challenge for this exact cancellation. */
 export async function cancelAgentFromView(
   runtime: AgentViewRuntime,
   viewId: string,
   node: AgentNode,
 ): Promise<void> {
   const snapshot = runtime.getSnapshot();
-  const availability = agentCancelAvailability(snapshot, viewId, node);
-  if (!availability.enabled)
-    throw new Error(availability.reason ?? "Agent cancellation is unavailable.");
   const address = resolveLiveSession(snapshot, viewId);
-  const rawRevision = sessionRevision(snapshot, viewId);
-  if (address === null || rawRevision === undefined) {
-    throw new Error("Waiting for this session's latest state.");
-  }
-  const result = await runtime.command(address.targetId, {
-    hostId: brandHostId(address.hostId),
-    sessionId: brandSessionId(address.sessionId),
-    command: "agent.cancel",
-    args: { agentId: node.id },
-    expectedRevision: brandRevision(rawRevision),
+  if (address === null) throw new Error("This session host is unavailable.");
+
+  await cancelConfirmedAgent(runtime, {
+    address,
+    agentId: node.id,
+    assertWritable() {
+      const availability = agentCancelAvailability(runtime.getSnapshot(), viewId, node);
+      if (!availability.enabled) {
+        throw new Error(availability.reason ?? "Agent cancellation is unavailable.");
+      }
+    },
+    currentRevision() {
+      const current = sessionRevision(runtime.getSnapshot(), viewId);
+      if (current === undefined) throw new Error("Waiting for this session's latest state.");
+      return current;
+    },
   });
-  if (!result.accepted) throw new Error("The host did not accept this cancellation request.");
 }
