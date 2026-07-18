@@ -187,6 +187,7 @@ export interface InspectorActionAvailability {
   readonly agentWake: PaneActionAvailability;
   readonly reviewApply: PaneActionAvailability;
   readonly reviewDiscard: PaneActionAvailability;
+  readonly fileWrite: PaneActionAvailability;
 }
 
 const AVAILABLE: PaneActionAvailability = Object.freeze({ enabled: true, reason: null });
@@ -198,4 +199,5 @@ export const ALL_ACTIONS_AVAILABLE: InspectorActionAvailability = Object.freeze(
   agentWake: AVAILABLE,
   reviewApply: AVAILABLE,
   reviewDiscard: AVAILABLE,
+  fileWrite: AVAILABLE,
 });

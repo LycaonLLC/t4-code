@@ -14,6 +14,7 @@ import {
   type InspectorStoreApi,
   resolveDir,
   resolvePreview,
+  resolveFileWriteOutcome,
   resolveReviewOutcome,
 } from "./inspector-store.ts";
 import { classifySessionEvent } from "./activity-log.ts";
@@ -743,6 +744,8 @@ function seedForSession(sessionId: string): Partial<InspectorState> {
         expanded: {},
         selectedPath: null,
         preview: null,
+        previewRevision: null,
+        draftsByPath: {},
         query: "",
         offline: true,
       },
@@ -790,6 +793,7 @@ function agentsForSession(sessionId: string): readonly AgentNode[] {
 }
 
 function fixtureController(api: InspectorStoreApi, clock: () => number): InspectorController {
+  const editedFiles = new Map<string, string>();
   return {
     kind: "fixture",
     performControl(scope) {
@@ -857,14 +861,23 @@ function fixtureController(api: InspectorStoreApi, clock: () => number): Inspect
           resolvePreview(api, { kind: "offline", path });
           return;
         }
+        const edited = editedFiles.get(path);
         resolvePreview(
           api,
-          FILE_PREVIEWS[path] ?? {
-            kind: "diagnostic",
-            path,
-            message: "The host has no readable content at this path.",
-          },
+          edited === undefined
+            ? FILE_PREVIEWS[path] ?? {
+                kind: "diagnostic",
+                path,
+                message: "The host has no readable content at this path.",
+              }
+            : { kind: "code", path, text: edited, truncated: false },
         );
+      });
+    },
+    writeFile(path, content) {
+      queueMicrotask(() => {
+        editedFiles.set(path, content);
+        resolveFileWriteOutcome(api, path, "saved");
       });
     },
   };

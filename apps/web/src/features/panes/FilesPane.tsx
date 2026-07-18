@@ -1,13 +1,13 @@
 // Files pane: lazy workspace tree with search over loaded folders and a
 // preview surface that stays honest about what it can show — code, images,
 // binaries, read failures, and offline hosts each get their own state.
-import { Badge, cn, Skeleton } from "@t4-code/ui";
+import { Badge, Button, cn, Skeleton } from "@t4-code/ui";
 import { ChevronRight, FileText, Folder, ImageIcon, WifiOff } from "lucide-react";
 import { useEffect, useMemo } from "react";
 
 import { FamilyEmpty } from "./FamilyEmpty.tsx";
 import { PaneHeading } from "./PaneHeading.tsx";
-import { useInspector, type InspectorStoreApi } from "./inspector-store.ts";
+import { useInspector, type FileDraft, type InspectorStoreApi } from "./inspector-store.ts";
 import type { FilePreview, FileTreeNode } from "./model.ts";
 
 function formatBytes(bytes: number): string {
@@ -203,11 +203,62 @@ function PreviewBody({ preview }: { readonly preview: FilePreview }) {
   }
 }
 
+function EditorBody({
+  api,
+  draft,
+  saveEnabled,
+}: {
+  readonly api: InspectorStoreApi;
+  readonly draft: FileDraft;
+  readonly saveEnabled: boolean;
+}) {
+  const saving = draft.status === "saving";
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <textarea
+        aria-label={`Edit ${draft.path}`}
+        className="min-h-32 flex-1 resize-none bg-transparent px-3 py-2 font-mono text-xs leading-5 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        disabled={saving}
+        onChange={(event) => api.getState().updateFileDraft(draft.path, event.target.value)}
+        onKeyDown={(event) => {
+          if (
+            (event.metaKey || event.ctrlKey) &&
+            event.key.toLowerCase() === "s" &&
+            draft.status === "dirty" &&
+            saveEnabled
+          ) {
+            event.preventDefault();
+            api.getState().saveFile(draft.path);
+          }
+        }}
+        spellCheck={false}
+        value={draft.text}
+      />
+      {draft.message !== null && (
+        <p
+          className="border-border border-t px-3 py-2 text-warning-foreground text-xs"
+          role="alert"
+        >
+          {draft.message}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function FilesPane({ api }: { readonly api: InspectorStoreApi }) {
   const query = useInspector(api, (state) => state.files.query);
   const selectedPath = useInspector(api, (state) => state.files.selectedPath);
   const preview = useInspector(api, (state) => state.files.preview);
   const offline = useInspector(api, (state) => state.files.offline);
+  const draftsByPath = useInspector(api, (state) => state.files.draftsByPath);
+  const fileWrite = useInspector(api, (state) => state.actions.fileWrite);
+  const draft = selectedPath === null ? undefined : draftsByPath[selectedPath];
+  const editablePreview =
+    preview !== null &&
+    preview !== "loading" &&
+    preview.kind === "code" &&
+    !preview.truncated;
   const rootKnown = useInspector(api, (state) => state.files.childrenByPath[""] !== undefined);
 
   // Root loads lazily on first open, like every other directory.
@@ -257,9 +308,56 @@ export function FilesPane({ api }: { readonly api: InspectorStoreApi }) {
             <span className="min-w-0 flex-1 truncate font-mono text-xs" dir="rtl">
               <bdi>{selectedPath}</bdi>
             </span>
-            <Badge size="sm" variant="outline">
-              Read-only
-            </Badge>
+            {draft === undefined ? (
+              <>
+                <Badge size="sm" variant="outline">
+                  Read-only
+                </Badge>
+                {preview !== null && preview !== "loading" && preview.kind === "code" && (
+                  <Button
+                    disabled={!editablePreview || !fileWrite.enabled}
+                    onClick={() => api.getState().startFileEdit(selectedPath)}
+                    size="xs"
+                    title={
+                      preview.truncated
+                        ? "The host returned only part of this file."
+                        : fileWrite.reason ?? undefined
+                    }
+                    variant="outline"
+                  >
+                    Edit
+                  </Button>
+                )}
+              </>
+            ) : (
+              <>
+                <Badge size="sm" variant="outline">
+                  {draft.status === "saving"
+                    ? "Saving"
+                    : draft.status === "conflict"
+                      ? "Conflict"
+                      : draft.status === "error"
+                        ? "Error"
+                        : "Editing"}
+                </Badge>
+                <Button
+                  disabled={draft.status === "saving"}
+                  onClick={() => api.getState().discardFileDraft(selectedPath)}
+                  size="xs"
+                  variant="ghost"
+                >
+                  Discard
+                </Button>
+                <Button
+                  disabled={draft.status !== "dirty" || !fileWrite.enabled}
+                  onClick={() => api.getState().saveFile(selectedPath)}
+                  size="xs"
+                  title={fileWrite.reason ?? undefined}
+                >
+                  Save
+                </Button>
+              </>
+            )}
           </div>
           {preview === "loading" || preview === null ? (
             <div className="flex flex-col gap-1.5 p-3">
@@ -267,7 +365,11 @@ export function FilesPane({ api }: { readonly api: InspectorStoreApi }) {
               <Skeleton className="h-3.5 w-3/5" />
             </div>
           ) : (
-            <PreviewBody preview={preview} />
+            draft === undefined ? (
+              <PreviewBody preview={preview} />
+            ) : (
+              <EditorBody api={api} draft={draft} saveEnabled={fileWrite.enabled} />
+            )
           )}
         </section>
       )}
