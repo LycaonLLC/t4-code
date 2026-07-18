@@ -6,7 +6,7 @@
 // rewritten on save. The host catalog is the label authority when it names a
 // model; every fallback is deterministic so the same input always renders
 // the same words.
-import type { CatalogFrame, SettingsFrame } from "@t4-code/protocol";
+import type { CatalogFrame, CatalogItem, SettingsFrame } from "@t4-code/protocol";
 
 import type { ModelChoice } from "./live-catalog.ts";
 import { isBuiltinRole, parseSelector, roleInfo, type ThinkingLevel } from "./roles-model.ts";
@@ -363,4 +363,186 @@ export function modelRoutingSearchText(input: ModelRoutingSearchInput): ModelRou
   }
   const join = (terms: readonly string[]) => terms.join(" ").toLowerCase();
   return { roles: join(roles), cycle: join(cycle), overrides: join(overrides), disabled: join(disabled) };
+}
+
+// Host catalog explorer
+
+/** Catalog kinds the settings surface can explain without adding controls. */
+export const CATALOG_EXPLORER_KINDS = ["command", "tool", "skill", "agent", "model", "provider", "mode"] as const;
+export type CatalogExplorerKind = (typeof CATALOG_EXPLORER_KINDS)[number];
+
+const CATALOG_KIND_LABELS: Readonly<Record<CatalogExplorerKind, string>> = {
+  command: "Commands",
+  tool: "Tools",
+  skill: "Skills",
+  agent: "Agents",
+  model: "Models",
+  provider: "Providers",
+  mode: "Modes",
+};
+const MAX_EXPLORER_METADATA = 8;
+const MAX_EXPLORER_TEXT = 512;
+const MAX_EXPLORER_METADATA_TEXT = 256;
+
+export interface CatalogExplorerHost {
+  readonly hostLabel: string;
+  readonly hostId: string;
+}
+
+export interface CatalogExplorerMetadata {
+  readonly key: string;
+  readonly value: string;
+}
+
+export interface CatalogExplorerEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string | null;
+  readonly metadata: readonly CatalogExplorerMetadata[];
+  readonly supported: boolean;
+  readonly reason: string | null;
+}
+
+export interface CatalogExplorerGroup {
+  readonly kind: CatalogExplorerKind;
+  readonly label: string;
+  readonly entries: readonly CatalogExplorerEntry[];
+}
+
+export type CatalogExplorerState =
+  | {
+      readonly status: "waiting";
+      readonly host: CatalogExplorerHost;
+      readonly title: "Waiting for host catalog";
+      readonly detail: string;
+    }
+  | {
+      readonly status: "unavailable";
+      readonly host: CatalogExplorerHost;
+      readonly title: "Host catalog unavailable";
+      readonly detail: string;
+    }
+  | {
+      readonly status: "empty";
+      readonly host: CatalogExplorerHost;
+      readonly title: "No capability entries published";
+      readonly detail: string;
+    }
+  | {
+      readonly status: "ready";
+      readonly host: CatalogExplorerHost;
+      readonly groups: readonly CatalogExplorerGroup[];
+      readonly itemCount: number;
+    };
+
+export interface CatalogExplorerInput {
+  readonly host: CatalogExplorerHost;
+  readonly catalog?: CatalogFrame;
+  /** Explicit non-ready state for a host that is still connecting or lacks the catalog feature. */
+  readonly phase?: "waiting" | "unavailable";
+}
+
+function explorerText(value: unknown, max = MAX_EXPLORER_TEXT): string | undefined {
+  if (typeof value !== "string" || value.length === 0 || value.length > max || CONTROL_CHARS.test(value)) return undefined;
+  return value;
+}
+
+function explorerMetadataValue(value: unknown): string | undefined {
+  if (typeof value === "string") return explorerText(value, MAX_EXPLORER_METADATA_TEXT);
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "boolean") return String(value);
+  if (!Array.isArray(value) || value.length > 8) return undefined;
+  const values = value.map((item) => (typeof item === "string" ? explorerText(item, 64) : typeof item === "number" && Number.isFinite(item) ? String(item) : typeof item === "boolean" ? String(item) : undefined));
+  return values.every((item): item is string => item !== undefined) ? values.join(", ") : undefined;
+}
+
+const SAFE_EXPLORER_METADATA_KEYS = new Set([
+  "aliases",
+  "contextWindow",
+  "cycle",
+  "cycleIndex",
+  "modelId",
+  "provider",
+  "role",
+]);
+
+
+function explorerMetadata(item: CatalogItem): readonly CatalogExplorerMetadata[] {
+  const metadata: CatalogExplorerMetadata[] = [];
+  if (item.capabilities !== undefined) {
+    const capabilities = explorerMetadataValue(item.capabilities);
+    if (capabilities !== undefined) metadata.push({ key: "capabilities", value: capabilities });
+  }
+  if (item.metadata === undefined || typeof item.metadata !== "object" || item.metadata === null || Array.isArray(item.metadata)) {
+    return metadata;
+  }
+  for (const [key, rawValue] of Object.entries(item.metadata)) {
+    if (metadata.length >= MAX_EXPLORER_METADATA || !SAFE_EXPLORER_METADATA_KEYS.has(key)) continue;
+    const value = explorerMetadataValue(rawValue);
+    if (value !== undefined) metadata.push({ key, value });
+  }
+  return metadata;
+}
+
+function explorerEntry(item: CatalogItem): CatalogExplorerEntry | null {
+  if (!(CATALOG_EXPLORER_KINDS as readonly string[]).includes(item.kind)) return null;
+  const name = explorerText(item.name, 256);
+  const id = explorerText(String(item.id), 256);
+  if (name === undefined || id === undefined) return null;
+  return {
+    id,
+    name,
+    description: explorerText(item.description) ?? null,
+    metadata: explorerMetadata(item),
+    supported: item.supported !== false,
+    reason: item.supported === false ? explorerText(item.reason) ?? "Not available on this host." : null,
+  };
+}
+export function catalogExplorerState(input: CatalogExplorerInput): CatalogExplorerState {
+  if (input.phase === "waiting") {
+    return {
+      status: "waiting",
+      host: input.host,
+      title: "Waiting for host catalog",
+      detail: `Waiting for ${input.host.hostLabel} to publish its capability catalog.`,
+    };
+  }
+  if (input.phase === "unavailable" || input.catalog === undefined) {
+    return {
+      status: "unavailable",
+      host: input.host,
+      title: "Host catalog unavailable",
+      detail: `The capability catalog is unavailable from ${input.host.hostLabel}.`,
+    };
+  }
+
+  const byKind = new Map<CatalogExplorerKind, CatalogExplorerEntry[]>();
+  let itemCount = 0;
+  // The protocol decoder bounds catalog items to its 1,000-item array limit;
+  // keep every supported entry rather than imposing a smaller UI cap.
+  for (const item of input.catalog.items) {
+    const entry = explorerEntry(item);
+    if (entry === null) continue;
+    const kind = item.kind as CatalogExplorerKind;
+    const entries = byKind.get(kind) ?? [];
+    if (entries.some((candidate) => candidate.id === entry.id)) continue;
+    entries.push(entry);
+    byKind.set(kind, entries);
+    itemCount++;
+  }
+  const groups = CATALOG_EXPLORER_KINDS.flatMap((kind) => {
+    const entries = byKind.get(kind);
+    if (entries === undefined || entries.length === 0) return [];
+    entries.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+    return [{ kind, label: CATALOG_KIND_LABELS[kind], entries }] satisfies CatalogExplorerGroup[];
+  });
+  if (groups.length === 0) {
+    return {
+      status: "empty",
+      host: input.host,
+      title: "No capability entries published",
+      detail: `${input.host.hostLabel} published no capability entries in its catalog.`,
+    };
+  }
+  return { status: "ready", host: input.host, groups, itemCount };
 }

@@ -8,7 +8,7 @@
 // Pure TypeScript over the runtime port so every transition is testable
 // headless.
 import type { DesktopRuntimeSnapshot } from "@t4-code/client";
-import { hostId as brandHostId } from "@t4-code/protocol";
+import { hostId as brandHostId, type CatalogFrame } from "@t4-code/protocol";
 
 import {
   createBrokerStatusModel,
@@ -26,7 +26,12 @@ import {
   type LiveSettingsRuntimePort,
   type SaveChallenge,
 } from "./live-controller.ts";
-import { NO_ROLE_TAGS, roleTagsFromFrames, type RoleTags } from "./settings-presentation.ts";
+import {
+  NO_ROLE_TAGS,
+  roleTagsFromFrames,
+  type CatalogExplorerInput,
+  type RoleTags,
+} from "./settings-presentation.ts";
 import { createSettingsStore, type SettingsStoreApi } from "./settings-store.ts";
 
 export interface ActiveHost {
@@ -77,12 +82,34 @@ export type LiveSettingsScreenState =
       readonly phase: "ready";
       readonly api: SettingsStoreApi;
       readonly active: ActiveHost;
+      readonly catalog: CatalogFrame;
       readonly models: readonly ModelChoice[];
       readonly agents: AgentCatalog;
       readonly roleTags: RoleTags;
       readonly hosts: readonly HostChoice[];
       readonly broker: BrokerStatusView;
     };
+
+/** Derive the explorer input from the same live state and host projection. */
+export function catalogExplorerInputForLiveState(
+  runtime: Pick<LiveSettingsRuntimePort, "getSnapshot">,
+  state: LiveSettingsScreenState,
+): CatalogExplorerInput | undefined {
+  if (state.phase === "ready") {
+    return {
+      host: { hostLabel: state.active.hostLabel, hostId: state.active.hostId },
+      catalog: state.catalog,
+    };
+  }
+  if (state.hostLabel === null || state.activeTargetId === null) return undefined;
+  const snapshot = runtime.getSnapshot();
+  const hostId = snapshot.targetHosts.get(state.activeTargetId);
+  if (hostId === undefined) return undefined;
+  return {
+    host: { hostLabel: state.hostLabel, hostId },
+    phase: state.phase === "waiting" && (state.detail === "connecting" || state.detail === "not-published") ? "waiting" : "unavailable",
+  };
+}
 
 export interface LiveSettingsScreenModel {
   getState(): LiveSettingsScreenState;
@@ -159,43 +186,66 @@ interface ConnectionProblem {
   detail: SettingsWaitDetail;
   error: string | null;
   label: string | null;
+  targetId: string | null;
 }
 
 /** The most useful thing to say when no candidate target is connected. */
 function connectionProblem(snapshot: DesktopRuntimeSnapshot): ConnectionProblem {
-  let connecting: string | null = null;
+  let connecting: { readonly label: string; readonly targetId: string } | null = null;
   for (const [targetId, target] of snapshot.targets) {
     const state = snapshot.connections.get(targetId) ?? target.state;
     if (state === "error") {
       const runtimeError = [...snapshot.runtimeErrors].reverse().find((entry) => entry.targetId === targetId);
       const reason = runtimeError === undefined ? "" : ` ${runtimeError.message}`;
-      return { detail: "no-host", error: `The connection to ${target.label} failed.${reason}`, label: target.label };
+      return {
+        detail: "no-host",
+        error: `The connection to ${target.label} failed.${reason}`,
+        label: target.label,
+        targetId,
+      };
     }
     if (state === "pairing-required") {
-      return { detail: "no-host", error: `${target.label} needs pairing before its settings can load.`, label: target.label };
+      return {
+        detail: "no-host",
+        error: `${target.label} needs pairing before its settings can load.`,
+        label: target.label,
+        targetId,
+      };
     }
-    if (state === "connecting") connecting = target.label;
+    if (state === "connecting") connecting = { label: target.label, targetId };
   }
-  if (connecting !== null) return { detail: "connecting", error: null, label: connecting };
-  return { detail: "no-host", error: null, label: null };
+  if (connecting !== null) {
+    return { detail: "connecting", error: null, label: connecting.label, targetId: connecting.targetId };
+  }
+  return { detail: "no-host", error: null, label: null, targetId: null };
 }
 
 /** The same, scoped to the explicitly chosen target: its trouble is named,
  * never papered over by silently opening another host's settings. */
 function connectionProblemFor(snapshot: DesktopRuntimeSnapshot, targetId: string): ConnectionProblem {
   const target = snapshot.targets.get(targetId);
-  if (target === undefined) return { detail: "no-host", error: null, label: null };
+  if (target === undefined) return { detail: "no-host", error: null, label: null, targetId: null };
   const state = snapshot.connections.get(targetId) ?? target.state;
   if (state === "error") {
     const runtimeError = [...snapshot.runtimeErrors].reverse().find((entry) => entry.targetId === targetId);
     const reason = runtimeError === undefined ? "" : ` ${runtimeError.message}`;
-    return { detail: "no-host", error: `The connection to ${target.label} failed.${reason}`, label: target.label };
+    return {
+      detail: "no-host",
+      error: `The connection to ${target.label} failed.${reason}`,
+      label: target.label,
+      targetId,
+    };
   }
   if (state === "pairing-required") {
-    return { detail: "no-host", error: `${target.label} needs pairing before its settings can load.`, label: target.label };
+    return {
+      detail: "no-host",
+      error: `${target.label} needs pairing before its settings can load.`,
+      label: target.label,
+      targetId,
+    };
   }
-  if (state === "connecting") return { detail: "connecting", error: null, label: target.label };
-  return { detail: "disconnected", error: null, label: target.label };
+  if (state === "connecting") return { detail: "connecting", error: null, label: target.label, targetId };
+  return { detail: "disconnected", error: null, label: target.label, targetId };
 }
 
 /** Everything one target+host's workspace owns; kept across host switches
@@ -204,6 +254,7 @@ interface StoreEntry {
   readonly api: SettingsStoreApi;
   settingsRevision: string;
   catalogRevision: string;
+  catalog: CatalogFrame;
   models: readonly ModelChoice[];
   agents: AgentCatalog;
   /** Frame pair the roleTags were computed from; either frame can move. */
@@ -265,6 +316,7 @@ export function createLiveSettingsScreenModel(options: LiveSettingsScreenModelOp
         (state.phase === "ready" &&
           next.phase === "ready" &&
           state.api === next.api &&
+          state.catalog === next.catalog &&
           state.models === next.models &&
           state.agents === next.agents &&
           state.roleTags === next.roleTags &&
@@ -336,10 +388,16 @@ export function createLiveSettingsScreenModel(options: LiveSettingsScreenModelOp
     let problem: ConnectionProblem;
     if (selectedTargetId !== null) {
       active = hostForTarget(snapshot, selectedTargetId);
-      problem = active === null ? connectionProblemFor(snapshot, selectedTargetId) : { detail: "no-host", error: null, label: null };
+      problem =
+        active === null
+          ? connectionProblemFor(snapshot, selectedTargetId)
+          : { detail: "no-host", error: null, label: null, targetId: active.targetId };
     } else {
       active = resolveActiveHost(snapshot);
-      problem = active === null ? connectionProblem(snapshot) : { detail: "no-host", error: null, label: null };
+      problem =
+        active === null
+          ? connectionProblem(snapshot)
+          : { detail: "no-host", error: null, label: null, targetId: active.targetId };
     }
 
     broker.sync(active === null ? null : { targetId: active.targetId, hostId: active.hostId });
@@ -353,7 +411,7 @@ export function createLiveSettingsScreenModel(options: LiveSettingsScreenModelOp
           message: problem.error,
           hostLabel: problem.label,
           hosts,
-          activeTargetId: selectedTargetId,
+          activeTargetId: problem.targetId,
         });
       } else {
         setState({
@@ -361,7 +419,7 @@ export function createLiveSettingsScreenModel(options: LiveSettingsScreenModelOp
           detail: problem.detail,
           hostLabel: problem.label,
           hosts,
-          activeTargetId: selectedTargetId,
+          activeTargetId: problem.targetId,
         });
       }
       return;
@@ -411,6 +469,7 @@ export function createLiveSettingsScreenModel(options: LiveSettingsScreenModelOp
           api: createSettingsStore(built.catalog, controller),
           settingsRevision: built.catalog.revision,
           catalogRevision: "",
+          catalog: catalogFrame,
           models: [],
           agents: { agents: [], unavailableReason: null },
           tagsKey: "",
@@ -451,6 +510,7 @@ export function createLiveSettingsScreenModel(options: LiveSettingsScreenModelOp
 
     if (String(catalogFrame.revision) !== entry.catalogRevision) {
       entry.catalogRevision = String(catalogFrame.revision);
+      entry.catalog = catalogFrame;
       entry.models = modelChoicesFromCatalog(catalogFrame);
       entry.agents = agentChoicesFromCatalog(catalogFrame);
     }
@@ -467,6 +527,7 @@ export function createLiveSettingsScreenModel(options: LiveSettingsScreenModelOp
       phase: "ready",
       api: entry.api,
       active,
+      catalog: entry.catalog,
       models: entry.models,
       agents: entry.agents,
       roleTags: entry.roleTags,

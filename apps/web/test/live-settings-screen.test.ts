@@ -20,6 +20,7 @@ import type {
 
 import type { LiveSettingsRuntimePort } from "../src/features/settings/live-controller.ts";
 import {
+  catalogExplorerInputForLiveState,
   createLiveSettingsScreenModel,
   type LiveSettingsScreenState,
 } from "../src/features/settings/live-screen-model.ts";
@@ -189,6 +190,7 @@ describe("live settings screen model", () => {
     expect(second.phase).toBe("ready");
     if (second.phase !== "ready") return;
     expect(second.api).toBe(first.api);
+    expect(second.catalog.revision).toBe("rev-2");
     expect(second.api.getState().viewModel.revision).toBe("rev-2");
     expect(second.api.getState().announcement).toBe("Settings refreshed from the host.");
   });
@@ -241,6 +243,45 @@ describe("live settings screen model", () => {
     const runtime = new FakeRuntime();
     const { model } = attachedModel(runtime);
     expect(model.getState()).toMatchObject({ phase: "waiting", detail: "no-host" });
+  });
+  it("mounts a waiting explorer for a connected host before catalog frames arrive", () => {
+    const runtime = new FakeRuntime();
+    runtime.connectLocal();
+    const { model } = attachedModel(runtime);
+    const input = catalogExplorerInputForLiveState(runtime, model.getState());
+    expect(input).toMatchObject({
+      host: { hostLabel: "This computer", hostId: "host-1" },
+      phase: "waiting",
+    });
+  });
+
+  it("mounts an unavailable explorer when the active host disconnects", () => {
+    const runtime = new FakeRuntime();
+    runtime.connectLocal();
+    runtime.snapshot.connections.set("local", "error");
+    const { model } = attachedModel(runtime);
+    const input = catalogExplorerInputForLiveState(runtime, model.getState());
+    expect(input).toMatchObject({
+      host: { hostLabel: "This computer", hostId: "host-1" },
+      phase: "unavailable",
+    });
+  });
+
+  it("does not guess an active host from duplicate display labels", () => {
+    const runtime = new FakeRuntime();
+    runtime.snapshot.targets.set("first", { targetId: "first", label: "Remote", state: "connected" });
+    runtime.snapshot.targets.set("second", { targetId: "second", label: "Remote", state: "connected" });
+    runtime.snapshot.targetHosts.set("first", "host-1");
+    runtime.snapshot.targetHosts.set("second", "host-2");
+    const state: LiveSettingsScreenState = {
+      phase: "waiting",
+      detail: "connecting",
+      hostLabel: "Remote",
+      hosts: [],
+      activeTargetId: null,
+    };
+
+    expect(catalogExplorerInputForLiveState(runtime, state)).toBeUndefined();
   });
 });
 
@@ -303,6 +344,10 @@ describe("full catalog rendering", () => {
       agents: [{ name: "scout", description: "Explores the repo." }],
       unavailableReason: null,
     });
+  });
+  it("renders each entry's raw host catalog ID as visible monospace metadata", () => {
+    const source = readFileSync(join(SETTINGS_SRC, "CatalogExplorerBlock.tsx"), "utf8");
+    expect(source).toMatch(/font-mono[^"]*" title="Raw host catalog ID"[\s\S]*\{entry\.id\}/);
   });
 });
 
