@@ -163,6 +163,7 @@ function responseFrame(
   requestId: string,
   ok: boolean,
   result?: Record<string, unknown>,
+  errorCode = "denied",
 ): ResultFrame {
   return {
     v: PROTOCOL_VERSION,
@@ -173,7 +174,7 @@ function responseFrame(
     sessionId: brandSessionId(SESSION),
     ok,
     ...(result === undefined ? {} : { result }),
-    ...(ok ? {} : { error: { code: "denied", message: "The host said no." } }),
+    ...(ok ? {} : { error: { code: errorCode, message: "The host said no." } }),
   };
 }
 
@@ -258,6 +259,7 @@ class FakeRuntime implements LiveInspectorRuntime {
   commands: CommandIntent[] = [];
   targets: string[] = [];
   failCommands = false;
+  commandResult: Pick<CommandResult, "accepted" | "result" | "error"> = { accepted: true };
   private snapshotValue: DesktopRuntimeSnapshot;
   private readonly listeners = new Set<(snapshot: DesktopRuntimeSnapshot) => void>();
   private readonly settled: Promise<unknown>[] = [];
@@ -304,7 +306,7 @@ class FakeRuntime implements LiveInspectorRuntime {
       targetId,
       requestId: `req-${this.requestCounter}`,
       commandId: `cmd-${this.requestCounter}`,
-      accepted: true,
+      ...this.commandResult,
     });
     this.settled.push(result);
     return result;
@@ -346,6 +348,7 @@ const AGENT_CATALOG: CatalogFrame = {
   items: [
     { id: brandCatalogId("agent.cancel"), kind: "command", name: "agent.cancel" },
     { id: brandCatalogId("review.apply"), kind: "command", name: "review.apply" },
+    { id: brandCatalogId("files.write"), kind: "command", name: "files.write" },
   ],
 };
 
@@ -743,6 +746,7 @@ describe("live pane actions", () => {
     };
     expect(store.getState().actions.agentCancel).toEqual(expected);
     expect(store.getState().actions.reviewApply).toEqual(expected);
+    expect(store.getState().actions.fileWrite).toEqual(expected);
   });
 
   it("steer, wake, and discard have no wire command: disabled, honest, silent", async () => {
@@ -791,6 +795,79 @@ describe("live pane actions", () => {
     expect(store.getState().review.files[0]?.applyState).toBe("pending");
     fake.setProjection(project([responseFrame("req-1", true, { applied: true })], base));
     expect(store.getState().review.files[0]?.applyState).toBe("applied");
+  });
+
+  it("file save sends revision-gated text and settles from its final command result", async () => {
+    const fake = new FakeRuntime({ catalog: AGENT_CATALOG });
+    const base = project([
+      snapshotFrame("rev-3"),
+      fileFrame("src/app.ts", "const value = 1;\n"),
+    ]);
+    fake.setProjection(base);
+    const store = createLiveInspectorStore(fake, VIEW_ID);
+    expect(store.getState().actions.fileWrite.enabled).toBe(true);
+
+    store.getState().selectFile("src/app.ts");
+    store.getState().startFileEdit("src/app.ts");
+    store.getState().updateFileDraft("src/app.ts", "const value = 2;\n");
+    store.getState().saveFile("src/app.ts");
+    await fake.settle();
+
+    expect(fake.commands).toEqual([
+      {
+        hostId: HOST,
+        sessionId: SESSION,
+        command: "files.write",
+        args: { path: "src/app.ts", content: "const value = 2;\n" },
+        expectedRevision: "rev-3",
+      },
+    ]);
+    expect(store.getState().files.draftsByPath["src/app.ts"]).toBeUndefined();
+    expect(store.getState().files.preview).toMatchObject({ text: "const value = 2;\n" });
+  });
+
+  it("pins a file save to the revision that produced its draft", async () => {
+    const fake = new FakeRuntime({ catalog: AGENT_CATALOG });
+    const base = project([
+      snapshotFrame("rev-3"),
+      fileFrame("src/app.ts", "const value = 1;\n"),
+    ]);
+    fake.setProjection(base);
+    const store = createLiveInspectorStore(fake, VIEW_ID);
+
+    store.getState().selectFile("src/app.ts");
+    store.getState().startFileEdit("src/app.ts");
+    store.getState().updateFileDraft("src/app.ts", "const value = 2;\n");
+    fake.setProjection(project([snapshotFrame("rev-4")], base));
+    store.getState().saveFile("src/app.ts");
+    await fake.settle();
+
+    expect(fake.commands[0]?.expectedRevision).toBe("rev-3");
+  });
+
+  it("a stale file save preserves the draft as a conflict", async () => {
+    const fake = new FakeRuntime({ catalog: AGENT_CATALOG });
+    const base = project([
+      snapshotFrame("rev-3"),
+      fileFrame("src/app.ts", "before\n"),
+    ]);
+    fake.setProjection(base);
+    const store = createLiveInspectorStore(fake, VIEW_ID);
+    fake.commandResult = {
+      accepted: false,
+      error: { code: "stale_revision", message: "revision changed" },
+    };
+    store.getState().selectFile("src/app.ts");
+    store.getState().startFileEdit("src/app.ts");
+    store.getState().updateFileDraft("src/app.ts", "mine\n");
+    store.getState().saveFile("src/app.ts");
+    await fake.settle();
+
+    expect(store.getState().files.draftsByPath["src/app.ts"]).toMatchObject({
+      text: "mine\n",
+      status: "conflict",
+    });
+    expect(fake.commands).toHaveLength(1);
   });
 
   it("a denied review apply keeps the row pending", async () => {
