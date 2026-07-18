@@ -57,6 +57,14 @@ function deploymentIdentity(value) {
   return identity;
 }
 
+export function parseProfileRoutesOption(value) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    fail("--profile-routes must be valid JSON");
+  }
+}
+
 function platformName(platform) {
   if (platform === "linux" || platform === "darwin") return platform;
   fail("the Tailnet gateway service supports Linux systemd and macOS launchd only");
@@ -632,7 +640,12 @@ async function install(options, paths) {
     port: options.port ?? DEFAULT_GATEWAY_PORT,
     label: options.label ?? "OMP on this Tailnet host",
     deploymentIdentity: options.deploymentIdentity,
-    ...(options.profileRoutes === undefined ? {} : { profileRoutes: JSON.parse(options.profileRoutes), startProfiles: options.startProfiles === true }),
+    ...(options.profileRoutes === undefined
+      ? {}
+      : {
+          profileRoutes: parseProfileRoutesOption(options.profileRoutes),
+          startProfiles: options.startProfiles === true,
+        }),
   });
   await preflight(config);
   if (paths.logs !== undefined) await mkdir(paths.logs, { recursive: true, mode: 0o700 });

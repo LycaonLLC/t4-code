@@ -47,6 +47,11 @@ describe("native mobile connection", () => {
     expect(() => parseTailnetBackend("https://example.com")).toThrow(/\.ts\.net/u);
     expect(() => parseTailnetBackend("https://host.tailnet.ts.net/admin")).toThrow(/host address only/u);
     expect(() => parseTailnetBackend("https://user:pass@host.tailnet.ts.net")).toThrow(/credentials/u);
+    expect(parseTailnetBackend("https://host.tailnet.ts.net", "  work  ")).toMatchObject({
+      endpointKey: "https://host.tailnet.ts.net#profile=work",
+      profileId: "work",
+      wsUrl: "wss://host.tailnet.ts.net/v1/profiles/work/ws",
+    });
   });
   it("replaces an existing endpoint at the saved-endpoint cap but rejects a distinct endpoint", () => {
     const storage = new MemoryStorage();

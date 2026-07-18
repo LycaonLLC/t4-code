@@ -9,6 +9,7 @@ import {
   DEFAULT_GATEWAY_PORT,
   SERVICE_LABEL,
   parseCli,
+  parseProfileRoutesOption,
   renderLaunchAgent,
   renderSystemdUnit,
   servicePaths,
@@ -300,4 +301,5 @@ test("CLI parser rejects ambiguous values and accepts the documented install sha
     () => parseCli(["install", "--origin", CONFIG.allowedOrigin, "--defer-start", "--defer-start"]),
     /more than once/u,
   );
+  assert.throws(() => parseProfileRoutesOption("{not-json"), /--profile-routes must be valid JSON/u);
 });

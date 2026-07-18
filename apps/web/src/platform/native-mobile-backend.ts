@@ -28,14 +28,16 @@ function requiredLabel(value: unknown): string {
 }
 
 export function normalizeMobileProfileId(value?: string): string {
-  if (value === undefined || value.trim() === "") return DEFAULT_MOBILE_PROFILE_ID;
+  if (value === undefined) return DEFAULT_MOBILE_PROFILE_ID;
+  const trimmed = value.trim();
+  if (trimmed === "") return DEFAULT_MOBILE_PROFILE_ID;
   if (
-    value.length > MAX_PROFILE_ID_LENGTH ||
-    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(value)
+    trimmed.length > MAX_PROFILE_ID_LENGTH ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(trimmed)
   ) {
     throw new Error("Use a profile ID made of ASCII letters, numbers, dot, dash, or underscore.");
   }
-  return value;
+  return trimmed;
 }
 
 function endpointKeyFor(origin: string, profileId: string): string {
