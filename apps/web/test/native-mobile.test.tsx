@@ -152,7 +152,7 @@ describe("native mobile connection", () => {
       },
     });
     await expect(prepareNativeMobileBackend()).resolves.toEqual({ kind: "ready", backend });
-    expect(reads).toEqual([{ hostKey: backend.endpointKey, migrateLegacy: true }]);
+    expect(reads).toEqual([{ hostKey: backend.endpointKey, migrateLegacy: false }]);
     expect(window.__t4MobileBackend).toEqual({
       endpointKey: backend.endpointKey,
       origin: backend.origin,
@@ -164,6 +164,82 @@ describe("native mobile connection", () => {
     });
     expect(storage.getItem("t4-code:mobile-backend:v1")).toBeNull();
     expect(readStoredMobileBackendDirectory(storage)?.backends).toEqual([backend]);
+  });
+
+  it("migrates v2 origin-keyed credentials to the default profile endpoint", async () => {
+    const storage = new MemoryStorage();
+    const backend = parseTailnetBackend("https://legacy.tailnet.ts.net:8445");
+    storage.setItem(
+      "t4-code:mobile-backends:v2",
+      JSON.stringify({
+        version: 2,
+        activeOrigin: backend.origin,
+        backends: [{
+          version: 1,
+          origin: backend.origin,
+          wsUrl: backend.wsUrl,
+          label: backend.label,
+        }],
+      }),
+    );
+    const credentials = {
+      deviceId: "legacy-android-device",
+      deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    };
+    const reads: Array<{ readonly hostKey: string; readonly migrateLegacy?: boolean }> = [];
+    const writes: Array<{ readonly hostKey: string; readonly deviceId: string; readonly deviceToken: string }> = [];
+    const clears: string[] = [];
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: { documentElement: { dataset: {} } },
+    });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        localStorage: storage,
+        Capacitor: {
+          isNativePlatform: () => true,
+          getPlatform: () => "android",
+          Plugins: {
+            T4SecureStorage: {
+              getCredentials: (options: { readonly hostKey: string; readonly migrateLegacy?: boolean }) => {
+                reads.push(options);
+                return Promise.resolve({
+                  credentials: options.hostKey === backend.origin ? credentials : null,
+                });
+              },
+              setCredentials: (options: {
+                readonly hostKey: string;
+                readonly deviceId: string;
+                readonly deviceToken: string;
+              }) => {
+                writes.push(options);
+                return Promise.resolve();
+              },
+              clearCredentials: ({ hostKey }: { readonly hostKey: string }) => {
+                clears.push(hostKey);
+                return Promise.resolve();
+              },
+            },
+          },
+        },
+      },
+    });
+
+    await expect(prepareNativeMobileBackend()).resolves.toEqual({ kind: "ready", backend });
+    expect(reads).toEqual([
+      { hostKey: backend.endpointKey, migrateLegacy: false },
+      { hostKey: backend.origin, migrateLegacy: true },
+    ]);
+    expect(writes).toEqual([{ hostKey: backend.endpointKey, ...credentials }]);
+    expect(clears).toEqual([backend.origin]);
+    expect(window.__t4MobileBackend).toMatchObject(credentials);
+    expect(storage.getItem("t4-code:mobile-backends:v2")).toBeNull();
+    expect(readStoredMobileBackendDirectory(storage)).toEqual({
+      version: 3,
+      activeEndpointKey: backend.endpointKey,
+      backends: [backend],
+    });
   });
 
   it("does not rebind global legacy credentials after v2 host repair", async () => {
@@ -199,7 +275,10 @@ describe("native mobile connection", () => {
       },
     });
     await expect(prepareNativeMobileBackend()).resolves.toEqual({ kind: "ready", backend });
-    expect(reads).toEqual([{ hostKey: backend.endpointKey, migrateLegacy: false }]);
+    expect(reads).toEqual([
+      { hostKey: backend.endpointKey, migrateLegacy: false },
+      { hostKey: backend.origin, migrateLegacy: false },
+    ]);
   });
 
   it("retries a stranded secure-storage callback after a WebView reload", async () => {

@@ -49,6 +49,11 @@ interface T4SecureStoragePlugin {
   clearCredentials(options: { readonly hostKey: string }): Promise<void>;
 }
 
+interface NativeMobileCredentials {
+  readonly deviceId: string;
+  readonly deviceToken: string;
+}
+
 export interface T4SpeechPlugin {
   speakText(options: { readonly text: string }): Promise<{ readonly accepted: boolean; readonly error?: string }>;
   stopSpeaking(): Promise<{ readonly accepted: boolean; readonly error?: string }>;
@@ -85,6 +90,39 @@ async function readSecureCredentials(
     if (!(error instanceof SecureStorageBridgeTimeoutError)) throw error;
     return await withSecureStorageTimeout(plugin.getCredentials(options));
   }
+}
+
+function validatedSecureCredentials(credentials: NativeMobileCredentials): NativeMobileCredentials {
+  if (credentials.deviceId.length === 0 || credentials.deviceId.length > 256) {
+    throw new Error("invalid device id");
+  }
+  return {
+    deviceId: credentials.deviceId,
+    deviceToken: validateDeviceToken(credentials.deviceToken, "deviceToken"),
+  };
+}
+
+async function readBackendSecureCredentials(
+  plugin: T4SecureStoragePlugin,
+  backend: StoredMobileBackend,
+  migrateLegacy: boolean,
+): Promise<NativeMobileCredentials | null> {
+  const current = await readSecureCredentials(plugin, {
+    hostKey: backend.endpointKey,
+    migrateLegacy: false,
+  });
+  if (current.credentials !== null) return validatedSecureCredentials(current.credentials);
+  if (backend.profileId !== DEFAULT_PROFILE_ID) return null;
+
+  const legacy = await readSecureCredentials(plugin, {
+    hostKey: backend.origin,
+    migrateLegacy,
+  });
+  if (legacy.credentials === null) return null;
+  const credentials = validatedSecureCredentials(legacy.credentials);
+  await withSecureStorageTimeout(plugin.setCredentials({ hostKey: backend.endpointKey, ...credentials }));
+  await withSecureStorageTimeout(plugin.clearCredentials({ hostKey: backend.origin }));
+  return credentials;
 }
 export interface NativeUpdateState {
   readonly currentVersion: string;
@@ -322,20 +360,13 @@ export async function prepareNativeMobileBackend(): Promise<MobileBootResult> {
     return { kind: "setup", message: "The Android security bridge did not start. Close T4 Code and open it again." };
   }
 
-  let credentials: { readonly deviceId: string; readonly deviceToken: string } | null = null;
+  let credentials: NativeMobileCredentials | null = null;
   try {
-    const result = await readSecureCredentials(plugin, {
-      hostKey: backend.endpointKey,
-      migrateLegacy: shouldMigrateLegacyCredentials,
-    });
-    if (result.credentials !== null) {
-      const deviceId = result.credentials.deviceId;
-      if (deviceId.length === 0 || deviceId.length > 256) throw new Error("invalid device id");
-      credentials = {
-        deviceId,
-        deviceToken: validateDeviceToken(result.credentials.deviceToken, "deviceToken"),
-      };
-    }
+    credentials = await readBackendSecureCredentials(
+      plugin,
+      backend,
+      shouldMigrateLegacyCredentials,
+    );
   } catch (error) {
     if (error instanceof SecureStorageBridgeTimeoutError) {
       return {
