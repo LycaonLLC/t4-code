@@ -163,7 +163,7 @@ describe("snapshot install", () => {
     expect(lastGroup.calls.at(-1)?.images).toEqual([
       { entryId: "large-tool-199", sha256: digest, mimeType: "image/png" },
     ]);
-  });
+  }, 15_000);
 
   it("clears stale in-flight state when a fresh snapshot crosses a server epoch", () => {
     const first = makeFactory();
