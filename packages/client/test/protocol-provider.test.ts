@@ -247,4 +247,21 @@ describe("OmpProtocolProvider", () => {
     expect(events[0]).toMatchObject({ kind: "welcome", payload: { hostId: "provider-host" } });
     await client.close();
   });
+
+  it("fails closed when a welcome selects a different protocol than the provider", async () => {
+    const provider: OmpProtocolProvider = {
+      ...ompAppV1ProtocolProvider,
+      id: "mismatched-provider",
+      protocolVersion: "omp-app/2",
+    };
+    const client = new OmpClient({
+      hostId: "provider-host",
+      protocolProvider: provider,
+      transport: () => new HandshakeTransport(),
+    });
+
+    await expect(client.connect()).rejects.toMatchObject({ code: "protocol" });
+    expect(client.state).toBe("fatal");
+    await client.close();
+  });
 });

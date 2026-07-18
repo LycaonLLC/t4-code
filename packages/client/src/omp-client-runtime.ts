@@ -453,6 +453,10 @@ export class OmpClient {
 
   private handleWelcome(frame: WelcomeFrame, event: PublicEvent<"welcome">): void {
     this.clearTimer("handshakeTimer");
+    if (frame.selectedProtocol !== this.protocol.protocolVersion) {
+      this.fatal(this.error("protocol", "welcome protocol does not match provider"));
+      return;
+    }
     if (this.expectedHost !== undefined && frame.hostId !== this.expectedHost) {
       this.fatal(this.error("protocol", "welcome host does not match target"));
       return;

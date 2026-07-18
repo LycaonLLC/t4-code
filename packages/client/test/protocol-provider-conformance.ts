@@ -61,6 +61,15 @@ export function protocolProviderConformance(
       }
     });
 
+    it("declares the protocol selected by its welcome event", () => {
+      const welcome = options.inboundFrames
+        .map((input) => options.provider.decodeServerEvent(input))
+        .find((decoded) => decoded.kind === "welcome");
+      expect(welcome).toBeDefined();
+      if (welcome?.kind !== "welcome") throw new Error("provider welcome fixture is required");
+      expect(welcome.payload.selectedProtocol).toBe(options.provider.protocolVersion);
+    });
+
     it("rejects malformed inbound values", () => {
       expect(options.invalidInbound.length).toBeGreaterThan(0);
       for (const input of options.invalidInbound) {
