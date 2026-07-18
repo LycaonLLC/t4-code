@@ -127,6 +127,31 @@ test("aggregates only valid runs and keeps transport diagnostics separate", () =
   assert.equal(summary.transportDiagnostics.deltaRequests.mean, 2);
 });
 
+test("omits unavailable latency fields instead of recording zeroes", () => {
+  const result = analyzeEvents([
+    { type: "tool_execution_start" },
+    { type: "tool_execution_end" },
+    {
+      type: "message_end",
+      message: { role: "assistant", content: "working", duration: 20 },
+    },
+    {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: "BENCHMARK_COMPLETE",
+        ttft: 8,
+      },
+    },
+  ], 1);
+
+  assert.equal(result.valid, true);
+  assert.equal(result.providerDurationMs, null);
+  assert.equal(result.initialTtftMs, null);
+  assert.deepEqual(result.continuationTtftMs, [8]);
+  assert.deepEqual(result.continuationDurationMs, []);
+});
+
 test("never copies process output into the report error", () => {
   const error = boundedError(
     "Authorization: Bearer secret-token",

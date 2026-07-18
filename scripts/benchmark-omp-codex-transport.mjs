@@ -183,6 +183,7 @@ export function analyzeEvents(events, expectedToolCalls) {
   const completed = assistantTurns.some((message) =>
     messageText(message.content).trim() === "BENCHMARK_COMPLETE");
   const continuationTurns = assistantTurns.slice(1);
+  const providerDurations = assistantTurns.map((message) => message.duration);
   const usage = assistantTurns.map((message) => message.usage ?? {});
 
   return {
@@ -191,10 +192,17 @@ export function analyzeEvents(events, expectedToolCalls) {
     toolResults,
     assistantTurns: assistantTurns.length,
     completed,
-    providerDurationMs: assistantTurns.reduce((sum, message) => sum + (message.duration ?? 0), 0),
-    initialTtftMs: assistantTurns[0]?.ttft ?? null,
-    continuationTtftMs: continuationTurns.map((message) => message.ttft ?? 0),
-    continuationDurationMs: continuationTurns.map((message) => message.duration ?? 0),
+    providerDurationMs:
+      providerDurations.length > 0 && providerDurations.every(Number.isFinite)
+        ? providerDurations.reduce((sum, duration) => sum + duration, 0)
+        : null,
+    initialTtftMs: Number.isFinite(assistantTurns[0]?.ttft) ? assistantTurns[0].ttft : null,
+    continuationTtftMs: continuationTurns
+      .map((message) => message.ttft)
+      .filter(Number.isFinite),
+    continuationDurationMs: continuationTurns
+      .map((message) => message.duration)
+      .filter(Number.isFinite),
     inputTokens: usage.reduce((sum, item) => sum + (item.input ?? 0), 0),
     cacheReadTokens: usage.reduce((sum, item) => sum + (item.cacheRead ?? 0), 0),
     outputTokens: usage.reduce((sum, item) => sum + (item.output ?? 0), 0),
@@ -229,17 +237,14 @@ async function runOmp(options, transport, pairIndex, orderIndex) {
           PI_CODEX_DEBUG: "1",
           PI_CODEX_WEBSOCKET: transport === "websocket" ? "1" : "0",
         },
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["ignore", "pipe", "ignore"],
       });
       let stdout = "";
-      let stderr = "";
       child.stdout.setEncoding("utf8");
-      child.stderr.setEncoding("utf8");
       const processId = child.pid;
       child.stdout.on("data", (chunk) => { stdout += chunk; });
-      child.stderr.on("data", (chunk) => { stderr += chunk; });
       child.on("error", rejectPromise);
-      child.on("close", (code, signal) => resolvePromise({ code, signal, stdout, stderr, processId }));
+      child.on("close", (code, signal) => resolvePromise({ code, signal, stdout, processId }));
     });
     const wallClockMs = performance.now() - startedAt;
     const transportDiagnostics = await readTransportDiagnostics(result.processId, processStartedAtMs);
@@ -279,7 +284,7 @@ export function aggregate(runs, transport) {
     successfulRuns: selected.length,
     failedRuns: runs.filter((run) => run.transport === transport && !run.valid).length,
     wallClockMs: summarize(selected.map((run) => run.wallClockMs)),
-    providerDurationMs: summarize(selected.map((run) => run.providerDurationMs)),
+    providerDurationMs: summarize(selected.map((run) => run.providerDurationMs).filter(Number.isFinite)),
     initialTtftMs: summarize(selected.map((run) => run.initialTtftMs).filter(Number.isFinite)),
     continuationTtftMs: summarize(selected.flatMap((run) => run.continuationTtftMs)),
     continuationDurationMs: summarize(selected.flatMap((run) => run.continuationDurationMs)),
