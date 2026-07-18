@@ -29,6 +29,7 @@
     "typecheck": "vp run -r typecheck",
     "test": "vp run -r test",
     "test:e2e": "pnpm build:web && pnpm build:site && playwright test",
+    "test:soak": "pnpm --filter @t4-code/client exec vp test run test/projection.test.ts -t 'retains a 10k snapshot' && pnpm build:web && playwright test e2e/remote-app.spec.ts --grep '@soak'",
     "test:protocol": "vp run --filter @t4-code/protocol --filter @t4-code/fixture-server test"
   },
   "devDependencies": {

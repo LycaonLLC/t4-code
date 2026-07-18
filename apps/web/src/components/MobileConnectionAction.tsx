@@ -34,14 +34,14 @@ type ManagerView = { kind: "hosts" } | { kind: "add" } | { kind: "remove"; endpo
  */
 export function performHostSwitch(
   endpointKey: string,
-  io: { readonly select: (endpointKey: string) => void; readonly reload: () => void },
+  io: { readonly select: (endpointKey: string) => void; readonly restartAtHome: () => void },
 ): string | null {
   try {
     io.select(endpointKey);
   } catch (cause) {
     return cause instanceof Error ? cause.message : "T4 Code could not switch hosts.";
   }
-  io.reload();
+  io.restartAtHome();
   return null;
 }
 
@@ -112,7 +112,10 @@ export function MobileConnectionAction() {
     setBusy("switch");
     setError(null);
     const failure = performHostSwitch(endpointKey, {
-      reload: () => window.location.reload(),
+      restartAtHome: () => {
+        window.history.replaceState(null, "", "#/");
+        window.location.reload();
+      },
       select: selectStoredMobileBackend,
     });
     if (failure !== null) {
