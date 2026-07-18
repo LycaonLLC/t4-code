@@ -54,10 +54,28 @@ test("current source tree has one consistent release version", () => {
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);
 });
 
-test("keeps verified and published runtime records aligned after promotion", () => {
+test("records the promoted runtime in independent provenance records", () => {
   const matrix = JSON.parse(files.get("compat/omp-app-matrix.json"));
   assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.4-appserver-4");
-  assert.deepEqual(matrix.publishedRuntime, matrix.verifiedRuntime);
+  assert.equal(matrix.publishedRuntime.sourceTag, "t4code-17.0.4-appserver-4");
+});
+
+test("allows a verified candidate to advance before a tagged release", () => {
+  const sourceCommit = "0".repeat(40);
+  const candidate = changedRuntime("verifiedRuntime", (runtime) => {
+    runtime.sourceCommit = sourceCommit;
+    runtime.sourceUrl = `https://github.com/lyc-aon/oh-my-pi/commit/${sourceCommit}`;
+    runtime.sourceTag = "t4code-17.0.4-appserver-5";
+  });
+
+  assert.deepEqual(collectReleaseConsistencyErrors(candidate), []);
+  assert.ok(
+    collectReleaseConsistencyErrors(candidate, "v0.1.22").some((error) =>
+      error.includes(
+        "published runtime must exactly match current verified runtime for tagged releases",
+      ),
+    ),
+  );
 });
 
 test("rejects a tag that differs from the package version", () => {
