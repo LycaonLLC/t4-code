@@ -8,7 +8,7 @@ if [[ "$(node -p 'process.versions.node.split(".")[0]')" != "24" ]]; then
   echo "autoresearch requires Node 24; found $(node --version)" >&2
   exit 1
 fi
-for command_name in pnpm timeout; do
+for command_name in pnpm tee timeout; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "missing required command: $command_name" >&2
     exit 1
@@ -19,14 +19,15 @@ if [[ ! -d node_modules ]]; then
   exit 1
 fi
 
-entry_count=10000
-event_count=100000
-repetitions=7
-warmups=1
+entry_count="${T4_PERF_ENTRY_COUNT:-10000}"
+event_count="${T4_PERF_EVENT_COUNT:-100000}"
+repetitions="${T4_PERF_REPETITIONS:-7}"
+warmups="${T4_PERF_WARMUPS:-1}"
 timeout_seconds="${T4_AUTORESEARCH_TIMEOUT_SECONDS:-120}"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 output_dir="test-results/perf/autoresearch/$run_id"
 mkdir -p "$output_dir"
+log_path="$output_dir/run.log"
 
 runner=()
 cpu_affinity="unbound"
@@ -43,9 +44,14 @@ export T4_PERF_REPETITIONS="$repetitions"
 export T4_PERF_WARMUPS="$warmups"
 export T4_PERF_MACHINE_LABEL="${T4_PERF_MACHINE_LABEL:-linux-vps-x64}"
 export T4_PERF_OUTPUT_DIR="$output_dir"
+export T4_AUTORESEARCH_TIMEOUT_SECONDS_RESOLVED="$timeout_seconds"
+export T4_AUTORESEARCH_CPU_AFFINITY_RESOLVED="$cpu_affinity"
 
-"${runner[@]}" timeout "$timeout_seconds" pnpm exec vp test run packages/client/test/projection.test.ts
-"${runner[@]}" timeout "$timeout_seconds" pnpm exec vp test run scripts/perf/core.test.ts
-node scripts/perf/autoresearch-report.mjs "$output_dir/latest-core.json"
-printf 'ASI timeout_seconds=%s\n' "$timeout_seconds"
-printf 'ASI cpu_affinity=%s\n' "$cpu_affinity"
+{
+  "${runner[@]}" timeout "$timeout_seconds" pnpm exec vp test run packages/client/test/projection.test.ts
+  "${runner[@]}" timeout "$timeout_seconds" pnpm exec vp test run scripts/perf/core.test.ts
+  node scripts/perf/autoresearch-report.mjs "$output_dir/latest-core.json"
+  printf 'ASI timeout_seconds=%s\n' "$timeout_seconds"
+  printf 'ASI cpu_affinity=%s\n' "$cpu_affinity"
+  printf 'ASI log=%s\n' "$log_path"
+} 2>&1 | tee "$log_path"
