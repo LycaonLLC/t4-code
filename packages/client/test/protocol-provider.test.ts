@@ -295,6 +295,8 @@ describe("OmpProtocolProvider", () => {
       protocolProvider: provider,
       transport: () => transport,
     });
+    const errors: string[] = [];
+    client.onError((error) => errors.push(error.message));
 
     await client.connect();
     transport.emit({
@@ -305,6 +307,7 @@ describe("OmpProtocolProvider", () => {
     });
 
     expect(client.state).toBe("fatal");
+    expect(errors).toEqual(["protocol provider returned an undeclared server event"]);
     await client.close();
   });
 });

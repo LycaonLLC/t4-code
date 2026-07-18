@@ -3,7 +3,14 @@ import type { OmpProtocolProvider, OmpServerEvent } from "./omp-protocol-provide
 
 type ServerEvent<Kind extends OmpServerEvent["kind"]> = Extract<OmpServerEvent, { kind: Kind }>;
 type DurableEvent = ServerEvent<"entry" | "event" | "session.delta">;
+class ProtocolProviderContractError extends Error {
+  constructor() {
+    super("protocol provider returned an undeclared server event");
+    this.name = "ProtocolProviderContractError";
+  }
+}
 export function safeFrameDecodeFailure(error: unknown): string {
+  if (error instanceof ProtocolProviderContractError) return error.message;
   if (!(error instanceof AppWireError)) return "invalid server frame";
   const safePath = error.path !== undefined && /^[A-Za-z0-9.[\]_-]{1,128}$/u.test(error.path) ? ` at ${error.path}` : "";
   return `invalid server frame (${error.code}${safePath})`;
@@ -14,7 +21,7 @@ export function decodeProviderServerEvent(
 ): OmpServerEvent {
   const event = provider.decodeServerEvent(input);
   if (!provider.serverEventKinds.includes(event.kind)) {
-    throw new Error("provider returned an undeclared server event");
+    throw new ProtocolProviderContractError();
   }
   return event;
 }
