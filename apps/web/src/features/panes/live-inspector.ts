@@ -558,8 +558,11 @@ export function createLiveInspectorStore(
     }
 
     // A pushed frame can answer a preview the command path could not.
-    const { selectedPath, preview } = store.getState().files;
-    if (selectedPath !== null && preview === "loading") {
+    const { selectedPath, preview, previewRevision } = store.getState().files;
+    const hasNewPreviewRevision =
+      previewRevision === null ||
+      (warm.revision !== undefined && String(warm.revision) !== previewRevision);
+    if (selectedPath !== null && preview === "loading" && hasNewPreviewRevision) {
       const frame = warm.files.get(selectedPath);
       if (frame !== undefined && frame.content !== undefined) {
         resolvePreview(store, previewFromFileFrame(frame), warm.revision ?? null);

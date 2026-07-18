@@ -484,7 +484,7 @@ export function resolveFileWriteOutcome(
           ...state.files,
           draftsByPath,
           ...(state.files.selectedPath === path
-            ? { preview: { kind: "code" as const, path, text: draft.text, truncated: false } }
+            ? { preview: "loading" as const }
             : {}),
         },
       };
@@ -550,4 +550,3 @@ export function getInspectorStore(sessionId: string): InspectorStoreApi | null {
 export function useInspector<T>(api: InspectorStoreApi, selector: (state: InspectorStore) => T): T {
   return useStore(api, selector);
 }
-

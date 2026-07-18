@@ -878,6 +878,11 @@ function fixtureController(api: InspectorStoreApi, clock: () => number): Inspect
       queueMicrotask(() => {
         editedFiles.set(path, content);
         resolveFileWriteOutcome(api, path, "saved");
+        resolvePreview(
+          api,
+          { kind: "code", path, text: content, truncated: false },
+          FIXTURE_FILE_REVISION,
+        );
       });
     },
   };

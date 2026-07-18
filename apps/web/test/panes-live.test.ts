@@ -823,7 +823,21 @@ describe("live pane actions", () => {
       },
     ]);
     expect(store.getState().files.draftsByPath["src/app.ts"]).toBeUndefined();
+    expect(store.getState().files.preview).toBe("loading");
+
+    fake.setProjection(
+      project(
+        [snapshotFrame("rev-4"), fileFrame("src/app.ts", "const value = 2;\n")],
+        base,
+      ),
+    );
     expect(store.getState().files.preview).toMatchObject({ text: "const value = 2;\n" });
+
+    store.getState().startFileEdit("src/app.ts");
+    store.getState().updateFileDraft("src/app.ts", "const value = 3;\n");
+    store.getState().saveFile("src/app.ts");
+    await fake.settle();
+    expect(fake.commands[1]?.expectedRevision).toBe("rev-4");
   });
 
   it("pins a file save to the revision that produced its draft", async () => {

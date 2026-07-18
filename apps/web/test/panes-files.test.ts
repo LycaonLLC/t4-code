@@ -116,11 +116,24 @@ describe("file drafts", () => {
 
     resolveFileWriteOutcome(api, "src/app.ts", "saved");
     expect(api.getState().files.draftsByPath["src/app.ts"]).toBeUndefined();
-    expect(api.getState().files.preview).toEqual({
-      kind: "code",
-      path: "src/app.ts",
-      text: "const value = 2;\n",
-      truncated: false,
+    expect(api.getState().files.preview).toBe("loading");
+    api.getState().startFileEdit("src/app.ts");
+    expect(api.getState().files.draftsByPath["src/app.ts"]).toBeUndefined();
+
+    resolvePreview(
+      api,
+      {
+        kind: "code",
+        path: "src/app.ts",
+        text: "const value = 2;\n",
+        truncated: false,
+      },
+      "rev-2",
+    );
+    api.getState().startFileEdit("src/app.ts");
+    expect(api.getState().files.draftsByPath["src/app.ts"]).toMatchObject({
+      baseRevision: "rev-2",
+      originalText: "const value = 2;\n",
     });
   });
 
