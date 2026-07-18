@@ -240,7 +240,10 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
   // restored to a mid-scroll anchor mask with the plain transcript background
   // instead (never wrong content). Removal is layout-driven (rAF poll of the
   // list's content), not a timer.
-  const REVEAL_STABILITY_FRAMES = 8;
+  // Readiness already requires stable content geometry, correct tail alignment,
+  // and a row inside the viewport. Four consecutive ready frames absorb one
+  // delayed list remeasure without holding the warm copy for eight display cycles.
+  const REVEAL_STABILITY_FRAMES = 4;
   const [coldMount, setColdMount] = useState(true);
   useEffect(() => {
     let frame = 0;

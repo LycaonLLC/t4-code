@@ -478,6 +478,7 @@ test("@soak mounts the bounded tail of a 10k history on a phone viewport", async
     await page.evaluate(() => {
       const phases: {
         transcriptVisibleAt?: number;
+        tailAlignedAt?: number;
         realListVisibleAt?: number;
         tailPaintedAt?: number;
       } = {};
@@ -500,6 +501,25 @@ test("@soak mounts the bounded tail of a 10k history on a phone viewport", async
         }
         const realList = transcript?.querySelector(".legend-list-content-container") ?? null;
         const overlay = transcript?.querySelector("[data-cold-mount-overlay]") ?? null;
+        const scroller = [...(transcript?.querySelectorAll<HTMLElement>("div") ?? [])].find(
+          (element) => {
+            const { overflowY } = getComputedStyle(element);
+            return overflowY === "auto" || overflowY === "scroll";
+          },
+        );
+        const transcriptRect = transcript?.getBoundingClientRect();
+        const rows = [...(transcript?.querySelectorAll<HTMLElement>("[data-transcript-row]") ?? [])];
+        const rowsInView = transcriptRect !== undefined && rows.some((row) => {
+          const rect = row.getBoundingClientRect();
+          return rect.bottom > transcriptRect.top && rect.top < transcriptRect.bottom;
+        });
+        if (scroller !== undefined && transcriptRect !== undefined) {
+          const maxScroll = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+          const aligned = Math.abs(scroller.scrollTop - maxScroll) <= 1;
+          if (phases.tailAlignedAt === undefined && aligned && rowsInView) {
+            phases.tailAlignedAt = performance.now();
+          }
+        }
         if (
           phases.realListVisibleAt === undefined
           && isVisible(transcript)
@@ -538,6 +558,7 @@ test("@soak mounts the bounded tail of a 10k history on a phone viewport", async
           window as typeof window & {
             __t4BrowserPaintPhases?: {
               transcriptVisibleAt?: number;
+              tailAlignedAt?: number;
               realListVisibleAt?: number;
               tailPaintedAt?: number;
             };
@@ -545,6 +566,7 @@ test("@soak mounts the bounded tail of a 10k history on a phone viewport", async
         ).__t4BrowserPaintPhases;
         return phases !== undefined
           && Number.isFinite(phases.transcriptVisibleAt)
+          && Number.isFinite(phases.tailAlignedAt)
           && Number.isFinite(phases.realListVisibleAt)
           && Number.isFinite(phases.tailPaintedAt)
           ? phases
@@ -557,6 +579,7 @@ test("@soak mounts the bounded tail of a 10k history on a phone viewport", async
     await phasesHandle.dispose();
     if (
       phases.transcriptVisibleAt === undefined
+      || phases.tailAlignedAt === undefined
       || phases.realListVisibleAt === undefined
       || phases.tailPaintedAt === undefined
     ) {
@@ -571,6 +594,8 @@ test("@soak mounts the bounded tail of a 10k history on a phone viewport", async
           navigationDomContentLoaded: navigationTiming.domContentLoaded,
           connectedAfterDomContentLoaded: connectedAt - navigationTiming.domContentLoaded,
           sessionClickToTranscriptVisible: phases.transcriptVisibleAt - sessionClickStartedAt,
+          sessionClickToTailAligned: phases.tailAlignedAt - sessionClickStartedAt,
+          tailAlignedToRealListVisible: phases.realListVisibleAt - phases.tailAlignedAt,
           sessionClickToRealListVisible: phases.realListVisibleAt - sessionClickStartedAt,
           sessionClickToTailPainted: phases.tailPaintedAt - sessionClickStartedAt,
         })}\n`,

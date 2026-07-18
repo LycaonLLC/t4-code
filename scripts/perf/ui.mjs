@@ -14,6 +14,8 @@ const phaseSamples = {
   navigationDomContentLoaded: [],
   connectedAfterDomContentLoaded: [],
   sessionClickToTranscriptVisible: [],
+  sessionClickToTailAligned: [],
+  tailAlignedToRealListVisible: [],
   sessionClickToRealListVisible: [],
   sessionClickToTailPainted: [],
 };
@@ -121,6 +123,16 @@ writeReport(
       name: "browser.session-click-to-transcript-visible",
       direction: "lower",
       ...summarize(phaseSamples.sessionClickToTranscriptVisible),
+    },
+    {
+      name: "browser.session-click-to-tail-aligned",
+      direction: "lower",
+      ...summarize(phaseSamples.sessionClickToTailAligned),
+    },
+    {
+      name: "browser.tail-aligned-to-real-list-visible",
+      direction: "lower",
+      ...summarize(phaseSamples.tailAlignedToRealListVisible),
     },
     {
       name: "browser.session-click-to-real-list-visible",
