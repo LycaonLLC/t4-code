@@ -123,8 +123,23 @@ test(
       }
       const session = state.sessions.values().next().value;
       const expectedRetainedEvents = Math.min(EVENT_COUNT, 512);
-      if (session?.events.length !== expectedRetainedEvents || session.entries.length !== ENTRY_COUNT) {
-        throw new Error("event throughput benchmark violated bounded retention");
+      if (
+        session?.events.length !== expectedRetainedEvents ||
+        session.entries.length !== ENTRY_COUNT ||
+        String(session.entries[0]?.id) !== "entry-0" ||
+        String(session.entries.at(-1)?.id) !== `entry-${ENTRY_COUNT - 1}` ||
+        session.cursor?.epoch !== "perf-epoch" ||
+        session.cursor.seq !== EVENT_COUNT + 1 ||
+        session.historyTruncated === true ||
+        state.arrivalOrdinal !== EVENT_COUNT
+      ) {
+        throw new Error("event throughput benchmark violated snapshot, cursor, history, or retention semantics");
+      }
+      for (let offset = 0; offset < expectedRetainedEvents; offset += 1) {
+        const retained = session.events[offset]?.event as { readonly index?: unknown } | undefined;
+        if (retained?.index !== EVENT_COUNT - expectedRetainedEvents + offset) {
+          throw new Error("event throughput benchmark violated retained event ordering");
+        }
       }
     }
 

@@ -19,10 +19,10 @@ if [[ ! -d node_modules ]]; then
   exit 1
 fi
 
-entry_count="${T4_PERF_ENTRY_COUNT:-10000}"
-event_count="${T4_PERF_EVENT_COUNT:-100000}"
-repetitions="${T4_PERF_REPETITIONS:-7}"
-warmups="${T4_PERF_WARMUPS:-1}"
+entry_count=10000
+event_count=100000
+repetitions=7
+warmups=1
 timeout_seconds="${T4_AUTORESEARCH_TIMEOUT_SECONDS:-120}"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 output_dir="test-results/perf/autoresearch/$run_id"
