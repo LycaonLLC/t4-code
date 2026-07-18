@@ -9,7 +9,7 @@
       "sourceBlobSha": "1a4dc6b689558a9f8d834c12d7ecb2bb64e0d7c8",
       "targetPath": "apps/web/src/features/transcript/TranscriptTimeline.tsx",
       "classification": "adapted",
-      "checksum": "sha256:7771cd7d001b856ddcfa859bc48de5603e780d31ea261200114b2346f280b2cd"
+      "checksum": "sha256:6cfceca8ebc0e1262cb96b947d111d18bb3850e49d3fb2ad5785562afaf8d96a"
     },
     {
       "sourcePath": "apps/web/src/components/chat/MessagesTimeline.tsx",
