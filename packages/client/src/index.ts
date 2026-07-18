@@ -53,6 +53,7 @@ export {
 export type { ProjectionCacheStore, ProjectionCacheEnvelope } from "./projection-cache.ts";
 export {
   createProjectionSnapshot,
+  applyPublicEvent,
   applyPublicFrame,
   ProjectionStore,
   createProjectionStore,
@@ -65,6 +66,7 @@ export {
 } from "./projection.ts";
 export type {
   ProjectionFrame,
+  ProjectionEventFrame,
   ProjectionFreshness,
   TerminalProjection,
   ResultProjection,

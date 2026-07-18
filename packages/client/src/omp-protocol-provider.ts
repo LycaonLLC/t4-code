@@ -70,17 +70,33 @@ export type OmpClientMessage =
     }
   | { readonly kind: "ping"; readonly nonce: string; readonly timestamp: string };
 
+type KnownFields<Value> = {
+  [Key in keyof Value as string extends Key
+    ? never
+    : number extends Key
+      ? never
+      : symbol extends Key
+        ? never
+        : Key]: Value[Key];
+};
+
+type PreservedIndex<Value> = string extends keyof Value ? Readonly<Record<string, unknown>> : object;
+
+type OmpServerEventPayload<Frame extends ServerFrame> = Readonly<
+  Omit<KnownFields<Frame>, "v" | "type"> & PreservedIndex<Frame>
+>;
+
 type OmpServerEventFromFrame<Frame extends ServerFrame> = Frame extends ServerFrame
   ? Readonly<{
       kind: Frame["type"];
-      payload: Readonly<Omit<Frame, "v" | "type">>;
+      payload: OmpServerEventPayload<Frame>;
     }>
   : never;
 
 type OmpDecodedServerEventFromFrame<Frame extends ServerFrame> = Frame extends ServerFrame
   ? Readonly<{
       kind: Frame["type"];
-      payload: Readonly<Omit<Frame, "v" | "type">>;
+      payload: OmpServerEventPayload<Frame>;
       event: OmpServerEventFromFrame<Frame>;
       wireFrame: Frame;
     }>

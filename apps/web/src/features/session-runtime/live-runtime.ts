@@ -15,7 +15,6 @@ import {
   revision as brandRevision,
   sessionId as brandSessionId,
   type CatalogItem,
-  type ConfirmationChallenge,
   type Revision,
   type SessionEvent,
   type SessionRef,
@@ -194,7 +193,9 @@ function findCancelCommand(items: readonly CatalogItem[]): CatalogItem | undefin
 
 
 interface PendingChallenge {
-  readonly challenge: ConfirmationChallenge;
+  readonly challenge: SessionProjection["confirmations"] extends ReadonlyMap<string, infer Value>
+    ? Value
+    : never;
   readonly approval: ApprovalRequest;
 }
 

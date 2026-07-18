@@ -39,6 +39,7 @@ import {
   retainDurableEntries,
   retainedText,
   sanitizeRetainedRecord,
+  type SessionProjection,
 } from "@t4-code/client";
 
 import {
@@ -47,6 +48,9 @@ import {
 } from "../session-runtime/session-event-vocabulary.ts";
 
 export type { Cursor, DurableEntry } from "@t4-code/protocol";
+
+type ProjectionLiveEventFrame = SessionProjection["events"][number];
+type TranscriptEventFrame = LiveEventFrame | ProjectionLiveEventFrame;
 
 export const MAX_ACCEPTED_PROMPT_ATTACHMENTS = 8;
 export const MAX_ACCEPTED_PENDING_PROMPTS = 16;
@@ -610,7 +614,7 @@ function noticeId(prefix: string): string {
   return `${prefix}-${noticeCounter}`;
 }
 
-function applyEvent(projection: TranscriptProjection, frame: LiveEventFrame): TranscriptProjection {
+function applyEvent(projection: TranscriptProjection, frame: TranscriptEventFrame): TranscriptProjection {
   const event = frame.event;
   const base: TranscriptProjection = { ...projection, cursor: frame.cursor };
   const projectionKind: SessionEventProjectionKind | undefined = sessionEventSpec(
@@ -821,7 +825,7 @@ export interface RetainedTranscriptEventBaseline {
 
 export function retainedTranscriptEventsAreValid(
   projection: TranscriptProjection,
-  frames: readonly LiveEventFrame[],
+  frames: readonly TranscriptEventFrame[],
   baseline: RetainedTranscriptEventBaseline,
 ): boolean {
   const cursor = projection.cursor;
@@ -874,7 +878,7 @@ export function retainedTranscriptEventsAreValid(
 
 export function replayRetainedTranscriptEvents(
   projection: TranscriptProjection,
-  frames: readonly LiveEventFrame[],
+  frames: readonly TranscriptEventFrame[],
   baseline: RetainedTranscriptEventBaseline,
 ): TranscriptProjection {
   if (!retainedTranscriptEventsAreValid(projection, frames, baseline)) return projection;

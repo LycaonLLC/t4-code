@@ -28,7 +28,7 @@ export class OmpClientEvents {
     for (const listener of [...this.errorListeners]) { try { listener(error); } catch { /* isolated */ } }
   }
   publish(frame: PublicServerFrame, event: PublicOmpServerEvent, projection: ProjectionStore | undefined): void {
-    try { projection?.applyPublicFrame(frame); } catch { /* observational */ }
+    try { projection?.applyPublicEvent(event); } catch { /* observational */ }
     // eslint-disable-next-line unicorn/no-useless-spread -- preserve listener snapshot when callbacks unsubscribe.
     for (const listener of [...this.eventListeners]) { try { listener(event); } catch { /* isolated */ } }
     // eslint-disable-next-line unicorn/no-useless-spread -- preserve listener snapshot when callbacks unsubscribe.
