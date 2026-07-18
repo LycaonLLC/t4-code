@@ -12,6 +12,7 @@ import { ElectronCursorStore, ElectronRemoteTargetStore, ElectronCredentialCiphe
 import { VersionedRemoteTargetRegistry, DeviceCredentialStore } from "./remote-runtime/index.ts";
 import { LocalTargetManager, type TargetManagerOptions } from "./target-manager.ts";
 import { createAppserverServiceManager, discoverOmpExecutable, OmpAppserverCompatibilityError, probeOmpAppserver, NodeServiceFileSystem } from "./service.ts";
+import { createDesktopSpeechService, type DesktopSpeechService } from "./speech.ts";
 import { createElectronUpdateController } from "./electron-update-controller.ts";
 import { installApplicationMenu, type ApplicationMenuOptions } from "./menu.ts";
 import { DesktopUpdateController } from "./update-controller.ts";
@@ -51,6 +52,7 @@ export interface DesktopLifecycleOptions {
   readonly probeAppserver?: (executable: string) => Promise<boolean>;
   readonly createServiceManager?: (options: Parameters<typeof createAppserverServiceManager>[0]) => ServiceManager;
   readonly createTargetManager?: (options: TargetManagerOptions) => LocalTargetManager;
+  readonly createSpeechService?: (options: { readonly discoverExecutable: () => Promise<string | undefined> }) => DesktopSpeechService;
   readonly createUpdateController?: () => DesktopUpdateController;
   readonly installMenu?: (options: ApplicationMenuOptions) => void;
 }
@@ -75,6 +77,7 @@ export class DesktopLifecycle {
   private readonly localProfileRegistryFactory: () => LocalProfileRegistry;
   private readonly executableFactory: () => Promise<string | undefined>;
   private readonly serviceFactory: (options: Parameters<typeof createAppserverServiceManager>[0]) => ServiceManager;
+  private readonly speechServiceFactory: (options: { readonly discoverExecutable: () => Promise<string | undefined> }) => DesktopSpeechService;
   private readonly appserverProbe: (executable: string) => Promise<boolean>;
   private readonly targetManagerFactory: (options: TargetManagerOptions) => LocalTargetManager;
   private readonly updateControllerFactory: () => DesktopUpdateController;
@@ -83,6 +86,7 @@ export class DesktopLifecycle {
   private ipc: DesktopIpcRegistry | undefined;
   private manager: LocalTargetManager | undefined;
   private localProfileRegistry: LocalProfileRegistry | undefined;
+  private speechService: DesktopSpeechService | undefined;
   private profileRuntime: LocalProfileRuntime | undefined;
   private serviceManager: ServiceManager | undefined;
   private readonly serviceManagers = new Map<string, ServiceManager>();
@@ -121,6 +125,7 @@ export class DesktopLifecycle {
     this.appserverProbe = options.probeAppserver ?? ((executable) => probeOmpAppserver(executable));
     this.serviceFactory = options.createServiceManager ?? createAppserverServiceManager;
     this.targetManagerFactory = options.createTargetManager ?? ((managerOptions) => new LocalTargetManager(managerOptions));
+    this.speechServiceFactory = options.createSpeechService ?? ((speechOptions) => createDesktopSpeechService(speechOptions));
     this.updateControllerFactory = options.createUpdateController ?? createElectronUpdateController;
     this.menuInstaller = options.installMenu ?? installApplicationMenu;
   }
@@ -189,6 +194,9 @@ export class DesktopLifecycle {
       releaseServiceManager: (profileId) => this.releaseServiceManager(profileId),
       getServiceAvailabilityIssue: (profileId) => this.getServiceAvailabilityIssue(profileId),
     });
+    this.speechService = this.speechServiceFactory({
+      discoverExecutable: () => this.discoverServiceExecutable(),
+    });
     this.bindWindow(this.windowFactory());
     await this.profileRuntime.startAutomaticProfiles((profileId, error) => {
       this.ipc?.emitRuntimeError(runtimeError(error, `local:${profileId}`));
@@ -212,6 +220,8 @@ export class DesktopLifecycle {
   }
   private async stopInternal(): Promise<void> {
     this.stopping = true;
+    await this.speechService?.dispose();
+    this.speechService = undefined;
     this.ipc?.uninstall();
     this.ipc = undefined;
     this.mainWindow = undefined;
@@ -411,6 +421,7 @@ export class DesktopLifecycle {
       getServiceManager: () => this.serviceManager,
       acquireServiceManager: () => this.acquireServiceManager(),
       getServiceAvailabilityIssue: () => this.serviceAvailabilityIssue,
+      ...(this.speechService === undefined ? {} : { speech: this.speechService }),
       ...(this.profileRuntime === undefined ? {} : { profileRuntime: this.profileRuntime }),
       drainPairLinks: () => this.pendingPairs.drain(),
       drainPendingUpdateOpen: () => this.markUpdateRendererReady(),

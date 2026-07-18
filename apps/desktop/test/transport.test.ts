@@ -12,7 +12,7 @@ const describeUnix = process.platform === "linux" || process.platform === "darwi
 const UUID = "123e4567-e89b-12d3-a456-426614174000";
 
 function fixtureDirectory(): string {
-  const directory = mkdtempSync(join(tmpdir(), "t4-transport-"));
+  const directory = mkdtempSync(join(process.platform === "darwin" ? "/private/tmp" : tmpdir(), "t4-transport-"));
   chmodSync(directory, 0o700);
   return directory;
 }

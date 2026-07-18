@@ -11,6 +11,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(T4SecureStoragePlugin.class);
         registerPlugin(T4UpdatePlugin.class);
+        registerPlugin(T4SpeechPlugin.class);
         super.onCreate(savedInstanceState);
     }
 

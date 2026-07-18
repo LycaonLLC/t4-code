@@ -15,7 +15,8 @@ export GIT_NO_REPLACE_OBJECTS=1
 GIT=${T4_MAINTAINER_GIT:-git}
 GH=${T4_MAINTAINER_GH:-gh}
 JQ=${T4_MAINTAINER_JQ:-jq}
-SYNC=${T4_MAINTAINER_SYNC:-sync}
+SYNC=${T4_MAINTAINER_SYNC:-/bin/sync}
+DATE=${T4_MAINTAINER_DATE:-/bin/date}
 STATE_ROOT=${T4_ATOMIC_STATE_DIR:?T4_ATOMIC_STATE_DIR is required}
 EXPECTED_UPSTREAM_TAG=${T4_ATOMIC_EXPECTED_UPSTREAM_TAG:?T4_ATOMIC_EXPECTED_UPSTREAM_TAG is required}
 EXPECTED_UPSTREAM_COMMIT=${T4_ATOMIC_EXPECTED_UPSTREAM_COMMIT:?T4_ATOMIC_EXPECTED_UPSTREAM_COMMIT is required}
@@ -65,6 +66,12 @@ done
 [[ $integration_tag =~ ^t4code-${EXPECTED_UPSTREAM_TAG#v}-appserver-[1-9][0-9]*$ ]] \
   || fail 'the integration tag is invalid for the expected official release'
 
+[[ $STATE_ROOT == /* ]] || fail 'T4_ATOMIC_STATE_DIR must be an absolute path'
+command -v "$DATE" >/dev/null 2>&1 \
+  || fail "required command is unavailable: $DATE"
+mkdir -p -- "$STATE_ROOT" || fail 'the atomic state root cannot be created'
+STATE_ROOT=$(cd -P -- "$STATE_ROOT" && pwd -P) \
+  || fail 'the atomic state root cannot be normalized'
 state_dir="$STATE_ROOT/$integration_tag"
 intent_file="$state_dir/intent.json"
 receipt_file="$state_dir/receipt.json"
@@ -72,13 +79,13 @@ preparation_file="$state_dir/preparation.json"
 staging="$state_dir/repository.git"
 staging_preparing="$state_dir/repository.git.preparing"
 mkdir -p -- "$state_dir"
-chmod 700 -- "$STATE_ROOT" "$state_dir"
+chmod 700 "$STATE_ROOT" "$state_dir"
 
 durable_json() {
   local destination=$1 source=$2 temporary
   temporary=$(mktemp "$state_dir/.json.XXXXXX")
   $JQ -S . "$source" >"$temporary"
-  chmod 600 -- "$temporary"
+  chmod 600 "$temporary"
   "$SYNC" -f "$temporary"
   mv -f -- "$temporary" "$destination"
   "$SYNC" -f "$state_dir"
@@ -162,7 +169,7 @@ write_receipt() {
   intent_sha=$($GIT hash-object "$intent_file") || return 1
   temporary=$(mktemp "$state_dir/.receipt-source.XXXXXX")
   $JQ -n \
-    --arg completed_at "$(date --utc +'%Y-%m-%dT%H:%M:%SZ')" \
+    --arg completed_at "$("$DATE" -u +'%Y-%m-%dT%H:%M:%SZ')" \
     --arg official_repository "$OFFICIAL_REPOSITORY" \
     --arg fork_repository "$FORK_REPOSITORY" \
     --arg upstream_tag "$EXPECTED_UPSTREAM_TAG" \
@@ -327,7 +334,7 @@ else
   else
     temporary_preparation=$(mktemp "$state_dir/.preparation-source.XXXXXX")
     $JQ -n \
-      --arg created_at "$(date --utc +'%Y-%m-%dT%H:%M:%SZ')" \
+      --arg created_at "$("$DATE" -u +'%Y-%m-%dT%H:%M:%SZ')" \
       --arg upstream_tag "$EXPECTED_UPSTREAM_TAG" \
       --arg upstream_commit "$EXPECTED_UPSTREAM_COMMIT" \
       --arg integration_tag "$integration_tag" '
@@ -407,7 +414,7 @@ else
     '{baseTagObject:$base,integrationTagObject:$integration,productCommit:$product}')
   temporary_intent=$(mktemp "$state_dir/.intent-source.XXXXXX")
   $JQ -n \
-    --arg created_at "$(date --utc +'%Y-%m-%dT%H:%M:%SZ')" \
+    --arg created_at "$("$DATE" -u +'%Y-%m-%dT%H:%M:%SZ')" \
     --arg upstream_tag "$EXPECTED_UPSTREAM_TAG" \
     --arg upstream_commit "$EXPECTED_UPSTREAM_COMMIT" \
     --arg integration_tag "$integration_tag" \
@@ -463,7 +470,7 @@ if ! "${git_push[@]}" -C "$staging" push \
   cat "$push_log" >&2 || true
   fail 'the single atomic three-ref publication push was rejected; durable intent is retained'
 fi
-chmod 600 -- "$push_log"
+chmod 600 "$push_log"
 "$SYNC" -f "$push_log"
 
 remote_matches_json "$desired" \

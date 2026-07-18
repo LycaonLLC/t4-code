@@ -394,7 +394,7 @@ function DrawerBody({
     <section
       aria-label="Terminal drawer"
       className={cn(
-        "relative flex shrink-0 flex-col border-border border-t bg-background",
+        "relative flex shrink-0 flex-col border-border border-t bg-background pb-(--app-safe-area-bottom)",
         closing ? "drawer-exit" : "drawer-enter",
       )}
       onAnimationEnd={(event) => {

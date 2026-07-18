@@ -58,7 +58,7 @@ import {
 } from "../src/platform/desktop-runtime.ts";
 import { createMemoryPersistence } from "../src/state/persistence.ts";
 import { createWorkspaceStore, selectSessionView } from "../src/state/workspace-store.ts";
-import { deferred, FakeShell, makeTarget, makeWelcome } from "./fake-shell.ts";
+import { bindProjectionInventoryResults, deferred, FakeShell, makeTarget, makeWelcome } from "./fake-shell.ts";
 
 const V = "omp-app/1" as const;
 const HOST = "host-a";
@@ -268,7 +268,11 @@ async function startedController(
       truncated: false,
     } satisfies SessionsFrame,
   });
+  bindProjectionInventoryResults(shell, controller);
   return { shell, controller };
+}
+async function settle(rounds = 12): Promise<void> {
+  for (let index = 0; index < rounds; index += 1) await Promise.resolve();
 }
 
 interface LiveSetup extends ControllerSetup {
@@ -2610,18 +2614,12 @@ describe("session lifecycle", () => {
     const cache = new Map<string, SessionRuntime>();
     shell.commandBehavior = { kind: "reject" };
     obtainLiveRuntime(controller, sessionViewId(HOST, SESSION), cache);
-    await Promise.resolve();
-    await Promise.resolve();
+    await settle();
     expect(shell.commandCount("session.attach")).toBe(1);
 
     shell.commandBehavior = { kind: "accept" };
     shell.emitState({ targetId: "local", state: "connected" });
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
-    shell.emitState({ targetId: "local", state: "connected" });
-    await Promise.resolve();
+    await settle();
     expect(shell.commandCount("session.attach")).toBe(2);
   });
 

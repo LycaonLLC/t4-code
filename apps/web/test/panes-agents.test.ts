@@ -74,6 +74,35 @@ describe("agent tree order", () => {
     const state = buildMap(node({ id: "lost", parentId: "never-seen" }));
     expect(buildAgentTreeRows(state)).toEqual([{ id: "lost", depth: 0 }]);
   });
+
+  it("terminates and emits every node for self and multi-node cycles", () => {
+    const state = buildMap(
+      node({ id: "self", parentId: "self" }),
+      node({ id: "cycle-a", parentId: "cycle-b" }),
+      node({ id: "cycle-b", parentId: "cycle-a" }),
+      node({ id: "descendant", parentId: "cycle-a" }),
+    );
+    expect(buildAgentTreeRows(state)).toEqual([
+      { id: "self", depth: 0 },
+      { id: "cycle-a", depth: 0 },
+      { id: "cycle-b", depth: 1 },
+      { id: "descendant", depth: 1 },
+    ]);
+  });
+
+  it("completes a large deep hierarchy without recursive stack overflow", () => {
+    const agents: Record<string, AgentNode> = {};
+    const order: string[] = [];
+    for (let index = 0; index < 10_000; index += 1) {
+      const id = `agent-${index}`;
+      agents[id] = node({ id, parentId: index === 0 ? null : `agent-${index - 1}` });
+      order.push(id);
+    }
+    const rows = buildAgentTreeRows({ agents, order });
+    expect(rows).toHaveLength(10_000);
+    expect(rows[0]).toEqual({ id: "agent-0", depth: 0 });
+    expect(rows[9_999]).toEqual({ id: "agent-9999", depth: 9_999 });
+  }, 10_000);
 });
 
 describe("agent lifecycle", () => {

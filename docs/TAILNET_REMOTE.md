@@ -166,6 +166,22 @@ prove that the caller is the signed T4 APK. Tailscale membership and ACLs remain
 the access boundary, so the gateway must stay behind Tailscale Serve with
 Funnel disabled.
 
+## Named profile routes
+
+The gateway keeps `/v1/ws` as the default route. A deployment may provide a
+static `T4_PROFILE_ROUTES` JSON array with bounded ASCII `id` values, exact
+absolute `appSocket` paths, and optional validated `serviceUnit` names. A named
+profile is reached at `/v1/profiles/<profileId>/ws`; the route table is not
+discovered from the filesystem and unknown IDs are rejected before socket or
+process work.
+
+Profile starts are disabled unless `T4_ENABLE_PROFILE_STARTS=1`. When enabled,
+only an allowlisted route with a service unit may request a fixed supervisor
+start; the gateway never accepts shell text and never stops or restarts a
+profile. Starts are coalesced and rate-limited while the gateway waits a
+bounded time for the existing private socket checks to pass. The appserver
+still performs its normal device authentication after bridging.
+
 ## Operate and update
 
 The lifecycle commands are the same on Linux and macOS:

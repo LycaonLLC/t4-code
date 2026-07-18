@@ -1,29 +1,33 @@
 import { deviceToken as validateDeviceToken, type AndroidUpdateState } from "@t4-code/protocol";
+import {
+  DEFAULT_MOBILE_PROFILE_ID,
+  MOBILE_BACKEND_STORAGE_KEY,
+  parseTailnetBackend,
+  type StoredMobileBackend,
+  type StoredMobileBackendDirectory,
+} from "./native-mobile-backend.ts";
+
+export {
+  MOBILE_BACKEND_STORAGE_KEY,
+  normalizeMobileProfileId,
+  parseTailnetBackend,
+  type StoredMobileBackend,
+  type StoredMobileBackendDirectory,
+} from "./native-mobile-backend.ts";
 
 const LEGACY_MOBILE_BACKEND_STORAGE_KEY = "t4-code:mobile-backend:v1";
-export const MOBILE_BACKEND_STORAGE_KEY = "t4-code:mobile-backends:v2";
+const LEGACY_MOBILE_BACKENDS_STORAGE_KEY = "t4-code:mobile-backends:v2";
+const DEFAULT_PROFILE_ID = DEFAULT_MOBILE_PROFILE_ID;
 
-const MAX_URL_LENGTH = 2048;
-const MAX_LABEL_LENGTH = 128;
 const MAX_SAVED_MOBILE_BACKENDS = 16;
+const SECURE_STORAGE_BRIDGE_TIMEOUT_MS = 1_500;
 
 export type NativeMobilePlatform = "android" | "ios";
 
-export interface StoredMobileBackend {
-  readonly version: 1;
-  readonly origin: string;
-  readonly wsUrl: string;
-  readonly label: string;
-}
-
-export interface StoredMobileBackendDirectory {
-  readonly version: 2;
-  readonly activeOrigin: string;
-  readonly backends: readonly StoredMobileBackend[];
-}
-
 export interface NativeMobileBackendConfig {
+  readonly endpointKey: string;
   readonly origin: string;
+  readonly profileId: string;
   readonly wsUrl: string;
   readonly label: string;
   readonly deviceId?: string;
@@ -45,6 +49,81 @@ interface T4SecureStoragePlugin {
   clearCredentials(options: { readonly hostKey: string }): Promise<void>;
 }
 
+interface NativeMobileCredentials {
+  readonly deviceId: string;
+  readonly deviceToken: string;
+}
+
+export interface T4SpeechPlugin {
+  speakText(options: { readonly text: string }): Promise<{ readonly accepted: boolean; readonly error?: string }>;
+  stopSpeaking(): Promise<{ readonly accepted: boolean; readonly error?: string }>;
+}
+
+class SecureStorageBridgeTimeoutError extends Error {
+  constructor() {
+    super("Android secure storage did not answer.");
+    this.name = "SecureStorageBridgeTimeoutError";
+  }
+}
+
+async function withSecureStorageTimeout<T>(operation: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new SecureStorageBridgeTimeoutError()), SECURE_STORAGE_BRIDGE_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function readSecureCredentials(
+  plugin: T4SecureStoragePlugin,
+  options: { readonly hostKey: string; readonly migrateLegacy: boolean },
+): ReturnType<T4SecureStoragePlugin["getCredentials"]> {
+  try {
+    return await withSecureStorageTimeout(plugin.getCredentials(options));
+  } catch (error) {
+    if (!(error instanceof SecureStorageBridgeTimeoutError)) throw error;
+    return await withSecureStorageTimeout(plugin.getCredentials(options));
+  }
+}
+
+function validatedSecureCredentials(credentials: NativeMobileCredentials): NativeMobileCredentials {
+  if (credentials.deviceId.length === 0 || credentials.deviceId.length > 256) {
+    throw new Error("invalid device id");
+  }
+  return {
+    deviceId: credentials.deviceId,
+    deviceToken: validateDeviceToken(credentials.deviceToken, "deviceToken"),
+  };
+}
+
+async function readBackendSecureCredentials(
+  plugin: T4SecureStoragePlugin,
+  backend: StoredMobileBackend,
+  migrateLegacy: boolean,
+): Promise<NativeMobileCredentials | null> {
+  const current = await readSecureCredentials(plugin, {
+    hostKey: backend.endpointKey,
+    migrateLegacy: false,
+  });
+  if (current.credentials !== null) return validatedSecureCredentials(current.credentials);
+  if (backend.profileId !== DEFAULT_PROFILE_ID) return null;
+
+  const legacy = await readSecureCredentials(plugin, {
+    hostKey: backend.origin,
+    migrateLegacy,
+  });
+  if (legacy.credentials === null) return null;
+  const credentials = validatedSecureCredentials(legacy.credentials);
+  await withSecureStorageTimeout(plugin.setCredentials({ hostKey: backend.endpointKey, ...credentials }));
+  await withSecureStorageTimeout(plugin.clearCredentials({ hostKey: backend.origin }));
+  return credentials;
+}
 export type NativeUpdateState = AndroidUpdateState;
 
 export interface T4UpdatePlugin {
@@ -62,6 +141,7 @@ interface CapacitorBridge {
   readonly Plugins?: {
     readonly T4SecureStorage?: T4SecureStoragePlugin;
     readonly T4Update?: T4UpdatePlugin;
+    readonly T4Speech?: T4SpeechPlugin;
   };
   readonly getPlatform?: () => string;
   readonly isNativePlatform?: () => boolean;
@@ -96,48 +176,6 @@ export function nativeUpdatePlugin(): T4UpdatePlugin | null {
   return window.Capacitor?.Plugins?.T4Update ?? null;
 }
 
-function requiredLabel(value: unknown): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > MAX_LABEL_LENGTH) {
-    throw new Error("The saved host label is invalid.");
-  }
-  return value;
-}
-
-export function parseTailnetBackend(value: string): StoredMobileBackend {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) throw new Error("Enter the HTTPS address shown by T4 Code on your computer.");
-  if (trimmed.length > MAX_URL_LENGTH) throw new Error("That address is too long.");
-
-  const candidate = trimmed.includes("://") ? trimmed : `https://${trimmed}`;
-  let parsed: URL;
-  try {
-    parsed = new URL(candidate);
-  } catch {
-    throw new Error("Enter a valid HTTPS Tailnet address.");
-  }
-  if (parsed.protocol !== "https:") throw new Error("Use the HTTPS Tailnet address, not HTTP.");
-  if (parsed.username !== "" || parsed.password !== "") throw new Error("The address cannot contain credentials.");
-  if (parsed.pathname !== "/" || parsed.search !== "" || parsed.hash !== "") {
-    throw new Error("Enter the host address only, without a path, query, or fragment.");
-  }
-  const hostname = parsed.hostname.toLowerCase();
-  if (hostname === "ts.net" || !hostname.endsWith(".ts.net")) {
-    throw new Error("Use the full Tailscale hostname ending in .ts.net.");
-  }
-
-  const origin = parsed.origin;
-  const websocket = new URL(origin);
-  websocket.protocol = "wss:";
-  websocket.pathname = "/v1/ws";
-  const deviceName = hostname.slice(0, hostname.indexOf("."));
-  return {
-    version: 1,
-    origin,
-    wsUrl: websocket.toString(),
-    label: requiredLabel(`T4 on ${deviceName}`),
-  };
-}
-
 type ReadableMobileStorage = Pick<Storage, "getItem">;
 type MutableMobileStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -154,24 +192,39 @@ function storedMobileBackend(value: unknown): StoredMobileBackend {
     throw new Error("The saved host list is damaged. Add the host again.");
   }
   const data = value as Record<string, unknown>;
-  if (data.version !== 1 || typeof data.origin !== "string") {
+  if (data.version !== 1 && data.version !== 3) {
     throw new Error("The saved host list is from an unsupported app version.");
   }
-  const parsed = parseTailnetBackend(data.origin);
-  if (data.wsUrl !== parsed.wsUrl || data.label !== parsed.label) {
+  if (typeof data.origin !== "string") throw new Error("The saved host list is damaged. Add the host again.");
+  const parsed = parseTailnetBackend(
+    data.origin,
+    data.version === 3 && typeof data.profileId === "string" ? data.profileId : undefined,
+  );
+  if (
+    data.wsUrl !== parsed.wsUrl ||
+    data.label !== parsed.label ||
+    (data.version === 3 && data.endpointKey !== parsed.endpointKey)
+  ) {
     throw new Error("The saved host list is inconsistent. Add the host again.");
   }
   return parsed;
 }
 
-function storedMobileBackendDirectory(value: unknown): StoredMobileBackendDirectory {
+function storedMobileBackendDirectory(value: unknown, version: 2 | 3): StoredMobileBackendDirectory {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("The saved host list is damaged. Add the host again.");
   }
   const data = value as Record<string, unknown>;
+  const activeEndpointKey =
+    version === 3
+      ? data.activeEndpointKey
+      : typeof data.activeOrigin === "string"
+        ? parseTailnetBackend(data.activeOrigin, DEFAULT_PROFILE_ID).endpointKey
+        : undefined;
   if (
-    data.version !== 2 ||
-    typeof data.activeOrigin !== "string" ||
+    (version === 3 && data.version !== 3) ||
+    (version === 2 && data.version !== 2) ||
+    typeof activeEndpointKey !== "string" ||
     !Array.isArray(data.backends) ||
     data.backends.length === 0 ||
     data.backends.length > MAX_SAVED_MOBILE_BACKENDS
@@ -179,31 +232,31 @@ function storedMobileBackendDirectory(value: unknown): StoredMobileBackendDirect
     throw new Error("The saved host list is from an unsupported app version.");
   }
   const backends = data.backends.map(storedMobileBackend);
-  const origins = new Set(backends.map((backend) => backend.origin));
-  if (origins.size !== backends.length || !origins.has(data.activeOrigin)) {
+  const keys = new Set(backends.map((backend) => backend.endpointKey));
+  if (keys.size !== backends.length || !keys.has(activeEndpointKey)) {
     throw new Error("The saved host list is inconsistent. Add the host again.");
   }
-  return { version: 2, activeOrigin: data.activeOrigin, backends };
+  return { version: 3, activeEndpointKey, backends };
 }
 
 export function readStoredMobileBackendDirectory(
   storage: ReadableMobileStorage = window.localStorage,
 ): StoredMobileBackendDirectory | null {
-  const raw = storage.getItem(MOBILE_BACKEND_STORAGE_KEY);
-  if (raw !== null) return storedMobileBackendDirectory(parsedStorageValue(raw));
+  const current = storage.getItem(MOBILE_BACKEND_STORAGE_KEY);
+  if (current !== null) return storedMobileBackendDirectory(parsedStorageValue(current), 3);
+  const legacyDirectory = storage.getItem(LEGACY_MOBILE_BACKENDS_STORAGE_KEY);
+  if (legacyDirectory !== null) return storedMobileBackendDirectory(parsedStorageValue(legacyDirectory), 2);
   const legacy = storage.getItem(LEGACY_MOBILE_BACKEND_STORAGE_KEY);
   if (legacy === null) return null;
   const backend = storedMobileBackend(parsedStorageValue(legacy));
-  return { version: 2, activeOrigin: backend.origin, backends: [backend] };
+  return { version: 3, activeEndpointKey: backend.endpointKey, backends: [backend] };
 }
 
 export function readStoredMobileBackend(
   storage: ReadableMobileStorage = window.localStorage,
 ): StoredMobileBackend | null {
   const directory = readStoredMobileBackendDirectory(storage);
-  return (
-    directory?.backends.find((backend) => backend.origin === directory.activeOrigin) ?? null
-  );
+  return directory?.backends.find((backend) => backend.endpointKey === directory.activeEndpointKey) ?? null;
 }
 
 function writeStoredMobileBackendDirectory(
@@ -211,6 +264,7 @@ function writeStoredMobileBackendDirectory(
   storage: MutableMobileStorage,
 ): void {
   storage.setItem(MOBILE_BACKEND_STORAGE_KEY, JSON.stringify(directory));
+  storage.removeItem(LEGACY_MOBILE_BACKENDS_STORAGE_KEY);
   storage.removeItem(LEGACY_MOBILE_BACKEND_STORAGE_KEY);
 }
 
@@ -220,16 +274,15 @@ export function writeStoredMobileBackend(
 ): void {
   const canonical = storedMobileBackend(backend);
   const current = readStoredMobileBackendDirectory(storage);
-  const existing = current?.backends.filter((item) => item.origin !== canonical.origin) ?? [];
-  if (existing.length >= MAX_SAVED_MOBILE_BACKENDS) {
+  const existing = current?.backends.filter((item) => item.endpointKey !== canonical.endpointKey) ?? [];
+  if (current === null && existing.length >= MAX_SAVED_MOBILE_BACKENDS) {
     throw new Error(`This phone can save up to ${MAX_SAVED_MOBILE_BACKENDS} T4 hosts.`);
   }
+  if (existing.length >= MAX_SAVED_MOBILE_BACKENDS) {
+    throw new Error(`This phone can save up to ${MAX_SAVED_MOBILE_BACKENDS} T4 endpoints.`);
+  }
   writeStoredMobileBackendDirectory(
-    {
-      version: 2,
-      activeOrigin: canonical.origin,
-      backends: [...existing, canonical],
-    },
+    { version: 3, activeEndpointKey: canonical.endpointKey, backends: [...existing, canonical] },
     storage,
   );
 }
@@ -241,20 +294,28 @@ export function replaceStoredMobileBackend(
 ): void {
   const canonical = storedMobileBackend(backend);
   writeStoredMobileBackendDirectory(
-    { version: 2, activeOrigin: canonical.origin, backends: [canonical] },
+    { version: 3, activeEndpointKey: canonical.endpointKey, backends: [canonical] },
     storage,
   );
 }
 
+function findEndpoint(directory: StoredMobileBackendDirectory, keyOrOrigin: string): StoredMobileBackend | undefined {
+  return (
+    directory.backends.find((backend) => backend.endpointKey === keyOrOrigin) ??
+    directory.backends.find(
+      (backend) => backend.origin === keyOrOrigin && backend.profileId === DEFAULT_PROFILE_ID,
+    )
+  );
+}
+
 export function selectStoredMobileBackend(
-  origin: string,
+  endpointKey: string,
   storage: MutableMobileStorage = window.localStorage,
 ): void {
   const directory = readStoredMobileBackendDirectory(storage);
-  if (directory === null || !directory.backends.some((backend) => backend.origin === origin)) {
-    throw new Error("That saved host is no longer available.");
-  }
-  writeStoredMobileBackendDirectory({ ...directory, activeOrigin: origin }, storage);
+  const backend = directory === null ? undefined : findEndpoint(directory, endpointKey);
+  if (directory === null || backend === undefined) throw new Error("That saved host is no longer available.");
+  writeStoredMobileBackendDirectory({ ...directory, activeEndpointKey: backend.endpointKey }, storage);
 }
 
 export function currentNativeMobileBackend(): NativeMobileBackendConfig | null {
@@ -271,10 +332,12 @@ export async function prepareNativeMobileBackend(): Promise<MobileBootResult> {
   try {
     shouldMigrateLegacyCredentials =
       window.localStorage.getItem(MOBILE_BACKEND_STORAGE_KEY) === null &&
-      window.localStorage.getItem(LEGACY_MOBILE_BACKEND_STORAGE_KEY) !== null;
+      (window.localStorage.getItem(LEGACY_MOBILE_BACKENDS_STORAGE_KEY) !== null ||
+        window.localStorage.getItem(LEGACY_MOBILE_BACKEND_STORAGE_KEY) !== null);
     backend = readStoredMobileBackend();
     if (backend !== null && window.localStorage.getItem(MOBILE_BACKEND_STORAGE_KEY) === null) {
-      writeStoredMobileBackend(backend);
+      const directory = readStoredMobileBackendDirectory();
+      if (directory !== null) writeStoredMobileBackendDirectory(directory, window.localStorage);
     }
   } catch (error) {
     return {
@@ -289,26 +352,29 @@ export async function prepareNativeMobileBackend(): Promise<MobileBootResult> {
     return { kind: "setup", message: "The Android security bridge did not start. Close T4 Code and open it again." };
   }
 
-  let credentials: { readonly deviceId: string; readonly deviceToken: string } | null = null;
+  let credentials: NativeMobileCredentials | null = null;
   try {
-    const result = await plugin.getCredentials({
-      hostKey: backend.origin,
-      migrateLegacy: shouldMigrateLegacyCredentials,
-    });
-    if (result.credentials !== null) {
-      const deviceId = result.credentials.deviceId;
-      if (deviceId.length === 0 || deviceId.length > 256) throw new Error("invalid device id");
-      credentials = {
-        deviceId,
-        deviceToken: validateDeviceToken(result.credentials.deviceToken, "deviceToken"),
+    credentials = await readBackendSecureCredentials(
+      plugin,
+      backend,
+      shouldMigrateLegacyCredentials,
+    );
+  } catch (error) {
+    if (error instanceof SecureStorageBridgeTimeoutError) {
+      return {
+        kind: "setup",
+        message: "Android secure storage did not answer. Close T4 Code and open it again.",
       };
     }
-  } catch {
-    await plugin.clearCredentials({ hostKey: backend.origin }).catch(() => undefined);
+    await withSecureStorageTimeout(
+      plugin.clearCredentials({ hostKey: backend.endpointKey }),
+    ).catch(() => undefined);
   }
 
   window.__t4MobileBackend = {
+    endpointKey: backend.endpointKey,
     origin: backend.origin,
+    profileId: backend.profileId,
     wsUrl: backend.wsUrl,
     label: backend.label,
     ...(credentials === null ? {} : credentials),
@@ -316,46 +382,64 @@ export async function prepareNativeMobileBackend(): Promise<MobileBootResult> {
   return { kind: "ready", backend };
 }
 
-export async function persistNativeMobileCredentials(credentials: {
-  readonly deviceId: string;
-  readonly deviceToken: string;
-}): Promise<void> {
+export function assertCurrentNativeMobileEndpoint(endpointKey: string): void {
+  const configured = currentNativeMobileBackend();
+  if (configured?.endpointKey !== endpointKey) {
+    throw new Error("The active mobile host changed while pairing.");
+  }
+  const stored = readStoredMobileBackend();
+  if (stored?.endpointKey !== endpointKey) {
+    throw new Error("The active mobile host changed while pairing.");
+  }
+}
+
+export async function persistNativeMobileCredentials(
+  credentials: {
+    readonly deviceId: string;
+    readonly deviceToken: string;
+  },
+  endpointKey?: string,
+): Promise<void> {
   if (nativeMobilePlatform() === null) return;
+  if (endpointKey === undefined) throw new Error("The active mobile host is unavailable");
   const plugin = secureStorage();
   if (plugin === null) throw new Error("Android secure storage is unavailable");
-  const backend = readStoredMobileBackend();
-  if (backend === null) throw new Error("The active mobile host is unavailable");
+  assertCurrentNativeMobileEndpoint(endpointKey);
   await plugin.setCredentials({
-    hostKey: backend.origin,
+    hostKey: endpointKey,
     deviceId: credentials.deviceId,
     deviceToken: validateDeviceToken(credentials.deviceToken, "deviceToken"),
   });
 }
 
 export async function removeNativeMobileBackend(
-  origin: string,
+  endpointKey: string,
   storage: MutableMobileStorage = window.localStorage,
 ): Promise<void> {
   const directory = readStoredMobileBackendDirectory(storage);
-  if (directory === null || !directory.backends.some((backend) => backend.origin === origin)) {
+  const backend = directory === null ? undefined : findEndpoint(directory, endpointKey);
+  if (directory === null || backend === undefined) {
     throw new Error("That saved host is no longer available.");
   }
   const plugin = secureStorage();
   if (plugin === null) throw new Error("Android secure storage is unavailable");
 
-  // Remove non-secret routing metadata before touching the irreversible
-  // credential. If secure deletion fails, restore the complete directory so a
-  // failed removal never strands the selected host without an address.
-  const backends = directory.backends.filter((backend) => backend.origin !== origin);
+  // Remove routing metadata before irreversible credential deletion. Restore
+  // the exact prior directory if secure deletion fails.
+  const backends = directory.backends.filter((item) => item.endpointKey !== backend.endpointKey);
   const next = backends[0];
   if (next === undefined) {
     storage.removeItem(MOBILE_BACKEND_STORAGE_KEY);
+    storage.removeItem(LEGACY_MOBILE_BACKENDS_STORAGE_KEY);
     storage.removeItem(LEGACY_MOBILE_BACKEND_STORAGE_KEY);
   } else {
     writeStoredMobileBackendDirectory(
       {
-        version: 2,
-        activeOrigin: directory.activeOrigin === origin ? next.origin : directory.activeOrigin,
+        version: 3,
+        activeEndpointKey:
+          directory.activeEndpointKey === backend.endpointKey
+            ? next.endpointKey
+            : directory.activeEndpointKey,
         backends,
       },
       storage,
@@ -363,7 +447,10 @@ export async function removeNativeMobileBackend(
   }
 
   try {
-    await plugin.clearCredentials({ hostKey: origin });
+    await plugin.clearCredentials({ hostKey: backend.endpointKey });
+    if (backend.profileId === DEFAULT_PROFILE_ID) {
+      await plugin.clearCredentials({ hostKey: backend.origin });
+    }
   } catch (error) {
     try {
       writeStoredMobileBackendDirectory(directory, storage);
@@ -374,7 +461,9 @@ export async function removeNativeMobileBackend(
     }
     throw error;
   }
-  if (window.__t4MobileBackend?.origin === origin) delete window.__t4MobileBackend;
+  if (window.__t4MobileBackend?.endpointKey === backend.endpointKey) {
+    delete window.__t4MobileBackend;
+  }
 }
 
 export async function probeMobileBackend(

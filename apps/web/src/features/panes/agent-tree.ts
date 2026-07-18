@@ -26,6 +26,31 @@ export const EMPTY_AGENT_MAP: AgentMapState = { agents: {}, order: [] };
  * parent is unknown — surface at the root rather than vanishing.
  */
 export function buildAgentTreeRows(state: AgentMapState): AgentTreeRow[] {
+  const childrenByParent = buildChildrenByParent(state);
+  const rows: AgentTreeRow[] = [];
+  const visited = new Set<string>();
+  const visit = (startId: string, depth: number) => {
+    const stack: Array<{ id: string; depth: number }> = [{ id: startId, depth }];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (current === undefined || visited.has(current.id)) continue;
+      visited.add(current.id);
+      rows.push({ id: current.id, depth: current.depth });
+      const children = childrenByParent.get(current.id) ?? [];
+      for (let index = children.length - 1; index >= 0; index -= 1) {
+        const childId = children[index];
+        if (childId !== undefined) stack.push({ id: childId, depth: current.depth + 1 });
+      }
+    }
+  };
+  for (const id of childrenByParent.get(null) ?? []) visit(id, 0);
+  for (const id of state.order) {
+    if (state.agents[id] !== undefined && !visited.has(id)) visit(id, 0);
+  }
+  return rows;
+}
+
+function buildChildrenByParent(state: AgentMapState): Map<string | null, string[]> {
   const childrenByParent = new Map<string | null, string[]>();
   for (const id of state.order) {
     const node = state.agents[id];
@@ -36,15 +61,22 @@ export function buildAgentTreeRows(state: AgentMapState): AgentTreeRow[] {
     if (siblings === undefined) childrenByParent.set(parentKey, [id]);
     else siblings.push(id);
   }
-  const rows: AgentTreeRow[] = [];
-  const visit = (parentKey: string | null, depth: number) => {
-    for (const id of childrenByParent.get(parentKey) ?? []) {
-      rows.push({ id, depth });
-      visit(id, depth + 1);
-    }
-  };
-  visit(null, 0);
-  return rows;
+  return childrenByParent;
+}
+
+function collectDescendants(state: AgentMapState, rootId: string): string[] {
+  const childrenByParent = buildChildrenByParent(state);
+  const result: string[] = [];
+  const visited = new Set<string>([rootId]);
+  const queue = [...(childrenByParent.get(rootId) ?? [])];
+  for (let index = 0; index < queue.length; index += 1) {
+    const id = queue[index];
+    if (id === undefined || visited.has(id)) continue;
+    visited.add(id);
+    result.push(id);
+    queue.push(...(childrenByParent.get(id) ?? []));
+  }
+  return result;
 }
 
 /** Insert or update one agent; unknown ids append to arrival order. */
@@ -105,21 +137,6 @@ export function removeAgentSubtree(state: AgentMapState, id: string): AgentMapSt
   return { agents, order: state.order.filter((agentId) => !doomed.has(agentId)) };
 }
 
-function collectDescendants(state: AgentMapState, rootId: string): string[] {
-  const result: string[] = [];
-  const queue = [rootId];
-  while (queue.length > 0) {
-    const parentId = queue.shift();
-    for (const id of state.order) {
-      const node = state.agents[id];
-      if (node !== undefined && node.parentId === parentId) {
-        result.push(id);
-        queue.push(id);
-      }
-    }
-  }
-  return result;
-}
 
 /** Wall-clock elapsed label for a live agent row ("3m 12s", "1h 4m"). */
 export function formatElapsed(startedAt: string | null, nowMs: number): string {

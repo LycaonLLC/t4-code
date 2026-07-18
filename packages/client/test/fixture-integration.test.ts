@@ -69,18 +69,20 @@ describe("OmpClient and FixtureWebSocketServer projection boundary", () => {
       expect(projection.snapshot.sessions.has(key)).toBe(true);
       expect(projection.snapshot.sessions.get(key)!.entries).toHaveLength(1);
       const { promise: streamed, resolve: resolveStreamed } = Promise.withResolvers<void>();
+      const { promise: settled, resolve: resolveSettled } = Promise.withResolvers<void>();
       const disposeStream = projection.subscribe((snapshot) => {
-        const updates = snapshot.sessions
-          .get(key)
-          ?.events.filter((event) => event.event.type === "message.update").length;
+        const session = snapshot.sessions.get(key);
+        const updates = session?.events.filter((event) => event.event.type === "message.update").length;
         if ((updates ?? 0) >= 2) resolveStreamed();
+        if (
+          session?.entries.length === 2 &&
+          session.events.some((event) => event.event.type === "agent.end")
+        ) resolveSettled();
       });
       const prompt = client.command({ hostId: "host-stream", sessionId: "session-stream", command: "session.prompt", args: { message: "hello" } });
-      await yieldLoop();
       await prompt;
       server.advanceBy(40);
-      await yieldLoop();
-      await streamed;
+      await Promise.all([streamed, settled]);
       disposeStream();
       // The subscription above proves both live events crossed the real
       // WebSocket boundary. Once the matching durable entry arrives, the

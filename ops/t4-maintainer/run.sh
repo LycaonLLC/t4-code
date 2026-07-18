@@ -40,7 +40,9 @@ else
 fi
 LINUX_UPDATE_INSPECTOR=${T4_MAINTAINER_LINUX_UPDATE_INSPECTOR:-$DEFAULT_LINUX_UPDATE_INSPECTOR}
 REALPATH=${T4_MAINTAINER_REALPATH:-realpath}
-SYNC=${T4_MAINTAINER_SYNC:-sync}
+SYNC=${T4_MAINTAINER_SYNC:-/bin/sync}
+DATE=${T4_MAINTAINER_DATE:-/bin/date}
+PROC_ROOT=${T4_MAINTAINER_TEST_PROC_ROOT:-/proc}
 LOCAL_DEPLOY=${T4_MAINTAINER_LOCAL_DEPLOY:-"$SCRIPT_DIR/deploy-local.sh"}
 ATOMIC_PUBLISH=${T4_MAINTAINER_ATOMIC_PUBLISH:-"$SCRIPT_DIR/publish-omp-atomic.sh"}
 VERIFY_ATTEMPTS=${T4_MAINTAINER_VERIFY_ATTEMPTS:-91}
@@ -71,7 +73,7 @@ TAILNET_REACHABILITY_REPORTED=false
 RESUME_PUBLICATION_JSON=null
 
 timestamp() {
-  date --utc +'%Y-%m-%dT%H:%M:%SZ'
+  "$DATE" -u +'%Y-%m-%dT%H:%M:%SZ'
 }
 
 log() {
@@ -85,6 +87,13 @@ fail() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "required command is unavailable: $1"
+}
+
+require_date_command() {
+  if ! command -v "$DATE" >/dev/null 2>&1; then
+    printf 'ERROR: required command is unavailable: %s\n' "$DATE" >&2
+    exit 1
+  fi
 }
 
 require_positive_integer() {
@@ -109,7 +118,7 @@ validate_fork_sync_settings() {
 
 prepare_directories() {
   mkdir -p -- "$STATE_DIR" "$RUNS_DIR" "$WORK_DIR" "$LOGS_DIR" "$ATOMIC_PUBLICATION_STATE_DIR"
-  chmod 700 -- "$MAINTAINER_ROOT" "$STATE_DIR" "$RUNS_DIR" "$WORK_DIR" "$LOGS_DIR" \
+  chmod 700 "$MAINTAINER_ROOT" "$STATE_DIR" "$RUNS_DIR" "$WORK_DIR" "$LOGS_DIR" \
     "$ATOMIC_PUBLICATION_STATE_DIR"
 }
 
@@ -124,7 +133,7 @@ acquire_lock() {
 durable_replace() {
   local temporary=$1 target=$2 target_dir
   target_dir=$(dirname -- "$target") || return 1
-  chmod 600 -- "$temporary" || return 1
+  chmod 600 "$temporary" || return 1
   "$SYNC" -f "$temporary" || return 1
   mv -f -- "$temporary" "$target" || return 1
   "$SYNC" -f "$target_dir" || return 1
@@ -689,8 +698,8 @@ local_state_matches_record() {
   [[ $($SHA256SUM "$OMP_TARGET" | awk '{print $1}') == "$omp_sha" ]] || return 1
   $SYSTEMCTL --user is-active --quiet "$omp_service" || return 1
   app_pid=$($SYSTEMCTL --user show "$omp_service" --property MainPID --value) || return 1
-  [[ $app_pid =~ ^[1-9][0-9]*$ && -r /proc/$app_pid/exe ]] || return 1
-  running_sha=$($SHA256SUM "/proc/$app_pid/exe" | awk '{print $1}')
+  [[ $app_pid =~ ^[1-9][0-9]*$ && -r "$PROC_ROOT/$app_pid/exe" ]] || return 1
+  running_sha=$($SHA256SUM "$PROC_ROOT/$app_pid/exe" | awk '{print $1}')
   [[ $running_sha == "$omp_sha" ]] || return 1
   omp_status=$("$OMP_TARGET" appserver status --json 2>/dev/null) || return 1
   printf '%s' "$omp_status" | $JQ -e --arg host_id "$recorded_host_id" '
@@ -870,7 +879,7 @@ download_exact_release_asset() {
       --max-filesize "$expected_size" "$url" -o "$destination"
   ) || return 1
   [[ -f $destination && ! -L $destination ]] || return 1
-  actual_size=$(wc -c <"$destination") || return 1
+  actual_size=$(wc -c <"$destination" | awk '{print $1}') || return 1
   [[ $actual_size == "$expected_size" ]]
 }
 
@@ -1528,11 +1537,11 @@ requeue_processed_publication() {
   processed_metadata_matches "$target" || return 0
   local_state_matches_processed && return 0
 
-  repair_id="repair-$(date --utc +%Y%m%dT%H%M%SZ)-$$"
+  repair_id="repair-$("$DATE" -u +%Y%m%dT%H%M%SZ)-$$"
   run_dir="$RUNS_DIR/$repair_id"
   result_file="$run_dir/result.json"
   mkdir -p -- "$run_dir"
-  chmod 700 -- "$run_dir"
+  chmod 700 "$run_dir"
   $JQ 'del(.processedAt, .runId, .publicVerification, .localDeployment)' "$PROCESSED_FILE" >"$result_file"
   verify_result "$result_file" "$target" true
   record_pending "$result_file" "$repair_id"
@@ -1758,12 +1767,12 @@ deploy_pending_publication() {
     clear_local_applied
   fi
 
-  retry_id="local-$(date --utc +%Y%m%dT%H%M%SZ)-$$"
+  retry_id="local-$("$DATE" -u +%Y%m%dT%H%M%SZ)-$$"
   run_dir="$RUNS_DIR/$retry_id"
   result_file="$run_dir/result.json"
   receipt_file="$run_dir/local-deployment.json"
   mkdir -p -- "$run_dir/local-work"
-  chmod 700 -- "$run_dir" "$run_dir/local-work"
+  chmod 700 "$run_dir" "$run_dir/local-work"
   $JQ '.' "$staged_result" >"$result_file"
   rm -f -- "$staged_result"
   log "Deploying publicly verified T4 $($JQ -r '.t4.tag' "$result_file") to this workstation."
@@ -1803,11 +1812,11 @@ adopt_publication() {
     return 0
   fi
 
-  run_id="adopt-${t4_tag}-$(date --utc +%Y%m%dT%H%M%SZ)"
+  run_id="adopt-${t4_tag}-$("$DATE" -u +%Y%m%dT%H%M%SZ)"
   run_dir="$RUNS_DIR/$run_id"
   result_file="$run_dir/result.json"
   mkdir -p -- "$run_dir"
-  chmod 700 -- "$run_dir"
+  chmod 700 "$run_dir"
   $JQ -n \
     --argjson upstream "$target" \
     --arg integration_tag "$($JQ -r '.verifiedRuntime.sourceTag' <<<"$matrix")" \
@@ -1935,13 +1944,13 @@ run_live_maintenance() {
     return 0
   fi
 
-  run_id="${upstream_tag#v}-$(date --utc +%Y%m%dT%H%M%SZ)"
+  run_id="${upstream_tag#v}-$("$DATE" -u +%Y%m%dT%H%M%SZ)"
   run_dir="$RUNS_DIR/$run_id"
   workspace="$run_dir/workspace"
   context_file="$run_dir/context.json"
   result_file="$run_dir/result.json"
   mkdir -p -- "$workspace"
-  chmod 700 -- "$run_dir" "$workspace"
+  chmod 700 "$run_dir" "$workspace"
   $JQ -n \
     --arg detected_at "$(timestamp)" \
     --argjson upstream "$target" \
@@ -2023,9 +2032,29 @@ run_live_maintenance() {
     log "Live publication and local deployment are complete for $upstream_tag; processed state now points to $($JQ -r '.t4.tag' "$result_file")."
   fi
 }
+validate_absolute_roots() {
+  [[ $MAINTAINER_ROOT == /* && $DEPLOYMENTS_DIR == /* && $ATOMIC_PUBLICATION_STATE_DIR == /* ]] \
+    || fail "maintainer state roots must be absolute paths"
+  if [[ $PROC_ROOT != /proc ]]; then
+    [[ ${T4_MAINTAINER_TEST_MODE:-0} == 1 \
+      && ($MAINTAINER_ROOT == /tmp/* || $MAINTAINER_ROOT == /private/tmp/*) ]] \
+      || fail "process-root override is restricted to an explicit temporary test root"
+    canonical_maintainer_root=$("$REALPATH" -e -- "$MAINTAINER_ROOT") \
+      || fail "test maintainer root must exist and be canonical"
+    canonical_proc_root=$("$REALPATH" -e -- "$PROC_ROOT") \
+      || fail "test process root must exist and be canonical"
+    [[ $canonical_maintainer_root == "$MAINTAINER_ROOT" ]] \
+      || fail "test maintainer root must be canonical"
+    [[ $canonical_proc_root == "$PROC_ROOT" ]] \
+      || fail "test process root must be canonical"
+    [[ $canonical_proc_root == "$canonical_maintainer_root"/* ]] \
+      || fail "test process root must be a child of the maintainer root"
+  fi
+}
 
 main() {
-  prepare_directories
+  validate_absolute_roots
+  require_date_command
   require_command flock
   require_command "$GH"
   require_command "$CURL"
@@ -2050,6 +2079,7 @@ main() {
   require_command "$LOCAL_DEPLOY"
   require_command "$ATOMIC_PUBLISH"
   [[ -r $PROMPT_FILE ]] || fail "maintainer prompt is unavailable: $PROMPT_FILE"
+  prepare_directories
   acquire_lock
   sync_fork_main
   [[ ! -e $BLOCKED_FILE ]] || fail "maintainer is blocked by an unfinished or incompletely rolled-back deployment; reconcile $BLOCKED_FILE before retrying"

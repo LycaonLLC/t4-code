@@ -61,6 +61,8 @@ export const DESKTOP_IPC_CHANNELS = [
   "app:update:get-state",
   "app:update:check",
   "app:update:download",
+  "omp:speech:speak",
+  "omp:speech:stop",
   "app:update:restart",
   "app:update:renderer-ready",
 ] as const;
@@ -265,6 +267,14 @@ export interface TerminalResult {
   targetId: string;
   accepted: boolean;
 }
+export const MAX_SPEECH_TEXT_BYTES = 64 * 1024;
+export interface SpeechRequest {
+  readonly text: string;
+}
+export interface SpeechResult {
+  readonly accepted: boolean;
+  readonly error?: string;
+}
 
 export interface DesktopUpdateRequest {}
 export interface DesktopUpdateRendererReadyResult {
@@ -431,6 +441,8 @@ export interface DesktopInvokeRequestMap {
   "omp:pair": PairRequest;
   "omp:pair-links:drain": PairLinksDrainRequest;
   "omp:service:inspect": ServiceActionRequest;
+  "omp:speech:speak": SpeechRequest;
+  "omp:speech:stop": {};
   "omp:service:install": ServiceActionRequest;
   "omp:service:start": ServiceActionRequest;
   "omp:service:stop": ServiceActionRequest;
@@ -470,6 +482,8 @@ export interface DesktopInvokeResponseMap {
   "omp:service:stop": ServiceActionResult;
   "omp:service:restart": ServiceActionResult;
   "omp:service:uninstall": ServiceActionResult;
+  "omp:speech:speak": SpeechResult;
+  "omp:speech:stop": SpeechResult;
   "app:update:get-state": DesktopUpdateState;
   "app:update:check": DesktopUpdateState;
   "app:update:download": DesktopUpdateState;
@@ -721,6 +735,17 @@ function decodeTerminalRequest(
   return { ...common, ...(decoded.reason === undefined ? {} : { reason: decoded.reason }) };
 }
 
+export function decodeSpeechText(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) throw new Error("invalid speech text");
+  if (utf8ByteLength(value) > MAX_SPEECH_TEXT_BYTES) throw new Error("speech text is too long");
+  for (const character of value) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (codePoint === 0 || (codePoint < 0x20 && codePoint !== 0x09 && codePoint !== 0x0a && codePoint !== 0x0d) || (codePoint >= 0x7f && codePoint <= 0x9f)) {
+      throw new Error("speech text contains unsupported control characters");
+    }
+  }
+  return value;
+}
 export function decodeDesktopInvokeRequest(input: unknown): DesktopInvokeRequest {
   const frame = inputObject(input);
   exact(frame, ["channel", "payload"]);
@@ -767,6 +792,12 @@ export function decodeDesktopInvokeRequest(input: unknown): DesktopInvokeRequest
         if (!/^\d{6}$/u.test(code)) throw new Error("invalid pairing code");
         return { channel, payload: { targetId: target(payload.targetId), code } };
       }
+    case "omp:speech:speak":
+      exact(payload, ["text"]);
+      return { channel, payload: { text: decodeSpeechText(payload.text) } };
+    case "omp:speech:stop":
+      exact(payload, []);
+      return { channel, payload: {} };
     case "omp:bootstrap":
     case "omp:pair-links:drain":
     case "omp:service:inspect":

@@ -30,6 +30,8 @@ import type { TranscriptImageSource } from "../session-runtime/transcript-images
 import { useAnchoredDisclosure } from "./disclosure-anchor.tsx";
 import { CopyButton, Markdown } from "./Markdown.tsx";
 import type { ToolCall, TranscriptNotice } from "./projection.ts";
+import { readAloudEligible } from "./read-aloud.ts";
+import { ReadAloudButton, useReadAloud } from "./ReadAloud.tsx";
 import { formatElapsed, type TranscriptRow } from "./rows.ts";
 import { adaptToolRender } from "./tool-render/adapter.ts";
 import { resolveToolRenderer } from "./tool-render/registry.ts";
@@ -107,6 +109,43 @@ function ReasoningDisclosure({ reasoning }: { readonly reasoning: string }) {
   );
 }
 
+/**
+ * Action strip under a completed assistant response: copy always, read-aloud
+ * only when the shell offers speech and the row has settled. While this
+ * response is speaking (or just failed to), the strip stays visible on
+ * desktop instead of waiting for hover, so "Stop reading" is never hidden.
+ */
+function AssistantMessageActions({ row }: { readonly row: Extract<TranscriptRow, { kind: "message" }> }) {
+  const { controller, state } = useReadAloud();
+  const speaking = state.speakingId === row.id;
+  const notice = state.notice !== null && state.notice.messageId === row.id ? state.notice : null;
+  const showReadAloud = controller.available && readAloudEligible(row);
+  return (
+    <div
+      className={cn(
+        "mt-1 flex h-11 items-center gap-1 opacity-100 transition-opacity duration-(--motion-duration-fast) sm:h-6 sm:opacity-0 sm:focus-within:opacity-100 sm:group-hover/message:opacity-100",
+        (speaking || notice !== null) && "sm:opacity-100",
+        row.live && "invisible",
+      )}
+    >
+      <CopyButton label="Copy response" text={row.text} />
+      {showReadAloud && (
+        <ReadAloudButton
+          messageId={row.id}
+          onToggle={controller.toggle}
+          speaking={speaking}
+          text={row.text}
+        />
+      )}
+      {notice !== null && (
+        <span className="text-muted-foreground text-xs" role="status">
+          {notice.text}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function MessageRow({
   row,
   imageSource,
@@ -142,14 +181,7 @@ function MessageRow({
         label="Response"
         source={imageSource}
       />
-      <div
-        className={cn(
-          "mt-1 flex h-11 items-center gap-1 opacity-100 transition-opacity duration-(--motion-duration-fast) sm:h-6 sm:opacity-0 sm:focus-within:opacity-100 sm:group-hover/message:opacity-100",
-          row.live && "invisible",
-        )}
-      >
-        <CopyButton label="Copy response" text={row.text} />
-      </div>
+      <AssistantMessageActions row={row} />
     </div>
   );
 }

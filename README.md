@@ -117,9 +117,15 @@ pnpm install
 pnpm dev              # web + desktop in watch mode
 pnpm check            # release contract, provenance, lint, typecheck
 pnpm test             # workspace tests
+pnpm test:soak        # headless 10k-history and 20-reconnect stress checks
 pnpm package:linux    # .deb + AppImage into release/
 pnpm package:mac:unsigned  # unsigned macOS build (on a Mac)
 ```
+
+The soak command needs no phone, Android emulator, or macOS simulator. It checks the shared data
+path and phone-sized browser UI, but it does not certify Android Keystore behavior, WebView
+background/foreground lifecycle, APK installation, or networking on a physical device. Those remain
+native release checks.
 
 ## Architecture
 

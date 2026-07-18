@@ -5,6 +5,12 @@ import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AddressInfo } from "node:net";
 import { expect, test, type Page } from "@playwright/test";
+import type { SessionRef } from "@t4-code/protocol";
+import {
+  MOBILE_BACKEND_STORAGE_KEY,
+  parseTailnetBackend,
+} from "../apps/web/src/platform/native-mobile-backend.ts";
+import type { ScenarioId } from "../packages/fixture-server/src/index.ts";
 import { installColdMountObserver, readColdMountSamples } from "./cold-mount-observer.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -21,6 +27,11 @@ const SESSION_TITLE = "stream-v1 fixture";
 const MIN_TOUCH_TARGET_PX = 43.99;
 const CONNECTED_COPY =
   "This Tailnet connection is live. Choose a session from the list on the left to inspect it.";
+const DEFAULT_MOBILE_BACKEND = parseTailnetBackend("https://fixture.tailnet.ts.net");
+const PROFILE_MOBILE_BACKEND = parseTailnetBackend(
+  "https://fixture.tailnet.ts.net",
+  "fable-swarm",
+);
 
 const MIME_TYPES: Readonly<Record<string, string>> = {
   ".css": "text/css; charset=utf-8",
@@ -131,11 +142,13 @@ class FixtureProcess {
   private controlUrl = "";
   wsUrl = "";
 
+  constructor(private readonly scenario: ScenarioId = "stream-v1") {}
+
   async start(): Promise<void> {
     await access(JITI);
     const child = spawn(JITI, [FIXTURE_PROCESS], {
       cwd: REPO_ROOT,
-      env: process.env,
+      env: { ...process.env, T4_FIXTURE_SCENARIO: this.scenario },
       stdio: ["ignore", "pipe", "pipe"],
     });
     this.child = child;
@@ -195,6 +208,27 @@ class FixtureProcess {
     if (!response.ok) throw new Error(`fixture advance failed: ${response.status}`);
   }
 
+  async state(): Promise<{
+    readonly scenario: ScenarioId;
+    readonly sessions: readonly SessionRef[];
+    readonly clients: number;
+    readonly connections: number;
+  }> {
+    const response = await fetch(`${this.controlUrl}/state`);
+    if (!response.ok) throw new Error(`fixture state failed: ${response.status}`);
+    return (await response.json()) as {
+      readonly scenario: ScenarioId;
+      readonly sessions: readonly SessionRef[];
+      readonly clients: number;
+      readonly connections: number;
+    };
+  }
+
+  async disconnectClients(): Promise<void> {
+    const response = await fetch(`${this.controlUrl}/disconnect`, { method: "POST" });
+    if (!response.ok) throw new Error(`fixture disconnect failed: ${response.status}`);
+  }
+
   async stop(): Promise<void> {
     const child = this.child;
     this.child = null;
@@ -214,10 +248,11 @@ class FixtureProcess {
 }
 
 let fixture: FixtureProcess;
+let profileFixture: FixtureProcess | undefined;
 let web: BuiltWebServer;
 
 test.beforeAll(async () => {
-  fixture = new FixtureProcess();
+  fixture = new FixtureProcess("stream-v1");
   await fixture.start();
   web = new BuiltWebServer(fixture.wsUrl);
   await web.start();
@@ -225,8 +260,74 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await web?.stop();
-  await fixture?.stop();
+  await Promise.all([fixture?.stop(), profileFixture?.stop()]);
 });
+
+async function installHeadlessAndroidProfiles(page: Page): Promise<FixtureProcess> {
+  const selectedProfileFixture = new FixtureProcess("basic-v1");
+  await selectedProfileFixture.start();
+  profileFixture = selectedProfileFixture;
+  await page.addInitScript(
+    ({
+      defaultBackend,
+      defaultWsUrl,
+      mobileBackendStorageKey,
+      profileBackend,
+      profileWsUrl,
+    }) => {
+      const NativeWebSocket = window.WebSocket;
+      class RoutedWebSocket extends NativeWebSocket {
+        constructor(url: string | URL, protocols?: string | string[]) {
+          const requested = String(url);
+          const routed =
+            requested === defaultBackend.wsUrl
+              ? defaultWsUrl
+              : requested === profileBackend.wsUrl
+                ? profileWsUrl
+                : requested;
+          super(routed, protocols);
+        }
+      }
+      Object.defineProperty(RoutedWebSocket, "CONNECTING", { value: NativeWebSocket.CONNECTING });
+      Object.defineProperty(RoutedWebSocket, "OPEN", { value: NativeWebSocket.OPEN });
+      Object.defineProperty(RoutedWebSocket, "CLOSING", { value: NativeWebSocket.CLOSING });
+      Object.defineProperty(RoutedWebSocket, "CLOSED", { value: NativeWebSocket.CLOSED });
+      window.WebSocket = RoutedWebSocket;
+
+      if (window.localStorage.getItem(mobileBackendStorageKey) === null) {
+        window.localStorage.setItem(
+          mobileBackendStorageKey,
+          JSON.stringify({
+            version: 3,
+            activeEndpointKey: profileBackend.endpointKey,
+            backends: [defaultBackend, profileBackend],
+          }),
+        );
+      }
+      Object.assign(window, {
+        Capacitor: {
+          getPlatform: () => "android",
+          isNativePlatform: () => true,
+          Plugins: {
+            T4SecureStorage: {
+              getCredentials: async () => ({ credentials: null }),
+              setCredentials: async () => undefined,
+              clearCredentials: async () => undefined,
+            },
+          },
+        },
+      });
+    },
+    {
+      defaultBackend: DEFAULT_MOBILE_BACKEND,
+      defaultWsUrl: fixture.wsUrl,
+      mobileBackendStorageKey: MOBILE_BACKEND_STORAGE_KEY,
+      profileBackend: PROFILE_MOBILE_BACKEND,
+      profileWsUrl: selectedProfileFixture.wsUrl,
+    },
+  );
+  return selectedProfileFixture;
+}
 
 async function openConnectedRoot(page: Page): Promise<void> {
   await page.goto(web.url, { waitUntil: "domcontentloaded" });
@@ -269,6 +370,127 @@ async function openSession(page: Page, mobile: boolean): Promise<void> {
 }
 
 test.describe.configure({ mode: "serial" });
+
+test("routes mobile session creation to the selected profile and preserves both profiles", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const selectedProfileFixture = await installHeadlessAndroidProfiles(page);
+
+  const [defaultBefore, profileBefore] = await Promise.all([
+    fixture.state(),
+    selectedProfileFixture.state(),
+  ]);
+  expect(defaultBefore.scenario).toBe("stream-v1");
+  expect(profileBefore.scenario).toBe("basic-v1");
+  expect(defaultBefore.sessions).toHaveLength(1);
+  expect(profileBefore.sessions).toHaveLength(1);
+
+  await page.goto(web.url, { waitUntil: "domcontentloaded" });
+  await expect(page.getByText(CONNECTED_COPY, { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Show session list", exact: true }).click();
+  let rail = page.getByRole("dialog", { name: "Working folders and sessions" });
+  await expect(rail.locator('[data-session-row="host-basic/session-basic"]')).toBeVisible();
+  await expect(rail.locator(`[data-session-row="${SESSION_VIEW_ID}"]`)).toHaveCount(0);
+
+  await rail.getByRole("button", { name: /^New session in /u }).click();
+  await expect(page).toHaveURL(/#\/sessions\//u);
+  await expect(page.getByRole("textbox", { name: "Message the session" })).toBeEnabled();
+  const createdViewId = decodeURIComponent(new URL(page.url()).hash.replace(/^#\/sessions\//u, ""));
+  expect(createdViewId).not.toBe("host-basic/session-basic");
+
+  await expect
+    .poll(async () => (await selectedProfileFixture.state()).sessions.length)
+    .toBe(profileBefore.sessions.length + 1);
+  expect((await fixture.state()).sessions).toHaveLength(defaultBefore.sessions.length);
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("textbox", { name: "Message the session" })).toBeEnabled();
+  await page.getByRole("button", { name: "Show session list", exact: true }).click();
+  rail = page.getByRole("dialog", { name: "Working folders and sessions" });
+  await expect(rail.locator(`[data-session-row="${createdViewId}"]`)).toBeVisible();
+
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("button", { name: "T4 hosts", exact: true }).click();
+  const manager = page.getByRole("dialog", { name: "T4 hosts" });
+  const profileItem = manager.getByRole("listitem").filter({ hasText: "Profile · fable-swarm" });
+  await expect(profileItem.getByText("Current", { exact: true })).toBeVisible();
+  const defaultItem = manager.getByRole("listitem").filter({ hasText: "Default profile" });
+  await defaultItem.getByRole("button", { name: "Switch", exact: true }).click();
+
+  await expect(page.getByText(CONNECTED_COPY, { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Show session list", exact: true }).click();
+  rail = page.getByRole("dialog", { name: "Working folders and sessions" });
+  await expect(rail.locator(`[data-session-row="${SESSION_VIEW_ID}"]`)).toBeVisible();
+  await expect(rail.locator('[data-session-row="host-basic/session-basic"]')).toHaveCount(0);
+  await expect(rail.locator(`[data-session-row="${createdViewId}"]`)).toHaveCount(0);
+
+  const storedDirectory = await page.evaluate((key) => {
+    const raw = window.localStorage.getItem(key);
+    return raw === null
+      ? null
+      : (JSON.parse(raw) as { activeEndpointKey: string; backends: unknown[] });
+  }, MOBILE_BACKEND_STORAGE_KEY);
+  expect(storedDirectory?.activeEndpointKey).toBe(DEFAULT_MOBILE_BACKEND.endpointKey);
+  expect(storedDirectory?.backends).toHaveLength(2);
+  expect((await selectedProfileFixture.state()).sessions).toHaveLength(
+    profileBefore.sessions.length + 1,
+  );
+});
+
+test("@soak mounts the bounded tail of a 10k history on a phone viewport", async ({ page }) => {
+  test.setTimeout(120_000);
+  const historyFixture = new FixtureProcess("history-10k-v1");
+  let historyWeb: BuiltWebServer | undefined;
+  try {
+    await historyFixture.start();
+    historyWeb = new BuiltWebServer(historyFixture.wsUrl);
+    await historyWeb.start();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(historyWeb.url, { waitUntil: "domcontentloaded" });
+    await expect(page.getByText(CONNECTED_COPY, { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Show session list", exact: true }).click();
+    const rail = page.getByRole("dialog", { name: "Working folders and sessions" });
+    await rail.locator('[data-session-row="host-history/session-history"]').click();
+
+    const transcript = page.getByRole("log", { name: "Transcript" });
+    await expect(transcript).toBeVisible();
+    await expect(transcript.locator("[data-cold-mount-overlay]")).toHaveCount(0);
+    await expect(transcript.getByText("message-10000", { exact: true })).toBeVisible();
+    expect(await transcript.locator("[data-transcript-row]").count()).toBeLessThan(100);
+  } finally {
+    await historyWeb?.stop();
+    await historyFixture.stop();
+  }
+});
+
+test("@soak recovers one live phone session across 20 network drops", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.clock.install();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openSession(page, true);
+  const transcript = page.getByRole("log", { name: "Transcript" });
+  const composer = page.getByRole("textbox", { name: "Message the session" });
+
+  for (let cycle = 1; cycle <= 20; cycle += 1) {
+    const before = await fixture.state();
+    await fixture.disconnectClients();
+    await expect(page.getByText("Offline", { exact: true }).first()).toBeVisible();
+    await page.clock.fastForward(10_000);
+    await expect
+      .poll(async () => (await fixture.state()).connections, {
+        message: `fixture did not accept reconnect ${cycle}`,
+      })
+      .toBeGreaterThan(before.connections);
+    await expect.poll(async () => (await fixture.state()).clients).toBe(1);
+    await expect(transcript).toBeVisible();
+    await expect(
+      transcript.getByText("Hello world", { exact: true }).filter({ visible: true }),
+    ).toHaveCount(1);
+    await expect(composer).toBeEnabled();
+    await expect(page.getByText("Offline", { exact: true })).toHaveCount(0);
+  }
+});
 
 test("settles a typed incompatible desktop inspection and recovers without a stale retry", async ({
   page,

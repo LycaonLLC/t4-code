@@ -42,6 +42,8 @@ import type {
   PairLinksDrainResult,
   RendererServerFrameEvent,
   RuntimeErrorEvent,
+  SpeechRequest,
+  SpeechResult,
   TargetAddRequest,
   TargetAddResult,
   TargetListResult,
@@ -52,7 +54,7 @@ import type {
   TerminalResizeRequest,
   TerminalResult,
 } from "@t4-code/protocol/desktop-ipc";
-import { commandResultError } from "@t4-code/protocol/desktop-ipc";
+import { commandResultError, decodeSpeechText } from "@t4-code/protocol/desktop-ipc";
 import type { DesktopShellPort } from "@t4-code/client";
 
 import { BrowserWebSocketTransport } from "./browser-transport.ts";
@@ -61,6 +63,7 @@ import {
   type BrowserConnectionLifecycleOptions,
 } from "./browser-connection-lifecycle.ts";
 import {
+  assertCurrentNativeMobileEndpoint,
   currentNativeMobileBackend,
   nativeMobilePlatform,
   persistNativeMobileCredentials,
@@ -209,7 +212,7 @@ export function createBrowserShellPort(
   const config = detectBackend();
   if (config === null) return null;
   const backendConfig = config;
-
+  const nativeEndpointKey = currentNativeMobileBackend()?.endpointKey;
   const mobilePlatform = nativeMobilePlatform();
   const platform: "linux" | "darwin" = (() => {
     if (typeof navigator !== "undefined" && /mac/i.test(navigator.platform)) return "darwin";
@@ -233,6 +236,8 @@ export function createBrowserShellPort(
   const stateListeners = new Set<StateListener>();
   const errorListeners = new Set<ErrorListener>();
   const pairLinkListeners = new Set<PairLinkListener>();
+  const wakeListeners = new Set<() => void>();
+  let browserSpeechResolve: ((result: SpeechResult) => void) | undefined;
 
   function emitState(targetId: string, state: DesktopTarget["state"]): void {
     connectionState = state;
@@ -290,7 +295,10 @@ export function createBrowserShellPort(
       compatibilityRequestedFeatures: COMPATIBILITY_FEATURES,
       authentication: () => authentication,
       privilegedPairResult: async (result) => {
-        await persistNativeMobileCredentials(result);
+        await persistNativeMobileCredentials(result, nativeEndpointKey);
+        if (nativeEndpointKey !== undefined) {
+          assertCurrentNativeMobileEndpoint(nativeEndpointKey);
+        }
         authentication = { deviceId: result.deviceId, deviceToken: result.deviceToken };
       },
       client: {
@@ -332,13 +340,60 @@ export function createBrowserShellPort(
   }
 
   function ensureLifecycle(): void {
-    stopLifecycle ??= bindBrowserConnectionWake(() => client?.wake(), options.lifecycle);
+    stopLifecycle ??= bindBrowserConnectionWake(() => {
+      client?.wake();
+      // eslint-disable-next-line unicorn/no-useless-spread -- listeners may unsubscribe during wake dispatch.
+      for (const listener of [...wakeListeners]) listener();
+    }, options.lifecycle);
   }
 
   // ------------------------------------------------------------------ shell port
 
+  async function speakText(request: SpeechRequest): Promise<SpeechResult> {
+    let text: string;
+    try { text = decodeSpeechText(request.text); } catch (error) {
+      return { accepted: false, error: error instanceof Error ? error.message : "invalid speech text" };
+    }
+    const plugin = mobilePlatform === "android" && typeof window !== "undefined" ? (window.Capacitor?.Plugins?.T4Speech ?? null) : null;
+    if (plugin !== null) {
+      try { return await plugin.speakText({ text }); }
+      catch { return { accepted: false, error: "Android speech is unavailable" }; }
+    }
+    const synthesis = (globalThis as typeof globalThis & { speechSynthesis?: SpeechSynthesis }).speechSynthesis;
+    const Utterance = (globalThis as typeof globalThis & { SpeechSynthesisUtterance?: typeof SpeechSynthesisUtterance }).SpeechSynthesisUtterance;
+    if (synthesis === undefined || Utterance === undefined) return { accepted: false, error: "Speech synthesis is unavailable" };
+    browserSpeechResolve?.({ accepted: false, error: "Speech replaced" });
+    synthesis.cancel();
+    const { promise, resolve } = Promise.withResolvers<SpeechResult>();
+    browserSpeechResolve = resolve;
+    const utterance = new Utterance(text);
+    utterance.onend = () => { if (browserSpeechResolve === resolve) { browserSpeechResolve = undefined; resolve({ accepted: true }); } };
+    utterance.onerror = () => { if (browserSpeechResolve === resolve) { browserSpeechResolve = undefined; resolve({ accepted: false, error: "Speech synthesis failed" }); } };
+    synthesis.speak(utterance);
+    return promise;
+  }
+
+  async function stopSpeaking(): Promise<SpeechResult> {
+    if (mobilePlatform === "android") {
+      const plugin = typeof window !== "undefined" ? window.Capacitor?.Plugins?.T4Speech : undefined;
+      if (plugin !== undefined) {
+        try { return await plugin.stopSpeaking(); }
+        catch { return { accepted: false, error: "Android speech is unavailable" }; }
+      }
+    }
+    const synthesis = (globalThis as typeof globalThis & { speechSynthesis?: SpeechSynthesis }).speechSynthesis;
+    if (synthesis === undefined) return { accepted: false, error: "Speech synthesis is unavailable" };
+    synthesis.cancel();
+    const resolve = browserSpeechResolve;
+    browserSpeechResolve = undefined;
+    resolve?.({ accepted: false, error: "Speech cancelled" });
+    return { accepted: true };
+  }
   const shell: DesktopShellPort = {
     kind: "desktop" as const,
+
+    speakText,
+    stopSpeaking,
     platform,
 
     async bootstrap(): Promise<BootstrapResult> {
@@ -370,6 +425,14 @@ export function createBrowserShellPort(
     },
 
     async disconnect(_request: TargetRequest): Promise<DisconnectResult> {
+      // Settle any active speech first: a disconnected session must not keep
+      // talking, and a pending speech promise must resolve before the client
+      // and lifecycle bindings are torn down.
+      try {
+        await stopSpeaking();
+      } catch {
+        // Speech settle is best-effort; teardown proceeds regardless.
+      }
       for (const pending of pendingOpens) pending.close();
       if (client !== undefined) {
         await client.close();
@@ -525,6 +588,10 @@ export function createBrowserShellPort(
     onRuntimeError(listener: ErrorListener): Unsubscribe {
       errorListeners.add(listener);
       return () => errorListeners.delete(listener);
+    },
+    onWake(listener: () => void): Unsubscribe {
+      wakeListeners.add(listener);
+      return () => wakeListeners.delete(listener);
     },
 
     onPairLink(listener: PairLinkListener): Unsubscribe {

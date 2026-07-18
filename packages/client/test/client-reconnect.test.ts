@@ -72,11 +72,17 @@ interface FakeTransportOptions {
 class FakeTransport implements OmpTransport {
   readonly sent: string[] = [];
   private readonly messages = new Set<(data: string | Uint8Array) => void>();
+  private readonly historicalMessages = new Set<(data: string | Uint8Array) => void>();
   private readonly closes = new Set<(code?: number, reason?: string) => void>();
   private readonly errors = new Set<(error: unknown) => void>();
   private closed = false;
   constructor(private readonly options: FakeTransportOptions = {}) {}
-  onMessage(listener: (data: string | Uint8Array) => void): () => void { this.messages.add(listener); return () => this.messages.delete(listener); }
+  get isOpen(): boolean { return !this.closed; }
+  onMessage(listener: (data: string | Uint8Array) => void): () => void {
+    this.messages.add(listener);
+    this.historicalMessages.add(listener);
+    return () => this.messages.delete(listener);
+  }
   onClose(listener: (code?: number, reason?: string) => void): () => void { this.closes.add(listener); return () => this.closes.delete(listener); }
   onError(listener: (error: unknown) => void): () => void { this.errors.add(listener); return () => this.errors.delete(listener); }
   send(data: string): void {
@@ -96,6 +102,11 @@ class FakeTransport implements OmpTransport {
     const data = JSON.stringify(frame);
     // eslint-disable-next-line unicorn/no-useless-spread -- callbacks may unsubscribe while the fixture dispatches.
     for (const listener of [...this.messages]) listener(data);
+  }
+  emitLate(frame: unknown): void {
+    const data = JSON.stringify(frame);
+    // eslint-disable-next-line unicorn/no-useless-spread -- preserve callbacks that intentionally outlive unsubscribe.
+    for (const listener of [...this.historicalMessages]) listener(data);
   }
   drop(code = 1006, reason = "dropped"): void {
     if (this.closed) return;
@@ -635,6 +646,7 @@ describe("OmpClient reconnect stability", () => {
     expect(client.state).toBe("ready");
     expect(client.snapshot().attempt).toBe(1);
 
+
     clock.advanceBy(10);
     const ping = second.lastClientFrame();
     if (ping.type !== "ping") throw new Error("expected heartbeat ping");
@@ -642,6 +654,57 @@ describe("OmpClient reconnect stability", () => {
     expect(client.snapshot().attempt).toBe(1);
     second.emit({ v: V, type: "pong", nonce: ping.nonce, timestamp: ping.timestamp });
     expect(client.snapshot().attempt).toBe(0);
+    await client.close();
+  });
+
+  it("rejects a delayed old-generation frame across replay without duplicating the durable event", async () => {
+    const clock = new FakeClock();
+    const first = new FakeTransport({
+      welcome: welcome(),
+      onSend: (frame, current) => {
+        if (frame.type === "command" && frame.command === "session.attach") {
+          current.emit(responseFor(frame, { attached: true, cursor: { epoch: "epoch-a", seq: 0 } }));
+        }
+      },
+    });
+    const second = new FakeTransport({
+      welcome: welcome({ resumed: true }),
+      onSend: (frame, current) => {
+        if (frame.type !== "command" || frame.command !== "session.attach") return;
+        current.emit(responseFor(frame, { attached: true, cursor: { epoch: "epoch-a", seq: 2 } }));
+        current.emit(event(2));
+      },
+    });
+    const transports = [first, second];
+    const client = new OmpClient({
+      transport: () => transports.shift() ?? new FakeTransport(),
+      hostId: HOST,
+      clock,
+      timers: clock,
+      random: () => 0,
+      reconnect: { baseMs: 0, maxMs: 0 },
+    });
+    const visible: number[] = [];
+    client.onFrame((frame) => {
+      if (frame.type === "event" && String(frame.sessionId) === SESSION) visible.push(frame.cursor.seq);
+    });
+
+    await client.connect();
+    await client.command({ hostId: HOST, sessionId: SESSION, command: "session.attach", args: {} });
+    first.emit(event(1));
+    first.drop();
+    await flushReconnect(clock);
+
+    expect(client.state).toBe("ready");
+    expect(first.isOpen).toBe(false);
+    expect(second.isOpen).toBe(true);
+    expect(client.snapshot().cursor?.seq).toBe(2);
+    expect(visible).toEqual([1, 2]);
+
+    first.emitLate(event(1));
+    await flushReconnect(clock);
+    expect(client.snapshot().cursor?.seq).toBe(2);
+    expect(visible).toEqual([1, 2]);
     await client.close();
   });
 

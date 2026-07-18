@@ -23,7 +23,7 @@
       "sourceBlobSha": "1641bb6b109b44f2c7b0f2576fcf0750a96da88f",
       "targetPath": "apps/web/src/features/terminal/TerminalDrawer.tsx",
       "classification": "reference-only",
-      "checksum": "sha256:100ecf2d7eab87a671ebbcec15e442a967e54b105d9c3827b0b311a4f1c9eb0a"
+      "checksum": "sha256:9e9b0e8d463326f4217a4c4dedad016a987406d83ee627997842241b6cfc9617"
     },
     {
       "sourcePath": "apps/web/src/components/DiffPanel.tsx;apps/web/src/diffPanelStore.ts",

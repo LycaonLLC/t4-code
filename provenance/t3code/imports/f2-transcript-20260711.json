@@ -23,7 +23,7 @@
       "sourceBlobSha": "1a4dc6b689558a9f8d834c12d7ecb2bb64e0d7c8",
       "targetPath": "apps/web/src/features/transcript/TranscriptRows.tsx",
       "classification": "adapted",
-      "checksum": "sha256:407886a370374106052557f855186286b9a421baaa43beefe34d1443bee3f7af"
+      "checksum": "sha256:fd24741fc543e280d2d03295da35d246ece68c6614aa17903ebc53a9bb1e3ad4"
     },
     {
       "sourcePath": "packages/shared/src/searchRanking.ts;apps/web/src/components/chat/composerSlashCommandSearch.ts",

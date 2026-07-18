@@ -40,12 +40,15 @@ import {
   type TerminalCloseRequest,
   type TerminalInputRequest,
   type TerminalResizeRequest,
+  type SpeechRequest,
+  type SpeechResult,
   type TerminalResult,
 } from "@t4-code/protocol/desktop-ipc";
 import type { RendererServerFrame } from "@t4-code/protocol/desktop-ipc";
 import type { ServiceManager } from "@t4-code/service-manager";
 import { redactedMessage } from "@t4-code/client";
 import { trustedSender, type TrustedRenderer } from "./security.ts";
+import type { DesktopSpeechService } from "./speech.ts";
 import type { LocalTargetManager } from "./target-manager.ts";
 import type { LocalProfileRuntime } from "./profile-runtime.ts";
 export interface IpcRuntime {
@@ -56,6 +59,7 @@ export interface IpcRuntime {
   readonly serviceManager?: ServiceManager;
   /** Dynamic lifecycle access keeps IPC valid after rediscovery or window reopen. */
   readonly getServiceManager?: () => ServiceManager | undefined;
+  readonly speech?: DesktopSpeechService;
   readonly acquireServiceManager?: () => Promise<ServiceManager | undefined>;
   readonly getServiceAvailabilityIssue?: () => ServiceAvailabilityIssue | undefined;
   readonly profileRuntime?: LocalProfileRuntime;
@@ -149,6 +153,16 @@ export class DesktopIpcRegistry {
       this.assertSender(event);
       const input = decodeRequest("omp:terminal:close", payload).payload as TerminalCloseRequest;
       return this.runtime.manager.terminalClose(input);
+    });
+    this.ipc.handle("omp:speech:speak", async (event, payload: unknown): Promise<SpeechResult> => {
+      this.assertSender(event);
+      const input = decodeRequest("omp:speech:speak", payload).payload as SpeechRequest;
+      return this.runtime.speech?.speakText(input) ?? { accepted: false, error: "Speech is unavailable" };
+    });
+    this.ipc.handle("omp:speech:stop", async (event, payload: unknown): Promise<SpeechResult> => {
+      this.assertSender(event);
+      decodeRequest("omp:speech:stop", payload);
+      return this.runtime.speech?.stopSpeaking() ?? { accepted: false, error: "Speech is unavailable" };
     });
     this.ipc.handle("omp:command", async (event, payload: unknown): Promise<CommandResult> => {
       this.assertSender(event);
@@ -267,6 +281,7 @@ export class DesktopIpcRegistry {
     for (const channel of [
       "omp:bootstrap", "omp:connect", "omp:disconnect", "omp:command", "omp:confirm",
       "omp:terminal:input", "omp:terminal:resize", "omp:terminal:close", "omp:pair",
+      "omp:speech:speak", "omp:speech:stop",
       "omp:pair-links:drain", "omp:targets:list", "omp:targets:add", "omp:targets:remove",
       "omp:profiles:list", "omp:profiles:add", "omp:profiles:update", "omp:profiles:remove",
       "omp:profiles:status", "omp:profiles:start", "omp:profiles:stop", "omp:profiles:restart",

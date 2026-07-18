@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { connect as connectSocket } from "node:net";
 import { tmpdir } from "node:os";
@@ -15,6 +15,8 @@ import {
   normalizeAllowedOrigin,
   normalizeDeploymentIdentity,
   normalizeNativeAllowedOrigins,
+  normalizeProfileRoutes,
+  supervisorCommandForRoute,
   optionsFromEnvironment,
   resolveAppSocket,
   safeStaticPath,
@@ -39,7 +41,8 @@ function websocketOpen(socket) {
 }
 
 async function fixture(socketTopology = "symlink", gatewayOptions = {}) {
-  const directory = await mkdtemp(join(tmpdir(), "t4-gateway-"));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "t4-gateway-")));
+  await chmod(directory, 0o700);
   const webRoot = join(directory, "web");
   const socketPath = join(directory, "appserver.sock");
   const backingSocketPath = join(directory, ".appserver-62e2983f-8779-464e-a184-82e0e962b87d.sock");
@@ -66,6 +69,17 @@ async function fixture(socketTopology = "symlink", gatewayOptions = {}) {
   await chmod(listeningSocket, 0o600);
   if (socketTopology === "symlink") await symlink(".appserver-62e2983f-8779-464e-a184-82e0e962b87d.sock", socketPath);
 
+  const resolvedGatewayOptions = {
+    ...gatewayOptions,
+    ...(gatewayOptions.profileRoutes === undefined
+      ? {}
+      : {
+          profileRoutes: gatewayOptions.profileRoutes.map((route) => ({
+            ...route,
+            ...(route.appSocket === "$fixture-default-socket" ? { appSocket: socketPath } : {}),
+          })),
+        }),
+  };
   const gateway = await startTailnetGateway({
     webRoot,
     appSocket: socketPath,
@@ -73,7 +87,7 @@ async function fixture(socketTopology = "symlink", gatewayOptions = {}) {
     listenPort: 0,
     label: "Test host </script>",
     deploymentIdentity: DEPLOYMENT_IDENTITY,
-    ...gatewayOptions,
+    ...resolvedGatewayOptions,
   });
   return {
     gateway,
@@ -393,4 +407,183 @@ test("gateway heartbeat preserves responsive browsers", async () => {
   } finally {
     await running.close();
   }
+});
+test("profile routes are static, bounded, and reject unsafe units", () => {
+  assert.deepEqual(
+    normalizeProfileRoutes([
+      { id: "fable-swarm", appSocket: "/run/user/1000/omp/fable.sock", serviceUnit: "t4-fable.service" },
+    ]),
+    [
+      {
+        id: "fable-swarm",
+        appSocket: "/run/user/1000/omp/fable.sock",
+        serviceUnit: "t4-fable.service",
+        startEnabled: false,
+      },
+    ],
+  );
+  for (const route of [
+    { id: "../escape", appSocket: "/tmp/socket" },
+    { id: "fable/swarm", appSocket: "/tmp/socket" },
+    { id: "fable", appSocket: "/tmp/socket", serviceUnit: "systemctl;touch" },
+  ]) {
+    assert.throws(() => normalizeProfileRoutes([route]), /profile/u);
+  }
+  assert.throws(
+    () =>
+      normalizeProfileRoutes(
+        Array.from({ length: 65 }, (_, index) => ({
+          id: `profile-${index}`,
+          appSocket: `/run/user/1000/omp/profile-${index}.sock`,
+        })),
+      ),
+    /profile routes must be an array/u,
+  );
+});
+test("relative profile socket is rejected before resolver or supervisor work", async () => {
+  let resolutions = 0;
+  let starts = 0;
+  await assert.rejects(
+    startTailnetGateway({
+      webRoot: join(tmpdir(), "missing-web-root"),
+      appSocket: join(tmpdir(), "default.sock"),
+      allowedOrigin: ALLOWED_ORIGIN,
+      listenPort: 0,
+      label: "test",
+      deploymentIdentity: DEPLOYMENT_IDENTITY,
+      profileRoutes: [{ id: "fable", appSocket: "../relative.sock", startEnabled: true, serviceUnit: "t4-fable.service" }],
+      resolveAppSocket: async () => {
+        resolutions += 1;
+        return undefined;
+      },
+      startSupervisor: async () => {
+        starts += 1;
+      },
+    }),
+    /absolute path/u,
+  );
+  assert.equal(resolutions, 0);
+  assert.equal(starts, 0);
+});
+
+
+test("unknown profile route is rejected before socket resolution or supervisor work", async () => {
+  let resolutions = 0;
+  let starts = 0;
+  const missingSocket = join(tmpdir(), "t4-unknown-profile.sock");
+  const running = await fixture("symlink", {
+    profileRoutes: [{ id: "fable", appSocket: missingSocket, startEnabled: true, serviceUnit: "t4-fable.service" }],
+    resolveAppSocket: async (path) => {
+      resolutions += 1;
+      return resolveAppSocket(path);
+    },
+    startProfiles: true,
+    startSupervisor: async () => {
+      starts += 1;
+    },
+  });
+  try {
+    const denied = new WebSocket(`${running.url.replace("http", "ws")}/v1/profiles/unknown/ws`, {
+      headers: { Origin: ALLOWED_ORIGIN },
+    });
+    const status = await new Promise((resolvePromise, reject) => {
+      denied.once("unexpected-response", (_request, response) => resolvePromise(response.statusCode));
+      denied.once("open", () => reject(new Error("unknown route opened")));
+      denied.once("error", () => {});
+    });
+    assert.equal(status, 404);
+    assert.equal(resolutions, 0);
+    assert.equal(starts, 0);
+  } finally {
+    await running.close();
+  }
+});
+test("named route bridges through the same opaque upstream auth channel", async () => {
+  const running = await fixture("symlink", {
+    profileRoutes: [{ id: "fable", appSocket: "$fixture-default-socket" }],
+  });
+  try {
+    const socket = new WebSocket(`${running.url.replace("http", "ws")}/v1/profiles/fable/ws`, {
+      headers: { Origin: ALLOWED_ORIGIN },
+    });
+    await websocketOpen(socket);
+    socket.send("named");
+    assert.equal(await websocketMessage(socket), "upstream:named");
+    socket.close();
+  } finally {
+    await running.close();
+  }
+});
+
+test("profile start is disabled by default and concurrent requests coalesce with cooldown", async () => {
+  const missingSocket = join(tmpdir(), `t4-profile-missing-${Date.now()}.sock`);
+  let starts = 0;
+  let routeReady = false;
+  let resolvedPath = "";
+  const running = await fixture("symlink", {
+    profileRoutes: [{ id: "fable", appSocket: missingSocket, serviceUnit: "t4-fable.service", startEnabled: true }],
+    resolveAppSocket: async (path) => {
+      if (path === missingSocket) return routeReady ? resolveAppSocket(resolvedPath) : undefined;
+      return resolveAppSocket(path);
+    },
+    startProfiles: true,
+    startSupervisor: async () => {
+      starts += 1;
+    },
+    profileStartWaitMs: 30,
+    profileStartPollMs: 5,
+    profileStartCooldownMs: 1_000,
+  });
+  resolvedPath = running.resolvedSocketPath;
+  try {
+    const first = new WebSocket(`${running.url.replace("http", "ws")}/v1/profiles/fable/ws`, {
+      headers: { Origin: ALLOWED_ORIGIN },
+    });
+    const second = new WebSocket(`${running.url.replace("http", "ws")}/v1/profiles/fable/ws`, {
+      headers: { Origin: ALLOWED_ORIGIN },
+    });
+    await Promise.all(
+      [first, second].map(
+        (socket) =>
+          new Promise((resolvePromise) => {
+            socket.once("unexpected-response", (_request, response) => resolvePromise(response.statusCode));
+            socket.once("error", () => {});
+          }),
+      ),
+    );
+    assert.equal(starts, 1);
+    const disabled = await fixture("symlink", {
+      profileRoutes: [{ id: "off", appSocket: missingSocket, serviceUnit: "t4-off.service", startEnabled: true }],
+      startSupervisor: async () => {
+        throw new Error("must not start");
+      },
+    });
+    try {
+      const socket = new WebSocket(`${disabled.url.replace("http", "ws")}/v1/profiles/off/ws`, {
+        headers: { Origin: ALLOWED_ORIGIN },
+      });
+      const status = await new Promise((resolvePromise) => {
+        socket.once("unexpected-response", (_request, response) => resolvePromise(response.statusCode));
+        socket.once("error", () => {});
+      });
+      assert.equal(status, 503);
+    } finally {
+      await disabled.close();
+    }
+  } finally {
+    await running.close();
+  }
+});
+test("profile supervisor argv is fixed and shell-free", () => {
+  const route = normalizeProfileRoutes([
+    { id: "fable", appSocket: "/run/user/1000/omp/fable.sock", serviceUnit: "t4-fable.service" },
+  ])[0];
+  assert.deepEqual(supervisorCommandForRoute(route), {
+    executable: process.platform === "darwin" ? "launchctl" : "systemctl",
+    argv:
+      process.platform === "darwin"
+        ? ["kickstart", `gui/${process.getuid?.() ?? ""}/t4-fable.service`]
+        : ["--user", "start", "t4-fable.service"],
+  });
+  assert.doesNotMatch(supervisorCommandForRoute(route).argv.join(" "), /[;&|$()`]/u);
 });

@@ -157,6 +157,7 @@ export function SettingRowView({
           {row.sensitive && row.control.kind !== "secret" && <Badge variant="outline">Kept out of exports</Badge>}
         </div>
         <p className="max-w-[70ch] text-muted-foreground text-xs leading-relaxed">{row.help}</p>
+        <p className="max-w-[70ch] break-all font-mono text-[11px] text-muted-foreground/80">{row.id}</p>
         {unavailable && <p className="text-muted-foreground text-xs">{row.unavailableReason}</p>}
         {effectiveElsewhere !== null && (
           <p className="text-muted-foreground text-xs">{effectiveElsewhere}</p>

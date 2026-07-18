@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
+import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { lstat, readFile, readlink, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { connect as connectSocket } from "node:net";
 import { homedir } from "node:os";
-import { dirname, extname, join, parse, resolve, sep } from "node:path";
+import { dirname, extname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import WebSocket, { WebSocketServer } from "ws";
@@ -14,8 +15,14 @@ const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_BYTES = 512 * 1024;
 const DEFAULT_PORT = 4_194;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
+const DEFAULT_PROFILE_START_WAIT_MS = 4_000;
+const DEFAULT_PROFILE_START_POLL_MS = 50;
+const DEFAULT_PROFILE_START_COOLDOWN_MS = 10_000;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1"]);
+const PROFILE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
+const SERVICE_UNIT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,127}$/u;
 const OMP_SOCKET_NAME = /^\.appserver-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.sock$/u;
+
 
 // Capacitor v8 serves bundled assets from these origins when its documented
 // default hostname and platform schemes are used. Keep this list exact: an
@@ -94,6 +101,57 @@ export function normalizeDeploymentIdentity(value) {
     );
   }
   return identity;
+}
+export function normalizeProfileId(value) {
+  const id = requiredText(value, "profile id", 64);
+  if (!PROFILE_ID_PATTERN.test(id) || id === "default") {
+    throw new Error("profile id must be a bounded ASCII identifier");
+  }
+  return id;
+}
+
+function normalizeServiceUnit(value) {
+  const unit = requiredText(value, "profile service unit", 128);
+  if (!SERVICE_UNIT_PATTERN.test(unit) || unit.includes("..")) {
+    throw new Error("profile service unit is invalid");
+  }
+  return unit;
+}
+
+/**
+ * Static route table only. User input selects an id; it never supplies a
+ * socket path or supervisor argv. Unknown ids are rejected before this table
+ * is consulted for filesystem or process work.
+ */
+export function normalizeProfileRoutes(value = []) {
+  if (!Array.isArray(value) || value.length > 64) throw new Error("profile routes must be an array");
+  const ids = new Set();
+  return Object.freeze(
+    value.map((entry) => {
+      if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+        throw new Error("profile route is invalid");
+      }
+      const route = entry;
+      const id = normalizeProfileId(route.id);
+      if (ids.has(id)) throw new Error("profile route ids must be unique");
+      ids.add(id);
+      if (typeof route.appSocket !== "string") throw new Error(`profile route ${id} socket is required`);
+      const socket = requiredText(route.appSocket, `profile route ${id} socket`, 4_096);
+      if (!isAbsolute(socket)) throw new Error(`profile route ${id} socket must be an absolute path`);
+      const appSocket = resolve(socket);
+      const serviceUnit =
+        route.serviceUnit === undefined ? undefined : normalizeServiceUnit(route.serviceUnit);
+      if (route.startEnabled !== undefined && typeof route.startEnabled !== "boolean") {
+        throw new Error(`profile route ${id} startEnabled is invalid`);
+      }
+      return Object.freeze({
+        id,
+        appSocket,
+        ...(serviceUnit === undefined ? {} : { serviceUnit }),
+        startEnabled: route.startEnabled === true,
+      });
+    }),
+  );
 }
 
 export function websocketUrlForOrigin(origin) {
@@ -283,6 +341,79 @@ function rejectUpgrade(socket, status, message) {
   );
 }
 
+function routeForUpgrade(pathname, profilesById, appSocket) {
+  if (pathname === "/v1/ws") return { id: "default", appSocket };
+  const match = /^\/v1\/profiles\/([^/]+)\/ws$/u.exec(pathname);
+  if (match === null) return undefined;
+  let id;
+  try {
+    id = normalizeProfileId(match[1]);
+  } catch {
+    return undefined;
+  }
+  return profilesById.get(id);
+}
+
+export function supervisorCommandForRoute(route) {
+  if (route.serviceUnit === undefined) throw new Error("profile route has no start service unit");
+  return process.platform === "darwin"
+    ? { executable: "launchctl", argv: ["kickstart", `gui/${process.getuid?.() ?? ""}/${route.serviceUnit}`] }
+    : { executable: "systemctl", argv: ["--user", "start", route.serviceUnit] };
+}
+
+function supervisorStart(route) {
+  const command = supervisorCommandForRoute(route);
+  const child = spawn(command.executable, command.argv, {
+    shell: false,
+    stdio: "ignore",
+  });
+  child.unref?.();
+  return new Promise((resolvePromise, reject) => {
+    child.once("error", reject);
+    child.once("spawn", resolvePromise);
+  });
+}
+
+function waitForRouteSocket(route, options, closed) {
+  const deadline = Date.now() + options.profileStartWaitMs;
+  let timer;
+  return new Promise((resolvePromise) => {
+    const check = async () => {
+      if (closed()) {
+        resolvePromise(undefined);
+        return;
+      }
+      const resolved = await options.resolveAppSocket(route.appSocket);
+      if (resolved !== undefined || Date.now() >= deadline) {
+        resolvePromise(resolved);
+        return;
+      }
+      timer = setTimeout(check, options.profileStartPollMs);
+    };
+    void check();
+  }).finally(() => {
+    clearTimeout(timer);
+  });
+}
+
+function profileSocketResolver(route, options, state, closed) {
+  const existing = state.starts.get(route.id);
+  if (existing !== undefined) return existing;
+  const now = Date.now();
+  const previous = state.lastStarts.get(route.id) ?? 0;
+  if (!options.startProfiles || !route.startEnabled || route.serviceUnit === undefined) {
+    return Promise.resolve(undefined);
+  }
+  if (now - previous < options.profileStartCooldownMs) return Promise.resolve(undefined);
+  state.lastStarts.set(route.id, now);
+  const start = Promise.resolve()
+    .then(() => options.startSupervisor(route))
+    .then(() => waitForRouteSocket(route, options, closed))
+    .finally(() => state.starts.delete(route.id));
+  state.starts.set(route.id, start);
+  return start;
+}
+
 function boundedReason(value, fallback) {
   const text = typeof value === "string" ? value.replace(/[\p{Cc}]/gu, " ").slice(0, 120) : "";
   return text || fallback;
@@ -361,16 +492,31 @@ export async function startTailnetGateway(input) {
     label: input.label ?? "OMP on this Tailnet host",
     deploymentIdentity: normalizeDeploymentIdentity(input.deploymentIdentity),
     heartbeatIntervalMs: input.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
+    profiles: normalizeProfileRoutes(input.profileRoutes ?? input.profiles ?? []),
+    startProfiles: input.startProfiles === true || input.enableProfileStarts === true,
+    profileStartWaitMs: input.profileStartWaitMs ?? DEFAULT_PROFILE_START_WAIT_MS,
+    profileStartPollMs: input.profileStartPollMs ?? DEFAULT_PROFILE_START_POLL_MS,
+    profileStartCooldownMs: input.profileStartCooldownMs ?? DEFAULT_PROFILE_START_COOLDOWN_MS,
     resolveAppSocket: resolveSocket,
+    startSupervisor: input.startSupervisor ?? supervisorStart,
   };
   if (!LOOPBACK_HOSTS.has(options.listenHost)) throw new Error("Tailnet gateway must listen on loopback");
   if (!Number.isSafeInteger(options.listenPort) || options.listenPort < 0 || options.listenPort > 65_535) {
     throw new Error("Tailnet gateway port is invalid");
   }
-  if (!Number.isSafeInteger(options.heartbeatIntervalMs) || options.heartbeatIntervalMs < 10) {
-    throw new Error("Tailnet gateway heartbeat interval is invalid");
+  for (const [name, value] of [
+    ["heartbeat interval", options.heartbeatIntervalMs],
+    ["profile start wait", options.profileStartWaitMs],
+    ["profile start poll", options.profileStartPollMs],
+    ["profile start cooldown", options.profileStartCooldownMs],
+  ]) {
+    if (!Number.isSafeInteger(value) || value < 1) throw new Error(`Tailnet gateway ${name} is invalid`);
   }
+  if (typeof options.startSupervisor !== "function") throw new Error("profile supervisor starter is invalid");
   const allowedSocketOrigins = new Set([options.allowedOrigin, ...options.nativeAllowedOrigins]);
+  const profilesById = new Map(options.profiles.map((profile) => [profile.id, profile]));
+  const startState = { starts: new Map(), lastStarts: new Map() };
+  let closed = false;
 
   const activeBrowsers = new Map();
   const webSockets = new WebSocketServer({
@@ -423,7 +569,10 @@ export async function startTailnetGateway(input) {
 
   server.on("upgrade", (request, socket, head) => {
     guardSocketErrors(socket);
-    if (requestPath(request.url) !== "/v1/ws") {
+    const pathname = requestPath(request.url);
+    const route = routeForUpgrade(pathname, profilesById, options.appSocket);
+    // Route lookup happens before any socket resolution or supervisor call.
+    if (route === undefined) {
       rejectUpgrade(socket, "404 Not Found", "Not found");
       return;
     }
@@ -431,15 +580,25 @@ export async function startTailnetGateway(input) {
       rejectUpgrade(socket, "403 Forbidden", "Origin not allowed");
       return;
     }
-    void options.resolveAppSocket(options.appSocket).then((resolvedAppSocket) => {
-      if (resolvedAppSocket === undefined) {
-        rejectUpgrade(socket, "503 Service Unavailable", "Local appserver unavailable");
-        return;
-      }
-      webSockets.handleUpgrade(request, socket, head, (browser) => {
-        bridgeBrowser(browser, { ...options, resolvedAppSocket }, activeBrowsers);
-      });
-    });
+    const socketPromise =
+      route.id === "default"
+        ? options.resolveAppSocket(route.appSocket)
+        : options.resolveAppSocket(route.appSocket).then((resolved) => {
+            if (resolved !== undefined) return resolved;
+            return profileSocketResolver(route, options, startState, () => closed);
+          });
+    void socketPromise.then(
+      (resolvedAppSocket) => {
+        if (resolvedAppSocket === undefined || closed) {
+          rejectUpgrade(socket, "503 Service Unavailable", "Local appserver unavailable");
+          return;
+        }
+        webSockets.handleUpgrade(request, socket, head, (browser) => {
+          bridgeBrowser(browser, { ...options, resolvedAppSocket }, activeBrowsers);
+        });
+      },
+      () => rejectUpgrade(socket, "503 Service Unavailable", "Local appserver unavailable"),
+    );
   });
 
   await new Promise((resolvePromise, reject) => {
@@ -472,6 +631,7 @@ export async function startTailnetGateway(input) {
     host: options.listenHost,
     port: address.port,
     close: async () => {
+      closed = true;
       clearInterval(heartbeat);
       for (const browser of activeBrowsers.keys()) browser.terminate();
       await new Promise((resolvePromise) => server.close(() => resolvePromise()));
@@ -489,6 +649,14 @@ function defaultSocketPath(environment) {
 export function optionsFromEnvironment(environment = process.env) {
   const scriptDirectory = fileURLToPath(new URL(".", import.meta.url));
   const port = Number.parseInt(environment.T4_GATEWAY_PORT ?? String(DEFAULT_PORT), 10);
+  let profileRoutes = [];
+  if (environment.T4_PROFILE_ROUTES !== undefined) {
+    try {
+      profileRoutes = JSON.parse(environment.T4_PROFILE_ROUTES);
+    } catch {
+      throw new Error("T4_PROFILE_ROUTES must be valid JSON");
+    }
+  }
   return {
     webRoot: environment.T4_WEB_ROOT ?? resolve(scriptDirectory, "..", "apps", "web", "dist"),
     appSocket: environment.T4_APP_SERVER_SOCKET ?? defaultSocketPath(environment),
@@ -501,6 +669,8 @@ export function optionsFromEnvironment(environment = process.env) {
         : environment.T4_NATIVE_ALLOWED_ORIGINS.split(","),
     label: environment.T4_HOST_LABEL ?? "OMP on this Tailnet host",
     deploymentIdentity: environment.T4_DEPLOYMENT_IDENTITY,
+    profileRoutes,
+    startProfiles: environment.T4_ENABLE_PROFILE_STARTS === "1",
   };
 }
 

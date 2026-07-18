@@ -8,6 +8,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -19,7 +20,7 @@ import { test } from "node:test";
 const repoRoot = resolve(import.meta.dirname, "..");
 const deployScript = resolve(repoRoot, "ops/t4-maintainer/deploy-local.sh");
 const runnerScript = resolve(repoRoot, "ops/t4-maintainer/run.sh");
-
+const bashPath = "/bin/bash";
 const upstreamCommit = "a".repeat(40);
 const integrationCommit = "b".repeat(40);
 const t4Commit = "c".repeat(40);
@@ -31,6 +32,37 @@ const mockAssetSize = Buffer.byteLength("mock-asset\n");
 const mockDebSha512 = createHash("sha512").update("mock-deb\n").digest("base64");
 const mockAssetSha512 = createHash("sha512").update("mock-asset\n").digest("base64");
 const mockDriftSha512 = createHash("sha512").update("drift\n").digest("base64");
+const flockUnavailable =
+  spawnSync("flock", ["--version"], { stdio: "ignore" }).error?.code === "ENOENT";
+const statModeProbe = spawnSync("stat", ["-c", "%a", import.meta.filename], {
+  encoding: "utf8",
+});
+const statModeUnavailable =
+  statModeProbe.status !== 0 || !/^[0-7]+\n$/u.test(statModeProbe.stdout);
+const nullSortExpected = Buffer.from("a\0b\0");
+const nullSortProbe = spawnSync("sort", ["-z"], { input: Buffer.from("b\0a\0") });
+const nullSortUnavailable =
+  nullSortProbe.status !== 0 || nullSortProbe.stdout?.equals(nullSortExpected) !== true;
+const portableFlockMock = "#!/usr/bin/env bash\nexit 0\n";
+const portableStatMock = [
+  "#!/usr/bin/env bash",
+  "set -euo pipefail",
+  "if [[ ${1:-} == -c && ${2:-} == %a && $# -eq 3 ]]; then",
+  '  exec "$MOCK_NODE_EXECUTABLE" -e \'const fs=require("node:fs");const mode=fs.statSync(process.argv[1]).mode&0o7777;process.stdout.write(mode.toString(8)+"\\n")\' "$3"',
+  "fi",
+  'exec /usr/bin/stat "$@"',
+  "",
+].join("\n");
+const portableNullSortMock = [
+  "#!/usr/bin/env bash",
+  "set -euo pipefail",
+  "if [[ ${1:-} == -z && $# -eq 1 ]]; then",
+  '  exec "$MOCK_NODE_EXECUTABLE" -e \'const fs=require("node:fs");const data=fs.readFileSync(0);const parts=[];let start=0;for(let index=0;index<data.length;index+=1){if(data[index]===0){parts.push(data.subarray(start,index));start=index+1;}}if(start<data.length)parts.push(data.subarray(start));parts.sort(Buffer.compare);const output=[];for(const part of parts)output.push(part,Buffer.from([0]));process.stdout.write(Buffer.concat(output));\'',
+  "fi",
+  'exec /usr/bin/sort "$@"',
+  "",
+].join("\n");
+
 
 const mockDispatcher = String.raw`#!/usr/bin/env bash
 set -euo pipefail
@@ -186,7 +218,7 @@ case $tool in
         t4_ci_path='.github/workflows/ci.yml'
         t4_release_path='.github/workflows/release.yml'
         t4_site_path='.github/workflows/deploy-site.yml'
-        mock_workflow_updated_at=$( /usr/bin/date --utc +%Y-%m-%dT%H:%M:%SZ )
+        mock_workflow_updated_at=$( /bin/date -u +%Y-%m-%dT%H:%M:%SZ )
         [[ \${MOCK_T4_WORKFLOW_WRONG_PATH:-0} != 1 ]] || t4_ci_path='.github/workflows/not-ci.yml'
         if [[ (\${MOCK_WORKFLOWS_TERMINAL:-0} == 1 && ! -f $state/sol-ran) ||
               (\${MOCK_WORKFLOWS_FAIL_ONCE_AFTER_SOL:-0} == 1 && -f $state/sol-ran && ! -f $state/workflows-failed-once) ]]; then
@@ -277,7 +309,7 @@ JSON
         fi
         ;;
       repos/lyc-aon/oh-my-pi/releases/tags/t4code-1.2.3-appserver-1)
-        omp_digest=$(printf 'mock-asset\n' | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
+        omp_digest=$(printf 'mock-asset\n' | sha256sum | awk '{print $1}')
         omp_asset_prefix='mock://'
         [[ \${MOCK_OMP_ASSET_WRONG_ORIGIN:-0} != 1 ]] || omp_asset_prefix='https://example.invalid/'
         extra=''
@@ -303,16 +335,16 @@ JSON
         release_tag=\${endpoint##*/}
         release_version=\${release_tag#v}
         release_prefix="https://github.com/LycaonLLC/t4-code/releases/download/$release_tag"
-        deb_digest=$(printf 'mock-deb\n' | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
-        asset_digest=$(printf 'mock-asset\n' | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
+        deb_digest=$(printf 'mock-deb\n' | sha256sum | awk '{print $1}')
+        asset_digest=$(printf 'mock-asset\n' | sha256sum | awk '{print $1}')
         metadata=$(linux_update_metadata "$release_version")
-        metadata_digest=$(printf '%s\n' "$metadata" | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
-        metadata_size=$(printf '%s\n' "$metadata" | /usr/bin/wc -c)
+        metadata_digest=$(printf '%s\n' "$metadata" | sha256sum | awk '{print $1}')
+        metadata_size=$(printf '%s\n' "$metadata" | wc -c)
         manifest=$(printf '%s  T4-Code-%s-android.apk\n%s  T4-Code-%s-linux-amd64.deb\n%s  T4-Code-%s-linux-x86_64.AppImage\n%s  T4-Code-%s-mac-arm64.dmg\n%s  T4-Code-%s-mac-arm64.zip\n%s  latest-linux.yml\n' \
           "$asset_digest" "$release_version" "$deb_digest" "$release_version" "$asset_digest" "$release_version" \
           "$asset_digest" "$release_version" "$asset_digest" "$release_version" "$metadata_digest")
-        manifest_digest=$(printf '%s\n' "$manifest" | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
-        manifest_size=$(printf '%s\n' "$manifest" | /usr/bin/wc -c)
+        manifest_digest=$(printf '%s\n' "$manifest" | sha256sum | awk '{print $1}')
+        manifest_size=$(printf '%s\n' "$manifest" | wc -c)
         cat <<JSON
 {"tag_name":"$release_tag","html_url":"https://github.com/LycaonLLC/t4-code/releases/tag/$release_tag","published_at":"2026-07-15T00:00:00Z","draft":false,"prerelease":false,"assets":[
   {"name":"SHA256SUMS.txt","state":"uploaded","size":$manifest_size,"digest":"sha256:$manifest_digest","browser_download_url":"$release_prefix/SHA256SUMS.txt"},
@@ -350,8 +382,8 @@ JSON
         manifest_version=$version
         manifest_tag=$release_tag
         deb_size=${mockDebSize}
-        deb_digest=$(printf 'mock-deb\n' | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
-        asset_digest=$(printf 'mock-asset\n' | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
+        deb_digest=$(printf 'mock-deb\n' | sha256sum | awk '{print $1}')
+        asset_digest=$(printf 'mock-asset\n' | sha256sum | awk '{print $1}')
         apk_digest=$asset_digest
         apk_url="$release_prefix/T4-Code-$version-android.apk"
         extra=''
@@ -377,10 +409,10 @@ JSON
       elif [[ $url == *SHA256SUMS* ]]; then
         version=1.2.3
         [[ $url =~ /v([0-9]+\.[0-9]+\.[0-9]+)/SHA256SUMS\.txt ]] && version=\${BASH_REMATCH[1]}
-        deb_digest=$(printf 'mock-deb\n' | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
-        asset_digest=$(printf 'mock-asset\n' | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
+        deb_digest=$(printf 'mock-deb\n' | sha256sum | awk '{print $1}')
+        asset_digest=$(printf 'mock-asset\n' | sha256sum | awk '{print $1}')
         metadata=$(linux_update_metadata "$version")
-        metadata_digest=$(printf '%s\n' "$metadata" | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
+        metadata_digest=$(printf '%s\n' "$metadata" | sha256sum | awk '{print $1}')
         printf '%s  T4-Code-%s-android.apk\n%s  T4-Code-%s-linux-amd64.deb\n%s  T4-Code-%s-linux-x86_64.AppImage\n%s  T4-Code-%s-mac-arm64.dmg\n%s  T4-Code-%s-mac-arm64.zip\n%s  latest-linux.yml\n' \
           "$asset_digest" "$version" "$deb_digest" "$version" "$asset_digest" "$version" \
           "$asset_digest" "$version" "$asset_digest" "$version" "$metadata_digest" >"$output"
@@ -401,9 +433,9 @@ JSON
       [[ $(read_state gateway-service inactive) == active ]] || exit 22
       [[ $(read_state gateway-health healthy) == healthy ]] || exit 22
       sessions=$(read_state active-sessions 0)
-      identity=$(read_state deployment-identity "sha256:$(printf old | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')")
+      identity=$(read_state deployment-identity "sha256:$(printf old | sha256sum | awk '{print $1}')")
       if [[ \${MOCK_STALE_LOOPBACK_IDENTITY:-0} == 1 ]]; then
-        identity="sha256:$(printf stale-loopback | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')"
+        identity="sha256:$(printf stale-loopback | sha256sum | awk '{print $1}')"
       fi
       printf '{"ok":true,"web":true,"upstream":true,"transport":"local-unix","activeSessions":%s,"deploymentIdentity":"%s"}\n' "$sessions" "$identity"
       exit 0
@@ -421,9 +453,9 @@ JSON
         exit 0
       fi
       [[ $(read_state tailnet-health healthy) == healthy ]] || exit 22
-      identity=$(read_state deployment-identity "sha256:$(printf old | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')")
+      identity=$(read_state deployment-identity "sha256:$(printf old | sha256sum | awk '{print $1}')")
       if [[ \${MOCK_STALE_TAILNET_IDENTITY:-0} == 1 ]]; then
-        identity="sha256:$(printf stale | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')"
+        identity="sha256:$(printf stale | sha256sum | awk '{print $1}')"
       fi
       printf '{"ok":true,"web":true,"upstream":true,"transport":"local-unix","activeSessions":0,"deploymentIdentity":"%s"}\n' "$identity"
       exit 0
@@ -606,6 +638,7 @@ SH
       runtime=$(dirname -- "$(dirname -- "$script")")
       shift 2
       origin='' port='' web_root='' app_socket='' label='' deployment_identity='' defer_start=false
+      profile_routes=null start_profiles=false
       while (($#)); do
         case $1 in
           --defer-start) defer_start=true; shift ;;
@@ -615,10 +648,12 @@ SH
           --app-socket) app_socket=$2; shift 2 ;;
           --label) label=$2; shift 2 ;;
           --deployment-identity) deployment_identity=$2; shift 2 ;;
+          --profile-routes) profile_routes=$2; shift 2 ;;
+          --start-profiles) start_profiles=true; shift ;;
           *) shift ;;
         esac
       done
-      /usr/bin/jq -n \
+      jq -n \
         --arg sourceRoot "$runtime" \
         --arg nodeExecutable "$MOCK_NODE_EXECUTABLE" \
         --arg gatewayScript "$runtime/scripts/tailnet-gateway.mjs" \
@@ -628,6 +663,8 @@ SH
         --arg label "$label" \
         --arg deploymentIdentity "$deployment_identity" \
         --arg webRoot "$web_root" \
+        --argjson profileRoutes "$profile_routes" \
+        --argjson startProfiles "$start_profiles" \
         '{
           sourceRoot:$sourceRoot,
           nodeExecutable:$nodeExecutable,
@@ -638,7 +675,10 @@ SH
           appSocket:$appSocket,
           label:$label,
           deploymentIdentity:$deploymentIdentity
-        }' \
+        } + (if $profileRoutes == null then {} else {
+          profileRoutes:$profileRoutes,
+          startProfiles:$startProfiles
+        } end)' \
         >"$MOCK_GATEWAY_CONFIG"
       printf 'new-unit\n' >"$MOCK_GATEWAY_UNIT"
       write_state deployment-identity "$deployment_identity"
@@ -729,6 +769,16 @@ SH
     esac
     ;;
 
+  realpath)
+    [[ \${1:-} == -e ]] && shift
+    [[ \${1:-} == -- ]] && shift
+    exec "$MOCK_NODE_EXECUTABLE" -e 'const fs=require("node:fs");process.stdout.write(fs.realpathSync.native(process.argv[1])+"\n")' "$1"
+    ;;
+
+  uname)
+    [[ \${1:-} == -s ]] && printf 'Linux\n' || printf 'Linux\n'
+    ;;
+
   pgrep)
     if [[ \${1:-} == -x || \${1:-} == -f ]]; then
       if [[ -f $state/desktop-busy ]]; then exit 0; fi
@@ -792,9 +842,9 @@ SH
 
   sha256sum)
     if [[ \${1:-} == /proc/*/exe ]]; then
-      exec /usr/bin/sha256sum "$MOCK_OMP_TARGET"
+      set -- "$MOCK_OMP_TARGET"
     fi
-    exec /usr/bin/sha256sum "$@"
+    exec "$MOCK_NODE_EXECUTABLE" -e 'const fs=require("node:fs");const crypto=require("node:crypto");const path=process.argv[1];const data=path ? fs.readFileSync(path) : fs.readFileSync(0);process.stdout.write(crypto.createHash("sha256").update(data).digest("hex")+"  "+(path || "-")+"\n")' "$@"
     ;;
 
   *)
@@ -837,8 +887,8 @@ case \${1:-} in
 esac
 SH
 chmod 0755 "$MOCK_OMP_TARGET"
-omp_sha=$(/usr/bin/sha256sum "$MOCK_OMP_TARGET" | /usr/bin/awk '{print $1}')
-deployment_identity="sha256:$(printf '%s\0%s\0%s\0' "$MOCK_T4_COMMIT" "$MOCK_INTEGRATION_COMMIT" "$omp_sha" | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')"
+omp_sha=$(sha256sum "$MOCK_OMP_TARGET" | awk '{print $1}')
+deployment_identity="sha256:$(printf '%s\0%s\0%s\0' "$MOCK_T4_COMMIT" "$MOCK_INTEGRATION_COMMIT" "$omp_sha" | sha256sum | awk '{print $1}')"
 printf '1.2.3' >"$MOCK_STATE/package-version"
 printf 'active' >"$MOCK_STATE/app-service"
 printf 'active' >"$MOCK_STATE/gateway-service"
@@ -854,7 +904,7 @@ gateway_origin=https://mock.tailnet.ts.net
 gateway_port=4319
 gateway_socket=$(<"$MOCK_STATE/socket-path")
 gateway_label=mock
-/usr/bin/jq -n \
+jq -n \
   --arg sourceRoot "$MOCK_RUNTIME_ROOT" \
   --arg allowedOrigin "$gateway_origin" \
   --argjson port "$gateway_port" \
@@ -881,18 +931,18 @@ tree_sha() {
   (
     cd -- "$root"
     while IFS= read -r -d '' relative; do
-      digest=$(/usr/bin/sha256sum "$relative" | /usr/bin/awk '{print $1}')
+      digest=$(sha256sum "$relative" | awk '{print $1}')
       printf '%s\0%s\0' "$relative" "$digest"
-    done < <(/usr/bin/find . -type f -print0 | LC_ALL=C /usr/bin/sort -z)
-  ) | /usr/bin/sha256sum | /usr/bin/awk '{print $1}'
+    done < <(find . -type f -print0 | LC_ALL=C sort -z)
+  ) | sha256sum | awk '{print $1}'
 }
 
-gateway_script_sha=$(/usr/bin/sha256sum "$gateway_script" | /usr/bin/awk '{print $1}')
+gateway_script_sha=$(sha256sum "$gateway_script" | awk '{print $1}')
 web_tree_sha=$(tree_sha "$web_root")
 ws_tree_sha=$(tree_sha "$ws_root")
-config_sha=$(/usr/bin/sha256sum "$MOCK_GATEWAY_CONFIG" | /usr/bin/awk '{print $1}')
-unit_sha=$(/usr/bin/sha256sum "$MOCK_GATEWAY_UNIT" | /usr/bin/awk '{print $1}')
-/usr/bin/jq -n \
+config_sha=$(sha256sum "$MOCK_GATEWAY_CONFIG" | awk '{print $1}')
+unit_sha=$(sha256sum "$MOCK_GATEWAY_UNIT" | awk '{print $1}')
+jq -n \
   --slurpfile publication "$result" \
   --arg omp_target "$MOCK_OMP_TARGET" \
   --arg omp_sha "$omp_sha" \
@@ -985,7 +1035,7 @@ function forgedOmpPublicProof() {
         browserDownloadUrl: `mock://${name}`,
       })),
   };
-  const canonicalJson = spawnSync("/usr/bin/jq", ["-cS", "."], {
+  const canonicalJson = spawnSync("jq", ["-cS", "."], {
     encoding: "utf8",
     input: JSON.stringify(canonical),
   });
@@ -1017,7 +1067,8 @@ async function waitForPath(path) {
 
 async function createDeployFixture(options = {}) {
   const previousVersion = options.sameVersion ? "1.2.3" : "1.2.2";
-  const root = await mkdtemp(join(tmpdir(), "t4-maintainer-contract-"));
+  const fixtureRoot = process.platform === "darwin" ? "/private/tmp" : tmpdir();
+  const root = await realpath(await mkdtemp(join(fixtureRoot, "t4-maintainer-contract-")));
   const home = join(root, "home");
   const state = join(root, "mock-state");
   const bin = join(root, "bin");
@@ -1036,6 +1087,7 @@ async function createDeployFixture(options = {}) {
   const t4Executable = join(root, "opt", "T4 Code", "t4-code");
   const t4WebRoot = join(root, "opt", "T4 Code", "resources", "web");
   const deployments = join(maintainerRoot, "deployments");
+  const procRoot = join(maintainerRoot, "mock-proc");
 
   await mkdir(dirname(ompTarget), { recursive: true });
   await mkdir(dirname(socket), { recursive: true });
@@ -1046,6 +1098,11 @@ async function createDeployFixture(options = {}) {
   await mkdir(state, { recursive: true });
   await mkdir(bin, { recursive: true });
   await writeFile(calls, "");
+  if (options.wsEscape) {
+    const escapingWs = join(state, "escaping-ws");
+    await mkdir(escapingWs, { recursive: true });
+    await writeFile(join(escapingWs, "package.json"), '{"name":"ws"}\n');
+  }
 
   await writeFile(
     result,
@@ -1132,6 +1189,9 @@ esac
       port: 4319,
       appSocket: socket,
       label: "mock",
+      ...(options.profileRoutes === undefined
+        ? {}
+        : { profileRoutes: options.profileRoutes, startProfiles: options.startProfiles === true }),
     })}\n`,
   );
   await writeFile(gatewayUnit, "old-unit\n");
@@ -1149,15 +1209,15 @@ esac
     join(state, "gateway-enablement"),
     options.gatewayEnabled === false ? "disabled" : "enabled",
   );
-  await mkdir(join(state, "escaping-ws"), { recursive: true });
-  await writeFile(join(state, "escaping-ws", "package.json"), "{}\n");
   if (options.desktopBusy) await writeFile(join(state, "desktop-busy"), "1");
   if (options.childBusy) await writeFile(join(state, "child-busy"), "1");
   if (options.mainPidZero) await writeFile(join(state, "mainpid-zero"), "1");
   if (options.busyAfterStage) await writeFile(join(state, "busy-after-stage"), "1");
-
   const dispatcher = join(bin, "mock-tool");
   await writeFile(dispatcher, mockDispatcher);
+  const uname = join(bin, "uname");
+  await writeFile(uname, "#!/usr/bin/env bash\nprintf 'Linux\\n'\n");
+  await chmod(uname, 0o755);
   await chmod(dispatcher, 0o755);
   for (const tool of [
     "gh",
@@ -1175,8 +1235,19 @@ esac
     "dpkg",
     "dpkg-deb",
     "sha256sum",
+    "realpath",
   ]) {
     await symlink(dispatcher, join(bin, tool));
+  }
+  const portableTools = [
+    ...(flockUnavailable ? [["flock", portableFlockMock]] : []),
+    ...(statModeUnavailable ? [["stat", portableStatMock]] : []),
+    ...(nullSortUnavailable ? [["sort", portableNullSortMock]] : []),
+  ];
+  for (const [tool, source] of portableTools) {
+    const toolPath = join(bin, tool);
+    await writeFile(toolPath, source);
+    await chmod(toolPath, 0o755);
   }
 
   const socketProcess = spawn(
@@ -1189,6 +1260,9 @@ esac
   );
   await waitForPath(socket);
   await writeFile(join(state, "app-pid"), `${socketProcess.pid}\n`);
+  const procExecutable = join(procRoot, String(socketProcess.pid), "exe");
+  await mkdir(dirname(procExecutable), { recursive: true });
+  await symlink(ompTarget, procExecutable);
 
   const env = {
     ...process.env,
@@ -1203,6 +1277,7 @@ esac
     MOCK_MAIN_COMMIT: mainCommit,
     MOCK_UPSTREAM_TAG_OBJECT: upstreamTagObject,
     MOCK_INTEGRATION_TAG_OBJECT: integrationTagObject,
+    MOCK_BIN: bin,
     MOCK_OMP_TARGET: ompTarget,
     MOCK_OMP_SERVICE: ompService,
     MOCK_GATEWAY_CONFIG: gatewayConfig,
@@ -1212,9 +1287,10 @@ esac
     MOCK_T4_WEB_ROOT: t4WebRoot,
     T4_MAINTAINER_ROOT: maintainerRoot,
     T4_MAINTAINER_TEST_MODE: "1",
+    ...(process.platform === "linux" ? {} : { T4_MAINTAINER_TEST_PROC_ROOT: procRoot }),
     T4_MAINTAINER_GH: join(bin, "gh"),
     T4_MAINTAINER_CURL: join(bin, "curl"),
-    T4_MAINTAINER_JQ: "/usr/bin/jq",
+    T4_MAINTAINER_JQ: "jq",
     T4_MAINTAINER_GIT: join(bin, "git"),
     T4_MAINTAINER_BUN: join(bin, "bun"),
     T4_MAINTAINER_PNPM: join(bin, "pnpm"),
@@ -1225,6 +1301,8 @@ esac
     T4_MAINTAINER_DPKG: join(bin, "dpkg"),
     T4_MAINTAINER_DPKG_DEB: join(bin, "dpkg-deb"),
     T4_MAINTAINER_SHA256SUM: join(bin, "sha256sum"),
+    T4_MAINTAINER_REALPATH: join(bin, "realpath"),
+    T4_MAINTAINER_UNAME: join(bin, "uname"),
     T4_MAINTAINER_SYSTEMCTL: join(bin, "systemctl"),
     T4_MAINTAINER_SLEEP: "/usr/bin/true",
     T4_MAINTAINER_FORK_SYNC_EVENT_QUIESCE_SECONDS: "1",
@@ -1232,8 +1310,8 @@ esac
     T4_MAINTAINER_FORK_SYNC_RUN_SETTLE_INTERVAL_SECONDS: "1",
     T4_MAINTAINER_FORK_SYNC_RUN_QUIET_POLLS: "3",
     T4_MAINTAINER_FORK_SYNC_RUN_MIN_OBSERVATION_POLLS: "7",
-    T4_MAINTAINER_INSTALL: "/usr/bin/install",
-    T4_MAINTAINER_SYNC: "/usr/bin/sync",
+    T4_MAINTAINER_INSTALL: "install",
+    T4_MAINTAINER_SYNC: "/bin/sync",
     T4_LOCAL_OMP_TARGET: ompTarget,
     T4_LOCAL_OMP_SERVICE: ompService,
     T4_LOCAL_OMP_SOCKET: socket,
@@ -1311,6 +1389,7 @@ esac
     calls,
     ompTarget,
     gatewayConfig,
+    procRoot,
     gatewayUnit,
     deployments,
     env,
@@ -1325,7 +1404,7 @@ esac
       gatewayEnablement: options.gatewayEnabled === false ? "disabled" : "enabled",
     },
     run(extraEnv = {}) {
-      return spawnSync("/usr/bin/bash", [deployScript, result, receipt, work], {
+      return spawnSync(bashPath, [deployScript, result, receipt, work], {
         encoding: "utf8",
         env: { ...env, ...extraEnv },
         timeout: 20_000,
@@ -1415,7 +1494,7 @@ async function createRunnerFixture(options = {}) {
       ],
     })}\n`,
   );
-  const intentHash = spawnSync("/usr/bin/git", ["hash-object", atomicIntentPath], {
+  const intentHash = spawnSync("git", ["hash-object", atomicIntentPath], {
     encoding: "utf8",
   });
   assert.equal(intentHash.status, 0, intentHash.stderr);
@@ -1494,7 +1573,7 @@ async function createRunnerFixture(options = {}) {
       );
     },
     runRunner(extraEnv = {}, args = []) {
-      return spawnSync("/usr/bin/bash", [runnerScript, ...args], {
+      return spawnSync(bashPath, [runnerScript, ...args], {
         encoding: "utf8",
         env: { ...runnerEnv, ...extraEnv },
         timeout: 20_000,
@@ -1662,10 +1741,13 @@ test("installed candidate proves its drain contract against the exact live execu
     calls,
     /^omp-candidate\tappserver\tdrain-if-idle\t--json\t--expected-host-id\tt4-maintainer-host-[0-9a-f]{64}\t--expected-epoch\tt4-maintainer-epoch-[0-9a-f]{64}$/mu,
   );
-  assert.ok(
-    calls.split("\n").filter((line) => /^sha256sum\t\/proc\/[0-9]+\/exe$/u.test(line)).length >= 2,
-    calls,
-  );
+  const expectedProcRoot = process.platform === "linux" ? "/proc" : fixture.procRoot;
+  const executableHashPrefix = `sha256sum\t${expectedProcRoot}/`;
+  const executableHashes = calls.split("\n").filter((line) => {
+    if (!line.startsWith(executableHashPrefix) || !line.endsWith("/exe")) return false;
+    return /^[1-9][0-9]*$/u.test(line.slice(executableHashPrefix.length, -"/exe".length));
+  });
+  assert.ok(executableHashes.length >= 2, calls);
 });
 
 test("malformed, unsupported, and false live drain proofs never complete deployment", async (t) => {
@@ -1804,6 +1886,24 @@ test("stopped or unhealthy baseline services are repairable", async (t) => {
       assert.match(await fixture.callsText(), /^apt-get\t.*--reinstall/mu);
     });
   }
+});
+
+test("local deployment preserves named Tailnet routes and their start policy", async (t) => {
+  const profileRoutes = [
+    {
+      id: "fast",
+      appSocket: "/run/user/1000/omp/fast.sock",
+      serviceUnit: "t4-fast.service",
+      startEnabled: true,
+    },
+  ];
+  const fixture = await createDeployFixture({ profileRoutes, startProfiles: true });
+  t.after(() => fixture.cleanup());
+  const result = fixture.run();
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const installedConfig = JSON.parse(await readFile(fixture.gatewayConfig, "utf8"));
+  assert.deepEqual(installedConfig.profileRoutes, profileRoutes);
+  assert.equal(installedConfig.startProfiles, true);
 });
 
 test("same-version package repair is an effective reinstall", async (t) => {
@@ -1997,6 +2097,86 @@ test("runtime dependency symlinks must remain inside the exact tagged runtime", 
   t.after(() => fixture.cleanup());
   const result = fixture.run();
   assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stderr, /T4 gateway ws runtime resolves outside the exact tagged checkout/u);
+  const calls = await fixture.callsText();
+  assert.doesNotMatch(calls, /^apt-get\t/mu);
+  assert.doesNotMatch(calls, /^systemctl\t.*(?:stop|start|restart)/mu);
+  await assertRestored(fixture);
+});
+
+test("test process roots cannot weaken the production executable proof", async (t) => {
+  const fixture = await createDeployFixture();
+  t.after(() => fixture.cleanup());
+  const result = fixture.run({
+    T4_MAINTAINER_TEST_MODE: "0",
+    T4_MAINTAINER_TEST_PROC_ROOT: join(fixture.maintainerRoot, "mock-proc"),
+  });
+  assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(
+    result.stderr,
+    /process-root override is restricted to an explicit temporary test root/u,
+  );
+  const calls = await fixture.callsText();
+  assert.doesNotMatch(calls, /^apt-get\t/mu);
+  assert.doesNotMatch(calls, /^systemctl\t.*(?:stop|start|restart)/mu);
+  await assertRestored(fixture);
+});
+
+test("test process roots reject canonical escapes before mutation", async (t) => {
+  const fixture = await createDeployFixture();
+  t.after(() => fixture.cleanup());
+  const externalProcRoot = join(fixture.root, "external-proc");
+  const escapedProcRoot = join(fixture.maintainerRoot, "escaped-proc");
+  await mkdir(externalProcRoot, { recursive: true });
+  await symlink(externalProcRoot, escapedProcRoot);
+  const result = fixture.run({ T4_MAINTAINER_TEST_PROC_ROOT: escapedProcRoot });
+  assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stderr, /test process root must be canonical/u);
+  const calls = await fixture.callsText();
+  assert.doesNotMatch(calls, /^apt-get\t/mu);
+  assert.doesNotMatch(calls, /^systemctl\t.*(?:stop|start|restart)/mu);
+  await assertRestored(fixture);
+});
+
+test("test process roots must remain inside the canonical maintainer root", async (t) => {
+  const fixture = await createDeployFixture();
+  t.after(() => fixture.cleanup());
+  const externalProcRoot = join(fixture.root, "external-proc");
+  await mkdir(externalProcRoot, { recursive: true });
+  const result = fixture.run({ T4_MAINTAINER_TEST_PROC_ROOT: externalProcRoot });
+  assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stderr, /test process root must be a child of the maintainer root/u);
+  const calls = await fixture.callsText();
+  assert.doesNotMatch(calls, /^apt-get\t/mu);
+  assert.doesNotMatch(calls, /^systemctl\t.*(?:stop|start|restart)/mu);
+  await assertRestored(fixture);
+});
+
+test("test maintainer roots must be canonical before process overrides", async (t) => {
+  const fixture = await createDeployFixture();
+  t.after(() => fixture.cleanup());
+  const maintainerAlias = join(fixture.root, "maintainer-alias");
+  await symlink(fixture.maintainerRoot, maintainerAlias);
+  const result = spawnSync(
+    bashPath,
+    [
+      deployScript,
+      join(maintainerAlias, "runs", "fixture", "result.json"),
+      join(maintainerAlias, "runs", "fixture", "local-deployment.json"),
+      join(maintainerAlias, "runs", "fixture", "local-work"),
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...fixture.env,
+        T4_MAINTAINER_ROOT: maintainerAlias,
+        T4_MAINTAINER_TEST_PROC_ROOT: join(maintainerAlias, "mock-proc"),
+      },
+      timeout: 20_000,
+    },
+  );
+  assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stderr, /test maintainer root must be canonical/u);
   const calls = await fixture.callsText();
   assert.doesNotMatch(calls, /^apt-get\t/mu);
   assert.doesNotMatch(calls, /^systemctl\t.*(?:stop|start|restart)/mu);
@@ -2773,7 +2953,7 @@ count=0
 count=$((count + 1))
 printf '%s' "$count" >"$count_file"
 [[ $count != 3 ]] || exit 1
-exec /usr/bin/sync "$@"
+exec /bin/sync "$@"
 `,
   );
   await chmod(failingSync, 0o755);
@@ -2803,7 +2983,7 @@ for argument in "$@"; do
     ${mode === "fail" ? "exit 1" : "printf '{}\\n'; exit 0"}
   fi
 done
-exec /usr/bin/jq "$@"
+exec jq "$@"
 `,
       );
       await chmod(jq, 0o755);

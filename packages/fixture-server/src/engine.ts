@@ -119,6 +119,10 @@ export class FixtureEngine {
   get clientCount(): number {
     return this.clients.size;
   }
+  /** Snapshot of the sessions currently visible to connected clients. */
+  get sessions(): readonly SessionRef[] {
+    return this.currentSessionRefs();
+  }
   get stateHash(): string {
     return canonicalSha256({
       seed: this.seed,

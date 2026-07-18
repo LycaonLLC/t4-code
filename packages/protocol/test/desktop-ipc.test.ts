@@ -5,6 +5,8 @@ import {
   decodeDesktopInvokeRequest,
   decodeDesktopUpdateRendererReadyResult,
   decodeDesktopUpdateState,
+  decodeSpeechText,
+  MAX_SPEECH_TEXT_BYTES,
   isDesktopInvokeRequest,
 } from "../src/desktop-ipc.ts";
 
@@ -409,5 +411,14 @@ describe("desktop IPC boundary", () => {
         payload: { source: "renderer", url: "https://attacker.invalid" },
       }),
     ).toThrow();
+  });
+  it("bounds and rejects unsafe read-aloud requests", () => {
+    expect(decodeDesktopInvokeRequest({ channel: "omp:speech:speak", payload: { text: "hello\nworld" } })).toEqual({
+      channel: "omp:speech:speak",
+      payload: { text: "hello\nworld" },
+    });
+    expect(() => decodeSpeechText("x".repeat(MAX_SPEECH_TEXT_BYTES + 1))).toThrow();
+    expect(() => decodeSpeechText("bad\0text")).toThrow();
+    expect(() => decodeDesktopInvokeRequest({ channel: "omp:speech:stop", payload: {} })).not.toThrow();
   });
 });

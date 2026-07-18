@@ -35,6 +35,8 @@ import type {
   TerminalInputRequest,
   TerminalResizeRequest,
   TerminalResult,
+  SpeechRequest,
+  SpeechResult,
 } from "@t4-code/protocol/desktop-ipc";
 import type { CatalogFrame, SettingsFrame, WelcomeFrame } from "@t4-code/protocol";
 import { ImmutableMap } from "./immutable-map.ts";
@@ -50,6 +52,8 @@ export interface DesktopShellPort {
   readonly confirm: (request: ConfirmRequest) => Promise<ConfirmResult>;
   readonly terminalInput: (request: TerminalInputRequest) => Promise<TerminalResult>;
   readonly terminalResize: (request: TerminalResizeRequest) => Promise<TerminalResult>;
+  readonly speakText?: (request: SpeechRequest) => Promise<SpeechResult>;
+  readonly stopSpeaking?: () => Promise<SpeechResult>;
   readonly terminalClose: (request: TerminalCloseRequest) => Promise<TerminalResult>;
   readonly pair: (request: PairRequest) => Promise<PairResult>;
   readonly drainPairLinks?: () => Promise<PairLinksDrainResult>;
@@ -80,6 +84,8 @@ export interface DesktopShellPort {
   readonly onServerFrame: (listener: (event: RendererServerFrameEvent) => void) => () => void;
   readonly onConnectionState: (listener: (event: ConnectionStateEvent) => void) => () => void;
   readonly onRuntimeError: (listener: (event: RuntimeErrorEvent) => void) => () => void;
+  /** Existing browser/native lifecycle funnel; does not install a second listener set. */
+  readonly onWake?: (listener: () => void) => () => void;
   readonly onPairLink?: (listener: (event: PairLinkEvent) => void) => () => void;
   readonly onUpdateState?: (listener: (state: DesktopUpdateState) => void) => () => void;
   readonly onOpenUpdateSettings?: (listener: (event: DesktopUpdateOpenEvent) => void) => () => void;
@@ -135,12 +141,18 @@ export interface DesktopRuntimeSnapshot {
 
 export type DesktopRuntimeSnapshotListener = (snapshot: DesktopRuntimeSnapshot) => void;
 
+export interface DesktopRuntimeTimerScheduler {
+  readonly setTimeout: (callback: () => void, delayMs: number) => unknown;
+  readonly clearTimeout: (handle: unknown) => void;
+}
+
 export interface DesktopRuntimeOptions {
   readonly shell: DesktopShellPort;
   readonly projection?: ProjectionStore;
   readonly projectionOptions?: ProjectionOptions;
   readonly clock?: { now(): number };
   readonly maxRuntimeErrors?: number;
+  readonly timers?: DesktopRuntimeTimerScheduler;
 }
 
 export interface DesktopControllerLease {

@@ -571,11 +571,14 @@ export function validateDraft(control: ControlModel, value: SettingValue): strin
 
 // ─── Search ────────────────────────────────────────────────────────────────
 
-export function rowMatches(row: SettingRow, query: string): boolean {
+/** `extraText` lets owners of specialized editors (model roles, task
+ * agents) contribute friendly-form search terms per row id. */
+export function rowMatches(row: SettingRow, query: string, extraText?: ReadonlyMap<string, string>): boolean {
   if (query.length === 0) return true;
   if (row.searchText.includes(query)) return true;
+  if (extraText?.get(row.id)?.includes(query) === true) return true;
   if (row.control.kind === "nested") {
-    return row.control.children.some((child) => rowMatches(child, query));
+    return row.control.children.some((child) => rowMatches(child, query, extraText));
   }
   return false;
 }
@@ -584,10 +587,11 @@ export function rowMatches(row: SettingRow, query: string): boolean {
 export function filterSections(
   sections: readonly SettingsSection[],
   query: string,
+  extraText?: ReadonlyMap<string, string>,
 ): readonly SettingsSection[] {
   const normalized = query.trim().toLowerCase();
   if (normalized.length === 0) return sections;
   return sections
-    .map((section) => ({ ...section, rows: section.rows.filter((row) => rowMatches(row, normalized)) }))
+    .map((section) => ({ ...section, rows: section.rows.filter((row) => rowMatches(row, normalized, extraText)) }))
     .filter((section) => section.rows.length > 0);
 }

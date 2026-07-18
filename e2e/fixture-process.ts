@@ -1,9 +1,21 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 
-import { FixtureWebSocketServer } from "../packages/fixture-server/src/index.ts";
+import {
+  FixtureWebSocketServer,
+  SCENARIO_IDS,
+  type ScenarioId,
+} from "../packages/fixture-server/src/index.ts";
 
-const fixture = new FixtureWebSocketServer({ scenario: "stream-v1" });
+function selectedScenario(value: string | undefined): ScenarioId {
+  if (value === undefined) return "stream-v1";
+  const scenario = SCENARIO_IDS.find((candidate) => candidate === value);
+  if (scenario === undefined) throw new Error(`unknown fixture scenario: ${value}`);
+  return scenario;
+}
+
+const scenario = selectedScenario(process.env.T4_FIXTURE_SCENARIO);
+const fixture = new FixtureWebSocketServer({ scenario });
 const wsUrl = await fixture.start();
 
 const control = createServer((request, response) => {
@@ -18,6 +30,24 @@ const control = createServer((request, response) => {
     fixture.advanceBy(ms);
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ ok: true, nowMs: fixture.engine.virtualTime }));
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/state") {
+    response.writeHead(200, { "cache-control": "no-store", "content-type": "application/json" });
+    response.end(
+      JSON.stringify({
+        scenario,
+        sessions: fixture.engine.sessions,
+        clients: fixture.clientCount,
+        connections: fixture.connectionCount,
+      }),
+    );
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/disconnect") {
+    fixture.dropConnections();
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ ok: true }));
     return;
   }
   response.writeHead(404, { "content-type": "application/json" });
