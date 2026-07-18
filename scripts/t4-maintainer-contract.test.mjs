@@ -83,24 +83,46 @@ test("runner preflights the Linux Sol privilege runner before creating state", a
   const scratch = await makeCanonicalTemporaryDirectory("t4-maintainer-setpriv-");
   const stateRoot = join(scratch, "maintainer");
   const bin = join(scratch, "bin");
+  const realpath = join(bin, "realpath");
   const uname = join(stateRoot, "uname");
   const missingSetpriv = join(stateRoot, "missing-setpriv");
   await mkdir(stateRoot, { mode: 0o700 });
   await mkdir(bin, { mode: 0o700 });
-  for (const command of ["dpkg", "dpkg-query", "flock", "sha256sum", "systemctl"]) {
+  for (const command of [
+    "curl",
+    "dpkg",
+    "dpkg-query",
+    "flock",
+    "gh",
+    "git",
+    "jq",
+    "sha256sum",
+    "systemctl",
+  ]) {
     await writeFile(join(bin, command), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
   }
+  await writeFile(
+    realpath,
+    `#!/bin/sh
+[ "\${1:-}" = "-e" ] && shift
+[ "\${1:-}" = "--" ] && shift
+exec "$T4_TEST_NODE" -e 'const fs=require("node:fs");process.stdout.write(fs.realpathSync.native(process.argv[1])+"\\n")' "$1"
+`,
+    { mode: 0o700 },
+  );
   await writeFile(uname, "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o700 });
   try {
     const result = spawnSync(bashPath, [resolve(maintainerRoot, "run.sh")], {
       encoding: "utf8",
       env: {
         ...process.env,
-        PATH: `${bin}:${process.env.PATH}`,
+        PATH: `${bin}:/usr/bin:/bin`,
+        T4_TEST_NODE: process.execPath,
         T4_MAINTAINER_TEST_MODE: "1",
         T4_MAINTAINER_ROOT: stateRoot,
         T4_MAINTAINER_UNAME: uname,
         T4_MAINTAINER_OMP: bashPath,
+        T4_MAINTAINER_NODE: process.execPath,
         T4_MAINTAINER_SETPRIV: missingSetpriv,
       },
     });
