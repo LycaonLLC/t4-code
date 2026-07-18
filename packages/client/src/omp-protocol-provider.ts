@@ -3,7 +3,12 @@ import type {
   CommandDescriptor,
   Cursor,
   DeviceCapability,
-  ServerFrame,
+  OmpDecodedServerEvent,
+} from "@t4-code/protocol";
+export type {
+  OmpDecodedServerEvent,
+  OmpServerEvent,
+  PublicOmpServerEvent,
 } from "@t4-code/protocol";
 
 /** Messages the T4 client can ask a concrete protocol adapter to send. */
@@ -69,47 +74,6 @@ export type OmpClientMessage =
       readonly reason?: string;
     }
   | { readonly kind: "ping"; readonly nonce: string; readonly timestamp: string };
-
-type KnownFields<Value> = {
-  [Key in keyof Value as string extends Key
-    ? never
-    : number extends Key
-      ? never
-      : symbol extends Key
-        ? never
-        : Key]: Value[Key];
-};
-
-type PreservedIndex<Value> = string extends keyof Value ? Readonly<Record<string, unknown>> : object;
-
-type OmpServerEventPayload<Frame extends ServerFrame> = Readonly<
-  Omit<KnownFields<Frame>, "v" | "type"> & PreservedIndex<Frame>
->;
-
-type OmpServerEventFromFrame<Frame extends ServerFrame> = Frame extends ServerFrame
-  ? Readonly<{
-      kind: Frame["type"];
-      payload: OmpServerEventPayload<Frame>;
-    }>
-  : never;
-
-type OmpDecodedServerEventFromFrame<Frame extends ServerFrame> = Frame extends ServerFrame
-  ? Readonly<{
-      kind: Frame["type"];
-      payload: OmpServerEventPayload<Frame>;
-      event: OmpServerEventFromFrame<Frame>;
-      wireFrame: Frame;
-    }>
-  : never;
-
-/** Stable, version-free event shape exposed to new T4 consumers. */
-export type OmpServerEvent = OmpServerEventFromFrame<ServerFrame>;
-
-/** Decoded provider result used while the legacy onFrame API is supported. */
-export type OmpDecodedServerEvent = OmpDecodedServerEventFromFrame<ServerFrame>;
-
-/** Pairing credentials never cross the public event subscription boundary. */
-export type PublicOmpServerEvent = Exclude<OmpServerEvent, { kind: "pair.ok" }>;
 
 /**
  * The narrow protocol seam consumed by OmpClient. Transport, reconnect, replay,

@@ -1,18 +1,16 @@
 import {
   COMMAND_DESCRIPTORS,
   PROTOCOL_VERSION,
+  decodedOmpServerEventFromFrame,
   decodeClientFrame,
   decodeServerFrame,
   requiredCapability,
   type ClientFrame,
-  type ServerFrame,
 } from "@t4-code/protocol";
 
 import type {
   OmpClientMessage,
-  OmpDecodedServerEvent,
   OmpProtocolProvider,
-  OmpServerEvent,
   PublicOmpServerEvent,
 } from "./omp-protocol-provider.ts";
 import type { PublicServerFrame } from "./omp-client-contracts.ts";
@@ -109,12 +107,6 @@ function appV1Input(message: OmpClientMessage): Record<string, unknown> {
   }
 }
 
-function appV1ServerEvent(frame: ServerFrame): OmpDecodedServerEvent {
-  const { v: _version, type, ...payload } = frame;
-  const event = Object.freeze({ kind: type, payload: Object.freeze(payload) }) as OmpServerEvent;
-  return Object.freeze({ ...event, event, wireFrame: frame }) as OmpDecodedServerEvent;
-}
-
 /**
  * Temporary bridge for desktop/browser shell ports whose public contract still
  * carries omp-app/1 frames. New application code should consume the event.
@@ -139,7 +131,7 @@ export const ompAppV1ProtocolProvider: OmpProtocolProvider = Object.freeze({
     decodeClientFrame(encoded);
     return encoded;
   },
-  decodeServerEvent: (input: unknown) => appV1ServerEvent(decodeServerFrame(input)),
+  decodeServerEvent: (input: unknown) => decodedOmpServerEventFromFrame(decodeServerFrame(input)),
   commandDescriptor: (command: string) => COMMAND_DESCRIPTORS[command],
   requiredCapability,
 });

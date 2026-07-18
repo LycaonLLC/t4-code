@@ -19,6 +19,10 @@ import {
 } from "@oh-my-pi/app-wire";
 import { decodeServerFrame } from "./index.ts";
 import {
+  ompServerEventFromFrame,
+  type PublicOmpServerEvent,
+} from "./server-event.ts";
+import {
   decodeDesktopUpdateState,
   type DesktopUpdateState,
 } from "./app-update.ts";
@@ -30,30 +34,10 @@ export type { PairLinkEvent } from "./pair-link.ts";
 
 export const DESKTOP_IPC_VERSION = PROTOCOL_VERSION;
 export type RendererServerFrame = Exclude<ServerFrame, { type: "pair.ok" }>;
-type KnownFields<Value> = {
-  [Key in keyof Value as string extends Key
-    ? never
-    : number extends Key
-      ? never
-      : symbol extends Key
-        ? never
-        : Key]: Value[Key];
-};
-type PreservedIndex<Value> = string extends keyof Value ? Readonly<Record<string, unknown>> : object;
-type RendererServerEventFromFrame<Frame extends RendererServerFrame> =
-  Frame extends RendererServerFrame
-    ? Readonly<{
-        kind: Frame["type"];
-        payload: Readonly<
-          Omit<KnownFields<Frame>, "v" | "type"> & PreservedIndex<Frame>
-        >;
-      }>
-    : never;
-export type RendererServerEvent = RendererServerEventFromFrame<RendererServerFrame>;
+export type RendererServerEvent = PublicOmpServerEvent;
 
 export function rendererServerEventFromFrame(frame: RendererServerFrame): RendererServerEvent {
-  const { v: _version, type, ...payload } = frame;
-  return Object.freeze({ kind: type, payload: Object.freeze(payload) }) as RendererServerEvent;
+  return ompServerEventFromFrame(frame);
 }
 export const DESKTOP_IPC_CHANNELS = [
   "omp:targets:list",
