@@ -86,11 +86,17 @@ function summarize(values) {
   };
 }
 
-export function benchmarkPrompt(toolCalls) {
-  const calls = Array.from({ length: toolCalls }, (_, index) => {
+export function benchmarkCommands(toolCalls) {
+  return Array.from({ length: toolCalls }, (_, index) => {
     const marker = String(index + 1).padStart(3, "0");
-    return `${index + 1}. Run printf 'marker-${marker}\\n' in one bash tool call.`;
-  }).join("\n");
+    return `printf 'marker-${marker}\\n'`;
+  });
+}
+
+export function benchmarkPrompt(toolCalls) {
+  const calls = benchmarkCommands(toolCalls)
+    .map((command, index) => `${index + 1}. Run exactly: ${command}`)
+    .join("\n");
   return `This is a deterministic transport benchmark. Make exactly ${toolCalls} bash tool calls, sequentially and never in parallel. Wait for each result before making the next call. Do not inspect files and do not run any other command.\n\n${calls}\n\nAfter every result has arrived, reply only BENCHMARK_COMPLETE.`;
 }
 
@@ -175,10 +181,16 @@ function messageText(content) {
 }
 
 export function analyzeEvents(events, expectedToolCalls) {
+  const toolStarts = events.filter((event) => event.type === "tool_execution_start");
   const assistantTurns = events
     .filter((event) => event.type === "message_end" && event.message?.role === "assistant")
     .map((event) => event.message);
-  const toolCalls = events.filter((event) => event.type === "tool_execution_start").length;
+  const expectedCommands = benchmarkCommands(expectedToolCalls);
+  const commandsMatch = toolStarts.length === expectedCommands.length && toolStarts.every(
+    (event, index) =>
+      event.toolName === "bash" && event.args?.command === expectedCommands[index],
+  );
+  const toolCalls = toolStarts.length;
   const toolResults = events.filter((event) => event.type === "tool_execution_end").length;
   const completed = assistantTurns.some((message) =>
     messageText(message.content).trim() === "BENCHMARK_COMPLETE");
@@ -187,9 +199,14 @@ export function analyzeEvents(events, expectedToolCalls) {
   const usage = assistantTurns.map((message) => message.usage ?? {});
 
   return {
-    valid: toolCalls === expectedToolCalls && toolResults === expectedToolCalls && completed,
+    valid:
+      toolCalls === expectedToolCalls &&
+      toolResults === expectedToolCalls &&
+      commandsMatch &&
+      completed,
     toolCalls,
     toolResults,
+    commandsMatch,
     assistantTurns: assistantTurns.length,
     completed,
     providerDurationMs:
@@ -278,11 +295,22 @@ async function runOmp(options, transport, pairIndex, orderIndex) {
 }
 
 export function aggregate(runs, transport) {
-  const selected = runs.filter((run) => run.transport === transport && run.valid);
+  const validRuns = runs.filter((run) => run.transport === transport && run.valid);
+  const selected = validRuns.filter((run) => {
+    const diagnostics = run.transportDiagnostics;
+    return (
+      diagnostics?.available === true &&
+      diagnostics.fallbackCount === 0 &&
+      Array.isArray(diagnostics.actualTransports) &&
+      diagnostics.actualTransports.length === 1 &&
+      diagnostics.actualTransports[0] === transport
+    );
+  });
   const diagnosticRuns = selected.filter((run) => run.transportDiagnostics?.available);
   return {
     successfulRuns: selected.length,
     failedRuns: runs.filter((run) => run.transport === transport && !run.valid).length,
+    excludedTransportRuns: validRuns.length - selected.length,
     wallClockMs: summarize(selected.map((run) => run.wallClockMs)),
     providerDurationMs: summarize(selected.map((run) => run.providerDurationMs).filter(Number.isFinite)),
     initialTtftMs: summarize(selected.map((run) => run.initialTtftMs).filter(Number.isFinite)),

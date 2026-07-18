@@ -18,6 +18,9 @@ useful than accurate diagnostics showing the transport OMP actually used and whe
 The checked-in harness runs the same read-only OMP workload twice, once with WebSocket forced and
 once with SSE forced. SSE, or Server-Sent Events, is the older request/stream-response path. Each
 workload makes a fixed number of sequential `printf` tool calls and verifies the exact tool count.
+The current harness also verifies each ordered command against the generated marker command. A run
+is excluded from a transport summary unless OMP diagnostics confirm that transport was actually
+used with no fallback.
 
 The benchmark used:
 
@@ -114,8 +117,9 @@ node scripts/benchmark-omp-codex-transport.mjs \
   --output /tmp/t4-omp-codex-transport.json
 ```
 
-The output is redacted JSON containing timings, counts, selected/actual transports, and safe OMP
-request diagnostics. It excludes prompts, tool output, authorization headers, and credentials.
+The output is redacted JSON containing timings, counts, command-validation status,
+selected/actual transports, excluded fallback or unverified runs, and safe OMP request diagnostics.
+It excludes prompts, tool output, authorization headers, and credentials.
 
 ## Proof boundary and references
 

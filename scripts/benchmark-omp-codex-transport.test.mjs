@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   aggregate,
   analyzeEvents,
+  benchmarkCommands,
   benchmarkPrompt,
   boundedError,
   parseArgs,
@@ -45,6 +46,10 @@ test("parses benchmark options without running the CLI", () => {
 });
 
 test("builds one ordered marker instruction per requested tool call", () => {
+  assert.deepEqual(benchmarkCommands(2), [
+    "printf 'marker-001\\n'",
+    "printf 'marker-002\\n'",
+  ]);
   const prompt = benchmarkPrompt(2);
   assert.match(prompt, /exactly 2 bash tool calls/u);
   assert.match(prompt, /marker-001/u);
@@ -61,7 +66,11 @@ test("ignores non-JSON output and requires assistant completion", () => {
 
   const baseEvents = [
     { type: "message_end", message: { role: "user", content: "Reply BENCHMARK_COMPLETE" } },
-    { type: "tool_execution_start" },
+    {
+      type: "tool_execution_start",
+      toolName: "bash",
+      args: { command: "printf 'marker-001\\n'" },
+    },
     { type: "tool_execution_end" },
   ];
   const incomplete = analyzeEvents([
@@ -93,6 +102,18 @@ test("ignores non-JSON output and requires assistant completion", () => {
   assert.equal(complete.inputTokens, 100);
   assert.equal(complete.cacheReadTokens, 40);
   assert.equal(complete.outputTokens, 3);
+
+  const wrongCommand = analyzeEvents([
+    {
+      type: "tool_execution_start",
+      toolName: "bash",
+      args: { command: "sleep 1" },
+    },
+    { type: "tool_execution_end" },
+    { type: "message_end", message: { role: "assistant", content: "BENCHMARK_COMPLETE" } },
+  ], 1);
+  assert.equal(wrongCommand.commandsMatch, false);
+  assert.equal(wrongCommand.valid, false);
 });
 
 test("aggregates only valid runs and keeps transport diagnostics separate", () => {
@@ -117,11 +138,22 @@ test("aggregates only valid runs and keeps transport diagnostics separate", () =
       },
     },
     { transport: "websocket", valid: false },
+    {
+      transport: "websocket",
+      valid: true,
+      transportDiagnostics: {
+        available: true,
+        actualTransports: ["sse"],
+        fallbackCount: 1,
+      },
+    },
+    { transport: "websocket", valid: true, transportDiagnostics: { available: false } },
     { transport: "sse", valid: true },
   ];
   const summary = aggregate(runs, "websocket");
   assert.equal(summary.successfulRuns, 1);
   assert.equal(summary.failedRuns, 1);
+  assert.equal(summary.excludedTransportRuns, 2);
   assert.equal(summary.wallClockMs.mean, 100);
   assert.deepEqual(summary.transportDiagnostics.actualTransports, ["websocket"]);
   assert.equal(summary.transportDiagnostics.deltaRequests.mean, 2);
@@ -129,7 +161,11 @@ test("aggregates only valid runs and keeps transport diagnostics separate", () =
 
 test("omits unavailable latency fields instead of recording zeroes", () => {
   const result = analyzeEvents([
-    { type: "tool_execution_start" },
+    {
+      type: "tool_execution_start",
+      toolName: "bash",
+      args: { command: "printf 'marker-001\\n'" },
+    },
     { type: "tool_execution_end" },
     {
       type: "message_end",
