@@ -61,4 +61,17 @@ describe("fixture determinism", () => {
     const comment = store.getState().review.comments.at(-1);
     expect(comment?.at).toBe("2026-07-11T12:00:02.000Z");
   });
+
+  it("backs sample file drafts with a stable synthetic revision", async () => {
+    installFixtureInspector();
+    const store = getInspectorStore("sess-stream");
+    if (store === null) throw new Error("fixture factory not installed");
+    const path = "packages/client/src/replay.ts";
+
+    store.getState().selectFile(path);
+    await Promise.resolve();
+    store.getState().startFileEdit(path);
+
+    expect(store.getState().files.draftsByPath[path]?.baseRevision).toBe("fixture-revision-1");
+  });
 });

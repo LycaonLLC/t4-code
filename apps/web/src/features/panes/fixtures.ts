@@ -633,6 +633,7 @@ export function attach(cursor: Cursor): Replay {
 // 4x4 checker PNG, generated once; identity-free sample pixels.
 const SAMPLE_IMAGE_SRC =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAF0lEQVR4nGP8//8/AwMDEwMDAwMDAwAkBgMBvR9pJAAAAABJRU5ErkJggg==";
+const FIXTURE_FILE_REVISION = "fixture-revision-1";
 
 const FILE_PREVIEWS: Readonly<Record<string, FilePreview>> = {
   "packages/client/src/replay.ts": {
@@ -862,16 +863,15 @@ function fixtureController(api: InspectorStoreApi, clock: () => number): Inspect
           return;
         }
         const edited = editedFiles.get(path);
-        resolvePreview(
-          api,
+        const preview =
           edited === undefined
             ? FILE_PREVIEWS[path] ?? {
-                kind: "diagnostic",
+                kind: "diagnostic" as const,
                 path,
                 message: "The host has no readable content at this path.",
               }
-            : { kind: "code", path, text: edited, truncated: false },
-        );
+            : { kind: "code" as const, path, text: edited, truncated: false };
+        resolvePreview(api, preview, preview.kind === "code" ? FIXTURE_FILE_REVISION : null);
       });
     },
     writeFile(path, content) {
