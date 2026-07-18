@@ -9,9 +9,15 @@ Needs Node `^24.13.1` and pnpm `11.10.0`.
 ```sh
 git clone https://github.com/LycaonLLC/t4-code.git
 cd t4-code
-pnpm install
+pnpm install --frozen-lockfile
+node scripts/t4-doctor.mjs
 pnpm dev
 ```
+
+The doctor is read-only and redacted. It checks the source toolchain, the verified OMP appserver
+contract, local profile discovery, and optional Tailscale access without printing private paths,
+hostnames, IP addresses, or credentials. See [Development setup](docs/DEVELOPMENT.md) for the
+sample-data and live-runtime workflows.
 
 ## Before you open a PR
 
