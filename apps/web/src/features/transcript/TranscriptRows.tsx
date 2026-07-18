@@ -609,15 +609,19 @@ function UnknownEntryRow({
 function WorkingRow({
   row,
   nowMs,
+  ghost,
 }: {
   readonly row: Extract<TranscriptRow, { kind: "working" }>;
   readonly nowMs: number;
+  readonly ghost: boolean;
 }) {
   const compacting = row.activity === "preparing-context";
   return (
     <div
       className="flex items-center gap-2 py-3 text-status-working text-xs"
-      data-transcript-status={compacting ? "compacting-context" : "working"}
+      // The live status is a singleton: a paint-only ghost copy (cold-mount
+      // overlay) must never duplicate the semantic lifecycle hook.
+      data-transcript-status={ghost ? undefined : compacting ? "compacting-context" : "working"}
     >
       <LoaderCircle
         aria-hidden="true"
@@ -653,12 +657,19 @@ export const TranscriptRowContent = memo(function TranscriptRowContent({
   nowMs,
   imageSource,
   toolHost,
+  ghost = false,
 }: {
   readonly row: TranscriptRow;
   /** Elapsed-label time base from the session runtime snapshot. */
   readonly nowMs: number;
   readonly imageSource: TranscriptImageSource;
   readonly toolHost?: ToolRenderHost | undefined;
+  /**
+   * Paint-only duplicate of a row (the cold-mount overlay's warm copy).
+   * A ghost renders pixel-identical but never carries singleton semantic
+   * hooks — the live transcript copy is the only semantic instance.
+   */
+  readonly ghost?: boolean | undefined;
 }) {
   switch (row.kind) {
     case "message":
@@ -672,6 +683,6 @@ export const TranscriptRowContent = memo(function TranscriptRowContent({
     case "unknown-entry":
       return <UnknownEntryRow row={row} />;
     case "working":
-      return <WorkingRow nowMs={nowMs} row={row} />;
+      return <WorkingRow ghost={ghost} nowMs={nowMs} row={row} />;
   }
 });
