@@ -1,6 +1,7 @@
 import type { PairOkFrame, RequestId, Cursor, ServerFrame } from "@t4-code/protocol";
 import type { ProjectionStore } from "./projection.ts";
 import type { OmpClientMessage, OmpPairOk, OmpProtocolProvider, OmpResponse } from "./omp-protocol-provider.ts";
+import type { OmpProtocolProviderRegistry } from "./omp-protocol-provider-registry.ts";
 
 
 export type OmpClientState =
@@ -64,6 +65,9 @@ export interface OmpClientOptions {
   transport: OmpTransportFactory;
   /** Concrete wire implementation. Defaults to the pinned omp-app/1 provider. */
   protocolProvider?: OmpProtocolProvider;
+  /** Select a provider from a registry without exposing its wire implementation. */
+  protocolProviderId?: string;
+  protocolProviderRegistry?: OmpProtocolProviderRegistry;
   hostId?: string; expectedHostId?: string;
   client?: { name: string; version: string; build: string; platform: string };
   requestedFeatures?: readonly string[];

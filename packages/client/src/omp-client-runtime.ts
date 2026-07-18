@@ -44,8 +44,8 @@ import { OmpClientEvents } from "./omp-client-events.ts";
 import { OmpClientConnection } from "./omp-client-connection.ts";
 import { OmpClientEventDispatcher, safeFrameDecodeFailure, sendClientHello } from "./omp-client-frames.ts";
 import { OmpClientReconnectHealth } from "./omp-client-reconnect-health.ts";
-import { ompAppV1ProtocolProvider } from "./omp-app-v1-protocol-provider.ts";
 import { encodeOutgoingMessage } from "./omp-client-outbound.ts";
+import { resolveOmpProtocolProvider } from "./omp-protocol-provider-registry.ts";
 import {
   type OmpClientMessage,
   type OmpPairOk,
@@ -103,7 +103,7 @@ export class OmpClient {
 
   constructor(options: OmpClientOptions) {
     this.options = options;
-    this.protocol = options.protocolProvider ?? ompAppV1ProtocolProvider;
+    this.protocol = resolveOmpProtocolProvider(options);
     this.timers = options.timers ?? new DefaultTimers();
     this.clock = options.clock ?? new DefaultClock();
     this.ids = options.ids ?? new DefaultIds();

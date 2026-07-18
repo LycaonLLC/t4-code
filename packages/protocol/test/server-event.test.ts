@@ -4,6 +4,7 @@ import {
   pairingId,
   requestId,
   type PublicOmpServerEvent,
+  type OmpServerEventFromFrame,
   type PairOkFrame,
   type WelcomeFrame,
 } from "../src/index.ts";
@@ -59,6 +60,15 @@ describe("shared server events", () => {
     expect(event.payload).not.toHaveProperty("type");
     expect(Object.isFrozen(event)).toBe(true);
     expect(Object.isFrozen(event.payload)).toBe(true);
+  });
+
+  it("keeps the normalized welcome protocol provider-defined", () => {
+    const future: OmpServerEventFromFrame<WelcomeFrame> = {
+      kind: "welcome",
+      payload: { ...ompServerEventFromFrame(welcome()).payload, selectedProtocol: "omp-app/2" },
+    };
+
+    expect(future.payload.selectedProtocol).toBe("omp-app/2");
   });
 
   it("retains privileged pair events only in the complete internal union", () => {

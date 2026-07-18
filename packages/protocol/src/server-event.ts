@@ -14,8 +14,16 @@ type PreservedIndex<Value> = string extends keyof Value
   ? Readonly<Record<string, unknown>>
   : object;
 
+type NormalizeProtocolFields<Frame extends ServerFrame, Payload> =
+  Frame extends { type: "welcome" }
+    ? Omit<Payload, "selectedProtocol"> & { readonly selectedProtocol: string }
+    : Payload;
+
 export type OmpServerEventPayload<Frame extends ServerFrame> = Readonly<
-  Omit<KnownFields<Frame>, "v" | "type"> & PreservedIndex<Frame>
+  NormalizeProtocolFields<
+    Frame,
+    Omit<KnownFields<Frame>, "v" | "type"> & PreservedIndex<Frame>
+  >
 >;
 
 export type OmpServerEventFromFrame<Frame extends ServerFrame> =
