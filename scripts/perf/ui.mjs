@@ -19,6 +19,7 @@ function executeOnce() {
         "e2e/remote-app.spec.ts",
         "--grep",
         "mounts the bounded tail of a 10k history",
+        "--retries=0",
         "--reporter=json",
       ],
       {

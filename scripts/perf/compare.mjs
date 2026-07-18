@@ -8,7 +8,9 @@ export function compareReports(baseline, current, thresholdFraction) {
   return baseline.metrics.flatMap((baselineMetric) => {
     const currentMetric = currentByName.get(baselineMetric.name);
     if (currentMetric === undefined || currentMetric.unit !== baselineMetric.unit) return [];
-    const changeFraction = (currentMetric.median - baselineMetric.median) / baselineMetric.median;
+    const changeFraction = baselineMetric.median === 0
+      ? (currentMetric.median === 0 ? 0 : null)
+      : (currentMetric.median - baselineMetric.median) / baselineMetric.median;
     return [{
       name: baselineMetric.name,
       unit: baselineMetric.unit,
@@ -16,7 +18,7 @@ export function compareReports(baseline, current, thresholdFraction) {
       currentMedian: currentMetric.median,
       changeFraction,
       thresholdFraction,
-      regression: changeFraction > thresholdFraction,
+      regression: changeFraction === null || changeFraction > thresholdFraction,
     }];
   });
 }
@@ -26,7 +28,7 @@ if (resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
   const arguments_ = rawArguments[0] === "--" ? rawArguments.slice(1) : rawArguments;
   const [baselinePath, currentPath] = arguments_;
   if (baselinePath === undefined || currentPath === undefined) {
-    throw new Error("usage: pnpm perf:compare <baseline.json> <current.json>");
+    throw new Error("usage: pnpm perf:compare -- <baseline.json> <current.json>");
   }
   const thresholdPercent = Number(process.env.T4_PERF_REGRESSION_PERCENT ?? "10");
   if (!Number.isFinite(thresholdPercent) || thresholdPercent < 0) {
@@ -46,8 +48,11 @@ if (resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
     comparisons,
   });
   for (const comparison of comparisons) {
+    const change = comparison.changeFraction === null
+      ? `from 0 to ${comparison.currentMedian} ${comparison.unit}`
+      : `${(comparison.changeFraction * 100).toFixed(1)}%`;
     process.stdout.write(
-      `${comparison.regression ? "REGRESSION" : "ok"} ${comparison.name}: ${(comparison.changeFraction * 100).toFixed(1)}%\n`,
+      `${comparison.regression ? "REGRESSION" : "ok"} ${comparison.name}: ${change}\n`,
     );
   }
   if (comparisons.some((comparison) => comparison.regression)) process.exitCode = 1;

@@ -47,13 +47,23 @@ function gitValue(args) {
   try {
     return execFileSync("git", args, { cwd: REPO_ROOT, encoding: "utf8" }).trim();
   } catch {
-    return "unknown";
+    return undefined;
   }
+}
+
+export function electronMemoryKilobytes(memory) {
+  for (const key of ["workingSetSize", "privateBytes"]) {
+    const value = memory?.[key];
+    if (Number.isFinite(value) && value >= 0) return value;
+  }
+  throw new Error("Electron process metrics contain neither workingSetSize nor privateBytes");
 }
 
 export function machineMetadata() {
   const processors = cpus();
   const sourceDirty = process.env.T4_PERF_SOURCE_DIRTY;
+  const gitCommit = gitValue(["rev-parse", "HEAD"]);
+  const gitStatus = gitValue(["status", "--porcelain"]);
   return {
     machineLabel: process.env.T4_PERF_MACHINE_LABEL ?? "unlabeled",
     platform: platform(),
@@ -64,8 +74,10 @@ export function machineMetadata() {
     totalMemoryBytes: totalmem(),
     freeMemoryBytesAtStart: freemem(),
     node: process.version,
-    commit: process.env.T4_PERF_SOURCE_COMMIT ?? gitValue(["rev-parse", "HEAD"]),
-    dirty: sourceDirty === undefined ? gitValue(["status", "--porcelain"]) !== "" : sourceDirty === "true",
+    commit: process.env.T4_PERF_SOURCE_COMMIT ?? gitCommit ?? "unknown",
+    dirty: sourceDirty === undefined
+      ? (gitStatus === undefined ? null : gitStatus !== "")
+      : sourceDirty === "true",
   };
 }
 

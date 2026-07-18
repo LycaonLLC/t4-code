@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { extname, join, resolve, sep } from "node:path";
 import { _electron as electron } from "@playwright/test";
-import { positiveInteger, summarize, writeReport } from "./report.mjs";
+import { electronMemoryKilobytes, positiveInteger, summarize, writeReport } from "./report.mjs";
 
 const desktopRequire = createRequire(new URL("../../apps/desktop/package.json", import.meta.url));
 const electronExecutable = desktopRequire("electron");
@@ -68,7 +68,7 @@ try {
       await window.waitForTimeout(500);
       const metrics = await electronApplication.evaluate(({ app }) => app.getAppMetrics());
       settledMemoryBytes.push(
-        metrics.reduce((sum, metric) => sum + metric.memory.workingSetSize * 1024, 0),
+        metrics.reduce((sum, metric) => sum + electronMemoryKilobytes(metric.memory) * 1024, 0),
       );
     } finally {
       await electronApplication?.close().catch(() => undefined);
