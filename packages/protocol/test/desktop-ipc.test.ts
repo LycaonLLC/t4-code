@@ -294,7 +294,7 @@ describe("desktop IPC boundary", () => {
           event: {
             kind: "welcome",
             payload: {
-              selectedProtocol: "omp-app/1",
+              selectedProtocol: "omp-app/2",
               hostId: "host-1",
               ompVersion: "16.4.3",
               ompBuild: "test",
@@ -313,7 +313,7 @@ describe("desktop IPC boundary", () => {
     ).toMatchObject({
       payload: {
         targetId: "target-1",
-        event: { kind: "welcome", payload: { hostId: "host-1" } },
+        event: { kind: "welcome", payload: { selectedProtocol: "omp-app/2", hostId: "host-1" } },
       },
     });
     for (const wireField of ["v", "type"] as const) {

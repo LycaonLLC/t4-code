@@ -17,7 +17,6 @@ import {
   type SessionId,
   type TerminalId,
 } from "@oh-my-pi/app-wire";
-import { decodeServerFrame } from "./index.ts";
 import {
   ompServerEventFromFrame,
   type PublicOmpServerEvent,
@@ -940,18 +939,18 @@ export function decodeDesktopEvent(input: unknown): DesktopEvent {
     if ("v" in eventPayload || "type" in eventPayload) {
       throw new Error("wire envelope fields cannot cross renderer IPC");
     }
-    const serverFrame = decodeServerFrame({
-      ...eventPayload,
-      v: PROTOCOL_VERSION,
-      type: controlFree(rawEvent.kind, "event.kind", 128),
-    });
-    if (serverFrame.type === "pair.ok")
+    const kind = controlFree(rawEvent.kind, "event.kind", 128);
+    if (kind === "pair.ok")
       throw new Error("pair credentials cannot cross renderer IPC");
+    const event = Object.freeze({
+      kind,
+      payload: Object.freeze(eventPayload),
+    }) as RendererServerEvent;
     return {
       channel,
       payload: {
         targetId: target(payload.targetId),
-        event: rendererServerEventFromFrame(serverFrame),
+        event,
       },
     };
   }
