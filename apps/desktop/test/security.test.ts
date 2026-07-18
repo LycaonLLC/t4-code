@@ -3,7 +3,6 @@ import { contentSecurityPolicy, isTrustedNavigation, rendererUrl, trustedSender,
 import { contentSecurityPolicy as duplicateContentSecurityPolicy } from "../src/security-policy.ts";
 import type { BrowserWindow, WebContents, WebFrameMain } from "electron";
 import { localSocketPath } from "../src/socket-path.ts";
-import { parsePairDeepLink } from "../src/deep-link.ts";
 describe("desktop security boundaries", () => {
   it("only accepts validated loopback development origins", () => {
     expect(validateDevelopmentRendererUrl("http://127.0.0.1:5173/")?.origin).toBe("http://127.0.0.1:5173");
@@ -66,18 +65,9 @@ describe("desktop security boundaries", () => {
     expect(isTrustedNavigation(`${packaged.url}#/sessions/abc`, packaged)).toBe(true);
     expect(isTrustedNavigation(`${packaged.url}/other#/sessions`, packaged)).toBe(false);
   });
-  it("uses only approved local socket locations and strips deep-link secrets", () => {
+  it("uses only approved local socket locations", () => {
     expect(localSocketPath({ platform: "linux", runtimeDirectory: "/run/user/1000" })).toBe("/run/user/1000/omp/appserver.sock");
     expect(localSocketPath({ platform: "darwin", homeDirectory: "/Users/test" })).toBe("/Users/test/.omp/run/appserver.sock");
-    const link = parsePairDeepLink("t4-code://pair/host-a/123456");
-    expect(link === null ? null : { hostHint: link.hostHint, code: link.code }).toEqual({ hostHint: "host-a", code: "123456" });
-    expect(link === null ? undefined : typeof link.issuedAt).toBe("number");
-    expect(parsePairDeepLink("t4-code://pair/host-a/12345")).toBeNull();
-  });
-  it("rejects public, encoded, and credential-bearing deep links", () => {
-    expect(parsePairDeepLink("t4-code://user:pass@pair/host-a/123456")).toBeNull();
-    expect(parsePairDeepLink("t4-code://pair/host-a/123456?token=secret")).toBeNull();
-    expect(parsePairDeepLink("t4-code://pair/host%00a/123456")).toBeNull();
   });
   it("rejects unsafe runtime socket fallbacks", () => {
     expect(() => localSocketPath({ platform: "linux", runtimeDirectory: "relative" })).toThrow();

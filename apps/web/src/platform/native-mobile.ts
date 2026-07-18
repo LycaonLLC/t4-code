@@ -1,4 +1,4 @@
-import { deviceToken as validateDeviceToken } from "@t4-code/protocol";
+import { deviceToken as validateDeviceToken, type AndroidUpdateState } from "@t4-code/protocol";
 import {
   DEFAULT_MOBILE_PROFILE_ID,
   MOBILE_BACKEND_STORAGE_KEY,
@@ -124,15 +124,7 @@ async function readBackendSecureCredentials(
   await withSecureStorageTimeout(plugin.clearCredentials({ hostKey: backend.origin }));
   return credentials;
 }
-export interface NativeUpdateState {
-  readonly currentVersion: string;
-  readonly latestVersion?: string;
-  readonly checkedAt?: number;
-  readonly phase: "idle" | "checking" | "current" | "available" | "downloading" | "installer" | "error";
-  readonly revision: number;
-  readonly error?: string;
-  readonly message?: string;
-}
+export type NativeUpdateState = AndroidUpdateState;
 
 export interface T4UpdatePlugin {
   getState(): Promise<NativeUpdateState>;

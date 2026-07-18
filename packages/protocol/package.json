@@ -5,7 +5,9 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./desktop-ipc": "./src/desktop-ipc.ts"
+    "./app-update": "./src/app-update.ts",
+    "./desktop-ipc": "./src/desktop-ipc.ts",
+    "./pair-link": "./src/pair-link.ts"
   },
   "scripts": {
     "build": "tsgo --noEmit",

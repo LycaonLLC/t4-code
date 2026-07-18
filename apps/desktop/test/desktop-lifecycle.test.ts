@@ -3,7 +3,6 @@ import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { ProcessRunner, ProcessSpec } from "@t4-code/remote";
-import { parsePairDeepLink, PendingPairQueue } from "../src/deep-link.ts";
 import {
   createSafeServiceEnvironment,
   discoverOmpExecutable,
@@ -13,27 +12,6 @@ import {
 } from "../src/service.ts";
 
 describe("desktop lifecycle boundaries", () => {
-  it("adds an issued timestamp without exposing credentials", () => {
-    const link = parsePairDeepLink("t4-code://pair/bunker/123456", 1234);
-    expect(link).toEqual({ hostHint: "bunker", code: "123456", issuedAt: 1234 });
-    expect(JSON.stringify(link).includes("token")).toBe(false);
-  });
-  it("deduplicates newest host and bounds pending links", () => {
-    const queue = new PendingPairQueue(8);
-    for (let index = 0; index < 10; index += 1) queue.push({ hostHint: `host-${index}`, code: "123456", issuedAt: index });
-    queue.push({ hostHint: "host-8", code: "654321", issuedAt: 99 });
-    expect(queue.drain()).toEqual([
-      { hostHint: "host-2", code: "123456", issuedAt: 2 },
-      { hostHint: "host-3", code: "123456", issuedAt: 3 },
-      { hostHint: "host-4", code: "123456", issuedAt: 4 },
-      { hostHint: "host-5", code: "123456", issuedAt: 5 },
-      { hostHint: "host-6", code: "123456", issuedAt: 6 },
-      { hostHint: "host-7", code: "123456", issuedAt: 7 },
-      { hostHint: "host-9", code: "123456", issuedAt: 9 },
-      { hostHint: "host-8", code: "654321", issuedAt: 99 },
-    ]);
-    expect(queue.drain()).toEqual([]);
-  });
   it("only discovers bounded executable candidates and honors explicit environment", async () => {
     const executable = await discoverOmpExecutable({ environment: { OMP_EXECUTABLE: "/not/a/real/omp", PATH: "" }, homeDirectory: "/not/a/home" });
     expect(executable).toBe(undefined);
