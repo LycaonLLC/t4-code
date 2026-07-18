@@ -4,8 +4,10 @@ import { createHash } from "node:crypto";
 import {
   appendFile,
   chmod,
+  copyFile,
   lstat,
   mkdir,
+  readdir,
   mkdtemp,
   readFile,
   realpath,
@@ -25,6 +27,7 @@ const upstreamCommit = "a".repeat(40);
 const integrationCommit = "b".repeat(40);
 const t4Commit = "c".repeat(40);
 const mainCommit = "d".repeat(40);
+const changedT4MainCommit = "1".repeat(40);
 const upstreamTagObject = "e".repeat(40);
 const integrationTagObject = "f".repeat(40);
 const mockDebSize = Buffer.byteLength("mock-deb\n");
@@ -128,6 +131,19 @@ case $tool in
       [[ $argument == repos/* ]] && endpoint=$argument
     done
     case $endpoint in
+      'repos/LycaonLLC/t4-code/pulls?state=open&base=main&per_page=100')
+        count=$(read_state t4-pr-queries 0)
+        count=$((count + 1))
+        write_state t4-pr-queries "$count"
+        if [[ \${MOCK_PR_SEQUENTIAL:-0} == 1 && $count -ge 2 ]]; then
+          printf '%s\n' '[{"number":42,"draft":false,"title":"Release cutover","labels":[]}]'
+        else
+          printf '%s\n' '[]'
+        fi
+        ;;
+      repos/LycaonLLC/t4-code/pulls/42/files?per_page=100)
+        printf '%s\n' '[{"filename":"ops/t4-maintainer/run.sh"}]'
+        ;;
       repos/can1357/oh-my-pi/releases/latest)
         printf '{"draft":false,"prerelease":false,"tag_name":"v1.2.3"}\n'
         ;;
@@ -197,7 +213,17 @@ case $tool in
       repos/lyc-aon/oh-my-pi/commits/t4code-1.2.3-appserver-1)
         printf '%s\n' "$MOCK_INTEGRATION_COMMIT"
         ;;
-      repos/LycaonLLC/t4-code/commits/v1.2.3|repos/LycaonLLC/t4-code/commits/main)
+      repos/LycaonLLC/t4-code/commits/main)
+        count=$(read_state t4-main-queries 0)
+        count=$((count + 1))
+        write_state t4-main-queries "$count"
+        if [[ -n \${MOCK_T4_MAIN_COMMIT_AFTER:-} && $count -gt \${MOCK_T4_MAIN_COMMIT_AFTER} ]]; then
+          printf '%s\n' "\${MOCK_T4_MAIN_COMMIT_CHANGED:?}"
+        else
+          printf '%s\n' "$MOCK_T4_COMMIT"
+        fi
+        ;;
+      repos/LycaonLLC/t4-code/commits/v1.2.3)
         printf '%s\n' "$MOCK_T4_COMMIT"
         ;;
       repos/lyc-aon/oh-my-pi/compare/*)
@@ -756,6 +782,7 @@ SH
       start|restart)
         write_state "$key" active
         if [[ $key == app-service ]]; then
+          cp -- "$MOCK_OMP_TARGET" "$MOCK_PROC_EXE"
           rm -f -- "$state/mainpid-zero" "$state/app-drained"
           if [[ \${MOCK_APP_START_FAIL_ACTIVE:-0} == 1 && ! -f $state/app-start-failed-once ]]; then
             write_state app-start-failed-once 1
@@ -814,6 +841,13 @@ SH
     version=1.2.3
     [[ $deb =~ T4-Code-([0-9]+\.[0-9]+\.[0-9]+)-linux-amd64\.deb$ ]] && version=\${BASH_REMATCH[1]}
     write_state package-version "$version"
+    if [[ \${MOCK_MUTATE_OVERLAY_AFTER_APT:-0} == 1 && $count -eq 1 ]]; then
+      printf 'mutated-overlay\n' >"$MOCK_OVERLAY_PACKAGE"
+    fi
+    if [[ \${MOCK_TAMPER_SEALED_AFTER_APT:-0} == 1 && $count -eq 1 ]]; then
+      chmod 600 "$MOCK_SEALED_PACKAGE"
+      printf 'tampered-sealed-overlay\n' >"$MOCK_SEALED_PACKAGE"
+    fi
     mkdir -p -- "$(dirname -- "$MOCK_T4_EXECUTABLE")" "$MOCK_T4_WEB_ROOT"
     printf '#!/bin/sh\nexit 0\n' >"$MOCK_T4_EXECUTABLE"
     chmod 0755 "$MOCK_T4_EXECUTABLE"
@@ -829,6 +863,14 @@ SH
     ;;
 
   dpkg-deb)
+    if [[ \${1:-} == --fsys-tarfile ]]; then
+      tar_root=$(mktemp -d)
+      mkdir -p "$tar_root/opt/T4 Code/resources"
+      printf 'mock-app-asar\n' >"$tar_root/opt/T4 Code/resources/app.asar"
+      tar -cf - -C "$tar_root" './opt/T4 Code/resources/app.asar'
+      rm -rf -- "$tar_root"
+      exit 0
+    fi
     field=\${!#}
     if [[ $field == Package ]]; then
       printf 't4-code\n'
@@ -842,7 +884,7 @@ SH
 
   sha256sum)
     if [[ \${1:-} == /proc/*/exe ]]; then
-      set -- "$MOCK_OMP_TARGET"
+      set -- "$MOCK_PROC_EXE"
     fi
     exec "$MOCK_NODE_EXECUTABLE" -e 'const fs=require("node:fs");const crypto=require("node:crypto");const path=process.argv[1];const data=path ? fs.readFileSync(path) : fs.readFileSync(0);process.stdout.write(crypto.createHash("sha256").update(data).digest("hex")+"  "+(path || "-")+"\n")' "$@"
     ;;
@@ -887,6 +929,7 @@ case \${1:-} in
 esac
 SH
 chmod 0755 "$MOCK_OMP_TARGET"
+cp -- "$MOCK_OMP_TARGET" "$MOCK_PROC_EXE"
 omp_sha=$(sha256sum "$MOCK_OMP_TARGET" | awk '{print $1}')
 deployment_identity="sha256:$(printf '%s\0%s\0%s\0' "$MOCK_T4_COMMIT" "$MOCK_INTEGRATION_COMMIT" "$omp_sha" | sha256sum | awk '{print $1}')"
 printf '1.2.3' >"$MOCK_STATE/package-version"
@@ -1067,6 +1110,7 @@ async function waitForPath(path) {
 
 async function createDeployFixture(options = {}) {
   const previousVersion = options.sameVersion ? "1.2.3" : "1.2.2";
+  const manifestKind = options.manifestKind ?? "t4-maintainer-local-deployment";
   const fixtureRoot = process.platform === "darwin" ? "/private/tmp" : tmpdir();
   const root = await realpath(await mkdtemp(join(fixtureRoot, "t4-maintainer-contract-")));
   const home = join(root, "home");
@@ -1085,18 +1129,27 @@ async function createDeployFixture(options = {}) {
   const ompService = "mock-omp.service";
   const gatewayUnit = join(home, ".config", "systemd", "user", gatewayService);
   const t4Executable = join(root, "opt", "T4 Code", "t4-code");
+  const t4AppAsar = join(root, "opt", "T4 Code", "resources", "app.asar");
   const t4WebRoot = join(root, "opt", "T4 Code", "resources", "web");
+  const previousRuntime = join(root, "previous-runtime");
+  const overlayPackage = join(root, "operator-overlay.deb");
+  const overlayReceipt = join(maintainerRoot, "state", "operator-overlay.json");
   const deployments = join(maintainerRoot, "deployments");
   const procRoot = join(maintainerRoot, "mock-proc");
+  const procExecutableCopy = join(procRoot, "immutable-omp");
 
   await mkdir(dirname(ompTarget), { recursive: true });
   await mkdir(dirname(socket), { recursive: true });
   await mkdir(dirname(gatewayConfig), { recursive: true });
   await mkdir(dirname(gatewayUnit), { recursive: true });
+  await mkdir(dirname(t4AppAsar), { recursive: true });
   await mkdir(t4WebRoot, { recursive: true });
+  await mkdir(previousRuntime, { recursive: true });
   await mkdir(runRoot, { recursive: true });
   await mkdir(state, { recursive: true });
   await mkdir(bin, { recursive: true });
+  await mkdir(procRoot, { recursive: true });
+
   await writeFile(calls, "");
   if (options.wsEscape) {
     const escapingWs = join(state, "escaping-ws");
@@ -1177,9 +1230,16 @@ case \${1:-} in
 esac
 `,
   );
+  await copyFile(ompTarget, procExecutableCopy);
+  await chmod(procExecutableCopy, 0o751);
   await chmod(ompTarget, 0o751);
   await writeFile(t4Executable, "#!/bin/sh\nexit 0\n");
   await chmod(t4Executable, 0o755);
+  await writeFile(t4AppAsar, "mock-app-asar\n");
+  const installedOmpSha = createHash("sha256").update(await readFile(ompTarget)).digest("hex");
+  const deploymentIdentity = `sha256:${createHash("sha256")
+    .update(`${t4Commit}\0${integrationCommit}\0${installedOmpSha}\0`)
+    .digest("hex")}`;
   await writeFile(join(t4WebRoot, "index.html"), "old-web\n");
   await writeFile(
     gatewayConfig,
@@ -1189,16 +1249,61 @@ esac
       port: 4319,
       appSocket: socket,
       label: "mock",
+      ...(options.sameVersion ? { deploymentIdentity } : {}),
       ...(options.profileRoutes === undefined
         ? {}
         : { profileRoutes: options.profileRoutes, startProfiles: options.startProfiles === true }),
     })}\n`,
   );
+  if (options.sameVersion) {
+    const appAsarSha = createHash("sha256").update("mock-app-asar\n").digest("hex");
+    await writeFile(overlayPackage, "mock-overlay\n");
+    const overlayPackageBytes = await readFile(overlayPackage);
+    const overlayPackageSha = createHash("sha256").update(overlayPackageBytes).digest("hex");
+    await writeFile(
+      join(previousRuntime, "LOCAL_DEPLOYMENT.json"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        kind: manifestKind,
+        t4Commit,
+        installedOmpSha256: installedOmpSha,
+        reportedPackageVersion: previousVersion,
+        deploymentIdentity,
+      })}\n`,
+    );
+    if (options.overlayReceipt !== "missing") {
+      await mkdir(dirname(overlayReceipt), { recursive: true });
+      await writeFile(
+        overlayReceipt,
+        `${JSON.stringify({
+          schemaVersion: 1,
+          kind: "t4-maintainer-operator-overlay",
+          artifact: {
+            package: {
+              path: overlayPackage,
+              canonicalPath: overlayPackage,
+              size: overlayPackageBytes.length,
+              sha256: overlayPackageSha,
+              version: previousVersion,
+            },
+            t4: { commit: t4Commit, appAsarSha256: appAsarSha },
+            omp: { sha256: installedOmpSha },
+            gateway: { deploymentIdentity },
+          },
+        })}\n`,
+      );
+      await chmod(overlayReceipt, 0o600);
+    }
+  }
   await writeFile(gatewayUnit, "old-unit\n");
   await writeFile(join(state, "package-version"), previousVersion);
   await writeFile(join(state, "active-sessions"), String(options.activeSessions ?? 0));
   await writeFile(join(state, "gateway-health"), options.gatewayHealthy === false ? "unhealthy" : "healthy");
   await writeFile(join(state, "tailnet-health"), "healthy");
+  await writeFile(
+    join(state, "deployment-identity"),
+    options.sameVersion ? deploymentIdentity : `sha256:${createHash("sha256").update("old").digest("hex")}`,
+  );
   await writeFile(join(state, "socket-path"), socket);
   await writeFile(join(state, "app-service"), options.appActive === false ? "inactive" : "active");
   await writeFile(
@@ -1262,7 +1367,7 @@ esac
   await writeFile(join(state, "app-pid"), `${socketProcess.pid}\n`);
   const procExecutable = join(procRoot, String(socketProcess.pid), "exe");
   await mkdir(dirname(procExecutable), { recursive: true });
-  await symlink(ompTarget, procExecutable);
+  await symlink(procExecutableCopy, procExecutable);
 
   const env = {
     ...process.env,
@@ -1279,6 +1384,7 @@ esac
     MOCK_INTEGRATION_TAG_OBJECT: integrationTagObject,
     MOCK_BIN: bin,
     MOCK_OMP_TARGET: ompTarget,
+    MOCK_PROC_EXE: procExecutableCopy,
     MOCK_OMP_SERVICE: ompService,
     MOCK_GATEWAY_CONFIG: gatewayConfig,
     MOCK_GATEWAY_UNIT: gatewayUnit,
@@ -1311,12 +1417,16 @@ esac
     T4_MAINTAINER_FORK_SYNC_RUN_QUIET_POLLS: "3",
     T4_MAINTAINER_FORK_SYNC_RUN_MIN_OBSERVATION_POLLS: "7",
     T4_MAINTAINER_INSTALL: "install",
+    MOCK_OVERLAY_PACKAGE: overlayPackage,
+    MOCK_SEALED_PACKAGE: join(maintainerRoot, "state", "operator-overlays", `${createHash("sha256").update("mock-overlay\n").digest("hex")}.deb`),
     T4_MAINTAINER_SYNC: "/bin/sync",
     T4_LOCAL_OMP_TARGET: ompTarget,
     T4_LOCAL_OMP_SERVICE: ompService,
     T4_LOCAL_OMP_SOCKET: socket,
     T4_LOCAL_T4_EXECUTABLE: t4Executable,
     T4_LOCAL_T4_WEB_ROOT: t4WebRoot,
+    T4_LOCAL_T4_APP_ASAR: t4AppAsar,
+    T4_LOCAL_ROLLBACK_RECEIPT: overlayReceipt,
     T4_LOCAL_GATEWAY_SERVICE: gatewayService,
     T4_LOCAL_GATEWAY_CONFIG: gatewayConfig,
     T4_LOCAL_GATEWAY_UNIT: gatewayUnit,
@@ -1377,6 +1487,13 @@ esac
       ? { MOCK_GATEWAY_DISABLE_FAIL_AFTER_FIRST: "1" }
       : {}),
     ...(options.productBranchMissing ? { MOCK_PRODUCT_BRANCH_MISSING: "1" } : {}),
+    ...(options.prSequential ? { MOCK_PR_SEQUENTIAL: "1" } : {}),
+    ...(options.t4MainCommitChangeAfter !== undefined
+      ? {
+          MOCK_T4_MAIN_COMMIT_AFTER: String(options.t4MainCommitChangeAfter),
+          MOCK_T4_MAIN_COMMIT_CHANGED: changedT4MainCommit,
+        }
+      : {}),
   };
 
   return {
@@ -1388,6 +1505,10 @@ esac
     receipt,
     calls,
     ompTarget,
+    t4AppAsar,
+    previousRuntime,
+    overlayPackage,
+    overlayReceipt,
     gatewayConfig,
     procRoot,
     gatewayUnit,
@@ -1454,6 +1575,8 @@ async function createRunnerFixture(options = {}) {
     ompAssetDigestless: options.ompAssetDigestless,
     ompAssetDigestMismatch: options.ompAssetDigestMismatch,
     ompAssetUnreachable: options.ompAssetUnreachable,
+    prSequential: options.prSequential,
+    t4MainCommitChangeAfter: options.t4MainCommitChangeAfter,
     ompAssetWrongOrigin: options.ompAssetWrongOrigin,
   });
   const localDeploy = join(fixture.root, "bin", "local-deploy");
@@ -1919,6 +2042,73 @@ test("same-version package repair is an effective reinstall", async (t) => {
   assert.match(aptCalls[0], /T4-Code-1\.2\.3-linux-amd64\.deb/u);
 });
 
+test("same-version repair accepts the explicit local-unreleased-candidate manifest kind", async (t) => {
+  const fixture = await createDeployFixture({
+    sameVersion: true,
+    manifestKind: "local-unreleased-candidate",
+  });
+  t.after(() => fixture.cleanup());
+  const result = fixture.run();
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const aptCalls = (await fixture.callsText())
+    .split("\n")
+    .filter((line) => line.startsWith("apt-get\t") && !line.includes("--simulate"));
+  assert.equal(aptCalls.length, 1);
+  assert.match(aptCalls[0], /--reinstall/u);
+});
+
+test("same-version deployment rejects a missing or mismatched current overlay receipt", async (t) => {
+  for (const [name, options, mutate] of [
+    ["missing", { sameVersion: true, overlayReceipt: "missing" }, undefined],
+    ["unexpected manifest kind", { sameVersion: true, manifestKind: "not-a-maintainer-deployment" }, undefined],
+    ["mismatched", { sameVersion: true }, async (fixture) => {
+      const receipt = JSON.parse(await readFile(fixture.overlayReceipt, "utf8"));
+      receipt.artifact.gateway.deploymentIdentity = `sha256:${"f".repeat(64)}`;
+      await writeFile(fixture.overlayReceipt, `${JSON.stringify(receipt)}\n`);
+    }],
+  ]) {
+    await t.test(name, async (subtest) => {
+      const fixture = await createDeployFixture(options);
+      subtest.after(() => fixture.cleanup());
+      if (mutate) await mutate(fixture);
+      const result = fixture.run();
+      assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      const calls = await fixture.callsText();
+      assert.doesNotMatch(calls, /^apt-get\t.*--reinstall(?!.*--simulate)/mu);
+      assert.doesNotMatch(calls, /^systemctl\t.*(?:stop|start|restart)/mu);
+    });
+  }
+});
+
+test("same-version rollback uses the sealed overlay when its original changes", async (t) => {
+  const fixture = await createDeployFixture({ sameVersion: true });
+  t.after(() => fixture.cleanup());
+  const result = fixture.run({
+    T4_MAINTAINER_TEST_FAULT: "after-desktop-install",
+    MOCK_MUTATE_OVERLAY_AFTER_APT: "1",
+  });
+  assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(await fixture.callsText(), /^apt-get\t.*operator-overlays.*\.deb/mu);
+  assert.equal(await pathExists(join(fixture.maintainerRoot, "state", "deployment-blocked.json")), false);
+});
+
+test("same-version rollback rejects a tampered sealed overlay", async (t) => {
+  const fixture = await createDeployFixture({ sameVersion: true });
+  t.after(() => fixture.cleanup());
+  const result = fixture.run({
+    T4_MAINTAINER_TEST_FAULT: "after-desktop-install",
+    MOCK_TAMPER_SEALED_AFTER_APT: "1",
+  });
+  assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const marker = join(fixture.maintainerRoot, "state", "deployment-blocked.json");
+  assert.equal(await pathExists(marker), true, `${result.stdout}\n${result.stderr}\n${await fixture.callsText()}`);
+  assert.ok(["rollback-incomplete", "rollback-drained-after-exposure"].includes(JSON.parse(await readFile(marker, "utf8")).status));
+  const aptCalls = (await fixture.callsText())
+    .split("\n")
+    .filter((line) => line.startsWith("apt-get\t") && line.includes("operator-overlays") && !line.includes("--simulate"));
+  assert.equal(aptCalls.length, 0, await fixture.callsText());
+});
+
 test("the second idle guard catches a session opened during preparation", async (t) => {
   const fixture = await createDeployFixture({ busyAfterStage: true });
   t.after(() => fixture.cleanup());
@@ -2030,7 +2220,14 @@ test("post-exposure busy or changed appserver preserves new state behind a durab
 
       const second = fixture.run();
       assert.notEqual(second.status, 0, `${second.stdout}\n${second.stderr}`);
-      assert.equal(await fixture.callsText(), callsBefore);
+      const callsAfter = await fixture.callsText();
+      const beforeLines = callsBefore.trimEnd().split("\n");
+      const afterLines = callsAfter.trimEnd().split("\n");
+      assert.deepEqual(
+        afterLines.slice(beforeLines.length),
+        [`realpath\t-e\t--\t${fixture.maintainerRoot}`],
+        callsAfter,
+      );
     });
   }
 });
@@ -2176,11 +2373,44 @@ test("test maintainer roots must be canonical before process overrides", async (
     },
   );
   assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
-  assert.match(result.stderr, /test maintainer root must be canonical/u);
+  assert.match(result.stderr, /maintainer root must be canonical/u);
   const calls = await fixture.callsText();
   assert.doesNotMatch(calls, /^apt-get\t/mu);
   assert.doesNotMatch(calls, /^systemctl\t.*(?:stop|start|restart)/mu);
   await assertRestored(fixture);
+});
+
+test("direct deployer rejects a /tmp symlink-root escape before staging or mutation", async (t) => {
+  const fixture = await createDeployFixture();
+  const outsideRoot = await mkdtemp(join("/var/tmp", "t4-deploy-outside-"));
+  const tmpParent = join(tmpdir(), `t4-deploy-root-link-${process.pid}-${Date.now()}`);
+  await symlink(outsideRoot, tmpParent);
+  t.after(async () => {
+    await fixture.cleanup();
+    await rm(tmpParent, { force: true });
+    await rm(outsideRoot, { recursive: true, force: true });
+  });
+  const escapedRoot = join(tmpParent, "nonexistent-child");
+  const result = spawnSync(
+    bashPath,
+    [
+      deployScript,
+      join(escapedRoot, "runs", "fixture", "result.json"),
+      join(escapedRoot, "runs", "fixture", "local-deployment.json"),
+      join(escapedRoot, "runs", "fixture", "local-work"),
+    ],
+    {
+      encoding: "utf8",
+      env: { ...fixture.env, T4_MAINTAINER_ROOT: escapedRoot },
+      timeout: 20_000,
+    },
+  );
+  assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stderr, /maintainer root must exist and be canonical/u);
+  assert.equal((await readdir(outsideRoot)).length, 0);
+  const calls = await fixture.callsText();
+  assert.doesNotMatch(calls, /^apt-get\t/mu);
+  assert.doesNotMatch(calls, /^systemctl\t.*(?:stop|start|restart)/mu);
 });
 
 test("a divergent fork main is retried and rejected before source staging", async (t) => {
@@ -2510,6 +2740,194 @@ test("normal recovery adopts a compatible in-flight main publication before Sol"
   );
   assert.equal(calls.split("\n").filter((line) => line.startsWith("omp\t")).length, 0);
 });
+test("sequential publication gate race defers before Sol and preserves local state", async (t) => {
+  const fixture = await createRunnerFixture({ prSequential: true, workflowsTerminal: true });
+  t.after(() => fixture.cleanup());
+  const result = fixture.runRunner({ T4_MAINTAINER_TEST_PUBLICATION_GATE: "1" });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const calls = await fixture.callsText();
+  assert.equal(calls.split("\n").filter((line) => line.startsWith("omp\t")).length, 0, calls);
+  assert.equal(calls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length, 0, calls);
+  assert.equal((await readFile(join(fixture.state, "t4-pr-queries"), "utf8")).trim(), "2");
+  assert.equal(await pathExists(fixture.processed), false);
+  assert.equal(await pathExists(fixture.pending), false);
+  await assertRestored(fixture);
+});
+test("a changed T4 main identity defers on the second gate without a stale Sol context", async (t) => {
+  const fixture = await createRunnerFixture({
+    t4MainCommitChangeAfter: 4,
+    workflowsTerminal: true,
+  });
+  t.after(() => fixture.cleanup());
+  const result = fixture.runRunner({ T4_MAINTAINER_TEST_PUBLICATION_GATE: "1" });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const calls = await fixture.callsText();
+  assert.equal(calls.split("\n").filter((line) => line.startsWith("omp\t")).length, 0, calls);
+  assert.equal((await readFile(join(fixture.state, "t4-main-queries"), "utf8")).trim(), "5");
+  const runEntries = await readdir(join(fixture.maintainerRoot, "runs"));
+  for (const entry of runEntries) {
+    assert.equal(await pathExists(join(fixture.maintainerRoot, "runs", entry, "context.json")), false);
+  }
+});
+
+
+test("nonexistent child roots behind /tmp symlink parents fail closed before outside state", async (t) => {
+  const fixture = await createRunnerFixture();
+  const outsideRoot = await mkdtemp(join("/var/tmp", "t4-maintainer-outside-"));
+  const tmpParent = join(tmpdir(), `t4-maintainer-root-link-${process.pid}-${Date.now()}`);
+  await symlink(outsideRoot, tmpParent);
+  t.after(async () => {
+    await fixture.cleanup();
+    await rm(tmpParent, { force: true });
+    await rm(outsideRoot, { recursive: true, force: true });
+  });
+  const result = fixture.runRunner({
+    T4_MAINTAINER_ROOT: join(tmpParent, "nonexistent-child"),
+  });
+  assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stderr, /maintainer root must exist and be canonicalized/u);
+  assert.equal((await readdir(outsideRoot)).length, 0);
+  const calls = await fixture.callsText();
+  assert.doesNotMatch(calls, /^omp\t/mu);
+  assert.doesNotMatch(calls, /^local-deploy\t/mu);
+});
+test("test mode cannot bypass publication gates from a production root", async (t) => {
+  const fixture = await createRunnerFixture({ prSequential: true, workflowsTerminal: true });
+  const productionRoot = await mkdtemp(join("/var/tmp", "t4-maintainer-production-"));
+  t.after(async () => {
+    await fixture.cleanup();
+    await rm(productionRoot, { recursive: true, force: true });
+  });
+  const result = fixture.runRunner({ T4_MAINTAINER_ROOT: productionRoot });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const calls = await fixture.callsText();
+  assert.equal(calls.split("\n").filter((line) => line.startsWith("omp\t")).length, 0, calls);
+  assert.equal(
+    calls.split("\n").filter((line) => line.includes("gh\tapi\trepos/LycaonLLC/t4-code/pulls\\?state")).length,
+    2,
+    calls,
+  );
+});
+
+test("notification failure cannot alter defer, deployment, or failure semantics", async (t) => {
+  const cases = [
+    ["collaborator defer", { prSequential: true, workflowsTerminal: true }, 0, false],
+    ["local deployment defer", {}, 0, true],
+    ["main failure", { publicIncompatible: true }, 1, false],
+  ];
+  for (const [name, options, expectedStatus, localDefer] of cases) {
+    await t.test(name, async (subtest) => {
+      const fixture = await createRunnerFixture(options);
+      subtest.after(() => fixture.cleanup());
+      if (localDefer) await writeFile(join(fixture.state, "tailnet-health"), "unhealthy");
+      const result = fixture.runRunner({
+        T4_MAINTAINER_TEST_PUBLICATION_GATE: "1",
+        T4_MAINTAINER_NOTIFY_HELPER: join(fixture.root, "missing-notifier"),
+        T4_MAINTAINER_HERMES_SECRET_FILE: join(fixture.root, "missing-secret"),
+      });
+      assert.equal(result.status, expectedStatus, `${result.stdout}\n${result.stderr}`);
+      const notificationState = join(fixture.state, "notification-state.json");
+      const calls = await fixture.callsText();
+      if (name === "collaborator defer") {
+        assert.equal(calls.split("\n").filter((line) => line.startsWith("omp\t")).length, 0, calls);
+        assert.equal(calls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length, 0, calls);
+        assert.equal(
+          await pathExists(notificationState),
+          false,
+          "failed collaborator notification must not persist blocker dedupe",
+        );
+      }
+      if (name === "local deployment defer") {
+        assert.equal(calls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length, 1, calls);
+      }
+    });
+  }
+});
+
+test("successful blocker delivery warns when durable dedupe persistence fails", async (t) => {
+  const fixture = await createRunnerFixture({ prSequential: true, workflowsTerminal: true });
+  const notifier = join(fixture.root, "successful-notifier");
+  const notifyMarker = join(fixture.root, "notify-delivered");
+  const secret = join(fixture.root, "hermes-secret");
+  const failingSync = join(fixture.root, "notification-failing-sync");
+  const syncMarker = join(fixture.root, "notification-sync-temp-seen");
+  await writeFile(notifier, `#!/usr/bin/env bash
+cat >/dev/null
+: >"${notifyMarker}"
+exit 0
+`);
+  await chmod(notifier, 0o700);
+  await writeFile(secret, "test-secret\n", { mode: 0o600 });
+  await writeFile(
+    failingSync,
+    `#!/usr/bin/env bash
+for argument in "$@"; do
+  case "$argument" in
+    *notification-state.json.*)
+      : >"${syncMarker}"
+      exec /bin/sync "$@"
+      ;;
+    ${fixture.state})
+      [[ -e ${syncMarker} ]] && exit 1
+      ;;
+  esac
+done
+exec /bin/sync "$@"
+`,
+  );
+  await chmod(failingSync, 0o700);
+  await writeFile(
+    join(fixture.state, "notification-state.json"),
+    '{"schemaVersion":1,"blockers":{"existing-blocker":true}}\n',
+  );
+  t.after(() => fixture.cleanup());
+  const result = fixture.runRunner({
+    T4_MAINTAINER_TEST_PUBLICATION_GATE: "1",
+    T4_MAINTAINER_NOTIFY_HELPER: notifier,
+    T4_MAINTAINER_HERMES_SECRET_FILE: secret,
+    T4_MAINTAINER_SYNC: failingSync,
+  });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.equal(await pathExists(notifyMarker), true);
+  assert.equal(await pathExists(syncMarker), true);
+  const notificationState = JSON.parse(await readFile(join(fixture.state, "notification-state.json"), "utf8"));
+  assert.equal(notificationState.blockers["existing-blocker"], true);
+});
+
+test("existing blocker dedupe survives a pre-mv persistence failure", async (t) => {
+  const fixture = await createRunnerFixture({ prSequential: true, workflowsTerminal: true });
+  const notifier = join(fixture.root, "successful-notifier");
+  const secret = join(fixture.root, "hermes-secret");
+  const failingSync = join(fixture.root, "notification-failing-sync");
+  await writeFile(notifier, "#!/usr/bin/env bash\ncat >/dev/null\nexit 0\n");
+  await chmod(notifier, 0o700);
+  await writeFile(secret, "test-secret\n", { mode: 0o600 });
+  await writeFile(
+    failingSync,
+    `#!/usr/bin/env bash
+for argument in "$@"; do
+  case "$argument" in
+    *notification-state.json.*) exit 1 ;;
+  esac
+done
+exec /bin/sync "$@"
+`,
+  );
+  await chmod(failingSync, 0o700);
+  const notificationStatePath = join(fixture.state, "notification-state.json");
+  await writeFile(notificationStatePath, '{"schemaVersion":1,"blockers":{"existing-blocker":true}}\n');
+  t.after(() => fixture.cleanup());
+  const result = fixture.runRunner({
+    T4_MAINTAINER_TEST_PUBLICATION_GATE: "1",
+    T4_MAINTAINER_NOTIFY_HELPER: notifier,
+    T4_MAINTAINER_HERMES_SECRET_FILE: secret,
+    T4_MAINTAINER_SYNC: failingSync,
+  });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const notificationState = JSON.parse(await readFile(notificationStatePath, "utf8"));
+  assert.equal(notificationState.blockers["existing-blocker"], true);
+  assert.equal(notificationState.blockers["t4-pr-42"], undefined);
+});
 
 test("normal recovery adopts the compatible latest public release before Sol", async (t) => {
   const fixture = await createRunnerFixture({ localDeployFail: true, mainIncompatible: true });
@@ -2729,6 +3147,7 @@ test("an older exact-SHA push rerun is outside the mirror transaction and remain
     forkMainRunPreexisting: true,
     localDeployFail: true,
   });
+
   t.after(() => fixture.cleanup());
   const result = fixture.runRunner();
   assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
@@ -2739,6 +3158,21 @@ test("an older exact-SHA push rerun is outside the mirror transaction and remain
     await pathExists(join(fixture.maintainerRoot, "state", "fork-main-sync.json")),
     false,
   );
+});
+
+test("Sol receives the exact maintainer execution argv", async (t) => {
+  const fixture = await createRunnerFixture({ publicIncompatible: true });
+  t.after(() => fixture.cleanup());
+  const result = fixture.runRunner();
+  assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const calls = await fixture.callsText();
+  const ompCall = calls.split("\n").find((line) => line.startsWith("omp\t"));
+  assert.ok(ompCall, calls);
+  assert.match(
+    ompCall.replaceAll("\\ ", " "),
+    /omp\t--profile\tt4-maintainer\t--cwd\t[^\t]+\t--model\topenai-codex\/gpt-5\.6-sol\t--thinking\tmax\t--print\t--mode\tjson\t--approval-mode\tyolo\t/u,
+  );
+  assert.doesNotMatch(ompCall, /--no-tools|--tools=|--no-pty|bwrap/u);
 });
 
 test("a human rerun attempt is never treated as the wrapper-created mirror run", async (t) => {
@@ -2752,6 +3186,7 @@ test("a human rerun attempt is never treated as the wrapper-created mirror run",
   const result = fixture.runRunner();
   assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
   const calls = await fixture.callsText();
+
   assert.doesNotMatch(calls, /actions\/runs\/4242\/cancel/u);
   assert.equal(await pathExists(join(fixture.state, "fork-main-run-cancelled")), false);
   assert.equal(
@@ -2759,6 +3194,7 @@ test("a human rerun attempt is never treated as the wrapper-created mirror run",
     false,
   );
 });
+
 
 test("malformed fork-main run state retains crash recovery and prevents Sol", async (t) => {
   const fixture = await createRunnerFixture({

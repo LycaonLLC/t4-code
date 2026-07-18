@@ -16,11 +16,13 @@ TIMER_NAME=t4-omp-maintainer.timer
 
 "$SCRIPT_DIR/validate.sh"
 
+stage_only=false
 if [[ ${1:-} == --check ]]; then
   exit 0
-fi
-if [[ $# -gt 0 ]]; then
-  printf 'usage: %s [--check]\n' "$0" >&2
+elif [[ ${1:-} == --stage-only && $# -eq 1 ]]; then
+  stage_only=true
+elif [[ $# -gt 0 ]]; then
+  printf 'usage: %s [--check|--stage-only]\n' "$0" >&2
   exit 1
 fi
 
@@ -81,9 +83,29 @@ else
   ln -s -- "$OMP_AUTH_BROKER_TOKEN_FILE" "$profile_token"
 fi
 
+link_shared_readonly() {
+  local source=$1 target=$2
+  [[ -e $source ]] || return 0
+  if [[ -L $target ]]; then
+    [[ $(readlink -f -- "$target") == "$(readlink -f -- "$source")" ]] || {
+      printf 't4-maintainer shared context link points to another path: %s\n' "$target" >&2
+      exit 1
+    }
+  elif [[ -e $target ]]; then
+    printf 't4-maintainer profile context path is already occupied: %s\n' "$target" >&2
+    exit 1
+  else
+    ln -s -- "$source" "$target"
+  fi
+}
+link_shared_readonly "$HOME/.omp/context" "$profile_root/context"
+link_shared_readonly "$HOME/.agents/skills" "$profile_root/skills"
+link_shared_readonly "$HOME/.omp/agent/config.yml" "$profile_root/agent-roster.yml"
+
 install -m 0700 "$SCRIPT_DIR/run.sh" "$MAINTAINER_ROOT/libexec/run.sh"
 install -m 0700 "$SCRIPT_DIR/deploy-local.sh" "$MAINTAINER_ROOT/libexec/deploy-local.sh"
 install -m 0700 "$SCRIPT_DIR/publish-omp-atomic.sh" "$MAINTAINER_ROOT/libexec/publish-omp-atomic.sh"
+install -m 0700 "$SCRIPT_DIR/notify.py" "$MAINTAINER_ROOT/libexec/notify.py"
 install -m 0600 "$SCRIPT_DIR/../../scripts/inspect-linux-update.mjs" \
   "$MAINTAINER_ROOT/libexec/inspect-linux-update.mjs"
 install -m 0600 "$SCRIPT_DIR/prompt.md" "$MAINTAINER_ROOT/libexec/prompt.md"
@@ -100,6 +122,12 @@ install -m 0644 "$temporary/$SERVICE_NAME" "$SYSTEMD_USER_DIR/$SERVICE_NAME"
 install -m 0644 "$temporary/$TIMER_NAME" "$SYSTEMD_USER_DIR/$TIMER_NAME"
 
 systemctl --user daemon-reload
+if [[ $stage_only == true ]]; then
+  flock -u 9
+  exec 9>&-
+  printf 'Staged %s without enabling or starting the maintainer timer/service.\n' "$TIMER_NAME"
+  exit 0
+fi
 systemctl --user enable --now "$TIMER_NAME"
 flock -u 9
 exec 9>&-

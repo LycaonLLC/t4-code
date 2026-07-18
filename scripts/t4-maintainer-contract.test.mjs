@@ -59,6 +59,7 @@ test("runner preflights the configured date helper before creating state", async
   const scratch = await mkdtemp(join(tmpdir(), "t4-maintainer-date-"));
   const stateRoot = join(scratch, "state");
   const missingDate = join(scratch, "missing-date");
+  await mkdir(stateRoot, { mode: 0o700 });
   try {
     const result = spawnSync(bashPath, [resolve(maintainerRoot, "run.sh")], {
       encoding: "utf8",
@@ -70,10 +71,26 @@ test("runner preflights the configured date helper before creating state", async
     });
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, new RegExp(`required command is unavailable: ${missingDate}`, "u"));
-    await assert.rejects(access(stateRoot));
+    await assert.rejects(access(join(stateRoot, "state")));
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }
+});
+
+test("direct deployer preflights every configured command used during cutover", async () => {
+  const deployer = await source("deploy-local.sh");
+  assert.match(
+    deployer,
+    /for command in[\s\S]*"\$DPKG_QUERY" "\$DPKG" "\$DPKG_DEB" "\$SHA256SUM" "\$SYSTEMCTL" "\$INSTALL" "\$SYNC"[\s\S]*require_command "\$command"/u,
+  );
+});
+
+test("runner warns when delivered blocker dedupe state cannot be persisted", async () => {
+  const runner = await source("run.sh");
+  assert.match(
+    runner,
+    /Hermes delivery succeeded but notification dedupe state could not be persisted/u,
+  );
 });
 
 test("installer and validator ship every deterministic verification helper", async () => {
@@ -106,6 +123,12 @@ test("installer and validator ship every deterministic verification helper", asy
     validator,
     /install -m 0600 "\$SCRIPT_DIR\/\.\.\/\.\.\/scripts\/inspect-linux-update\.mjs"/u,
   );
+  assert.match(installer, /--stage-only/u);
+  assert.ok(installer.indexOf("systemctl --user daemon-reload") < installer.indexOf("stage_only == true"));
+  const runner = await source("run.sh");
+  assert.match(runner, /NOTIFY_SECRET_FILE=\$\{T4_MAINTAINER_HERMES_SECRET_FILE:-"\$MAINTAINER_ROOT\/secrets\/hermes-webhook\.secret"\}/u);
+  assert.match(runner, /publication_gate \|\| \{\s+local gate_status=\$\?/u);
+  assert.match(runner, /--profile t4-maintainer[\s\S]*--model openai-codex\/gpt-5\.6-sol[\s\S]*--thinking max[\s\S]*--approval-mode yolo/u);
 });
 
 test("reinstall waits for the active maintainer lock before replacing its bundle", async (t) => {
