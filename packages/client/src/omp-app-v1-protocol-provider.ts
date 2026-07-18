@@ -13,7 +13,9 @@ import type {
   OmpDecodedServerEvent,
   OmpProtocolProvider,
   OmpServerEvent,
+  PublicOmpServerEvent,
 } from "./omp-protocol-provider.ts";
+import type { PublicServerFrame } from "./omp-client-contracts.ts";
 
 function commandArgs(message: Extract<OmpClientMessage, { kind: "command" }>): Readonly<Record<string, unknown>> {
   const args = message.args;
@@ -111,6 +113,20 @@ function appV1ServerEvent(frame: ServerFrame): OmpDecodedServerEvent {
   const { v: _version, type, ...payload } = frame;
   const event = Object.freeze({ kind: type, payload: Object.freeze(payload) }) as OmpServerEvent;
   return Object.freeze({ ...event, event, wireFrame: frame }) as OmpDecodedServerEvent;
+}
+
+/**
+ * Temporary bridge for desktop/browser shell ports whose public contract still
+ * carries omp-app/1 frames. New application code should consume the event.
+ */
+export function ompAppV1PublicFrameFromEvent(event: PublicOmpServerEvent): PublicServerFrame {
+  const frame = decodeServerFrame({
+    ...event.payload,
+    v: PROTOCOL_VERSION,
+    type: event.kind,
+  });
+  if (frame.type === "pair.ok") throw new Error("pair credentials cannot cross public boundaries");
+  return frame;
 }
 
 /** Current canonical provider backed by the pinned @oh-my-pi/app-wire v1 artifact. */

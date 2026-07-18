@@ -13,6 +13,7 @@
 import {
   createOmpClient,
   isConfirmationDecisionConsumed,
+  ompAppV1PublicFrameFromEvent,
   type OmpClient,
   type OmpClientOptions,
   type OmpTransport,
@@ -310,7 +311,8 @@ export function createBrowserShellPort(
       reconnect: { baseMs: 250, maxMs: 10_000 },
     });
 
-    c.onFrame((frame) => {
+    c.onEvent((event) => {
+      const frame = ompAppV1PublicFrameFromEvent(event);
       if (frame.type === "welcome") welcome = frame;
       emitFrame(TARGET_ID, safePublicFrame(frame));
     });

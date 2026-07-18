@@ -1,4 +1,4 @@
-import { createOmpClient, isConfirmationDecisionConsumed, OmpClientError, type CommandIntent, type CursorStore, type OmpClient, type PublicServerFrame } from "@t4-code/client";
+import { createOmpClient, isConfirmationDecisionConsumed, ompAppV1PublicFrameFromEvent, OmpClientError, type CommandIntent, type CursorStore, type OmpClient, type PublicServerFrame } from "@t4-code/client";
 import { commandResultError, type CommandResult, type ConnectionStateEvent, type RuntimeErrorEvent } from "@t4-code/protocol/desktop-ipc";
 import type { ConfirmRequest, ConfirmResult, TerminalCloseRequest, TerminalInputRequest, TerminalResizeRequest, TerminalResult } from "@t4-code/protocol/desktop-ipc";
 import { ADDITIVE_FEATURES, DEVICE_CAPABILITIES, type DeviceCapability } from "@t4-code/protocol";
@@ -381,8 +381,9 @@ export class DesktopTargetManager {
     const client = createOmpClient(clientOptions);
     const runtime: Runtime = { generation, client, requestedCapabilities, paired: local !== undefined || hasCredential };
     this.runtimes.set(targetId, runtime);
-    client.onFrame((frame) => {
+    client.onEvent((event) => {
       if (this.generations.get(targetId) !== generation) return;
+      const frame = ompAppV1PublicFrameFromEvent(event);
       if (frame.type === "welcome") this.latestWelcomes.set(targetId, frame);
       this.events.onFrame(targetId, safePublicFrame(frame));
     });
