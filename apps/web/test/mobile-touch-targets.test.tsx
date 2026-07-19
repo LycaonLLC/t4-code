@@ -141,7 +141,9 @@ describe("phone touch targets", () => {
     expect(controls).toContain("flex min-h-11 w-full cursor-pointer items-center");
     expect(controls).toContain("flex max-h-[min(24rem,var(--available-height))]");
     expect(controls).toContain("min-h-0 overflow-y-auto overscroll-contain");
-    expect(titlebar.match(/className="size-11 sm:size-7"/g)).toHaveLength(6);
+    expect(titlebar.match(/className="size-11 sm:size-7"/g)).toHaveLength(5);
+    expect(titlebar).toContain('aria-label="Exit focus mode"');
+    expect(titlebar).toContain("Focus mode</span>");
     const hostedAppAction = readFileSync(
       join(import.meta.dirname, "../src/components/HostedAppAction.tsx"),
       "utf8",

@@ -73,7 +73,10 @@ function SessionContextMenu({
     <Popover.Root onOpenChange={setOpen} open={open}>
       <Popover.Trigger
         aria-label={`Session context: ${project.name}${host === undefined ? "" : ` on ${host.name}`}`}
-        className="flex size-11 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-transparent text-muted-foreground outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:h-7 sm:w-auto sm:max-w-56 sm:justify-start sm:rounded-md sm:px-1.5"
+        className={cn(
+          "flex size-11 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-transparent text-muted-foreground outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:h-7 sm:w-auto sm:max-w-56 sm:justify-start sm:rounded-md sm:px-1.5",
+          open && "bg-secondary text-foreground",
+        )}
       >
         <FolderGit2 aria-hidden="true" className="size-3.5 shrink-0" />
         <span className="hidden truncate text-xs sm:inline">{project.name}</span>
@@ -154,7 +157,7 @@ function WorkspaceMenu({
         aria-pressed={workspaceActive}
         className={cn(
           "flex size-11 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-lg border border-transparent px-2 text-foreground outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:h-7 sm:w-auto sm:rounded-md",
-          workspaceActive && "bg-secondary",
+          (workspaceActive || open) && "bg-secondary",
         )}
       >
         <PanelsTopLeft aria-hidden="true" className="size-4 text-muted-foreground" />

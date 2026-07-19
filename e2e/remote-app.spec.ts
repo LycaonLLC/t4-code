@@ -1154,6 +1154,9 @@ test("shows verified session context and groups command-palette actions", async 
   await expect(palette.getByText("Workspace", { exact: true })).toBeVisible();
   await expect(palette.getByText("Navigate", { exact: true })).toBeVisible();
   await expect(palette.getByText("App", { exact: true })).toBeVisible();
+  await expect(palette.getByLabel("Command menu keyboard help")).toContainText(
+    /Navigate.*Open.*Esc.*Close/u,
+  );
 
   const search = palette.getByRole("combobox");
   await search.fill("open terminal");

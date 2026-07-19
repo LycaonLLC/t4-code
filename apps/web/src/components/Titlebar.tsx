@@ -124,14 +124,15 @@ export function Titlebar({
         <Tooltip>
           <TooltipTrigger
             render={
-              <IconButton
+              <button
                 aria-label="Exit focus mode"
-                className="size-11 sm:size-7"
+                className="flex size-11 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-border/60 bg-secondary/60 text-foreground outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:h-7 sm:w-auto sm:rounded-md sm:px-2"
                 onClick={onExitFocus}
-                size="icon-sm"
+                type="button"
               >
-                <Minimize2 />
-              </IconButton>
+                <Minimize2 aria-hidden="true" className="size-3.5" />
+                <span className="hidden text-xs md:inline">Focus mode</span>
+              </button>
             }
           />
           <TooltipPopup side="bottom">Exit focus mode (Ctrl+Shift+F)</TooltipPopup>

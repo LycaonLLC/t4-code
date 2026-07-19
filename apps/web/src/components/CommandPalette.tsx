@@ -267,30 +267,36 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
         className="w-full max-w-lg overflow-hidden p-0"
         showCloseButton={false}
       >
-        <input
-          aria-activedescendant={filtered.length > 0 ? `palette-item-${highlighted}` : undefined}
-          aria-controls="palette-results"
-          aria-expanded="true"
-          autoFocus
-          className="h-11 w-full border-border border-b bg-transparent px-4 text-foreground text-sm outline-none placeholder:text-muted-foreground"
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "ArrowDown") {
-              event.preventDefault();
-              setHighlighted((index) => Math.min(index + 1, filtered.length - 1));
-            } else if (event.key === "ArrowUp") {
-              event.preventDefault();
-              setHighlighted((index) => Math.max(index - 1, 0));
-            } else if (event.key === "Enter") {
-              event.preventDefault();
-              runItem(filtered[highlighted]);
-            }
-          }}
-          placeholder="Search sessions, transcripts, and commands"
-          role="combobox"
-          type="text"
-          value={query}
-        />
+        <div className="relative border-border border-b">
+          <Search
+            aria-hidden="true"
+            className="pointer-events-none absolute start-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+          />
+          <input
+            aria-activedescendant={filtered.length > 0 ? `palette-item-${highlighted}` : undefined}
+            aria-controls="palette-results"
+            aria-expanded="true"
+            autoFocus
+            className="h-12 w-full bg-transparent pe-4 ps-10 text-foreground text-sm outline-none placeholder:text-muted-foreground"
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setHighlighted((index) => Math.min(index + 1, filtered.length - 1));
+              } else if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setHighlighted((index) => Math.max(index - 1, 0));
+              } else if (event.key === "Enter") {
+                event.preventDefault();
+                runItem(filtered[highlighted]);
+              }
+            }}
+            placeholder="Search sessions, transcripts, and commands"
+            role="combobox"
+            type="text"
+            value={query}
+          />
+        </div>
         <ul
           aria-label="Results"
           className="max-h-[min(34rem,calc(100dvh-8rem))] overflow-y-auto p-1.5"
@@ -319,7 +325,7 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
                   aria-selected={index === highlighted}
                   className={cn(
                     "flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2",
-                    index === highlighted && "bg-secondary",
+                    index === highlighted && "bg-secondary ring-1 ring-border/60",
                   )}
                   data-index={index}
                   id={`palette-item-${index}`}
@@ -341,6 +347,23 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
             );
           })}
         </ul>
+        <div
+          aria-label="Command menu keyboard help"
+          className="flex min-h-9 items-center gap-3 border-border border-t px-3 text-[10px] text-muted-foreground"
+        >
+          <span className="flex items-center gap-1">
+            <kbd className="font-mono text-foreground/80">↑↓</kbd>
+            Navigate
+          </span>
+          <span className="flex items-center gap-1">
+            <kbd className="font-mono text-foreground/80">↵</kbd>
+            Open
+          </span>
+          <span className="ml-auto flex items-center gap-1">
+            <kbd className="font-mono text-foreground/80">Esc</kbd>
+            Close
+          </span>
+        </div>
       </DialogPopup>
     </Dialog>
   );
