@@ -9,7 +9,13 @@ import {
   type ServerFrame,
   type WelcomeFrame,
 } from "@t4-code/protocol";
-import { OmpClient, type Clock, type OmpTransport, type PublicOmpServerEvent, type TimerScheduler } from "../src/index.ts";
+import {
+  OmpClient,
+  type Clock,
+  type OmpTransport,
+  type PublicOmpServerEvent,
+  type TimerScheduler,
+} from "../src/index.ts";
 
 const HOST = "host-fixture";
 const SESSION = "session-fixture";
@@ -27,7 +33,12 @@ function welcome(overrides: Partial<WelcomeFrame> = {}): WelcomeFrame {
     appserverVersion: "fixture",
     appserverBuild: "test",
     epoch: "epoch-a",
-    grantedCapabilities: ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage"],
+    grantedCapabilities: [
+      "sessions.read",
+      "sessions.prompt",
+      "sessions.control",
+      "sessions.manage",
+    ],
     grantedFeatures: ["resume"],
     negotiatedLimits: { maxInputBytes: 1_048_576 },
     authentication: "local",
@@ -40,7 +51,9 @@ class FakeClock implements Clock, TimerScheduler {
   private nowValue = 0;
   private nextHandle = 1;
   private readonly tasks = new Map<number, { at: number; order: number; callback: () => void }>();
-  now(): number { return this.nowValue; }
+  now(): number {
+    return this.nowValue;
+  }
   setTimeout(callback: () => void, delayMs: number): unknown {
     const handle = this.nextHandle++;
     this.tasks.set(handle, { at: this.nowValue + delayMs, order: handle, callback });
@@ -77,19 +90,29 @@ class FakeTransport implements OmpTransport {
   private readonly errors = new Set<(error: unknown) => void>();
   private closed = false;
   constructor(private readonly options: FakeTransportOptions = {}) {}
-  get isOpen(): boolean { return !this.closed; }
+  get isOpen(): boolean {
+    return !this.closed;
+  }
   onMessage(listener: (data: string | Uint8Array) => void): () => void {
     this.messages.add(listener);
     this.historicalMessages.add(listener);
     return () => this.messages.delete(listener);
   }
-  onClose(listener: (code?: number, reason?: string) => void): () => void { this.closes.add(listener); return () => this.closes.delete(listener); }
-  onError(listener: (error: unknown) => void): () => void { this.errors.add(listener); return () => this.errors.delete(listener); }
+  onClose(listener: (code?: number, reason?: string) => void): () => void {
+    this.closes.add(listener);
+    return () => this.closes.delete(listener);
+  }
+  onError(listener: (error: unknown) => void): () => void {
+    this.errors.add(listener);
+    return () => this.errors.delete(listener);
+  }
   send(data: string): void {
     this.sent.push(data);
     const frame = decodeClientFrame(data);
-    if (frame.type === "hello" && this.options.sendError !== undefined) throw this.options.sendError;
-    if (frame.type === "hello" && this.options.welcome !== undefined) this.emit(this.options.welcome);
+    if (frame.type === "hello" && this.options.sendError !== undefined)
+      throw this.options.sendError;
+    if (frame.type === "hello" && this.options.welcome !== undefined)
+      this.emit(this.options.welcome);
     this.options.onSend?.(frame, this);
   }
   close(): void {
@@ -114,7 +137,9 @@ class FakeTransport implements OmpTransport {
     // eslint-disable-next-line unicorn/no-useless-spread -- callbacks may unsubscribe while the fixture dispatches.
     for (const listener of [...this.closes]) listener(code, reason);
   }
-  lastClientFrame(): ClientFrame { return decodeClientFrame(this.sent[this.sent.length - 1]!); }
+  lastClientFrame(): ClientFrame {
+    return decodeClientFrame(this.sent[this.sent.length - 1]!);
+  }
 }
 
 function responseFor(command: CommandFrame, result: Record<string, unknown> = {}): ServerFrame {
@@ -169,7 +194,8 @@ describe("OmpClient reconnect stability", () => {
     const transport = new FakeTransport({
       welcome: welcome(),
       onSend: (frame, current) => {
-        if (frame.type === "ping") current.emit({ v: V, type: "pong", nonce: frame.nonce, timestamp: frame.timestamp });
+        if (frame.type === "ping")
+          current.emit({ v: V, type: "pong", nonce: frame.nonce, timestamp: frame.timestamp });
       },
     });
     const client = new OmpClient({
@@ -250,7 +276,10 @@ describe("OmpClient reconnect stability", () => {
     await client.close();
   });
 
-  for (const [code, expectedError] of [[1008, "auth"], [1002, "protocol"]] as const) {
+  for (const [code, expectedError] of [
+    [1008, "auth"],
+    [1002, "protocol"],
+  ] as const) {
     it(`treats websocket close ${code} as fatal`, async () => {
       const transport = new FakeTransport({ welcome: welcome() });
       const errors: string[] = [];
@@ -436,7 +465,9 @@ describe("OmpClient reconnect stability", () => {
       welcome: welcome(),
       onSend: (frame, current) => {
         if (frame.type === "command" && frame.command === "session.attach") {
-          current.emit(responseFor(frame, { attached: true, cursor: { epoch: "epoch-a", seq: 0 } }));
+          current.emit(
+            responseFor(frame, { attached: true, cursor: { epoch: "epoch-a", seq: 0 } }),
+          );
         }
       },
     });
@@ -444,7 +475,9 @@ describe("OmpClient reconnect stability", () => {
       welcome: welcome({ resumed: true }),
       onSend: (frame, current) => {
         if (frame.type === "command" && frame.command === "session.attach") {
-          current.emit(responseFor(frame, { attached: true, cursor: { epoch: "epoch-a", seq: 0 } }));
+          current.emit(
+            responseFor(frame, { attached: true, cursor: { epoch: "epoch-a", seq: 0 } }),
+          );
         }
       },
     });
@@ -486,9 +519,11 @@ describe("OmpClient reconnect stability", () => {
 
     expect(factoryCalls).toBe(2);
     expect(client.state).toBe("ready");
-    expect(second.sent.map((raw) => decodeClientFrame(raw)).some(
-      (frame) => frame.type === "command" && frame.command === "session.attach",
-    )).toBe(true);
+    expect(
+      second.sent
+        .map((raw) => decodeClientFrame(raw))
+        .some((frame) => frame.type === "command" && frame.command === "session.attach"),
+    ).toBe(true);
     await client.close();
   });
 
@@ -646,7 +681,6 @@ describe("OmpClient reconnect stability", () => {
     expect(client.state).toBe("ready");
     expect(client.snapshot().attempt).toBe(1);
 
-
     clock.advanceBy(10);
     const ping = second.lastClientFrame();
     if (ping.type !== "ping") throw new Error("expected heartbeat ping");
@@ -657,13 +691,78 @@ describe("OmpClient reconnect stability", () => {
     await client.close();
   });
 
+  it("drops stale session cursors before replaying against a replacement epoch", async () => {
+    const clock = new FakeClock();
+    const first = new FakeTransport({
+      welcome: welcome(),
+      onSend: (frame, current) => {
+        if (frame.type === "command" && frame.command === "session.attach") {
+          current.emit(responseFor(frame));
+        }
+      },
+    });
+    let replayArgs: unknown;
+    const second = new FakeTransport({
+      welcome: welcome({ epoch: "epoch-b", resumed: false }),
+      onSend: (frame, current) => {
+        if (frame.type !== "command" || frame.command !== "session.attach") return;
+        replayArgs = frame.args;
+        current.emit({
+          ...event(1),
+          cursor: { epoch: "epoch-b", seq: 1 },
+        });
+        current.emit(
+          responseFor(frame, {
+            attached: true,
+            cursor: { epoch: "epoch-b", seq: 1 },
+          }),
+        );
+        current.emit({
+          ...snapshot(1),
+          cursor: { epoch: "epoch-b", seq: 1 },
+        });
+      },
+    });
+    const transports = [first, second];
+    const client = new OmpClient({
+      transport: () => transports.shift() ?? new FakeTransport(),
+      hostId: HOST,
+      clock,
+      timers: clock,
+      random: () => 0,
+      reconnect: { baseMs: 0, maxMs: 0 },
+    });
+    const errors: string[] = [];
+    client.onError((error) => errors.push(error.code));
+
+    await client.connect();
+    await client.command({
+      hostId: HOST,
+      sessionId: SESSION,
+      command: "session.attach",
+      args: {},
+    });
+    first.emit(event(1));
+    first.drop();
+    await flushReconnect(clock);
+
+    expect(client.state).toBe("ready");
+    expect(replayArgs).toEqual({});
+    expect(client.snapshot().cursor).toEqual({ epoch: "epoch-b", seq: 1 });
+    expect(client.snapshot().desynced).toBe(false);
+    expect(errors).not.toContain("desync");
+    await client.close();
+  });
+
   it("rejects a delayed old-generation frame across replay without duplicating the durable event", async () => {
     const clock = new FakeClock();
     const first = new FakeTransport({
       welcome: welcome(),
       onSend: (frame, current) => {
         if (frame.type === "command" && frame.command === "session.attach") {
-          current.emit(responseFor(frame, { attached: true, cursor: { epoch: "epoch-a", seq: 0 } }));
+          current.emit(
+            responseFor(frame, { attached: true, cursor: { epoch: "epoch-a", seq: 0 } }),
+          );
         }
       },
     });
@@ -686,7 +785,8 @@ describe("OmpClient reconnect stability", () => {
     });
     const visible: number[] = [];
     client.onEvent((event) => {
-      if (event.kind === "event" && String(event.payload.sessionId) === SESSION) visible.push(event.payload.cursor.seq);
+      if (event.kind === "event" && String(event.payload.sessionId) === SESSION)
+        visible.push(event.payload.cursor.seq);
     });
 
     await client.connect();
@@ -715,7 +815,9 @@ describe("OmpClient reconnect stability", () => {
       welcome: welcome(),
       onSend: (frame, current) => {
         if (frame.type === "command" && frame.command === "session.attach") {
-          current.emit(responseFor(frame, { attached: true, cursor: { epoch: "epoch-a", seq: 0 } }));
+          current.emit(
+            responseFor(frame, { attached: true, cursor: { epoch: "epoch-a", seq: 0 } }),
+          );
         }
       },
     });
@@ -759,7 +861,9 @@ describe("OmpClient reconnect stability", () => {
     second.emit({ v: V, type: "pong", nonce: secondPing.nonce, timestamp: secondPing.timestamp });
     expect(client.snapshot().attempt).toBe(1);
     if (delayedAttach === undefined) throw new Error("expected delayed reattach");
-    second.emit(responseFor(delayedAttach, { attached: true, cursor: { epoch: "epoch-a", seq: 2 } }));
+    second.emit(
+      responseFor(delayedAttach, { attached: true, cursor: { epoch: "epoch-a", seq: 2 } }),
+    );
     expect(client.snapshot().attempt).toBe(1);
 
     second.drop();
@@ -783,7 +887,9 @@ describe("OmpClient reconnect stability", () => {
       welcome: welcome(),
       onSend: (frame, current) => {
         if (frame.type === "command" && frame.command === "session.attach") {
-          current.emit(responseFor(frame, { attached: true, cursor: { epoch: "epoch-a", seq: 0 } }));
+          current.emit(
+            responseFor(frame, { attached: true, cursor: { epoch: "epoch-a", seq: 0 } }),
+          );
         }
       },
     });
@@ -809,7 +915,12 @@ describe("OmpClient reconnect stability", () => {
 
     await client.connect();
     await client.command({ hostId: HOST, sessionId: SESSION, command: "session.attach", args: {} });
-    await client.command({ hostId: HOST, sessionId: SESSION_TWO, command: "session.attach", args: {} });
+    await client.command({
+      hostId: HOST,
+      sessionId: SESSION_TWO,
+      command: "session.attach",
+      args: {},
+    });
     first.emit(snapshot(0, SESSION));
     first.emit(snapshot(0, SESSION_TWO));
     first.drop();
@@ -834,7 +945,9 @@ describe("OmpClient reconnect stability", () => {
       welcome: welcome(),
       onSend: (frame, current) => {
         if (frame.type === "command" && frame.command === "session.attach") {
-          current.emit(responseFor(frame, { attached: true, cursor: { epoch: "epoch-a", seq: 0 } }));
+          current.emit(
+            responseFor(frame, { attached: true, cursor: { epoch: "epoch-a", seq: 0 } }),
+          );
         }
       },
     });
@@ -844,7 +957,12 @@ describe("OmpClient reconnect stability", () => {
 
     await client.connect();
     await client.command({ hostId: HOST, sessionId: SESSION, command: "session.attach", args: {} });
-    await client.command({ hostId: HOST, sessionId: SESSION_TWO, command: "session.attach", args: {} });
+    await client.command({
+      hostId: HOST,
+      sessionId: SESSION_TWO,
+      command: "session.attach",
+      args: {},
+    });
     transport.emit(snapshot(0, SESSION));
     transport.emit(snapshot(0, SESSION_TWO));
     transport.emit({
@@ -857,7 +975,11 @@ describe("OmpClient reconnect stability", () => {
       reason: "reconnect",
     });
     transport.emit(event(1, SESSION_TWO));
-    expect(events.some((event) => event.kind === "event" && String(event.payload.sessionId) === SESSION_TWO)).toBe(true);
+    expect(
+      events.some(
+        (event) => event.kind === "event" && String(event.payload.sessionId) === SESSION_TWO,
+      ),
+    ).toBe(true);
     expect(client.snapshot().desynced).toBe(true);
     transport.emit(snapshot(2, SESSION));
     expect(client.snapshot().desynced).toBe(false);
@@ -866,8 +988,12 @@ describe("OmpClient reconnect stability", () => {
 
   it("gives a successful pair credential rotation a fresh reconnect budget", async () => {
     const clock = new FakeClock();
-    const first = new FakeTransport({ welcome: welcome({ authentication: "pairing-required", grantedCapabilities: [] }) });
-    const second = new FakeTransport({ welcome: welcome({ authentication: "pairing-required", grantedCapabilities: [] }) });
+    const first = new FakeTransport({
+      welcome: welcome({ authentication: "pairing-required", grantedCapabilities: [] }),
+    });
+    const second = new FakeTransport({
+      welcome: welcome({ authentication: "pairing-required", grantedCapabilities: [] }),
+    });
     const third = new FakeTransport({ welcome: welcome({ authentication: "paired" }) });
     const transports = [first, second, third];
     const client = new OmpClient({
@@ -924,7 +1050,9 @@ describe("OmpClient reconnect stability", () => {
         frame.type === "command" &&
         (frame.command === "session.attach" || frame.command === "preview.state")
       )
-        transport.emit(responseFor(frame, frame.command === "preview.state" ? { previews: [] } : {}));
+        transport.emit(
+          responseFor(frame, frame.command === "preview.state" ? { previews: [] } : {}),
+        );
     };
     const previewCapabilities = [
       "sessions.read",

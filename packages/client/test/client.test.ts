@@ -39,7 +39,12 @@ function welcome(overrides: Partial<WelcomeFrame> = {}): WelcomeFrame {
     appserverVersion: "fixture",
     appserverBuild: "test",
     epoch: "epoch-a",
-    grantedCapabilities: ["sessions.read", "sessions.prompt", "sessions.control", "sessions.manage"],
+    grantedCapabilities: [
+      "sessions.read",
+      "sessions.prompt",
+      "sessions.control",
+      "sessions.manage",
+    ],
     grantedFeatures: ["resume"],
     negotiatedLimits: { maxInputBytes: 1_048_576 },
     authentication: "local",
@@ -52,7 +57,9 @@ class FakeClock implements Clock, TimerScheduler {
   private nowValue = 0;
   private nextHandle = 1;
   private readonly tasks = new Map<number, { at: number; order: number; callback: () => void }>();
-  now(): number { return this.nowValue; }
+  now(): number {
+    return this.nowValue;
+  }
   setTimeout(callback: () => void, delayMs: number): unknown {
     const handle = this.nextHandle++;
     this.tasks.set(handle, { at: this.nowValue + delayMs, order: handle, callback });
@@ -61,7 +68,9 @@ class FakeClock implements Clock, TimerScheduler {
   clearTimeout(handle: unknown): void {
     if (typeof handle === "number") this.tasks.delete(handle);
   }
-  advanceBy(ms: number): void { this.advanceTo(this.nowValue + ms); }
+  advanceBy(ms: number): void {
+    this.advanceTo(this.nowValue + ms);
+  }
   advanceTo(target: number): void {
     while (true) {
       const due = [...this.tasks.entries()]
@@ -74,7 +83,9 @@ class FakeClock implements Clock, TimerScheduler {
     }
     this.nowValue = target;
   }
-  pending(): number { return this.tasks.size; }
+  pending(): number {
+    return this.tasks.size;
+  }
 }
 
 interface FakeTransportOptions {
@@ -88,13 +99,23 @@ class FakeTransport implements OmpTransport {
   private readonly closes = new Set<(code?: number, reason?: string) => void>();
   private readonly errors = new Set<(error: unknown) => void>();
   constructor(private readonly options: FakeTransportOptions = {}) {}
-  onMessage(listener: (data: string | Uint8Array) => void): () => void { this.messages.add(listener); return () => this.messages.delete(listener); }
-  onClose(listener: (code?: number, reason?: string) => void): () => void { this.closes.add(listener); return () => this.closes.delete(listener); }
-  onError(listener: (error: unknown) => void): () => void { this.errors.add(listener); return () => this.errors.delete(listener); }
+  onMessage(listener: (data: string | Uint8Array) => void): () => void {
+    this.messages.add(listener);
+    return () => this.messages.delete(listener);
+  }
+  onClose(listener: (code?: number, reason?: string) => void): () => void {
+    this.closes.add(listener);
+    return () => this.closes.delete(listener);
+  }
+  onError(listener: (error: unknown) => void): () => void {
+    this.errors.add(listener);
+    return () => this.errors.delete(listener);
+  }
   send(data: string): void {
     this.sent.push(data);
     const frame = decodeClientFrame(data);
-    if (frame.type === "hello" && this.options.welcome !== undefined) this.emit(this.options.welcome);
+    if (frame.type === "hello" && this.options.welcome !== undefined)
+      this.emit(this.options.welcome);
     this.options.onSend?.(frame, this);
   }
   close(): void {
@@ -103,10 +124,13 @@ class FakeTransport implements OmpTransport {
     // eslint-disable-next-line unicorn/no-useless-spread -- preserve listener snapshot when callbacks may unsubscribe during dispatch.
     for (const listener of [...this.closes]) listener(1000, "closed");
   }
-  // eslint-disable-next-line unicorn/no-useless-spread -- preserve listener snapshot when callbacks may unsubscribe during dispatch.
-  fail(error: unknown): void { for (const listener of [...this.errors]) listener(error); }
+  fail(error: unknown): void {
+    // eslint-disable-next-line unicorn/no-useless-spread -- preserve listener snapshot when callbacks may unsubscribe during dispatch.
+    for (const listener of [...this.errors]) listener(error);
+  }
   emit(frame: unknown): void {
-    const data = typeof frame === "string" || frame instanceof Uint8Array ? frame : JSON.stringify(frame);
+    const data =
+      typeof frame === "string" || frame instanceof Uint8Array ? frame : JSON.stringify(frame);
     // eslint-disable-next-line unicorn/no-useless-spread -- preserve listener snapshot when callbacks may unsubscribe during dispatch.
     for (const listener of [...this.messages]) listener(data);
   }
@@ -116,21 +140,35 @@ class FakeTransport implements OmpTransport {
     // eslint-disable-next-line unicorn/no-useless-spread -- preserve listener snapshot when callbacks may unsubscribe during dispatch.
     for (const listener of [...this.closes]) listener(code, reason);
   }
-  lastClientFrame(): ClientFrame { return decodeClientFrame(this.sent[this.sent.length - 1]!); }
+  lastClientFrame(): ClientFrame {
+    return decodeClientFrame(this.sent[this.sent.length - 1]!);
+  }
 }
 
 class FakeStore implements CursorStore {
   readonly saved: CursorRecord[] = [];
-  constructor(private readonly records: readonly CursorRecord[] = [], private readonly loadError = false, private readonly saveError = false) {}
-  load(): readonly CursorRecord[] { if (this.loadError) throw new Error("load failed"); return this.records; }
-  save(record: CursorRecord): void { if (this.saveError) throw new Error("save failed"); this.saved.push(record); }
+  constructor(
+    private readonly records: readonly CursorRecord[] = [],
+    private readonly loadError = false,
+    private readonly saveError = false,
+  ) {}
+  load(): readonly CursorRecord[] {
+    if (this.loadError) throw new Error("load failed");
+    return this.records;
+  }
+  save(record: CursorRecord): void {
+    if (this.saveError) throw new Error("save failed");
+    this.saved.push(record);
+  }
 }
 class DeferredStore implements CursorStore {
   readonly requests: CursorRecord[] = [];
   readonly resolves: Array<() => void> = [];
   readonly rejects: Array<() => void> = [];
   failNext = false;
-  load(): readonly CursorRecord[] { return []; }
+  load(): readonly CursorRecord[] {
+    return [];
+  }
   save(record: CursorRecord): Promise<void> {
     this.requests.push(record);
     if (this.failNext) {
@@ -190,16 +228,39 @@ function confirmationFor(command: CommandFrame): ServerFrame {
     summary: command.command,
   };
 }
-async function readyClient(transport: FakeTransport, options: Partial<ConstructorParameters<typeof OmpClient>[0]> = {}): Promise<OmpClient> {
-  const client = new OmpClient({ transport: () => transport, hostId: HOST, reconnect: { baseMs: 5, maxMs: 20 }, ...options });
+async function readyClient(
+  transport: FakeTransport,
+  options: Partial<ConstructorParameters<typeof OmpClient>[0]> = {},
+): Promise<OmpClient> {
+  const client = new OmpClient({
+    transport: () => transport,
+    hostId: HOST,
+    reconnect: { baseMs: 5, maxMs: 20 },
+    ...options,
+  });
   await client.connect();
   return client;
 }
 function snapshot(seq = 0, epoch = "epoch-a"): ServerFrame {
-  return { v: V, type: "snapshot", cursor: { epoch, seq }, revision: revision("rev-a"), hostId: hostId(HOST), sessionId: sessionId(SESSION), entries: [] };
+  return {
+    v: V,
+    type: "snapshot",
+    cursor: { epoch, seq },
+    revision: revision("rev-a"),
+    hostId: hostId(HOST),
+    sessionId: sessionId(SESSION),
+    entries: [],
+  };
 }
 function event(seq: number, epoch = "epoch-a"): ServerFrame {
-  return { v: V, type: "event", cursor: { epoch, seq }, hostId: hostId(HOST), sessionId: sessionId(SESSION), event: { type: "message.delta", text: String(seq) } };
+  return {
+    v: V,
+    type: "event",
+    cursor: { epoch, seq },
+    hostId: hostId(HOST),
+    sessionId: sessionId(SESSION),
+    event: { type: "message.delta", text: String(seq) },
+  };
 }
 function sessionDelta(seq: number, epoch = "epoch-a"): ServerFrame {
   return {
@@ -228,7 +289,10 @@ describe("OmpClient protocol state machine", () => {
     expect(decodeClientFrame(transport.sent[0]!).type).toBe("hello");
     const first = client.command({ hostId: HOST, command: "host.list" });
     const second = client.command({ hostId: HOST, command: "session.list" });
-    const commands = transport.sent.slice(-2).map((raw) => decodeClientFrame(raw)).filter((frame): frame is CommandFrame => frame.type === "command");
+    const commands = transport.sent
+      .slice(-2)
+      .map((raw) => decodeClientFrame(raw))
+      .filter((frame): frame is CommandFrame => frame.type === "command");
     transport.emit(responseFor(commands[1]!, { n: 2 }));
     transport.emit(responseFor(commands[0]!, { n: 1 }));
     expect((await first).result).toMatchObject({ n: 1 });
@@ -263,19 +327,20 @@ describe("OmpClient protocol state machine", () => {
       expect(confirm.requestId).not.toBe(command.requestId);
       expect(client.resources().pending).toBe(2);
 
-      const response: ServerFrame = decision === "approve"
-        ? responseFor(command, { cancelled: true })
-        : {
-            v: V,
-            type: "response",
-            requestId: command.requestId,
-            commandId: command.commandId,
-            hostId: command.hostId,
-            ...(command.sessionId === undefined ? {} : { sessionId: command.sessionId }),
-            command: command.command,
-            ok: false,
-            error: { code: "confirmation_denied", message: "command was denied" },
-          };
+      const response: ServerFrame =
+        decision === "approve"
+          ? responseFor(command, { cancelled: true })
+          : {
+              v: V,
+              type: "response",
+              requestId: command.requestId,
+              commandId: command.commandId,
+              hostId: command.hostId,
+              ...(command.sessionId === undefined ? {} : { sessionId: command.sessionId }),
+              command: command.command,
+              ok: false,
+              error: { code: "confirmation_denied", message: "command was denied" },
+            };
       // Valid approve and deny responses both carry the ORIGINAL requestId.
       transport.emit(response);
       const [settledCommand, settledConfirm] = await Promise.all([commandResult, confirmResult]);
@@ -403,13 +468,35 @@ describe("OmpClient protocol state machine", () => {
   it("sends one-way terminal frames only while ready without pending correlation", async () => {
     const transport = new FakeTransport({ welcome: welcome() });
     const client = await readyClient(transport);
-    client.terminalInput({ hostId: HOST, sessionId: SESSION, terminalId: "terminal-a", data: "hi" });
-    client.terminalResize({ hostId: HOST, sessionId: SESSION, terminalId: "terminal-a", cols: 80, rows: 24 });
+    client.terminalInput({
+      hostId: HOST,
+      sessionId: SESSION,
+      terminalId: "terminal-a",
+      data: "hi",
+    });
+    client.terminalResize({
+      hostId: HOST,
+      sessionId: SESSION,
+      terminalId: "terminal-a",
+      cols: 80,
+      rows: 24,
+    });
     client.terminalClose({ hostId: HOST, sessionId: SESSION, terminalId: "terminal-a" });
-    expect(transport.sent.slice(-3).map((raw) => decodeClientFrame(raw).type)).toEqual(["terminal.input", "terminal.resize", "terminal.close"]);
+    expect(transport.sent.slice(-3).map((raw) => decodeClientFrame(raw).type)).toEqual([
+      "terminal.input",
+      "terminal.resize",
+      "terminal.close",
+    ]);
     expect(client.resources().pending).toBe(0);
     await client.close();
-    expect(() => client.terminalInput({ hostId: HOST, sessionId: SESSION, terminalId: "terminal-a", data: "late" })).toThrow("client is not ready");
+    expect(() =>
+      client.terminalInput({
+        hostId: HOST,
+        sessionId: SESSION,
+        terminalId: "terminal-a",
+        data: "late",
+      }),
+    ).toThrow("client is not ready");
   });
 
   it("uses configurable welcome host, protocol, feature, and capability checks", async () => {
@@ -418,11 +505,24 @@ describe("OmpClient protocol state machine", () => {
     await expect(hostClient.connect()).rejects.toMatchObject({ code: "protocol" });
     expect(hostClient.state).toBe("fatal");
     const denied = new FakeTransport({ welcome: welcome({ grantedFeatures: [] }) });
-    const featureClient = new OmpClient({ transport: () => denied, hostId: HOST, requiredFeatures: ["resume"] });
+    const featureClient = new OmpClient({
+      transport: () => denied,
+      hostId: HOST,
+      requiredFeatures: ["resume"],
+    });
     await expect(featureClient.connect()).rejects.toMatchObject({ code: "capability" });
-    const noCapability = new FakeTransport({ welcome: welcome({ grantedCapabilities: ["sessions.read"] }) });
+    const noCapability = new FakeTransport({
+      welcome: welcome({ grantedCapabilities: ["sessions.read"] }),
+    });
     const capabilityClient = await readyClient(noCapability);
-    await expect(capabilityClient.command({ hostId: HOST, sessionId: SESSION, command: "session.prompt", args: {} })).rejects.toMatchObject({ code: "capability" });
+    await expect(
+      capabilityClient.command({
+        hostId: HOST,
+        sessionId: SESSION,
+        command: "session.prompt",
+        args: {},
+      }),
+    ).rejects.toMatchObject({ code: "capability" });
     await capabilityClient.close();
   });
 
@@ -464,10 +564,7 @@ describe("OmpClient protocol state machine", () => {
     clock.advanceBy(1);
     await connecting;
 
-    expect(hellos).toEqual([
-      ["resume", "prompt.images", "transcript.images"],
-      ["resume"],
-    ]);
+    expect(hellos).toEqual([["resume", "prompt.images", "transcript.images"], ["resume"]]);
     expect(errors).toContain(
       "Host uses an earlier feature set; reconnecting in compatibility mode.",
     );
@@ -520,7 +617,11 @@ describe("OmpClient protocol state machine", () => {
   });
 
   it("bounds hello cursors and reports cursor store load errors", async () => {
-    const records = Array.from({ length: 140 }, (_, index) => ({ hostId: HOST, sessionId: `session-${index}`, cursor: { epoch: "epoch-a", seq: index } }));
+    const records = Array.from({ length: 140 }, (_, index) => ({
+      hostId: HOST,
+      sessionId: `session-${index}`,
+      cursor: { epoch: "epoch-a", seq: index },
+    }));
     const store = new FakeStore(records);
     const transport = new FakeTransport({ welcome: welcome() });
     const client = await readyClient(transport, { cursorStore: store });
@@ -528,7 +629,11 @@ describe("OmpClient protocol state machine", () => {
     expect(hello.type === "hello" ? hello.savedCursors : []).toHaveLength(128);
     await client.close();
     const loadErrors: string[] = [];
-    const failing = new OmpClient({ transport: () => new FakeTransport({ welcome: welcome() }), hostId: HOST, cursorStore: new FakeStore([], true) });
+    const failing = new OmpClient({
+      transport: () => new FakeTransport({ welcome: welcome() }),
+      hostId: HOST,
+      cursorStore: new FakeStore([], true),
+    });
     failing.onError((error) => loadErrors.push(error.code));
     await failing.connect();
     expect(loadErrors).toContain("storage");
@@ -552,28 +657,77 @@ describe("OmpClient protocol state machine", () => {
     await client.close();
     expect(client.resources().cursorSaves).toBe(0);
   });
+  it("persists replacement-epoch cursors after an appserver restart", async () => {
+    const store = new FakeStore();
+    const transport = new FakeTransport({ welcome: welcome() });
+    const client = await readyClient(transport, { cursorStore: store });
+    transport.emit(snapshot(1, "epoch-a"));
+    transport.emit(snapshot(0, "epoch-b"));
+    await client.close();
+    expect(store.saved.map((record) => record.cursor)).toEqual([
+      { epoch: "epoch-a", seq: 1 },
+      { epoch: "epoch-b", seq: 0 },
+    ]);
+  });
 
   it("never invokes privileged pairing sink for unsolicited, replayed, or wrong-kind pair.ok", async () => {
     let callbacks = 0;
     const unsolicitedTransport = new FakeTransport({ welcome: welcome() });
-    const unsolicited = await readyClient(unsolicitedTransport, { privilegedPairResult: () => { callbacks += 1; } });
-    unsolicitedTransport.emit({ v: V, type: "pair.ok", requestId: "unknown", pairingId: "pair", deviceId: "device", deviceName: "test", platform: "linux", requestedCapabilities: [], grantedCapabilities: [], deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", expiresAt: "2030-01-01T00:00:00Z" });
+    const unsolicited = await readyClient(unsolicitedTransport, {
+      privilegedPairResult: () => {
+        callbacks += 1;
+      },
+    });
+    unsolicitedTransport.emit({
+      v: V,
+      type: "pair.ok",
+      requestId: "unknown",
+      pairingId: "pair",
+      deviceId: "device",
+      deviceName: "test",
+      platform: "linux",
+      requestedCapabilities: [],
+      grantedCapabilities: [],
+      deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      expiresAt: "2030-01-01T00:00:00Z",
+    });
     expect(callbacks).toBe(0);
     expect(unsolicited.state).toBe("fatal");
     await unsolicited.close();
     const wrongTransport = new FakeTransport({ welcome: welcome() });
-    const wrong = await readyClient(wrongTransport, { privilegedPairResult: () => { callbacks += 1; } });
+    const wrong = await readyClient(wrongTransport, {
+      privilegedPairResult: () => {
+        callbacks += 1;
+      },
+    });
     const command = wrong.command({ hostId: HOST, command: "host.list" });
     const request = wrongTransport.lastClientFrame();
     if (request.type !== "command") throw new Error("expected command");
-    wrongTransport.emit({ v: V, type: "pair.ok", requestId: request.requestId, pairingId: "pair", deviceId: "device", deviceName: "test", platform: "linux", requestedCapabilities: [], grantedCapabilities: [], deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", expiresAt: "2030-01-01T00:00:00Z" });
+    wrongTransport.emit({
+      v: V,
+      type: "pair.ok",
+      requestId: request.requestId,
+      pairingId: "pair",
+      deviceId: "device",
+      deviceName: "test",
+      platform: "linux",
+      requestedCapabilities: [],
+      grantedCapabilities: [],
+      deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      expiresAt: "2030-01-01T00:00:00Z",
+    });
     await expect(command).rejects.toMatchObject({ code: "protocol" });
     expect(callbacks).toBe(0);
     await wrong.close();
   });
 
   it("rejects unsent requests, marks handed-off drops unknown, and never replays", async () => {
-    const transport = new FakeTransport({ welcome: welcome(), onSend: (frame) => { if (frame.type === "command") throw new Error("send rejected"); } });
+    const transport = new FakeTransport({
+      welcome: welcome(),
+      onSend: (frame) => {
+        if (frame.type === "command") throw new Error("send rejected");
+      },
+    });
     const client = await readyClient(transport);
     const unsent = client.command({ hostId: HOST, command: "host.list" });
     await expect(unsent).rejects.toMatchObject({ code: "transport" });
@@ -624,7 +778,10 @@ describe("OmpClient protocol state machine", () => {
     const transport = new FakeTransport({ welcome: welcome() });
     const client = await readyClient(transport, { clock, timers: clock });
     const controller = new AbortController();
-    const aborted = client.command({ hostId: HOST, command: "host.list" }, { signal: controller.signal, timeoutMs: 20 });
+    const aborted = client.command(
+      { hostId: HOST, command: "host.list" },
+      { signal: controller.signal, timeoutMs: 20 },
+    );
     controller.abort();
     await expect(aborted).rejects.toMatchObject({ code: "aborted" });
     const timed = client.command({ hostId: HOST, command: "host.list" }, { timeoutMs: 20 });
@@ -633,13 +790,26 @@ describe("OmpClient protocol state machine", () => {
     const closed = client.command({ hostId: HOST, command: "host.list" });
     await client.close();
     await expect(closed).rejects.toMatchObject({ code: "closed" });
-    expect(client.resources()).toEqual({ timers: 0, socket: false, socketHandlers: 0, pending: 0, cursorSaves: 0, listeners: 0 });
+    expect(client.resources()).toEqual({
+      timers: 0,
+      socket: false,
+      socketHandlers: 0,
+      pending: 0,
+      cursorSaves: 0,
+      listeners: 0,
+    });
   });
 
   it("ignores stale generation callbacks and closes stale transports", async () => {
     let resolveTransport: ((transport: FakeTransport) => void) | undefined;
     const stale = new FakeTransport();
-    const client = new OmpClient({ transport: () => new Promise<FakeTransport>((resolve) => { resolveTransport = resolve; }), hostId: HOST });
+    const client = new OmpClient({
+      transport: () =>
+        new Promise<FakeTransport>((resolve) => {
+          resolveTransport = resolve;
+        }),
+      hostId: HOST,
+    });
     const connecting = client.connect();
     await Promise.resolve();
     await Promise.resolve();
@@ -648,7 +818,14 @@ describe("OmpClient protocol state machine", () => {
     await expect(connecting).rejects.toMatchObject({ code: "closed" });
     await Promise.resolve();
     expect(stale.closed).toBe(true);
-    expect(client.resources()).toEqual({ timers: 0, socket: false, socketHandlers: 0, pending: 0, cursorSaves: 0, listeners: 0 });
+    expect(client.resources()).toEqual({
+      timers: 0,
+      socket: false,
+      socketHandlers: 0,
+      pending: 0,
+      cursorSaves: 0,
+      listeners: 0,
+    });
   });
 
   it("keeps session-index cursors independent from transcript contiguity", async () => {
@@ -697,27 +874,44 @@ describe("OmpClient protocol state machine", () => {
   });
 
   it.each([
-    ["duplicate keys", '{"v":"omp-app/1","v":"omp-app/1","type":"pong","nonce":"n","timestamp":"t"}'],
+    [
+      "duplicate keys",
+      '{"v":"omp-app/1","v":"omp-app/1","type":"pong","nonce":"n","timestamp":"t"}',
+    ],
     ["unknown frame", '{"v":"omp-app/1","type":"unknown"}'],
     ["invalid utf8", new Uint8Array([0xff, 0xfe])],
-    ["oversize", `{"v":"omp-app/1","type":"pong","nonce":"${"x".repeat(1_048_577)}","timestamp":"t"}`],
+    [
+      "oversize",
+      `{"v":"omp-app/1","type":"pong","nonce":"${"x".repeat(1_048_577)}","timestamp":"t"}`,
+    ],
   ] as const)("faults on %s with bounded teardown", async (_name, raw) => {
     const transport = new FakeTransport({ welcome: welcome() });
     const client = await readyClient(transport);
     transport.emit(raw);
     expect(client.state).toBe("fatal");
-    expect(client.resources()).toMatchObject({ timers: 0, socket: false, socketHandlers: 0, pending: 0 });
+    expect(client.resources()).toMatchObject({
+      timers: 0,
+      socket: false,
+      socketHandlers: 0,
+      pending: 0,
+    });
     await client.close();
   });
 
   it("handles heartbeat pong and timeout", async () => {
     const clock = new FakeClock();
     const transport = new FakeTransport({ welcome: welcome() });
-    const client = await readyClient(transport, { clock, timers: clock, heartbeat: { intervalMs: 10, timeoutMs: 5 }, reconnect: { baseMs: 0, maxMs: 0 } });
+    const client = await readyClient(transport, {
+      clock,
+      timers: clock,
+      heartbeat: { intervalMs: 10, timeoutMs: 5 },
+      reconnect: { baseMs: 0, maxMs: 0 },
+    });
     clock.advanceBy(10);
     const ping = transport.lastClientFrame();
     expect(ping.type).toBe("ping");
-    if (ping.type === "ping") transport.emit({ v: V, type: "pong", nonce: ping.nonce, timestamp: ping.timestamp });
+    if (ping.type === "ping")
+      transport.emit({ v: V, type: "pong", nonce: ping.nonce, timestamp: ping.timestamp });
     expect(client.state).toBe("ready");
     clock.advanceBy(10);
     clock.advanceBy(5);
@@ -730,7 +924,14 @@ describe("OmpClient protocol state machine", () => {
     const first = new FakeTransport({ welcome: welcome() });
     const second = new FakeTransport({ welcome: welcome({ resumed: true }) });
     const transports = [first, second];
-    const client = new OmpClient({ transport: () => transports.shift() ?? new FakeTransport(), hostId: HOST, timers: clock, clock, random: () => 0, reconnect: { baseMs: 10, maxMs: 15 } });
+    const client = new OmpClient({
+      transport: () => transports.shift() ?? new FakeTransport(),
+      hostId: HOST,
+      timers: clock,
+      clock,
+      random: () => 0,
+      reconnect: { baseMs: 10, maxMs: 15 },
+    });
     await client.connect();
     first.emit({ v: V, type: "bye", code: "retryable", reason: "try again", retryable: true });
     expect(clock.pending()).toBeGreaterThan(0);
@@ -746,61 +947,157 @@ describe("OmpClient protocol state machine", () => {
   });
 
   it("keeps pair.ok privileged and isolates listener throws/unsubscribe", async () => {
-    const transport = new FakeTransport({ welcome: welcome({ authentication: "pairing-required", grantedCapabilities: [] }) });
+    const transport = new FakeTransport({
+      welcome: welcome({ authentication: "pairing-required", grantedCapabilities: [] }),
+    });
     let token = "";
     const publicEvents: PublicOmpServerEvent[] = [];
-    const client = await readyClient(transport, { privilegedPairResult: (frame) => { token = frame.deviceToken; } });
-    const unsubscribeEvent = client.onEvent(() => { throw new Error("listener"); });
+    const client = await readyClient(transport, {
+      privilegedPairResult: (frame) => {
+        token = frame.deviceToken;
+      },
+    });
+    const unsubscribeEvent = client.onEvent(() => {
+      throw new Error("listener");
+    });
     client.onEvent((event) => publicEvents.push(event));
-    const pairing = client.pairStart({ code: "123456", deviceId: "device", deviceName: "test", platform: "linux", requestedCapabilities: [] });
+    const pairing = client.pairStart({
+      code: "123456",
+      deviceId: "device",
+      deviceName: "test",
+      platform: "linux",
+      requestedCapabilities: [],
+    });
     const request = transport.lastClientFrame();
     if (request.type !== "pair.start") throw new Error("expected pair start");
-    transport.emit({ v: V, type: "pair.ok", requestId: request.requestId, pairingId: "pair-1", deviceId: "device", deviceName: "test", platform: "linux", requestedCapabilities: [], grantedCapabilities: [], deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", expiresAt: "2030-01-01T00:00:00Z" });
+    transport.emit({
+      v: V,
+      type: "pair.ok",
+      requestId: request.requestId,
+      pairingId: "pair-1",
+      deviceId: "device",
+      deviceName: "test",
+      platform: "linux",
+      requestedCapabilities: [],
+      grantedCapabilities: [],
+      deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      expiresAt: "2030-01-01T00:00:00Z",
+    });
     const paired = await pairing;
     unsubscribeEvent();
     expect(token).toBe("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     expect(paired).not.toHaveProperty("v");
     expect(paired).not.toHaveProperty("type");
     expect(publicEvents).toHaveLength(0);
-    expect(JSON.stringify(publicEvents)).not.toContain("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    expect(JSON.stringify(publicEvents)).not.toContain(
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    );
     await client.close();
   });
 
   it("awaits pairing sink before reconnect and invalidates queued frames on close or overflow", async () => {
-    const transport = new FakeTransport({ welcome: welcome({ authentication: "pairing-required", grantedCapabilities: [] }) });
+    const transport = new FakeTransport({
+      welcome: welcome({ authentication: "pairing-required", grantedCapabilities: [] }),
+    });
     let release!: () => void;
-    const sink = new Promise<void>((resolve) => { release = resolve; });
+    const sink = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const client = await readyClient(transport, { privilegedPairResult: () => sink });
-    const pairing = client.pairStart({ code: "123456", deviceId: "device", deviceName: "test", platform: "linux", requestedCapabilities: [] });
+    const pairing = client.pairStart({
+      code: "123456",
+      deviceId: "device",
+      deviceName: "test",
+      platform: "linux",
+      requestedCapabilities: [],
+    });
     const request = transport.lastClientFrame();
     if (request.type !== "pair.start") throw new Error("expected pair start");
-    transport.emit({ v: V, type: "pair.ok", requestId: request.requestId, pairingId: "pair-1", deviceId: "device", deviceName: "test", platform: "linux", requestedCapabilities: [], grantedCapabilities: [], deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", expiresAt: "2030-01-01T00:00:00Z" });
+    transport.emit({
+      v: V,
+      type: "pair.ok",
+      requestId: request.requestId,
+      pairingId: "pair-1",
+      deviceId: "device",
+      deviceName: "test",
+      platform: "linux",
+      requestedCapabilities: [],
+      grantedCapabilities: [],
+      deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      expiresAt: "2030-01-01T00:00:00Z",
+    });
     expect(client.state).toBe("pairing");
     release();
     await pairing;
     expect(transport.closed).toBe(true);
     await client.close();
 
-    const failingTransport = new FakeTransport({ welcome: welcome({ authentication: "pairing-required", grantedCapabilities: [] }) });
-    const failing = await readyClient(failingTransport, { privilegedPairResult: async () => { throw new Error("sink failed"); } });
-    const failedPairing = failing.pairStart({ code: "123456", deviceId: "device", deviceName: "test", platform: "linux", requestedCapabilities: [] });
+    const failingTransport = new FakeTransport({
+      welcome: welcome({ authentication: "pairing-required", grantedCapabilities: [] }),
+    });
+    const failing = await readyClient(failingTransport, {
+      privilegedPairResult: async () => {
+        throw new Error("sink failed");
+      },
+    });
+    const failedPairing = failing.pairStart({
+      code: "123456",
+      deviceId: "device",
+      deviceName: "test",
+      platform: "linux",
+      requestedCapabilities: [],
+    });
     const failedRequest = failingTransport.lastClientFrame();
     if (failedRequest.type !== "pair.start") throw new Error("expected pair start");
-    failingTransport.emit({ v: V, type: "pair.ok", requestId: failedRequest.requestId, pairingId: "pair-1", deviceId: "device", deviceName: "test", platform: "linux", requestedCapabilities: [], grantedCapabilities: [], deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", expiresAt: "2030-01-01T00:00:00Z" });
+    failingTransport.emit({
+      v: V,
+      type: "pair.ok",
+      requestId: failedRequest.requestId,
+      pairingId: "pair-1",
+      deviceId: "device",
+      deviceName: "test",
+      platform: "linux",
+      requestedCapabilities: [],
+      grantedCapabilities: [],
+      deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      expiresAt: "2030-01-01T00:00:00Z",
+    });
     await expect(failedPairing).rejects.toMatchObject({ code: "auth" });
     expect(failing.state).toBe("fatal");
     await failing.close();
   });
 
   it("closes during a slow pairing sink without reconnecting", async () => {
-    const transport = new FakeTransport({ welcome: welcome({ authentication: "pairing-required", grantedCapabilities: [] }) });
+    const transport = new FakeTransport({
+      welcome: welcome({ authentication: "pairing-required", grantedCapabilities: [] }),
+    });
     let release!: () => void;
-    const sink = new Promise<void>((resolve) => { release = resolve; });
+    const sink = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const client = await readyClient(transport, { privilegedPairResult: () => sink });
-    const pairing = client.pairStart({ code: "123456", deviceId: "device", deviceName: "test", platform: "linux", requestedCapabilities: [] });
+    const pairing = client.pairStart({
+      code: "123456",
+      deviceId: "device",
+      deviceName: "test",
+      platform: "linux",
+      requestedCapabilities: [],
+    });
     const request = transport.lastClientFrame();
     if (request.type !== "pair.start") throw new Error("expected pair start");
-    transport.emit({ v: V, type: "pair.ok", requestId: request.requestId, pairingId: "pair-1", deviceId: "device", deviceName: "test", platform: "linux", requestedCapabilities: [], grantedCapabilities: [], deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", expiresAt: "2030-01-01T00:00:00Z" });
+    transport.emit({
+      v: V,
+      type: "pair.ok",
+      requestId: request.requestId,
+      pairingId: "pair-1",
+      deviceId: "device",
+      deviceName: "test",
+      platform: "linux",
+      requestedCapabilities: [],
+      grantedCapabilities: [],
+      deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      expiresAt: "2030-01-01T00:00:00Z",
+    });
     const closing = client.close();
     release();
     await closing;
@@ -808,14 +1105,38 @@ describe("OmpClient protocol state machine", () => {
     expect(transport.closed).toBe(true);
   });
   it("ignores stale pair.ok after close generation changes", async () => {
-    const transport = new FakeTransport({ welcome: welcome({ authentication: "pairing-required", grantedCapabilities: [] }) });
+    const transport = new FakeTransport({
+      welcome: welcome({ authentication: "pairing-required", grantedCapabilities: [] }),
+    });
     let sinks = 0;
-    const client = await readyClient(transport, { privilegedPairResult: () => { sinks += 1; } });
-    const pairing = client.pairStart({ code: "123456", deviceId: "device", deviceName: "test", platform: "linux", requestedCapabilities: [] });
+    const client = await readyClient(transport, {
+      privilegedPairResult: () => {
+        sinks += 1;
+      },
+    });
+    const pairing = client.pairStart({
+      code: "123456",
+      deviceId: "device",
+      deviceName: "test",
+      platform: "linux",
+      requestedCapabilities: [],
+    });
     const request = transport.lastClientFrame();
     if (request.type !== "pair.start") throw new Error("expected pair start");
     await client.close();
-    transport.emit({ v: V, type: "pair.ok", requestId: request.requestId, pairingId: "stale", deviceId: "device", deviceName: "test", platform: "linux", requestedCapabilities: [], grantedCapabilities: [], deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", expiresAt: "2030-01-01T00:00:00Z" });
+    transport.emit({
+      v: V,
+      type: "pair.ok",
+      requestId: request.requestId,
+      pairingId: "stale",
+      deviceId: "device",
+      deviceName: "test",
+      platform: "linux",
+      requestedCapabilities: [],
+      grantedCapabilities: [],
+      deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      expiresAt: "2030-01-01T00:00:00Z",
+    });
     await expect(pairing).rejects.toMatchObject({ code: "closed" });
     expect(sinks).toBe(0);
   });
@@ -824,10 +1145,18 @@ describe("OmpClient protocol state machine", () => {
     const transport = new FakeTransport({ welcome: welcome() });
     const client = await readyClient(transport, { maxPending: 1 });
     const first = client.command({ hostId: HOST, command: "host.list" });
-    await expect(client.command({ hostId: HOST, command: "host.list" })).rejects.toMatchObject({ code: "invalid_state" });
+    await expect(client.command({ hostId: HOST, command: "host.list" })).rejects.toMatchObject({
+      code: "invalid_state",
+    });
     await client.close();
     await expect(first).rejects.toMatchObject({ code: "closed" });
-    const startup = new OmpClient({ transport: async () => { throw new Error("startup"); }, hostId: HOST, reconnect: { baseMs: 0, maxMs: 0 } });
+    const startup = new OmpClient({
+      transport: async () => {
+        throw new Error("startup");
+      },
+      hostId: HOST,
+      reconnect: { baseMs: 0, maxMs: 0 },
+    });
     const startupErrors: string[] = [];
     const stopStartupErrors = startup.onError((error) => startupErrors.push(error.message));
     const startupConnect = startup.connect();
@@ -836,7 +1165,14 @@ describe("OmpClient protocol state machine", () => {
     await startup.close();
     await expect(startupConnect).rejects.toMatchObject({ code: "closed" });
     stopStartupErrors();
-    expect(startup.resources()).toEqual({ timers: 0, socket: false, socketHandlers: 0, pending: 0, cursorSaves: 0, listeners: 0 });
+    expect(startup.resources()).toEqual({
+      timers: 0,
+      socket: false,
+      socketHandlers: 0,
+      pending: 0,
+      cursorSaves: 0,
+      listeners: 0,
+    });
   });
 
   it("shares a pending transport open and recovers when the next factory succeeds", async () => {
@@ -884,24 +1220,47 @@ describe("OmpClient live fixture websocket", () => {
     constructor(private readonly socket: WebSocket) {
       socket.on("message", (data, isBinary) => {
         // eslint-disable-next-line unicorn/no-useless-spread -- preserve listener snapshot when callbacks may unsubscribe during dispatch.
-        for (const listener of [...this.messages]) listener(isBinary ? new Uint8Array(data as Buffer) : String(data));
+        for (const listener of [...this.messages])
+          listener(isBinary ? new Uint8Array(data as Buffer) : String(data));
       });
-      // eslint-disable-next-line unicorn/no-useless-spread -- preserve listener snapshot when callbacks may unsubscribe during dispatch.
-      socket.on("close", (code, reason) => { for (const listener of [...this.closes]) listener(code, reason.toString()); });
-      // eslint-disable-next-line unicorn/no-useless-spread -- preserve listener snapshot when callbacks may unsubscribe during dispatch.
-      socket.on("error", (error) => { for (const listener of [...this.errors]) listener(error); });
+      socket.on("close", (code, reason) => {
+        // eslint-disable-next-line unicorn/no-useless-spread -- preserve listener snapshot when callbacks may unsubscribe during dispatch.
+        for (const listener of [...this.closes]) listener(code, reason.toString());
+      });
+      socket.on("error", (error) => {
+        // eslint-disable-next-line unicorn/no-useless-spread -- preserve listener snapshot when callbacks may unsubscribe during dispatch.
+        for (const listener of [...this.errors]) listener(error);
+      });
     }
     static async open(address: string): Promise<WsTransport> {
       const socket = new WebSocket(address);
-      await new Promise<void>((resolve, reject) => { socket.once("open", () => resolve()); socket.once("error", reject); });
+      await new Promise<void>((resolve, reject) => {
+        socket.once("open", () => resolve());
+        socket.once("error", reject);
+      });
       return new WsTransport(socket);
     }
-    send(data: string): void { this.socket.send(data); }
-    close(): void { this.socket.close(); }
-    onMessage(listener: (data: string | Uint8Array) => void): () => void { this.messages.add(listener); return () => this.messages.delete(listener); }
-    onClose(listener: (code?: number, reason?: string) => void): () => void { this.closes.add(listener); return () => this.closes.delete(listener); }
-    onError(listener: (error: unknown) => void): () => void { this.errors.add(listener); return () => this.errors.delete(listener); }
-    drop(): void { this.socket.terminate(); }
+    send(data: string): void {
+      this.socket.send(data);
+    }
+    close(): void {
+      this.socket.close();
+    }
+    onMessage(listener: (data: string | Uint8Array) => void): () => void {
+      this.messages.add(listener);
+      return () => this.messages.delete(listener);
+    }
+    onClose(listener: (code?: number, reason?: string) => void): () => void {
+      this.closes.add(listener);
+      return () => this.closes.delete(listener);
+    }
+    onError(listener: (error: unknown) => void): () => void {
+      this.errors.add(listener);
+      return () => this.errors.delete(listener);
+    }
+    drop(): void {
+      this.socket.terminate();
+    }
   }
 
   it("connects, attaches, prompts, persists ordered frames, resumes, and cleans up", async () => {
@@ -910,7 +1269,11 @@ describe("OmpClient live fixture websocket", () => {
     const transports: WsTransport[] = [];
     const store = new FakeStore();
     const client = new OmpClient({
-      transport: async () => { const transport = await WsTransport.open(address); transports.push(transport); return transport; },
+      transport: async () => {
+        const transport = await WsTransport.open(address);
+        transports.push(transport);
+        return transport;
+      },
       hostId: "host-stream",
       cursorStore: store,
       heartbeat: { intervalMs: 100_000, timeoutMs: 100 },
@@ -920,7 +1283,12 @@ describe("OmpClient live fixture websocket", () => {
     client.onEvent((event) => events.push(event));
     await client.connect();
     await client.attach("host-stream", "session-stream");
-    const prompt = client.command({ hostId: "host-stream", sessionId: "session-stream", command: "session.prompt", args: { message: "hello" } });
+    const prompt = client.command({
+      hostId: "host-stream",
+      sessionId: "session-stream",
+      command: "session.prompt",
+      args: { message: "hello" },
+    });
     await prompt;
     const entry = new Promise<void>((resolve) => {
       const unsubscribe = client.onEvent((event) => {
@@ -949,13 +1317,25 @@ describe("OmpClient live fixture websocket", () => {
     await client.close();
     await Promise.resolve();
     await Promise.resolve();
-    expect(client.resources()).toMatchObject({ timers: 0, socket: false, socketHandlers: 0, pending: 0, listeners: 0 });
+    expect(client.resources()).toMatchObject({
+      timers: 0,
+      socket: false,
+      socketHandlers: 0,
+      pending: 0,
+      listeners: 0,
+    });
     expect(server.clientCount).toBe(0);
   });
   it("restarts only one heartbeat loop on duplicate welcome", async () => {
     const clock = new FakeClock();
     const transport = new FakeTransport({ welcome: welcome() });
-    const client = new OmpClient({ transport: () => transport, hostId: HOST, timers: clock, clock, heartbeat: { intervalMs: 10, timeoutMs: 50 } });
+    const client = new OmpClient({
+      transport: () => transport,
+      hostId: HOST,
+      timers: clock,
+      clock,
+      heartbeat: { intervalMs: 10, timeoutMs: 50 },
+    });
     await client.connect();
     transport.emit(welcome());
     clock.advanceBy(10);
@@ -965,14 +1345,33 @@ describe("OmpClient live fixture websocket", () => {
   });
   it("starts heartbeat after normal and pairing welcomes", async () => {
     const clock = new FakeClock();
-    const readyTransport = new FakeTransport({ welcome: welcome(), onSend: (frame) => { if (frame.type === "ping") return; } });
-    const readyClientInstance = new OmpClient({ transport: () => readyTransport, hostId: HOST, timers: clock, clock, heartbeat: { intervalMs: 10, timeoutMs: 5 } });
+    const readyTransport = new FakeTransport({
+      welcome: welcome(),
+      onSend: (frame) => {
+        if (frame.type === "ping") return;
+      },
+    });
+    const readyClientInstance = new OmpClient({
+      transport: () => readyTransport,
+      hostId: HOST,
+      timers: clock,
+      clock,
+      heartbeat: { intervalMs: 10, timeoutMs: 5 },
+    });
     await readyClientInstance.connect();
     clock.advanceBy(10);
     expect(readyTransport.sent.some((raw) => decodeClientFrame(raw).type === "ping")).toBe(true);
     await readyClientInstance.close();
-    const pairingTransport = new FakeTransport({ welcome: welcome({ authentication: "pairing-required", grantedCapabilities: [] }) });
-    const pairingClient = new OmpClient({ transport: () => pairingTransport, hostId: HOST, timers: clock, clock, heartbeat: { intervalMs: 10, timeoutMs: 5 } });
+    const pairingTransport = new FakeTransport({
+      welcome: welcome({ authentication: "pairing-required", grantedCapabilities: [] }),
+    });
+    const pairingClient = new OmpClient({
+      transport: () => pairingTransport,
+      hostId: HOST,
+      timers: clock,
+      clock,
+      heartbeat: { intervalMs: 10, timeoutMs: 5 },
+    });
     await pairingClient.connect();
     clock.advanceBy(10);
     expect(pairingTransport.sent.some((raw) => decodeClientFrame(raw).type === "ping")).toBe(true);
@@ -980,7 +1379,14 @@ describe("OmpClient live fixture websocket", () => {
   });
   it("injects authenticated hello without exposing credentials", async () => {
     const transport = new FakeTransport({ welcome: welcome({ authentication: "paired" }) });
-    const client = new OmpClient({ transport: () => transport, hostId: HOST, authentication: () => ({ deviceId: "device", deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }) });
+    const client = new OmpClient({
+      transport: () => transport,
+      hostId: HOST,
+      authentication: () => ({
+        deviceId: "device",
+        deviceToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      }),
+    });
     const publicEvents: PublicOmpServerEvent[] = [];
     client.onEvent((event) => publicEvents.push(event));
     await client.connect();
@@ -991,18 +1397,32 @@ describe("OmpClient live fixture websocket", () => {
     await client.close();
   });
   it("enters pairing and denies commands until pairing completes", async () => {
-    const transport = new FakeTransport({ welcome: welcome({ authentication: "pairing-required", grantedCapabilities: [] }) });
+    const transport = new FakeTransport({
+      welcome: welcome({ authentication: "pairing-required", grantedCapabilities: [] }),
+    });
     const client = new OmpClient({ transport: () => transport, hostId: HOST });
     await client.connect();
     expect(client.state).toBe("pairing");
-    await expect(client.command({ hostId: HOST, command: "host.list" })).rejects.toMatchObject({ code: "invalid_state" });
+    await expect(client.command({ hostId: HOST, command: "host.list" })).rejects.toMatchObject({
+      code: "invalid_state",
+    });
     await expect(client.attach(HOST, SESSION)).rejects.toMatchObject({ code: "invalid_state" });
     await client.close();
   });
   it("fails closed when authentication provider throws or returns invalid data", async () => {
-    const throwing = new OmpClient({ transport: () => new FakeTransport({ welcome: welcome() }), hostId: HOST, authentication: () => { throw new Error("secret"); } });
+    const throwing = new OmpClient({
+      transport: () => new FakeTransport({ welcome: welcome() }),
+      hostId: HOST,
+      authentication: () => {
+        throw new Error("secret");
+      },
+    });
     await expect(throwing.connect()).rejects.toMatchObject({ code: "auth" });
-    const invalid = new OmpClient({ transport: () => new FakeTransport({ welcome: welcome() }), hostId: HOST, authentication: () => ({ deviceId: "", deviceToken: "x" }) });
+    const invalid = new OmpClient({
+      transport: () => new FakeTransport({ welcome: welcome() }),
+      hostId: HOST,
+      authentication: () => ({ deviceId: "", deviceToken: "x" }),
+    });
     await expect(invalid.connect()).rejects.toMatchObject({ code: "auth" });
   });
 });

@@ -18,6 +18,8 @@ dist-electron/
 !.env.example
 
 # Test and runtime output
+/artifacts/operations-continuity/
+/evidence/wire/
 coverage/
 playwright-report/
 test-results/
