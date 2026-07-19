@@ -1,4 +1,4 @@
-import osxSign from "@electron/osx-sign";
+import { sign } from "@electron/osx-sign";
 
 export const OMP_RUNTIME_ENTITLEMENTS = "apps/desktop/build/entitlements.omp-runtime.plist";
 
@@ -23,7 +23,6 @@ export function normalizeMacSignOptions(input) {
 }
 
 export default async function signT4MacApp(input) {
-  const sign = osxSign.sign ?? osxSign;
   const options = normalizeMacSignOptions(input);
   await sign({
     ...options,
