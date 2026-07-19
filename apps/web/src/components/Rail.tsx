@@ -45,7 +45,7 @@ import {
 } from "react";
 
 import type { SessionListView, WorkspaceSession } from "../lib/workspace-data.ts";
-import { formatRelativeTime, modelMonogram, type ProjectGroup, type SessionRow } from "../lib/session-tree.ts";
+import { formatRelativeTime, type ProjectGroup, type SessionRow } from "../lib/session-tree.ts";
 import { composerStore } from "../features/composer/composer-store.ts";
 import { createLiveSession } from "../features/session-runtime/live-create.ts";
 import {
@@ -280,8 +280,6 @@ function SessionRowItem({
                   )}
                 </span>
                 <span className="flex w-full items-center gap-1 text-xs text-muted-foreground leading-4">
-                  <span aria-hidden="true" className="shrink-0 font-mono font-semibold tracking-wide">{modelMonogram(session.model)}</span>
-                  <span aria-hidden="true">·</span>
                   <span className="shrink-0">{formatRelativeTime(session.updatedAt, nowMs)}</span>
                   <span className="min-w-0 flex-1" />
                   {session.status !== null ? (
