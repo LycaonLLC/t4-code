@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "bundleId": "com.lycaonsolutions.t4code",
+  "teamId": "WJLM3D3DK6",
+  "certificateCommonName": "Developer ID Application: Michael Schoenberger (WJLM3D3DK6)",
+  "certificateSha256": "7f946ec45aabcb895a46df233f326d8a878d1e874b2d546bfa781d4bd7b081ef",
+  "certificateAuthority": "Developer ID Certification Authority",
+  "architecture": "arm64",
+  "firstSignedReleaseTag": "v0.1.24",
+  "notarizationRequired": true
+}
