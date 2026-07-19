@@ -25,7 +25,7 @@ function ThemeToggle() {
         render={
           <IconButton
             aria-label={nextLabel}
-            className="size-11 sm:size-7"
+            className="hidden size-11 sm:inline-flex sm:size-7"
             onClick={() =>
               workspaceStore.getState().setTheme(resolved === "dark" ? "light" : "dark")
             }

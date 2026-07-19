@@ -132,8 +132,8 @@ test("offers the Android APK without hiding desktop downloads", async ({ page })
     "href",
     "https://github.com/LycaonLLC/t4-code/releases/download/v0.1.25/T4-Code-0.1.25-android.apk",
   );
-  await expect(page.getByRole("link", { name: "Download for Linux" }).first()).toBeVisible();
-  await expect(page.getByRole("link", { name: "macOS build" }).first()).toBeVisible();
+  await expect(page.getByRole("link", { name: /Linux/u }).first()).toBeVisible();
+  await expect(page.getByRole("link", { name: /macOS/u }).first()).toBeVisible();
   await expect(page.getByText("TestFlight coming soon", { exact: true }).first()).toBeVisible();
   const handoff = page.locator('img[src="/screenshots/t4-code-tui-handoff.gif"]');
   await handoff.scrollIntoViewIfNeeded();

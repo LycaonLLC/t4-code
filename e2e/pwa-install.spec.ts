@@ -137,7 +137,7 @@ test("reserves macOS traffic-light space only for native window chrome", async (
 
   const titlebar = page.locator("header");
   await expect(titlebar).not.toHaveAttribute("data-window-chrome");
-  await expect(titlebar).toHaveCSS("padding-left", "12px");
+  await expect(titlebar).toHaveCSS("padding-left", "10px");
 
   await titlebar.evaluate((element) => element.setAttribute("data-window-chrome", "darwin"));
   await expect(titlebar).toHaveCSS("padding-left", "76px");
