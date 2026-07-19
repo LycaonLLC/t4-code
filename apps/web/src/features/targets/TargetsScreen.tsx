@@ -225,7 +225,7 @@ function PhoneSetupCard({ api }: { readonly api: PhoneSetupApi }) {
       </div>
       {ready ? (
         <div className="mt-4 grid items-center gap-4 sm:grid-cols-[auto_1fr]">
-          <div className="w-fit rounded-xl bg-white p-3 shadow-sm">
+          <div className="w-fit rounded-xl p-3 shadow-sm">
             <QRCodeSVG aria-label="QR code for private T4 Code phone access" level="M" size={164} value={state.url!} />
           </div>
           <div className="flex min-w-0 flex-col gap-3">
