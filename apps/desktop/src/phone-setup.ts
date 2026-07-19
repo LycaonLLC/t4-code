@@ -31,7 +31,8 @@ export class PhoneSetupService {
   private readonly electronExecutable: string;
   private readonly runner: ProcessRunner;
   private readonly tailscaleExecutable: () => Promise<string>;
-  private operation: Promise<PhoneSetupState> | undefined;
+  private configureOperation: Promise<PhoneSetupState> | undefined;
+  private restoreOperation: Promise<PhoneSetupState> | undefined;
 
   constructor(options: PhoneSetupServiceOptions) {
     this.platform = options.platform ?? process.platform;
@@ -43,28 +44,32 @@ export class PhoneSetupService {
   }
 
   inspect(): Promise<PhoneSetupState> {
+    if (this.configureOperation) return this.configureOperation;
+    if (this.restoreOperation) return this.restoreOperation;
     return this.inspectInternal();
   }
 
   configure(): Promise<PhoneSetupState> {
-    if (this.operation) return this.operation;
-    const operation = this.configureInternal().catch((error: unknown) => ({
+    if (this.configureOperation) return this.configureOperation;
+    const restore = this.restoreOperation;
+    const operation = (restore === undefined ? this.configureInternal() : restore.then(() => this.configureInternal())).catch((error: unknown) => ({
       phase: "error" as const,
       message: error instanceof Error ? error.message.slice(0, 512) : "Phone setup could not be completed.",
     }));
-    this.operation = operation;
-    void operation.finally(() => { if (this.operation === operation) this.operation = undefined; });
+    this.configureOperation = operation;
+    void operation.finally(() => { if (this.configureOperation === operation) this.configureOperation = undefined; });
     return operation;
   }
 
   restore(): Promise<PhoneSetupState> {
-    if (this.operation) return this.operation;
+    if (this.configureOperation) return this.configureOperation;
+    if (this.restoreOperation) return this.restoreOperation;
     const operation = this.restoreInternal().catch((error: unknown) => ({
       phase: "error" as const,
       message: error instanceof Error ? error.message.slice(0, 512) : "Phone access could not be restored.",
     }));
-    this.operation = operation;
-    void operation.finally(() => { if (this.operation === operation) this.operation = undefined; });
+    this.restoreOperation = operation;
+    void operation.finally(() => { if (this.restoreOperation === operation) this.restoreOperation = undefined; });
     return operation;
   }
 
@@ -97,19 +102,19 @@ export class PhoneSetupService {
     });
   }
 
-  private async gatewayIsHealthy(): Promise<boolean> {
+  private async gatewayIsHealthy(deploymentIdentity: string): Promise<boolean> {
     try {
-      const service = await this.runGatewayService(["status"]);
+      const service = await this.runGatewayService(["status", "--deployment-identity", deploymentIdentity]);
       return service.exitCode === 0 && /health:\s*healthy/iu.test(service.stdout);
     } catch {
       return false;
     }
   }
 
-  private async waitForHealthyGateway(timeoutMs = 10_000): Promise<boolean> {
+  private async waitForHealthyGateway(deploymentIdentity: string, timeoutMs = 10_000): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() <= deadline) {
-      if (await this.gatewayIsHealthy()) return true;
+      if (await this.gatewayIsHealthy(deploymentIdentity)) return true;
       const remaining = deadline - Date.now();
       if (remaining <= 0) break;
       await new Promise<void>((resolve) => setTimeout(resolve, Math.min(250, remaining)));
@@ -161,7 +166,7 @@ export class PhoneSetupService {
       return { phase: "tailscale-required", message: "Install and connect Tailscale on this Mac to enable private phone access." };
     }
     try {
-      const service = await this.runGatewayService(["status"]);
+      const service = await this.runGatewayService(["status", "--deployment-identity", await this.identity()]);
       const expectedServe = await this.hasExpectedServe(facts.executable, facts.url);
       if (
         service.exitCode === 0
@@ -190,11 +195,12 @@ export class PhoneSetupService {
     } catch (error) {
       return { phase: "tailscale-required", message: error instanceof Error ? error.message : "Tailscale is unavailable." };
     }
+    const deploymentIdentity = await this.identity();
     const service = await this.runGatewayService([
       "install",
       "--origin", facts.url,
       "--web-root", join(this.resourcesPath, "web"),
-      "--deployment-identity", await this.identity(),
+      "--deployment-identity", deploymentIdentity,
       "--electron-run-as-node",
     ]);
     if (service.exitCode !== 0) {
@@ -212,7 +218,7 @@ export class PhoneSetupService {
     if (!await this.hasExpectedServe(facts.executable, facts.url)) {
       return { phase: "error", message: "Tailscale Serve did not keep the expected private phone route." };
     }
-    if (!await this.waitForHealthyGateway()) {
+    if (!await this.waitForHealthyGateway(deploymentIdentity)) {
       return {
         phase: "error",
         message: "Phone access was installed, but the local OMP runtime is not ready. Open Hosts, restart the default OMP profile, then check again.",
@@ -234,17 +240,21 @@ export class PhoneSetupService {
     if (!await this.hasExpectedServe(facts.executable, facts.url)) {
       return { phase: "not-configured", message: "Set up private phone access, then scan the QR code with your phone.", url: facts.url };
     }
+    const deploymentIdentity = await this.identity();
+    if (await this.gatewayIsHealthy(deploymentIdentity)) {
+      return { phase: "ready", message: "Phone access is ready on your private Tailscale network.", url: facts.url };
+    }
     const service = await this.runGatewayService([
       "install",
       "--origin", facts.url,
       "--web-root", join(this.resourcesPath, "web"),
-      "--deployment-identity", await this.identity(),
+      "--deployment-identity", deploymentIdentity,
       "--electron-run-as-node",
     ]);
     if (service.exitCode !== 0) {
       return { phase: "error", message: service.stderr.trim().slice(0, 512) || "The private phone gateway could not restart." };
     }
-    if (!await this.waitForHealthyGateway()) {
+    if (!await this.waitForHealthyGateway(deploymentIdentity)) {
       return {
         phase: "error",
         message: "Phone access restarted, but the local OMP runtime is not ready yet. Open Hosts, restart the default OMP profile, then check again.",

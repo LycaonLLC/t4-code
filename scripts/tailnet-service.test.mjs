@@ -12,6 +12,7 @@ import {
   parseProfileRoutesOption,
   renderLaunchAgent,
   renderSystemdUnit,
+  serviceFileMode,
   servicePaths,
   supervisorCommands,
   validateServiceConfig,
@@ -168,6 +169,10 @@ test("macOS paths and launch agent preserve argv and environment as XML data", (
   assert.match(plist, /<string>A&amp;B &lt;host&gt;<\/string>/u);
   assert.match(plist, /<key>T4_DEPLOYMENT_IDENTITY<\/key>\s+<string>sha256:a{64}<\/string>/u);
   assert.match(plist, /<key>Umask<\/key><integer>63<\/integer>/u);
+  assert.equal(serviceFileMode(paths, paths.definition), 0o644);
+  assert.equal(serviceFileMode(paths, paths.config), 0o600);
+  const linuxPaths = servicePaths({ platform: "linux", homeDirectory: "/home/alice", uid: 1000 });
+  assert.equal(serviceFileMode(linuxPaths, linuxPaths.definition), 0o600);
 });
 
 test("supervisor command plans never use a shell and include durable enablement", () => {
@@ -291,6 +296,11 @@ test("CLI parser rejects ambiguous values and accepts the documented install sha
     "--profile-routes",
     "[]",
     "--start-profiles",
+  ]).options);
+  validateCliOptions("status", parseCli([
+    "status",
+    "--deployment-identity",
+    CONFIG.deploymentIdentity,
   ]).options);
   assert.throws(() => parseCli(["install", "--origin"]), /requires a value/u);
   assert.throws(

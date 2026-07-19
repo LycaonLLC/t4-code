@@ -62,6 +62,9 @@ describe("phone setup", () => {
     const install = calls.find((call) => call.command.includes("T4 Code") && call.args?.includes("install"));
     expect(install?.env).toEqual({ PATH: "/usr/bin:/bin:/usr/sbin:/sbin", ELECTRON_RUN_AS_NODE: "1" });
     expect(install?.args).toContain("--electron-run-as-node");
+    const installCount = calls.filter((call) => call.args?.[1] === "install").length;
+    expect(await service.restore()).toMatchObject({ phase: "ready" });
+    expect(calls.filter((call) => call.args?.[1] === "install")).toHaveLength(installCount);
   });
 
   it("does not show a QR code when Tailscale Serve points somewhere else", async () => {
@@ -125,7 +128,9 @@ describe("phone setup", () => {
       discoverTailscale: async () => "/tailscale",
     });
 
-    expect(await service.restore()).toMatchObject({ phase: "ready" });
+    const restoring = service.restore();
+    expect(service.inspect()).toBe(restoring);
+    expect(await restoring).toMatchObject({ phase: "ready" });
     expect(calls.some((call) => call.args?.[1] === "install")).toBe(true);
     expect(calls.some((call) => call.args?.[0] === "serve" && call.args?.[1] === "--bg")).toBe(false);
   });
