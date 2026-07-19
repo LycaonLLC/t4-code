@@ -21,9 +21,9 @@
     "package": "omp",
     "version": "17.0.4",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "be0301f566ef172b6a7e1864853b3f04d6545758",
-    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/be0301f566ef172b6a7e1864853b3f04d6545758",
-    "sourceTag": "t4code-17.0.4-appserver-4",
+    "sourceCommit": "d57dcd855006c673d8d530237d474fe5ba5645c4",
+    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/d57dcd855006c673d8d530237d474fe5ba5645c4",
+    "sourceTag": "t4code-17.0.4-appserver-5",
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
     "upstreamTag": "v17.0.4",
     "upstreamCommit": "3fdd85ab6c6bab6c0cdee80abbbec0981740a5c0",
@@ -80,7 +80,8 @@
       "workspace-native-build-artifact-preference",
       "retry-safe-integration-release-metadata",
       "versioned-agent-view-lifecycle-corpus",
-      "session-owned-agent-cancellation"
+      "session-owned-agent-cancellation",
+      "codex-provider-transport-diagnostics"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },
@@ -88,9 +89,9 @@
     "package": "omp",
     "version": "17.0.4",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "be0301f566ef172b6a7e1864853b3f04d6545758",
-    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/be0301f566ef172b6a7e1864853b3f04d6545758",
-    "sourceTag": "t4code-17.0.4-appserver-4",
+    "sourceCommit": "d57dcd855006c673d8d530237d474fe5ba5645c4",
+    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/d57dcd855006c673d8d530237d474fe5ba5645c4",
+    "sourceTag": "t4code-17.0.4-appserver-5",
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
     "upstreamTag": "v17.0.4",
     "upstreamCommit": "3fdd85ab6c6bab6c0cdee80abbbec0981740a5c0",
@@ -147,7 +148,8 @@
       "workspace-native-build-artifact-preference",
       "retry-safe-integration-release-metadata",
       "versioned-agent-view-lifecycle-corpus",
-      "session-owned-agent-cancellation"
+      "session-owned-agent-cancellation",
+      "codex-provider-transport-diagnostics"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },

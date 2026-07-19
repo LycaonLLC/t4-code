@@ -158,6 +158,32 @@ export {
   DesktopRuntimeController,
   createDesktopRuntimeController,
 } from "./desktop-runtime.ts";
+export { deriveAttentionInbox, readSessionAttention } from "./attention-projection.ts";
+export type {
+  AttentionActionability,
+  AttentionActionabilityInputs,
+  AttentionActionStatus,
+  AttentionApprovalItem,
+  AttentionConfirmationItem,
+  AttentionGroup,
+  AttentionIdentity,
+  AttentionInboxItem,
+  AttentionInboxProjection,
+  AttentionInventoryIssue,
+  AttentionInventoryReason,
+  AttentionInventoryState,
+  AttentionNeedsYouItem,
+  AttentionOutcomeItem,
+  AttentionOutcomeKind,
+  AttentionPendingKind,
+  AttentionPlanItem,
+  AttentionQuestionItem,
+  AttentionQuestionOption,
+  AttentionSessionContext,
+  AttentionUnavailableReason,
+  DeriveAttentionInboxOptions,
+  SessionAttentionRead,
+} from "./attention-projection.ts";
 export type {
   DesktopUpdateOpenEvent,
   DesktopUpdatePhase,

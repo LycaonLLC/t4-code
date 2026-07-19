@@ -26,6 +26,7 @@ import { HomePane } from "./components/HomePane.tsx";
 import { SessionScreen } from "./components/SessionScreen.tsx";
 import { AgentViewScreen } from "./features/agent-view/AgentViewScreen.tsx";
 import { PreviewWorkspace } from "./features/preview/PreviewWorkspace.tsx";
+import { LiveAttentionInbox } from "./features/attention/index.ts";
 import { SettingsWorkspace } from "./features/settings/index.ts";
 import { LiveSettingsScreen } from "./features/settings/LiveSettingsScreen.tsx";
 import { TargetsScreen } from "./features/targets/TargetsScreen.tsx";
@@ -44,6 +45,7 @@ import {
   preferredHomeSessionId,
 } from "./lib/session-route.ts";
 import { desktopRuntime, useDesktopRuntimeSnapshot } from "./platform/desktop-runtime.ts";
+import { sessionAttentionOutcomeMarker } from "./platform/live-workspace.ts";
 import { useShellData } from "./state/shell-data.ts";
 import { RAIL_OVERLAY_QUERY, useMediaQuery } from "./hooks/useMediaQuery.ts";
 import { fixtureSettingsStore } from "./state/settings-instance.ts";
@@ -81,6 +83,12 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
   component: HomeRoute,
+});
+
+const inboxRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/inbox",
+  component: LiveAttentionInbox,
 });
 
 interface SessionRouteGateProps {
@@ -128,6 +136,21 @@ function SessionRouteGate({ children, previewRoute, sessionId }: SessionRouteGat
       workspaceStore.getState().activateSession(target, new Date().toISOString());
     }
   }, [activationGate, decision, session]);
+
+  const attentionOutcome =
+    runtimeSnapshot === null ? null : sessionAttentionOutcomeMarker(runtimeSnapshot, sessionId);
+  const attentionOutcomeId = attentionOutcome?.outcomeId;
+  const attentionSessionKey = attentionOutcome?.sessionKey;
+  useEffect(() => {
+    if (
+      decision.kind !== "present" ||
+      attentionOutcomeId === undefined ||
+      attentionSessionKey === undefined
+    ) {
+      return;
+    }
+    workspaceStore.getState().markAttentionOutcomeSeen(attentionSessionKey, attentionOutcomeId);
+  }, [attentionOutcomeId, attentionSessionKey, decision.kind]);
 
   if (decision.kind === "pending") {
     return (
@@ -211,11 +234,18 @@ function SessionRouteGate({ children, previewRoute, sessionId }: SessionRouteGat
 }
 
 function SessionRoute() {
+  const navigate = useNavigate();
   const { sessionId } = useParams({ from: "/sessions/$sessionId" });
   return (
     <SessionRouteGate previewRoute={false} sessionId={sessionId}>
       {(session, project, nowMs) => (
-        <SessionScreen key={session.id} nowMs={nowMs} project={project} session={session} />
+        <SessionScreen
+          key={session.id}
+          nowMs={nowMs}
+          onOpenHostHealth={() => void navigate({ to: "/hosts" })}
+          project={project}
+          session={session}
+        />
       )}
     </SessionRouteGate>
   );
@@ -408,6 +438,7 @@ const usageRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
+  inboxRoute,
   sessionRoute,
   previewRoute,
   agentViewRoute,

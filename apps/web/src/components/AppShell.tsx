@@ -3,11 +3,16 @@
 // palette. Keyboard: Cmd/Ctrl+K palette, Cmd/Ctrl+B rail, Cmd/Ctrl+1..9
 // visible sessions, Escape peels the topmost open surface.
 import { Button, Sheet, SheetClose, SheetPopup, SheetTitle } from "@t4-code/ui";
+import { deriveAttentionInbox } from "@t4-code/client";
 import { Outlet, useNavigate } from "@tanstack/react-router";
 import { X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { startDesktopRuntime } from "../platform/desktop-runtime.ts";
+import { startDesktopRuntime, useDesktopRuntimeSnapshot } from "../platform/desktop-runtime.ts";
+import {
+  ATTENTION_INBOX_FIXTURES,
+  buildAttentionInboxViewModel,
+} from "../features/attention/index.ts";
 import { getShellData, useShellData } from "../state/shell-data.ts";
 import { RAIL_OVERLAY_QUERY, useMediaQuery } from "../hooks/useMediaQuery.ts";
 import { isEditableTarget, resolveShortcut } from "../keyboard/shortcuts.ts";
@@ -30,10 +35,14 @@ export function AppShell() {
   const projectExpandedById = useWorkspace((state) => state.projectExpandedById);
   const dismissedEmptyProjectIds = useWorkspace((state) => state.dismissedEmptyProjectIds);
   const lastVisitedAtBySessionId = useWorkspace((state) => state.lastVisitedAtBySessionId);
+  const lastSeenAttentionOutcomeBySessionKey = useWorkspace(
+    (state) => state.lastSeenAttentionOutcomeBySessionKey,
+  );
   const [railPreviewWidth, setRailPreviewWidth] = useState<number | null>(null);
   const [nowMs] = useState(() => Date.now());
 
   const shellData = useShellData();
+  const runtimeSnapshot = useDesktopRuntimeSnapshot();
   const currentGroups = useMemo(
     () =>
       buildProjectGroups(
@@ -50,8 +59,19 @@ export function AppShell() {
     [shellData, projectExpandedById, lastVisitedAtBySessionId],
   );
   const groups = sessionListView === "archived" ? archivedGroups : currentGroups;
-  const currentCount = shellData.sessions.filter((session) => session.archivedAt === undefined).length;
+  const currentCount = shellData.sessions.filter(
+    (session) => session.archivedAt === undefined,
+  ).length;
   const archivedCount = shellData.sessions.length - currentCount;
+  const attentionCount = useMemo(
+    () =>
+      runtimeSnapshot === null
+        ? buildAttentionInboxViewModel(ATTENTION_INBOX_FIXTURES.sample.items).urgentCount
+        : deriveAttentionInbox(runtimeSnapshot, {
+            seenOutcomeIdsBySessionKey: lastSeenAttentionOutcomeBySessionKey,
+          }).urgentCount,
+    [lastSeenAttentionOutcomeBySessionKey, runtimeSnapshot],
+  );
   const hiddenEmptyProjectIds = useMemo(() => {
     const currentProjectIds = new Set(
       shellData.sessions
@@ -156,6 +176,7 @@ export function AppShell() {
               {railCollapsed ? (
                 <div className="h-full" style={{ width: RAIL_COLLAPSED_WIDTH }}>
                   <CollapsedRail
+                    attentionCount={attentionCount}
                     groups={currentGroups}
                     onExpand={(projectId) => {
                       const state = workspaceStore.getState();
@@ -167,6 +188,7 @@ export function AppShell() {
               ) : (
                 <div className="flex h-full flex-col" style={{ width: effectiveRailWidth }}>
                   <Rail
+                    attentionCount={attentionCount}
                     archivedCount={archivedCount}
                     currentCount={currentCount}
                     groups={groups}
@@ -220,6 +242,7 @@ export function AppShell() {
             </div>
             <div className="min-h-0 flex-1">
               <Rail
+                attentionCount={attentionCount}
                 archivedCount={archivedCount}
                 currentCount={currentCount}
                 groups={groups}

@@ -11,7 +11,7 @@ import { createStore, type StoreApi } from "zustand/vanilla";
 import type { SessionListView } from "../lib/workspace-data.ts";
 import type { WorkspacePersistence } from "./persistence.ts";
 
-export const WORKSPACE_STATE_VERSION = 1;
+export const WORKSPACE_STATE_VERSION = 2;
 export const WORKSPACE_STORAGE_KEY = "omp:workspace:v1";
 
 export const RAIL_WIDTH = { minWidth: 208, maxWidth: 400, defaultWidth: 256 } as const;
@@ -61,6 +61,8 @@ interface PersistedWorkspaceState {
   /** Empty Current-tab project headers the user explicitly removed. */
   readonly dismissedEmptyProjectIds?: Record<string, true>;
   readonly lastVisitedAtBySessionId: Record<string, string>;
+  /** Latest terminal attention outcome the user has seen for each session. */
+  readonly lastSeenAttentionOutcomeBySessionKey?: Record<string, string>;
   readonly sessionViewById: Record<string, SessionViewState>;
 }
 
@@ -78,6 +80,8 @@ export interface WorkspaceState {
   /** View-only dismissals; a current session makes its project visible again. */
   readonly dismissedEmptyProjectIds: Record<string, true>;
   readonly lastVisitedAtBySessionId: Record<string, string>;
+  /** Renderer-local read markers; OMP remains the outcome authority. */
+  readonly lastSeenAttentionOutcomeBySessionKey: Record<string, string>;
   readonly sessionViewById: Record<string, SessionViewState>;
 }
 
@@ -92,6 +96,8 @@ export interface WorkspaceActions {
   activateSession(sessionId: string, visitedAt: string): void;
   /** Stamp a visit; timestamps only move forward. */
   markSessionVisited(sessionId: string, visitedAt: string): void;
+  /** Mark one host-authored terminal outcome as seen on this client. */
+  markAttentionOutcomeSeen(sessionKey: string, outcomeId: string): void;
   setProjectExpanded(projectId: string, expanded: boolean): void;
   setEmptyProjectDismissed(projectId: string, dismissed: boolean): void;
   setSessionDraft(sessionId: string, draft: string): void;
@@ -119,6 +125,7 @@ const INITIAL_STATE: WorkspaceState = {
   projectExpandedById: {},
   dismissedEmptyProjectIds: {},
   lastVisitedAtBySessionId: {},
+  lastSeenAttentionOutcomeBySessionKey: {},
   sessionViewById: {},
 };
 
@@ -145,6 +152,23 @@ function sanitizeTimestampRecord(value: unknown): Record<string, string> {
   const result: Record<string, string> = {};
   for (const [key, entry] of Object.entries(value)) {
     if (typeof entry === "string" && Number.isFinite(Date.parse(entry))) result[key] = entry;
+  }
+  return result;
+}
+
+function sanitizeAttentionOutcomeRecord(value: unknown): Record<string, string> {
+  if (typeof value !== "object" || value === null) return {};
+  const result: Record<string, string> = {};
+  for (const [sessionId, outcomeId] of Object.entries(value).slice(0, 1_000)) {
+    if (
+      sessionId.length > 0 &&
+      sessionId.length <= 1_024 &&
+      typeof outcomeId === "string" &&
+      outcomeId.length > 0 &&
+      outcomeId.length <= 1_024
+    ) {
+      result[sessionId] = outcomeId;
+    }
   }
   return result;
 }
@@ -181,7 +205,7 @@ function sanitizeSessionView(value: unknown): SessionViewState | null {
 export function parsePersistedWorkspace(raw: unknown): WorkspaceState | null {
   if (typeof raw !== "object" || raw === null) return null;
   const parsed = raw as Partial<PersistedWorkspaceState>;
-  if (parsed.version !== WORKSPACE_STATE_VERSION) return null;
+  if (parsed.version !== 1 && parsed.version !== WORKSPACE_STATE_VERSION) return null;
 
   const sessionViewById: Record<string, SessionViewState> = {};
   if (typeof parsed.sessionViewById === "object" && parsed.sessionViewById !== null) {
@@ -207,6 +231,9 @@ export function parsePersistedWorkspace(raw: unknown): WorkspaceState | null {
     projectExpandedById: sanitizeBooleanRecord(parsed.projectExpandedById),
     dismissedEmptyProjectIds: sanitizeTrueRecord(parsed.dismissedEmptyProjectIds),
     lastVisitedAtBySessionId: sanitizeTimestampRecord(parsed.lastVisitedAtBySessionId),
+    lastSeenAttentionOutcomeBySessionKey: sanitizeAttentionOutcomeRecord(
+      parsed.lastSeenAttentionOutcomeBySessionKey,
+    ),
     sessionViewById,
   };
 }
@@ -222,6 +249,7 @@ export function toPersistedWorkspace(state: WorkspaceState): PersistedWorkspaceS
     projectExpandedById: state.projectExpandedById,
     dismissedEmptyProjectIds: state.dismissedEmptyProjectIds,
     lastVisitedAtBySessionId: state.lastVisitedAtBySessionId,
+    lastSeenAttentionOutcomeBySessionKey: state.lastSeenAttentionOutcomeBySessionKey,
     sessionViewById: state.sessionViewById,
   };
 }
@@ -258,6 +286,14 @@ export function isSessionUnread(
   const visitedMs = Date.parse(lastVisitedAt);
   if (Number.isNaN(visitedMs)) return true;
   return completedMs > visitedMs;
+}
+
+export function isAttentionOutcomeSeen(
+  seenBySessionKey: Readonly<Record<string, string>>,
+  sessionKey: string,
+  outcomeId: string,
+): boolean {
+  return seenBySessionKey[sessionKey] === outcomeId;
 }
 
 /** View state for a session, with defaults for sessions never touched. */
@@ -305,6 +341,24 @@ export function createWorkspaceStore(options: CreateWorkspaceStoreOptions): Work
       set((state) => ({
         lastVisitedAtBySessionId: markVisited(state.lastVisitedAtBySessionId, sessionId, visitedAt),
       })),
+    markAttentionOutcomeSeen: (sessionKey, outcomeId) =>
+      set((state) => {
+        if (
+          sessionKey.length === 0 ||
+          sessionKey.length > 1_024 ||
+          outcomeId.length === 0 ||
+          outcomeId.length > 1_024 ||
+          state.lastSeenAttentionOutcomeBySessionKey[sessionKey] === outcomeId
+        ) {
+          return state;
+        }
+        return {
+          lastSeenAttentionOutcomeBySessionKey: {
+            ...state.lastSeenAttentionOutcomeBySessionKey,
+            [sessionKey]: outcomeId,
+          },
+        };
+      }),
     setProjectExpanded: (projectId, expanded) =>
       set((state) => ({
         projectExpandedById: { ...state.projectExpandedById, [projectId]: expanded },

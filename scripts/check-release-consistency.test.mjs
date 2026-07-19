@@ -71,7 +71,7 @@ test("rejects duplicate keys in JSON release contracts", () => {
 
 test("keeps verified and published runtime records aligned after promotion", () => {
   const matrix = JSON.parse(files.get("compat/omp-app-matrix.json"));
-  assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.4-appserver-4");
+  assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.4-appserver-5");
   assert.deepEqual(matrix.publishedRuntime, matrix.verifiedRuntime);
 });
 
@@ -85,15 +85,24 @@ test("rejects a tag that differs from the package version", () => {
 
 test("tagged releases reject published provenance drift", () => {
   const appWireCases = [
-    ["version", (record) => {
-      record.version = "0.5.8";
-    }],
-    ["commit", (record) => {
-      record.sourceCommit = "0".repeat(40);
-    }],
-    ["source tree", (record) => {
-      record.sourceTreeHash = "0".repeat(40);
-    }],
+    [
+      "version",
+      (record) => {
+        record.version = "0.5.8";
+      },
+    ],
+    [
+      "commit",
+      (record) => {
+        record.sourceCommit = "0".repeat(40);
+      },
+    ],
+    [
+      "source tree",
+      (record) => {
+        record.sourceTreeHash = "0".repeat(40);
+      },
+    ],
   ];
   for (const [field, mutate] of appWireCases) {
     const drifted = changedRuntime("publishedAppWire", mutate);
@@ -107,21 +116,36 @@ test("tagged releases reject published provenance drift", () => {
   }
 
   const runtimeCases = [
-    ["version", (runtime) => {
-      runtime.version = "17.0.0";
-    }],
-    ["commit", (runtime) => {
-      runtime.sourceCommit = "0".repeat(40);
-    }],
-    ["tag", (runtime) => {
-      runtime.sourceTag = "t4code-17.0.4-appserver-3";
-    }],
-    ["upstream commit", (runtime) => {
-      runtime.upstreamCommit = "0".repeat(40);
-    }],
-    ["integration patches", (runtime) => {
-      runtime.integrationPatches = runtime.integrationPatches.slice(0, -1);
-    }],
+    [
+      "version",
+      (runtime) => {
+        runtime.version = "17.0.0";
+      },
+    ],
+    [
+      "commit",
+      (runtime) => {
+        runtime.sourceCommit = "0".repeat(40);
+      },
+    ],
+    [
+      "tag",
+      (runtime) => {
+        runtime.sourceTag = "t4code-17.0.4-appserver-3";
+      },
+    ],
+    [
+      "upstream commit",
+      (runtime) => {
+        runtime.upstreamCommit = "0".repeat(40);
+      },
+    ],
+    [
+      "integration patches",
+      (runtime) => {
+        runtime.integrationPatches = runtime.integrationPatches.slice(0, -1);
+      },
+    ],
   ];
   for (const [field, mutate] of runtimeCases) {
     const drifted = changedRuntime("publishedRuntime", mutate);
@@ -313,7 +337,7 @@ test("rejects published app-wire provenance drift until release surfaces agree",
 test("rejects drift between the compatibility matrix and vendored app-wire manifest", () => {
   const drifted = changed("vendor/app-wire/manifest.json", (text) =>
     text.replace(
-      '"sourceTreeHash": "4d8794bad6fc57d86058a46dc4698fcca14263e5"',
+      '"sourceTreeHash": "ea8608496731f29addc95d43ea68e44c5c42cb22"',
       '"sourceTreeHash": "0000000000000000000000000000000000000000"',
     ),
   );
@@ -326,7 +350,7 @@ test("rejects drift between the compatibility matrix and vendored app-wire manif
 
 test("rejects a stale app-wire third-party notice", () => {
   const drifted = changed("THIRD_PARTY_NOTICES.md", (text) =>
-    text.replace("@oh-my-pi/app-wire@0.5.9", "@oh-my-pi/app-wire@0.5.8"),
+    text.replace("@oh-my-pi/app-wire@0.5.10", "@oh-my-pi/app-wire@0.5.8"),
   );
   assert.ok(
     collectReleaseConsistencyErrors(drifted).some((error) =>
@@ -383,22 +407,22 @@ test("accepts a current app-wire update without rewriting published release surf
       path,
       coordinated
         .get(path)
-        .replace('"version": "0.5.9"', '"version": "0.6.0"')
+        .replace('"version": "0.5.10"', '"version": "0.6.0"')
         .replace(
-          '"sourceCommit": "5633bdd7e5f9062d1822eeeddb9311b2d942bf6f"',
+          '"sourceCommit": "93f48ab62e2002b48a0dc2734de33d5328ea76d6"',
           '"sourceCommit": "1111111111111111111111111111111111111111"',
         )
         .replace(
-          '"sourceTreeHash": "4d8794bad6fc57d86058a46dc4698fcca14263e5"',
+          '"sourceTreeHash": "ea8608496731f29addc95d43ea68e44c5c42cb22"',
           '"sourceTreeHash": "2222222222222222222222222222222222222222"',
         )
-        .replace("oh-my-pi-app-wire-0.5.9.tgz", "oh-my-pi-app-wire-0.6.0.tgz")
+        .replace("oh-my-pi-app-wire-0.5.10.tgz", "oh-my-pi-app-wire-0.6.0.tgz")
         .replace(
-          '"tarballSha256": "b3a891610e919833d16302b1893831f509d264322c3869d28f17adbbff6116f0"',
+          '"tarballSha256": "d30da820ff2bb8a7efa024fc829b654a2dfaf2600688fa369abc64b053ae8ede"',
           '"tarballSha256": "3333333333333333333333333333333333333333333333333333333333333333"',
         )
         .replace(
-          '"goldenCorpusSha256": "50b087a3a22bb48908718b7786eff6ce618bbd6b6123c055e40c957ef47a805c"',
+          '"goldenCorpusSha256": "63480a2359c1b2b4ec2f5cc8890683f0eefc13e92597d1464e442b563bc7375e"',
           '"goldenCorpusSha256": "4444444444444444444444444444444444444444444444444444444444444444"',
         ),
     );
@@ -407,21 +431,21 @@ test("accepts a current app-wire update without rewriting published release surf
     "THIRD_PARTY_NOTICES.md",
     coordinated
       .get("THIRD_PARTY_NOTICES.md")
-      .replace("@oh-my-pi/app-wire@0.5.9", "@oh-my-pi/app-wire@0.6.0")
+      .replace("@oh-my-pi/app-wire@0.5.10", "@oh-my-pi/app-wire@0.6.0")
       .replace(
-        "5633bdd7e5f9062d1822eeeddb9311b2d942bf6f",
+        "93f48ab62e2002b48a0dc2734de33d5328ea76d6",
         "1111111111111111111111111111111111111111",
       )
       .replace(
-        "4d8794bad6fc57d86058a46dc4698fcca14263e5",
+        "ea8608496731f29addc95d43ea68e44c5c42cb22",
         "2222222222222222222222222222222222222222",
       )
       .replace(
-        "b3a891610e919833d16302b1893831f509d264322c3869d28f17adbbff6116f0",
+        "d30da820ff2bb8a7efa024fc829b654a2dfaf2600688fa369abc64b053ae8ede",
         "3333333333333333333333333333333333333333333333333333333333333333",
       )
       .replace(
-        "50b087a3a22bb48908718b7786eff6ce618bbd6b6123c055e40c957ef47a805c",
+        "63480a2359c1b2b4ec2f5cc8890683f0eefc13e92597d1464e442b563bc7375e",
         "4444444444444444444444444444444444444444444444444444444444444444",
       ),
   );
