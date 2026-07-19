@@ -10,14 +10,11 @@ import {
   Sheet,
   SheetPopup,
   StatusPill,
-  Tooltip,
-  TooltipPopup,
-  TooltipTrigger,
   useReducedMotion,
 } from "@t4-code/ui";
 import { Popover } from "@base-ui/react/popover";
 import { Link } from "@tanstack/react-router";
-import { Check, PanelBottomClose, PanelBottomOpen, PanelRight, X } from "lucide-react";
+import { Check, ChevronDown, PanelsTopLeft, SquareTerminal, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { WorkspaceProject, WorkspaceSession } from "../lib/workspace-data.ts";
@@ -36,84 +33,53 @@ import {
 import { PANE_FAMILY_META } from "./pane-families.tsx";
 import { ResizeHandle } from "./ResizeHandle.tsx";
 
-function FamilyToggles({
+function WorkspaceMenu({
   sessionId,
   paneOpen,
   paneFamily,
+  terminalOpen,
 }: {
   sessionId: string;
   paneOpen: boolean;
   paneFamily: PaneFamily;
-}) {
-  return (
-    <>
-      <div aria-label="Session panels" className="hidden items-center gap-0.5 sm:flex" role="group">
-        {PANE_FAMILY_META.map((meta) => {
-          const active = paneOpen && paneFamily === meta.id;
-          const Icon = meta.icon;
-          return (
-            <Tooltip key={meta.id}>
-              <TooltipTrigger
-                render={
-                  <IconButton
-                    aria-label={active ? `Close ${meta.label}` : `Open ${meta.label}`}
-                    aria-pressed={active}
-                    className={cn(active && "bg-secondary text-foreground")}
-                    onClick={() => workspaceStore.getState().togglePaneFamily(sessionId, meta.id)}
-                    size="icon-sm"
-                  >
-                    <Icon aria-hidden="true" />
-                  </IconButton>
-                }
-              />
-              <TooltipPopup side="bottom">{meta.label}</TooltipPopup>
-            </Tooltip>
-          );
-        })}
-      </div>
-      <MobileFamilyMenu paneFamily={paneFamily} paneOpen={paneOpen} sessionId={sessionId} />
-    </>
-  );
-}
-
-function MobileFamilyMenu({
-  sessionId,
-  paneOpen,
-  paneFamily,
-}: {
-  sessionId: string;
-  paneOpen: boolean;
-  paneFamily: PaneFamily;
+  terminalOpen: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const activeMeta = PANE_FAMILY_META.find((entry) => entry.id === paneFamily);
-  const TriggerIcon = paneOpen && activeMeta !== undefined ? activeMeta.icon : PanelRight;
+  const workspaceActive = paneOpen || terminalOpen;
   return (
     <Popover.Root onOpenChange={setOpen} open={open}>
       <Popover.Trigger
-        aria-label="Session panels"
+        aria-label="Workspace tools"
+        aria-pressed={workspaceActive}
         className={cn(
-          "flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-transparent text-foreground outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:hidden",
-          paneOpen && "bg-secondary",
+          "flex size-11 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-lg border border-transparent px-2 text-foreground outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:h-7 sm:w-auto sm:rounded-md",
+          workspaceActive && "bg-secondary",
         )}
       >
-        <TriggerIcon aria-hidden="true" className="size-5 text-muted-foreground" />
+        <PanelsTopLeft aria-hidden="true" className="size-4 text-muted-foreground" />
+        <span className="hidden text-xs lg:inline">Workspace</span>
+        <ChevronDown aria-hidden="true" className="hidden size-3 text-muted-foreground sm:block" />
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Positioner align="end" className="z-50" side="bottom" sideOffset={6}>
-          <Popover.Popup className="w-[min(13rem,calc(100vw-1rem))] rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-(--overlay-shadow) outline-none transition-[scale,opacity] duration-(--motion-duration-fast) data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0">
-            <Popover.Title className="px-2 pt-1 pb-1.5 font-medium text-muted-foreground text-xs">
-              Session panels
+          <Popover.Popup className="w-[min(17rem,calc(100vw-1rem))] rounded-xl border border-border bg-popover p-1.5 text-popover-foreground shadow-(--overlay-shadow) outline-none transition-[scale,opacity] duration-(--motion-duration-fast) data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0">
+            <Popover.Title className="px-2 pt-1 pb-2 font-medium text-sm">
+              Workspace
             </Popover.Title>
+            <p className="px-2 pb-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+              Open on the right
+            </p>
             <ul>
               {PANE_FAMILY_META.map((meta) => {
                 const active = paneOpen && paneFamily === meta.id;
                 const Icon = meta.icon;
+                const label = meta.id === "terminals" ? "Agent terminals" : meta.label;
                 return (
                   <li key={meta.id}>
                     <button
+                      aria-label={`${active ? "Close" : "Open"} ${label} panel`}
                       aria-pressed={active}
-                      className="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                      className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-9"
                       onClick={() => {
                         workspaceStore.getState().togglePaneFamily(sessionId, meta.id);
                         setOpen(false);
@@ -121,13 +87,33 @@ function MobileFamilyMenu({
                       type="button"
                     >
                       <Icon aria-hidden="true" className="size-4 text-muted-foreground" />
-                      <span className="min-w-0 flex-1 truncate">{meta.label}</span>
+                      <span className="min-w-0 flex-1 truncate">{label}</span>
+                      <span className="text-[10px] text-muted-foreground">Right</span>
                       {active && <Check aria-hidden="true" className="size-4 text-accent-text" />}
                     </button>
                   </li>
                 );
               })}
             </ul>
+            <div aria-hidden="true" className="my-1 h-px bg-border" />
+            <p className="px-2 pb-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+              Open below
+            </p>
+            <button
+              aria-label={terminalOpen ? "Close terminal below" : "Open terminal below"}
+              aria-pressed={terminalOpen}
+              className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-9"
+              onClick={() => {
+                workspaceStore.getState().setTerminalDrawerOpen(sessionId, !terminalOpen);
+                setOpen(false);
+              }}
+              type="button"
+            >
+              <SquareTerminal aria-hidden="true" className="size-4 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate">Terminal</span>
+              <span className="font-mono text-[10px] text-muted-foreground">⌘J</span>
+              {terminalOpen && <Check aria-hidden="true" className="size-4 text-accent-text" />}
+            </button>
           </Popover.Popup>
         </Popover.Positioner>
       </Popover.Portal>
@@ -234,33 +220,13 @@ export function SessionScreen({
           </Link>
         )}
         {!archived && (
-          <FamilyToggles paneFamily={viewPaneFamily} paneOpen={viewPaneOpen} sessionId={session.id} />
-        )}
-        {!archived && <span aria-hidden="true" className="mx-1 hidden h-4 w-px bg-border sm:block" />}
-        {!archived && <Tooltip>
-          <TooltipTrigger
-            render={
-              <IconButton
-                aria-label={
-                  terminalDrawerOpen ? "Close terminal drawer" : "Open terminal drawer"
-                }
-                aria-pressed={terminalDrawerOpen}
-                className="size-11 sm:size-7"
-                onClick={() =>
-                  workspaceStore
-                    .getState()
-                    .setTerminalDrawerOpen(session.id, !terminalDrawerOpen)
-                }
-                size="icon-sm"
-              >
-                {terminalDrawerOpen ? <PanelBottomClose /> : <PanelBottomOpen />}
-              </IconButton>
-            }
+          <WorkspaceMenu
+            paneFamily={viewPaneFamily}
+            paneOpen={viewPaneOpen}
+            sessionId={session.id}
+            terminalOpen={terminalDrawerOpen}
           />
-          <TooltipPopup side="bottom">
-            {terminalDrawerOpen ? "Close terminal drawer" : "Open terminal drawer"}
-          </TooltipPopup>
-        </Tooltip>}
+        )}
       </div>
 
       <div className="flex min-h-0 flex-1">

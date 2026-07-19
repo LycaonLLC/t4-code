@@ -125,6 +125,14 @@ export function AppShell() {
       } else if (action.kind === "toggle-rail") {
         if (railOverlaid) state.setRailOverlayOpen(!state.railOverlayOpen);
         else state.setRailCollapsed(!state.railCollapsed);
+      } else if (action.kind === "toggle-terminal") {
+        const activeId = state.activeSessionId;
+        const activeSession =
+          activeId === null ? undefined : getShellData().sessions.find((session) => session.id === activeId);
+        if (activeId !== null && activeSession?.archivedAt === undefined) {
+          const view = selectSessionView(state, activeId);
+          state.setTerminalDrawerOpen(activeId, !view.terminalDrawerOpen);
+        }
       } else if (action.kind === "settings") {
         void navigate({ to: "/settings" });
       } else {

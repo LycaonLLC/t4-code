@@ -1064,6 +1064,31 @@ test("keeps an empty Archived filter selected on the home route", async ({ page 
   ).toHaveAttribute("aria-pressed", "true");
 });
 
+test("opens supporting tools from one workspace menu and toggles the terminal shortcut", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openSession(page, false);
+
+  const workspace = page.getByRole("button", { name: "Workspace tools", exact: true });
+  await expect(workspace).toBeVisible();
+  await workspace.click();
+  await expect(page.getByText("Open on the right", { exact: true })).toBeVisible();
+  await expect(page.getByText("Open below", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open Agent terminals panel" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Open Activity panel", exact: true }).click();
+  await expect(page.getByRole("complementary", { name: "Activity", exact: true })).toBeVisible();
+  await expect(workspace).toHaveAttribute("aria-pressed", "true");
+
+  await page.keyboard.press("Control+j");
+  await expect(page.getByRole("button", { name: "Close terminal drawer", exact: true })).toBeVisible();
+  await page.keyboard.press("Control+j");
+  await expect(
+    page.getByRole("button", { name: "Close terminal drawer", exact: true }),
+  ).toBeHidden();
+});
+
 for (const viewport of [
   { width: 390, height: 844 },
   { width: 390, height: 500 },

@@ -147,9 +147,11 @@ describe("phone touch targets", () => {
       "utf8",
     );
     expect(hostedAppAction).toContain('className="size-11 lg:size-7"');
-    expect(session).toContain('aria-label="Session panels"');
+    expect(session).toContain('aria-label="Workspace tools"');
     expect(session).toContain("flex size-11 shrink-0 cursor-pointer");
     expect(session).toContain("flex min-h-11 w-full cursor-pointer items-center");
+    expect(session).toContain("Agent terminals");
+    expect(session).toContain("⌘J");
     expect(rail).toContain("flex min-h-11 min-w-0 flex-1 items-center");
     // Project-row create actions are labeled `New`, stay 44px on touch, and
     // announce that the chosen OMP profile owns the session.

@@ -3,14 +3,16 @@
 // focus (dialog primitive owns the focus contract).
 import { cn, Dialog, DialogPopup, StatusPill } from "@t4-code/ui";
 import { useNavigate } from "@tanstack/react-router";
-import { CornerDownLeft, Search } from "lucide-react";
+import { CornerDownLeft, Search, SquareTerminal } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ProjectGroup } from "../lib/session-tree.ts";
 import { handoffTranscriptSearchQuery } from "../features/transcript-search/index.ts";
 import { TRANSCRIPT_SEARCH_ROUTE } from "../features/transcript-search/route.ts";
 import { useWorkspace, workspaceStore } from "../state/store-instance.ts";
+import { selectSessionView } from "../state/workspace-store.ts";
 import { resolveTheme } from "../theme/theme.ts";
+import { PANE_FAMILY_META } from "./pane-families.tsx";
 interface PaletteItem {
   readonly id: string;
   readonly label: string;
@@ -43,6 +45,36 @@ function buildItems(
     }
   }
   const state = workspaceStore.getState();
+  const activeSessionId = state.activeSessionId;
+  const activeSessionVisible =
+    activeSessionId !== null &&
+    groups.some((group) => group.sessions.some((row) => row.session.id === activeSessionId));
+  if (activeSessionId !== null && activeSessionVisible) {
+    const view = selectSessionView(state, activeSessionId);
+    for (const meta of PANE_FAMILY_META) {
+      const active = view.paneOpen && view.paneFamily === meta.id;
+      const Icon = meta.icon;
+      const label = meta.id === "terminals" ? "Agent terminals" : meta.label;
+      items.push({
+        id: `action:pane:${meta.id}`,
+        label: active ? `Close ${label}` : `Open ${label}`,
+        hint: "Workspace · Right",
+        status: <Icon aria-hidden="true" className="size-3.5 text-muted-foreground" />,
+        run: () => workspaceStore.getState().togglePaneFamily(activeSessionId, meta.id),
+      });
+    }
+    items.push({
+      id: "action:terminal",
+      label: view.terminalDrawerOpen ? "Close terminal" : "Open terminal",
+      hint: "Workspace · Below · ⌘J",
+      status: <SquareTerminal aria-hidden="true" className="size-3.5 text-muted-foreground" />,
+      run: () => {
+        const current = workspaceStore.getState();
+        const currentView = selectSessionView(current, activeSessionId);
+        current.setTerminalDrawerOpen(activeSessionId, !currentView.terminalDrawerOpen);
+      },
+    });
+  }
   items.push(
     {
       id: "action:theme",
