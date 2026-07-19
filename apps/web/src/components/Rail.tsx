@@ -1058,7 +1058,9 @@ function ProjectHeaderRow({
                       onClick={() => {
                         setMenuOpen(false);
                         onRestore();
-                        requestAnimationFrame(() => disclosureRef.current?.focus());
+                        requestAnimationFrame(() =>
+                          requestAnimationFrame(() => disclosureRef.current?.focus()),
+                        );
                       }}
                       type="button"
                     >
@@ -1337,6 +1339,7 @@ export function Rail({
           ))}
         </div>
         <button
+          aria-label="Open attention inbox"
           className="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8"
           onClick={() => {
             workspaceStore.getState().setRailOverlayOpen(false);
