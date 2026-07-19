@@ -21,14 +21,26 @@ extension on ConnectionPhase {
     ConnectionPhase.failed => false,
   };
 
-  String? get actionLabel => switch (this) {
-    ConnectionPhase.disconnected => 'Connect',
-    ConnectionPhase.failed => 'Retry',
+  bool get canDisconnect => switch (this) {
+    ConnectionPhase.disconnected || ConnectionPhase.failed => false,
     ConnectionPhase.connecting ||
     ConnectionPhase.synchronizing ||
     ConnectionPhase.ready ||
-    ConnectionPhase.retrying => null,
+    ConnectionPhase.retrying => true,
   };
+
+  String get actionLabel => canDisconnect
+      ? 'Disconnect'
+      : switch (this) {
+          ConnectionPhase.disconnected => 'Connect',
+          ConnectionPhase.failed => 'Retry',
+          ConnectionPhase.connecting ||
+          ConnectionPhase.synchronizing ||
+          ConnectionPhase.ready ||
+          ConnectionPhase.retrying => throw StateError(
+            'disconnectable phase has no connection action',
+          ),
+        };
 }
 
 String _displaySessionTitle(SessionSummary? session) {
@@ -42,8 +54,10 @@ final class _SessionNavigation extends StatelessWidget {
     required this.mode,
     required this.connecting,
     required this.selectingSessionId,
+    required this.disconnecting,
     required this.showingHostManager,
     required this.onConnect,
+    required this.onDisconnect,
     required this.onManageHosts,
     required this.onSelectSession,
     this.onClose,
@@ -51,9 +65,11 @@ final class _SessionNavigation extends StatelessWidget {
 
   final T4ViewState state;
   final _SessionNavigationMode mode;
+  final bool disconnecting;
   final bool connecting;
   final String? selectingSessionId;
   final bool showingHostManager;
+  final Future<void> Function() onDisconnect;
   final Future<void> Function() onConnect;
   final VoidCallback onManageHosts;
   final Future<void> Function(String sessionId) onSelectSession;
@@ -100,8 +116,9 @@ final class _SessionNavigation extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: _T4Space.md),
               child: _ConnectionStatus(
                 phase: state.connectionPhase,
-                actionPending: connecting,
-                onAction: onConnect,
+                actionPending: connecting || disconnecting,
+                onConnect: onConnect,
+                onDisconnect: onDisconnect,
               ),
             ),
             if (activeProfile != null)
@@ -199,17 +216,20 @@ final class _ConnectionStatus extends StatelessWidget {
   const _ConnectionStatus({
     required this.phase,
     required this.actionPending,
-    required this.onAction,
+    required this.onConnect,
+    required this.onDisconnect,
   });
 
   final ConnectionPhase phase;
   final bool actionPending;
-  final Future<void> Function() onAction;
+  final Future<void> Function() onConnect;
+  final Future<void> Function() onDisconnect;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final actionLabel = phase.actionLabel;
+    final action = phase.canDisconnect ? onDisconnect : onConnect;
     final active = phase.isActive || actionPending;
 
     return Semantics(
@@ -242,11 +262,10 @@ final class _ConnectionStatus extends StatelessWidget {
               ).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
             ),
           ),
-          if (actionLabel != null)
-            TextButton(
-              onPressed: actionPending ? null : () => unawaited(onAction()),
-              child: Text(actionPending ? 'Working…' : actionLabel),
-            ),
+          TextButton(
+            onPressed: actionPending ? null : () => unawaited(action()),
+            child: Text(actionPending ? 'Working…' : actionLabel),
+          ),
         ],
       ),
     );

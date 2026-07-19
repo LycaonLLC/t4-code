@@ -115,6 +115,7 @@ void main() {
         connectionPhase: ConnectionPhase.ready,
         hostDirectory: directory,
         authenticationPhase: AuthenticationPhase.paired,
+        grantedCapabilities: t4RequestedCapabilities.toSet(),
       ),
       actions: actions,
       size: wideDesktop,
@@ -144,6 +145,13 @@ void main() {
     );
     await tester.tap(find.widgetWithText(TextButton, 'Remove').last);
     await tester.pumpAndSettle();
+    expect(find.text('Remove ${alpha.label}?'), findsOneWidget);
+    expect(
+      find.textContaining('pairing credential from this device'),
+      findsOneWidget,
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Remove host'));
+    await tester.pumpAndSettle();
     expect(actions.removedEndpointKeys, [alpha.endpointKey]);
   });
 
@@ -166,6 +174,7 @@ void main() {
     );
 
     expect(find.text('Pair this device'), findsOneWidget);
+    expect(find.text(t4PairCommand), findsOneWidget);
     final code = List<String>.filled(6, '1').join();
     await tester.enterText(find.byType(TextField), code);
     await tester.pump();
@@ -173,10 +182,81 @@ void main() {
     await tester.pump();
 
     expect(actions.pairingCodes, [code]);
-    final editable = tester.widget<EditableText>(find.byType(EditableText));
-    expect(editable.controller.text, isEmpty);
+    final codeField = tester.widget<TextField>(find.byType(TextField));
+    expect(codeField.controller?.text, isEmpty);
     expect(find.text(code), findsNothing);
   });
+
+  testWidgets('pairing-required state surfaces the host rejection', (
+    tester,
+  ) async {
+    final profile = HostProfile.parseTailnetAddress(
+      'https://alpha.tailnet-name.ts.net',
+    );
+    await pumpApp(
+      tester,
+      state: T4ViewState(
+        connectionPhase: ConnectionPhase.synchronizing,
+        hostDirectory: HostDirectory.empty().upsert(profile),
+        authenticationPhase: AuthenticationPhase.pairingRequired,
+        errorMessage:
+            'Pairing failed (INVALID_CODE). Check the code and try again.',
+      ),
+      actions: _FakeActions(),
+      size: compactPhone,
+    );
+
+    expect(
+      find.textContaining('Pairing failed (INVALID_CODE)'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('connected host can be deliberately disconnected', (
+    tester,
+  ) async {
+    final profile = HostProfile.parseTailnetAddress(
+      'https://alpha.tailnet-name.ts.net',
+    );
+    final actions = _FakeActions();
+    await pumpApp(
+      tester,
+      state: T4ViewState(
+        connectionPhase: ConnectionPhase.ready,
+        hostDirectory: HostDirectory.empty().upsert(profile),
+        authenticationPhase: AuthenticationPhase.paired,
+        grantedCapabilities: t4RequestedCapabilities.toSet(),
+      ),
+      actions: actions,
+      size: wideDesktop,
+    );
+
+    await tester.tap(find.widgetWithText(TextButton, 'Disconnect'));
+    await tester.pumpAndSettle();
+    expect(actions.disconnectCalls, 1);
+  });
+
+  testWidgets(
+    'configured endpoint can reconnect after a deliberate disconnect',
+    (tester) async {
+      final actions = _FakeActions();
+      await pumpApp(
+        tester,
+        state: const T4ViewState(
+          connectionPhase: ConnectionPhase.disconnected,
+          targetConfigured: true,
+        ),
+        actions: actions,
+        size: compactPhone,
+      );
+
+      expect(find.byTooltip('Connect'), findsOneWidget);
+      expect(find.text('Connect to T4'), findsNothing);
+      await tester.tap(find.byTooltip('Connect'));
+      await tester.pumpAndSettle();
+      expect(actions.connectCalls, 1);
+    },
+  );
 
   testWidgets('compact layout exposes host manager in the drawer', (
     tester,
@@ -256,8 +336,11 @@ final class _FakeActions implements T4Actions {
   final List<String> addedAddresses = <String>[];
   final List<String> addedProfileIds = <String>[];
   final List<String> activatedEndpointKeys = <String>[];
+  int connectCalls = 0;
   final List<String> removedEndpointKeys = <String>[];
   final List<String> pairingCodes = <String>[];
+  int cancelHostProbeCalls = 0;
+  int disconnectCalls = 0;
 
   @override
   Future<void> addHost(
@@ -272,12 +355,24 @@ final class _FakeActions implements T4Actions {
   }
 
   @override
+  void cancelHostProbe() {
+    cancelHostProbeCalls += 1;
+  }
+
+  @override
   Future<void> activateHost(String endpointKey) async {
     activatedEndpointKeys.add(endpointKey);
   }
 
   @override
-  Future<void> connect() async {}
+  Future<void> connect() async {
+    connectCalls += 1;
+  }
+
+  @override
+  Future<void> disconnect() async {
+    disconnectCalls += 1;
+  }
 
   @override
   Future<void> pairHost(String code) async {

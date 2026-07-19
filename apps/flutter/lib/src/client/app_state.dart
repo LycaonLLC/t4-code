@@ -11,6 +11,18 @@ enum ConnectionPhase {
 
 enum AuthenticationPhase { unknown, local, pairingRequired, pairing, paired }
 
+const List<String> t4RequestedCapabilities = <String>[
+  'sessions.read',
+  'sessions.prompt',
+  'sessions.control',
+  'sessions.manage',
+];
+
+final String t4PairCommand = <String>[
+  'omp appserver pair',
+  for (final capability in t4RequestedCapabilities) '--capability $capability',
+].join(' ');
+
 enum MessageRole { user, assistant, system, tool }
 
 final class SessionSummary {
@@ -52,6 +64,9 @@ final class T4ViewState {
     this.errorMessage,
     this.hostDirectory = const HostDirectory.empty(),
     this.authenticationPhase = AuthenticationPhase.unknown,
+    this.grantedCapabilities = const <String>{},
+    this.grantedFeatures = const <String>{},
+    this.targetConfigured = false,
     this.hostOperationPending = false,
     this.submitting = false,
   });
@@ -66,6 +81,9 @@ final class T4ViewState {
   final String? errorMessage;
   final HostDirectory hostDirectory;
   final AuthenticationPhase authenticationPhase;
+  final Set<String> grantedCapabilities;
+  final Set<String> grantedFeatures;
+  final bool targetConfigured;
   final bool hostOperationPending;
   final bool submitting;
 
@@ -79,6 +97,9 @@ final class T4ViewState {
 
 abstract interface class T4Actions {
   Future<void> connect();
+  Future<void> disconnect();
+
+  void cancelHostProbe();
 
   Future<void> addHost(
     String address, {

@@ -14,6 +14,7 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   String? _selectingSessionId;
   bool _connecting = false;
+  bool _disconnecting = false;
   bool _showHostManager = false;
 
   Future<void> _connect() async {
@@ -28,6 +29,22 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
       if (mounted) setState(() => _connecting = false);
     }
   }
+
+  Future<void> _disconnect() async {
+    if (_disconnecting) return;
+    setState(() => _disconnecting = true);
+    try {
+      await widget.actions.disconnect();
+    } on Object {
+      if (!mounted) return;
+      _showActionFailure('Could not disconnect. Try again.');
+    } finally {
+      if (mounted) setState(() => _disconnecting = false);
+    }
+  }
+
+  Future<void> _runConnectionAction() =>
+      widget.state.connectionPhase.canDisconnect ? _disconnect() : _connect();
 
   Future<void> _selectSession(
     String sessionId, {
@@ -99,6 +116,7 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
   @override
   Widget build(BuildContext context) {
     final needsOnboarding =
+        !widget.state.targetConfigured &&
         widget.state.hostDirectory.profiles.isEmpty &&
         widget.state.connectionPhase == ConnectionPhase.disconnected;
     if (needsOnboarding) {
@@ -126,9 +144,11 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
                 state: widget.state,
                 mode: _SessionNavigationMode.rail,
                 connecting: _connecting,
+                disconnecting: _disconnecting,
                 selectingSessionId: _selectingSessionId,
                 showingHostManager: _showHostManager,
                 onConnect: _connect,
+                onDisconnect: _disconnect,
                 onManageHosts: () => _openHostManager(closeDrawer: false),
                 onSelectSession: (sessionId) =>
                     _selectSession(sessionId, closeDrawer: false),
@@ -176,12 +196,16 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
                 ],
               ),
         actions: [
-          if (!_showHostManager && actionLabel != null)
+          if (!_showHostManager)
             IconButton(
-              onPressed: _connecting ? null : () => unawaited(_connect()),
+              onPressed: _connecting || _disconnecting
+                  ? null
+                  : () => unawaited(_runConnectionAction()),
               tooltip: actionLabel,
               icon: Icon(
-                phase == ConnectionPhase.failed
+                phase.canDisconnect
+                    ? Icons.link_off
+                    : phase == ConnectionPhase.failed
                     ? Icons.refresh
                     : Icons.power_settings_new,
               ),
@@ -195,8 +219,10 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
           mode: _SessionNavigationMode.drawer,
           connecting: _connecting,
           selectingSessionId: _selectingSessionId,
+          disconnecting: _disconnecting,
           showingHostManager: _showHostManager,
           onConnect: _connect,
+          onDisconnect: _disconnect,
           onManageHosts: () => _openHostManager(closeDrawer: true),
           onSelectSession: (sessionId) =>
               _selectSession(sessionId, closeDrawer: true),

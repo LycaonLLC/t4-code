@@ -11,13 +11,6 @@ import '../protocol/protocol.dart';
 import 'app_state.dart';
 import 'web_socket_connector.dart';
 
-const List<String> _deviceCapabilities = <String>[
-  'sessions.read',
-  'sessions.prompt',
-  'sessions.control',
-  'sessions.manage',
-];
-
 final class T4ClientController extends ChangeNotifier implements T4Actions {
   T4ClientController({
     required this.hostDirectoryStore,
@@ -40,6 +33,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   HostDirectory _hostDirectory = const HostDirectory.empty();
   WebSocketChannel? _channel;
   StreamSubscription<Object?>? _subscription;
+  WebSocketChannel? _hostProbe;
   Timer? _reconnectTimer;
   List<SessionSummary> _sessions = const <SessionSummary>[];
   ConnectionPhase _phase = ConnectionPhase.disconnected;
@@ -48,6 +42,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   String? _errorMessage;
   String? _hostId;
   _PendingPair? _pendingPair;
+  Set<String> _grantedCapabilities = const <String>{};
   Set<String> _grantedFeatures = const <String>{};
   Future<void>? _initialization;
   bool _initialized = false;
@@ -57,6 +52,8 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   bool _disposed = false;
   int _connectionGeneration = 0;
   int _hostOperationGeneration = 0;
+  int? _hostProbeOperation;
+  bool _reconnectEnabled = true;
   int _bootstrapGeneration = -1;
   int _commandOrdinal = 0;
   int _reconnectAttempt = 0;
@@ -69,6 +66,9 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     errorMessage: _errorMessage,
     hostDirectory: _hostDirectory,
     authenticationPhase: _authenticationPhase,
+    grantedCapabilities: Set<String>.unmodifiable(_grantedCapabilities),
+    grantedFeatures: Set<String>.unmodifiable(_grantedFeatures),
+    targetConfigured: developmentEndpoint != null || _activeProfile != null,
     hostOperationPending: _hostOperationPending,
     submitting: _submitting,
   );
@@ -94,11 +94,52 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
 
   @override
   Future<void> connect() async {
+    _reconnectEnabled = true;
     if (!_initialized) {
       await initialize();
       return;
     }
     await _connectCurrent();
+  }
+
+  @override
+  Future<void> disconnect() async {
+    _reconnectEnabled = false;
+    _connectionGeneration += 1;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    final previousSubscription = _subscription;
+    final previousChannel = _channel;
+    _subscription = null;
+    _channel = null;
+    _pendingCommands.clear();
+    _pendingPair = null;
+    _submitting = false;
+    _hostId = null;
+    _grantedCapabilities = const <String>{};
+    _grantedFeatures = const <String>{};
+    _bootstrapGeneration = -1;
+    _reconnectAttempt = 0;
+    _phase = ConnectionPhase.disconnected;
+    _authenticationPhase = AuthenticationPhase.unknown;
+    _errorMessage = null;
+    _publish();
+    await previousSubscription?.cancel();
+    await previousChannel?.sink.close();
+  }
+
+  @override
+  void cancelHostProbe() {
+    final operation = _hostProbeOperation;
+    if (operation == null) return;
+    _hostOperationGeneration += 1;
+    _hostProbeOperation = null;
+    final probe = _hostProbe;
+    _hostProbe = null;
+    _hostOperationPending = false;
+    _errorMessage = null;
+    _publish();
+    if (probe != null) unawaited(probe.sink.close());
   }
 
   Future<void> _connectCurrent() async {
@@ -127,6 +168,8 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         ? ConnectionPhase.connecting
         : ConnectionPhase.retrying;
     _authenticationPhase = AuthenticationPhase.unknown;
+    _grantedCapabilities = const <String>{};
+    _grantedFeatures = const <String>{};
     _errorMessage = null;
     _publish();
 
@@ -170,7 +213,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       platform: defaultTargetPlatform.name,
     ),
     requestedFeatures: const <String>['resume', 'host.watch'],
-    capabilities: _deviceCapabilities,
+    capabilities: t4RequestedCapabilities,
     authentication: credentials == null
         ? null
         : DeviceAuthentication(
@@ -204,6 +247,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     }
     if (_hostOperationPending) return;
     final operation = ++_hostOperationGeneration;
+    _hostProbeOperation = operation;
     _hostOperationPending = true;
     _errorMessage = null;
     _publish();
@@ -214,9 +258,15 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         profileId: profileId,
       );
       probe = await _webSocketConnector(profile.webSocketUrl);
+      if (!_acceptHostOperation(operation)) {
+        await probe.sink.close();
+        return;
+      }
+      _hostProbe = probe;
       await probe.ready;
       await probe.sink.close();
       probe = null;
+      _hostProbe = null;
       if (!_acceptHostOperation(operation)) return;
 
       final next = _hostDirectory.upsert(profile);
@@ -226,6 +276,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       _hostDirectory = next;
       if (switched) _clearTargetProjection();
       _hostOperationPending = false;
+      _reconnectEnabled = true;
       _publish();
       await _connectCurrent();
     } on Object catch (error) {
@@ -235,6 +286,9 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       _errorMessage = 'Could not add host: $error';
       _publish();
       rethrow;
+    } finally {
+      if (_hostProbeOperation == operation) _hostProbeOperation = null;
+      if (identical(_hostProbe, probe)) _hostProbe = null;
     }
   }
 
@@ -260,6 +314,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       _clearTargetProjection();
       _hostOperationPending = false;
       _publish();
+      _reconnectEnabled = true;
       await _connectCurrent();
     } on Object catch (error) {
       if (!_acceptHostOperation(operation)) return;
@@ -339,9 +394,9 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       requestId: ids.requestId,
       endpointKey: profile.endpointKey,
       deviceId: deviceId,
-      deviceName: 'T4 Code Mobile',
+      deviceName: 'T4 Code',
       platform: defaultTargetPlatform.name,
-      requestedCapabilities: _deviceCapabilities,
+      requestedCapabilities: t4RequestedCapabilities,
     );
     _pendingPair = pending;
     _authenticationPhase = AuthenticationPhase.pairing;
@@ -452,9 +507,19 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
           'paired' => AuthenticationPhase.paired,
           _ => throw const FormatException('unknown authentication state'),
         };
-        _publish();
+        _grantedCapabilities = frame.grantedCapabilities.toSet();
         _grantedFeatures = frame.grantedFeatures.toSet();
-        if (frame.grantedCapabilities.contains('sessions.read') &&
+        if (_authenticationPhase != AuthenticationPhase.pairingRequired &&
+            !_grantedCapabilities.contains('sessions.read')) {
+          _phase = ConnectionPhase.ready;
+          _errorMessage =
+              'This device cannot read sessions. Pair again with '
+              'sessions.read permission.';
+          _publish();
+          return;
+        }
+        _publish();
+        if (_grantedCapabilities.contains('sessions.read') &&
             _authenticationPhase != AuthenticationPhase.pairingRequired &&
             _bootstrapGeneration != _connectionGeneration) {
           _bootstrapGeneration = _connectionGeneration;
@@ -786,6 +851,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _selectedSessionId = null;
     _hostId = null;
     _submitting = false;
+    _grantedCapabilities = const <String>{};
     _grantedFeatures = const <String>{};
     _bootstrapGeneration = -1;
     _reconnectAttempt = 0;
@@ -800,6 +866,13 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _pendingCommands.clear();
     _pendingPair = null;
     _submitting = false;
+    if (!_reconnectEnabled) {
+      _phase = ConnectionPhase.disconnected;
+      _authenticationPhase = AuthenticationPhase.unknown;
+      _errorMessage = null;
+      _publish();
+      return;
+    }
     _reconnectAttempt += 1;
     final exponent = (_reconnectAttempt - 1).clamp(0, 4);
     final delay = Duration(milliseconds: 500 * (1 << exponent));
@@ -811,7 +884,9 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _publish();
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(delay, () {
-      if (!_disposed && generation == _connectionGeneration) {
+      if (!_disposed &&
+          _reconnectEnabled &&
+          generation == _connectionGeneration) {
         unawaited(_connectCurrent());
       }
     });
@@ -838,6 +913,11 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   @override
   void dispose() {
     _disposed = true;
+    _reconnectEnabled = false;
+    _hostProbeOperation = null;
+    final hostProbe = _hostProbe;
+    _hostProbe = null;
+    if (hostProbe != null) unawaited(hostProbe.sink.close());
     _connectionGeneration += 1;
     _hostOperationGeneration += 1;
     _reconnectTimer?.cancel();

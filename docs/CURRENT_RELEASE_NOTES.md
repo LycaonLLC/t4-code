@@ -18,6 +18,11 @@ disposable OMP appserver connection pass locally. The existing Electron, React, 
 Capacitor clients remain the released implementation until the complete feature matrix, packaging,
 update, migration, security, and release gates pass.
 
+Stage 3 host parity is now complete on the local migration branch. The Flutter client presents
+negotiated device permissions, deliberate disconnect/reconnect controls, cancellable pre-save host
+checks, an exact least-authority pairing command, pairing failures, and confirmed host removal that
+deletes only the device-local address and credential.
+
 
 ## Signed and notarized on macOS
 

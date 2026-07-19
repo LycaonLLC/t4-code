@@ -102,6 +102,11 @@ void main() {
       expect(requestedFeatures, containsAll(<String>['resume', 'host.watch']));
       channel.emit(_welcome('host-alpha', features: requestedFeatures));
       await _flush();
+      expect(
+        controller.state.grantedCapabilities,
+        containsAll(<String>['sessions.read']),
+      );
+      expect(controller.state.grantedFeatures, containsAll(requestedFeatures));
       final list = channel.sentJson.last;
       expect(list, containsPair('command', 'session.list'));
 
@@ -228,6 +233,57 @@ void main() {
       expect(connector.uris.last, beta.webSocketUrl);
     },
   );
+
+  test('deliberate disconnect cancels an automatic reconnect', () async {
+    final profile = _profile('alpha');
+    final directory = _MemoryDirectoryStore(
+      directory: const HostDirectory.empty().upsert(profile),
+    );
+    final connector = _FakeConnector();
+    final controller = _controller(
+      directory,
+      _MemoryCredentialStore(),
+      connector,
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    final first = connector.channels.single;
+    first.fail(StateError('network lost'));
+    await _flush();
+    expect(controller.state.connectionPhase, ConnectionPhase.retrying);
+
+    await controller.disconnect();
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+
+    expect(controller.state.connectionPhase, ConnectionPhase.disconnected);
+    expect(connector.channels, hasLength(1));
+    await controller.connect();
+    expect(connector.channels, hasLength(2));
+  });
+
+  test('cancelling a pending host probe never saves it', () async {
+    final readyGate = Completer<void>();
+    final directory = _MemoryDirectoryStore();
+    final connector = _FakeConnector(readyGate: readyGate);
+    final controller = _controller(
+      directory,
+      _MemoryCredentialStore(),
+      connector,
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+
+    final adding = controller.addHost('alpha.example.ts.net');
+    await _until(() => connector.channels.isNotEmpty);
+    expect(controller.state.hostOperationPending, isTrue);
+    controller.cancelHostProbe();
+    readyGate.complete();
+    await adding;
+
+    expect(controller.state.hostOperationPending, isFalse);
+    expect(directory.saved, isEmpty);
+    expect(directory.directory.profiles, isEmpty);
+  });
 
   test('credential deletion failure rolls host metadata back', () async {
     final alpha = _profile('alpha');
@@ -552,7 +608,11 @@ final class _MemoryCredentialStore implements HostCredentialStore {
 }
 
 final class _FakeConnector {
-  _FakeConnector({List<String>? events}) : events = events ?? <String>[];
+  _FakeConnector({List<String>? events, this.readyGate})
+    : events = events ?? <String>[];
+
+  final Completer<void>? readyGate;
+  // Constructor is declared above so tests can delay a probe handshake.
 
   final List<String> events;
   final List<Uri> uris = <Uri>[];
@@ -561,18 +621,23 @@ final class _FakeConnector {
   Future<WebSocketChannel> call(Uri uri) async {
     events.add('connect:$uri');
     uris.add(uri);
-    final channel = _FakeWebSocketChannel(channels.length, events);
+    final channel = _FakeWebSocketChannel(
+      channels.length,
+      events,
+      readyGate: readyGate,
+    );
     channels.add(channel);
     return channel;
   }
 }
 
 final class _FakeWebSocketChannel implements WebSocketChannel {
-  _FakeWebSocketChannel(this.index, this.events)
+  _FakeWebSocketChannel(this.index, this.events, {this.readyGate})
     : sink = _FakeWebSocketSink(index, events);
 
   final int index;
   final List<String> events;
+  final Completer<void>? readyGate;
   final StreamController<Object?> _incoming = StreamController<Object?>();
   @override
   final _FakeWebSocketSink sink;
@@ -583,9 +648,10 @@ final class _FakeWebSocketChannel implements WebSocketChannel {
       .toList(growable: false);
 
   void emit(Map<String, Object?> frame) => _incoming.add(jsonEncode(frame));
+  void fail(Object error) => _incoming.addError(error);
 
   @override
-  Future<void> get ready => Future<void>.value();
+  Future<void> get ready => readyGate?.future ?? Future<void>.value();
   @override
   Stream<Object?> get stream => _incoming.stream;
   @override

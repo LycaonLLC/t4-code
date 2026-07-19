@@ -118,6 +118,39 @@ final class _HostManagerPaneState extends State<_HostManagerPane> {
     }
   }
 
+  Future<void> _confirmRemove({
+    required String endpointKey,
+    required String label,
+  }) async {
+    if (_pendingProfileKey != null || widget.state.hostOperationPending) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Remove $label?'),
+        content: const Text(
+          'This removes the saved address and pairing credential from this '
+          'device. The host and its sessions are not changed.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Keep host'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Remove host'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _runProfileAction(
+      endpointKey: endpointKey,
+      action: () => widget.actions.removeHost(endpointKey),
+      failureMessage: 'Could not remove this host. Try again.',
+    );
+  }
+
   Widget _buildProfile(BuildContext context, int index) {
     final profile = widget.state.hostDirectory.profiles[index];
     final active =
@@ -189,6 +222,12 @@ final class _HostManagerPaneState extends State<_HostManagerPane> {
                 color: active ? scheme.primary : scheme.onSurfaceVariant,
               ),
             ),
+            if (active &&
+                widget.state.authenticationPhase !=
+                    AuthenticationPhase.unknown) ...[
+              const SizedBox(height: _T4Space.xxs),
+              _HostPermissionSummary(state: widget.state),
+            ],
             const SizedBox(height: _T4Space.xs),
             Wrap(
               spacing: _T4Space.xs,
@@ -221,13 +260,9 @@ final class _HostManagerPaneState extends State<_HostManagerPane> {
                     onPressed: pending
                         ? null
                         : () => unawaited(
-                            _runProfileAction(
+                            _confirmRemove(
                               endpointKey: profile.endpointKey,
-                              action: () => widget.actions.removeHost(
-                                profile.endpointKey,
-                              ),
-                              failureMessage:
-                                  'Could not remove this host. Try again.',
+                              label: profile.label,
                             ),
                           ),
                     child: pending
@@ -325,6 +360,46 @@ final class _HostManagerPaneState extends State<_HostManagerPane> {
   }
 }
 
+final class _HostPermissionSummary extends StatelessWidget {
+  const _HostPermissionSummary({required this.state});
+
+  final T4ViewState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final granted = state.grantedCapabilities;
+    final missing = t4RequestedCapabilities
+        .where((capability) => !granted.contains(capability))
+        .toList(growable: false);
+    final colors = Theme.of(context).colorScheme;
+    return Semantics(
+      container: true,
+      label:
+          'Granted ${granted.length} of '
+          '${t4RequestedCapabilities.length} requested permissions',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Permissions: ${granted.length} of '
+            '${t4RequestedCapabilities.length} granted',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+          ),
+          if (missing.isNotEmpty)
+            Text(
+              'Not granted: ${missing.join(', ')}',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: colors.error),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 final class _HostForm extends StatefulWidget {
   const _HostForm({
     required this.actions,
@@ -387,6 +462,7 @@ final class _HostFormState extends State<_HostForm> {
 
   @override
   void dispose() {
+    widget.actions.cancelHostProbe();
     _addressController.dispose();
     _profileController.dispose();
     _profileFocusNode.dispose();
@@ -482,6 +558,7 @@ final class _PairingPaneState extends State<_PairingPane> {
   bool _hasCompleteCode = false;
   bool _submitting = false;
   String? _errorMessage;
+  bool _copiedCommand = false;
 
   bool get _pending =>
       widget.state.authenticationPhase == AuthenticationPhase.pairing ||
@@ -521,6 +598,12 @@ final class _PairingPaneState extends State<_PairingPane> {
     }
   }
 
+  Future<void> _copyPairCommand() async {
+    await Clipboard.setData(ClipboardData(text: t4PairCommand));
+    if (!mounted) return;
+    setState(() => _copiedCommand = true);
+  }
+
   @override
   void dispose() {
     _codeController
@@ -532,7 +615,11 @@ final class _PairingPaneState extends State<_PairingPane> {
 
   @override
   Widget build(BuildContext context) {
-    final error = _errorMessage;
+    final error =
+        _errorMessage ??
+        (widget.state.authenticationPhase == AuthenticationPhase.pairingRequired
+            ? widget.state.errorMessage
+            : null);
     return SafeArea(
       top: false,
       child: SingleChildScrollView(
@@ -559,6 +646,50 @@ final class _PairingPaneState extends State<_PairingPane> {
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                   ),
+                  Text(
+                    'On the host computer, run this command to create a '
+                    'one-time code:',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: _T4Space.sm),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(_T4Radius.md),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(_T4Space.sm),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: SelectableText(
+                              t4PairCommand,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(fontFamily: 'monospace'),
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: _copyPairCommand,
+                            tooltip: 'Copy pair command',
+                            icon: Icon(
+                              _copiedCommand ? Icons.check : Icons.copy,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      _copiedCommand ? 'Pair command copied.' : '',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                  const SizedBox(height: _T4Space.lg),
                   const SizedBox(height: _T4Space.xl),
                   Semantics(
                     textField: true,
