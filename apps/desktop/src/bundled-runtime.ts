@@ -1,6 +1,17 @@
+import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, copyFile, mkdir, readFile, rename, stat, unlink } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+const SIGNED_RUNTIME_TEAM_ID = "WJLM3D3DK6";
+const SIGNED_RUNTIME_CERTIFICATE = "Developer ID Application: Michael Schoenberger (WJLM3D3DK6)";
+const SIGNED_RUNTIME_CERTIFICATE_AUTHORITY = "Developer ID Certification Authority";
+const SIGNED_RUNTIME_CERTIFICATE_SHA256 =
+  "7f946ec45aabcb895a46df233f326d8a878d1e874b2d546bfa781d4bd7b081ef";
 
 export interface BundledRuntimeManifest {
   readonly version: 1;
@@ -29,27 +40,78 @@ function decodeManifest(value: unknown): BundledRuntimeManifest {
   return record as BundledRuntimeManifest;
 }
 
-async function matches(path: string, manifest: BundledRuntimeManifest): Promise<boolean> {
+interface RuntimeIntegrity {
+  readonly size: number;
+  readonly sha256: string;
+}
+
+async function inspectIntegrity(path: string): Promise<RuntimeIntegrity> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  return { size: (await stat(path)).size, sha256: hash.digest("hex") };
+}
+
+async function matches(path: string, integrity: RuntimeIntegrity): Promise<boolean> {
   try {
-    if ((await stat(path)).size !== manifest.size) return false;
-    const hash = createHash("sha256").update(await readFile(path)).digest("hex");
-    return hash === manifest.sha256;
+    const actual = await inspectIntegrity(path);
+    return actual.size === integrity.size && actual.sha256 === integrity.sha256;
   } catch {
     return false;
+  }
+}
+
+async function verifySignedDeveloperIdRuntime(path: string): Promise<void> {
+  const certificateDirectory = await mkdtemp(join(tmpdir(), "t4-runtime-certificate-"));
+  const certificatePrefix = join(certificateDirectory, "certificate");
+  try {
+    await execFileAsync("/usr/bin/codesign", ["--verify", "--strict", "--verbose=2", path], {
+      maxBuffer: 1024 * 1024,
+    });
+    const display = await execFileAsync(
+      "/usr/bin/codesign",
+      ["--display", "--verbose=4", `--extract-certificates=${certificatePrefix}`, path],
+      { maxBuffer: 1024 * 1024 },
+    );
+    const output = `${display.stdout}\n${display.stderr}`;
+    const leafCertificate = await readFile(`${certificatePrefix}0`);
+    const certificateSha256 = createHash("sha256").update(leafCertificate).digest("hex");
+    if (
+      !output.includes("Identifier=omp") ||
+      !output.includes(`TeamIdentifier=${SIGNED_RUNTIME_TEAM_ID}`) ||
+      !output.includes(`Authority=${SIGNED_RUNTIME_CERTIFICATE}`) ||
+      !output.includes(`Authority=${SIGNED_RUNTIME_CERTIFICATE_AUTHORITY}`) ||
+      (!output.includes("flags=0x10000(runtime)") && !output.includes("Runtime Version=")) ||
+      !output.includes("Timestamp=") ||
+      certificateSha256 !== SIGNED_RUNTIME_CERTIFICATE_SHA256
+    ) throw new Error("signed bundled OMP runtime identity is invalid");
+  } finally {
+    await rm(certificateDirectory, { recursive: true, force: true });
   }
 }
 
 export async function installBundledOmpRuntime(options: {
   readonly resourcesPath: string;
   readonly applicationSupportPath: string;
+  readonly verifySignedRuntime?: (path: string) => Promise<void>;
 }): Promise<string> {
   const sourceRoot = join(options.resourcesPath, "runtime");
   const manifest = decodeManifest(JSON.parse(await readFile(join(sourceRoot, "manifest.json"), "utf8")));
   const source = join(sourceRoot, manifest.executable);
-  if (!(await matches(source, manifest))) throw new Error("bundled OMP runtime failed its integrity check");
+  let sourceIntegrity: RuntimeIntegrity;
+  try {
+    sourceIntegrity = await inspectIntegrity(source);
+    if (
+      sourceIntegrity.size !== manifest.size ||
+      sourceIntegrity.sha256 !== manifest.sha256
+    ) {
+      await (options.verifySignedRuntime ?? verifySignedDeveloperIdRuntime)(source);
+    }
+  } catch {
+    throw new Error("bundled OMP runtime failed its integrity check");
+  }
   const destinationRoot = join(options.applicationSupportPath, "runtime", manifest.tag);
   const destination = join(destinationRoot, "omp");
-  if (await matches(destination, manifest)) {
+  if (await matches(destination, sourceIntegrity)) {
     await chmod(destination, 0o755);
     return destination;
   }
@@ -58,7 +120,9 @@ export async function installBundledOmpRuntime(options: {
   try {
     await copyFile(source, temporary);
     await chmod(temporary, 0o755);
-    if (!(await matches(temporary, manifest))) throw new Error("installed OMP runtime failed its integrity check");
+    if (!(await matches(temporary, sourceIntegrity))) {
+      throw new Error("installed OMP runtime failed its integrity check");
+    }
     await rename(temporary, destination);
   } finally {
     await unlink(temporary).catch(() => {});
