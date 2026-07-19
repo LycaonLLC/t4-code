@@ -7,6 +7,9 @@ allowBuilds:
   electron-winstaller: false
   esbuild: true
   node-pty: true
+  # ESLint's resolver ships ready-to-use platform packages. Its optional build
+  # step is not needed and stays disabled under the repository safety policy.
+  unrs-resolver: false
 
 catalog:
   "@types/node": 24.12.4

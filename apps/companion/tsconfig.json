@@ -1,0 +1,30 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "allowImportingTsExtensions": true,
+    "types": [
+      "node"
+    ],
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ],
+      "@/assets/*": [
+        "./assets/*"
+      ]
+    }
+  },
+  "include": [
+    "src/app/**/*.ts",
+    "src/app/**/*.tsx",
+    "src/components/attention-row.tsx",
+    "src/components/connection-pill.tsx",
+    "src/components/session-row.tsx",
+    "src/runtime/**/*.ts",
+    "src/runtime/**/*.tsx",
+    "src/theme.ts",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts"
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "expo": {
+    "name": "T4 Companion",
+    "slug": "t4-companion",
+    "version": "0.1.28",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "t4companion",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#090b0f",
+    "ios": {
+      "icon": "./assets/images/icon.png",
+      "bundleIdentifier": "com.roycorp.t4companion",
+      "supportsTablet": false
+    },
+    "android": {
+      "package": "com.roycorp.t4companion",
+      "adaptiveIcon": {
+          "backgroundColor": "#090b0f",
+          "foregroundImage": "./assets/images/android-icon-foreground.png",
+          "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": true
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#090b0f",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 76
+        }
+      ],
+      "expo-secure-store"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}

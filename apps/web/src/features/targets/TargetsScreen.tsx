@@ -35,6 +35,7 @@ import {
   type TargetCapabilityGroupId,
   type TargetRow,
 } from "./model.ts";
+import { companionSetupLink } from "./phone-setup.ts";
 import {
   useTargets,
   type ProfileActionId,
@@ -189,6 +190,7 @@ function PhoneSetupCard({ api }: { readonly api: PhoneSetupApi }) {
   const [state, setState] = useState<PhoneSetupState | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [destination, setDestination] = useState<"companion" | "browser">("companion");
   useEffect(() => {
     let active = true;
     void inspect().then((next) => { if (active) setState(next); }, () => {
@@ -204,12 +206,16 @@ function PhoneSetupCard({ api }: { readonly api: PhoneSetupApi }) {
   };
   const copy = async () => {
     if (!state?.url) return;
-    try { await navigator.clipboard.writeText(state.url); }
+    const setupUrl = destination === "companion" ? companionSetupLink(state.url) : state.url;
+    try { await navigator.clipboard.writeText(setupUrl); }
     catch { return; }
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1_500);
   };
   const ready = state?.phase === "ready" && state.url !== undefined;
+  const setupUrl = ready
+    ? destination === "companion" ? companionSetupLink(state.url!) : state.url!
+    : undefined;
   return (
     <section aria-labelledby="phone-setup-heading" className="rounded-lg border border-border bg-card p-4">
       <div className="flex items-start justify-between gap-3">
@@ -227,21 +233,39 @@ function PhoneSetupCard({ api }: { readonly api: PhoneSetupApi }) {
       {ready ? (
         <div className="mt-4 grid items-center gap-4 sm:grid-cols-[auto_1fr]">
           <div className="w-fit rounded-xl p-3 shadow-sm">
-            <QRCodeSVG aria-label="QR code for private T4 Code phone access" level="M" size={164} value={state.url!} />
+            <QRCodeSVG aria-label="QR code for private T4 Code phone access" level="M" size={164} value={setupUrl!} />
           </div>
           <div className="flex min-w-0 flex-col gap-3">
-            <ol className="list-decimal space-y-1 pl-4 text-sm">
-              <li>Open Tailscale on your phone, sign in to the same account, and connect.</li>
-              <li>
-                For automatic reconnect, tap your Tailscale profile picture, open
-                {" "}<span className="font-medium">VPN On Demand</span>, and set both Wi-Fi and
-                Cellular to <span className="font-medium">Always</span>.
-              </li>
-              <li>Scan this code with your phone camera.</li>
-              <li>Choose <span className="font-medium">Add to Home Screen</span> in Safari if you want an app icon.</li>
-            </ol>
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Phone experience">
+              <Button onClick={() => setDestination("companion")} size="xs" variant={destination === "companion" ? "default" : "outline"}>
+                Companion app
+              </Button>
+              <Button onClick={() => setDestination("browser")} size="xs" variant={destination === "browser" ? "default" : "outline"}>
+                Safari web app
+              </Button>
+            </div>
+            {destination === "companion" ? (
+              <ol className="list-decimal space-y-1 pl-4 text-sm">
+                <li>Open Tailscale on your phone, sign in to the same account, and connect.</li>
+                <li>Install T4 Companion, then scan this code with your phone camera.</li>
+                <li>Choose <span className="font-medium">Open in T4 Companion</span>.</li>
+                <li>The app saves this Mac and reconnects automatically from then on.</li>
+              </ol>
+            ) : (
+              <ol className="list-decimal space-y-1 pl-4 text-sm">
+                <li>Open Tailscale on your phone, sign in to the same account, and connect.</li>
+                <li>Scan this code with your phone camera.</li>
+                <li>In Safari, choose <span className="font-medium">Add to Home Screen</span>.</li>
+                <li>This address stays the same as long as the Mac keeps its Tailscale name.</li>
+              </ol>
+            )}
+            <p className="text-muted-foreground text-xs">
+              For automatic reconnect, open your Tailscale profile settings, choose
+              {" "}<span className="font-medium">VPN On Demand</span>, and set both Wi-Fi and Cellular to
+              {" "}<span className="font-medium">Always</span>.
+            </p>
             <div className="flex min-w-0 items-center gap-2">
-              <code className="min-w-0 flex-1 truncate rounded bg-secondary px-2 py-1.5 text-xs">{state.url}</code>
+              <code className="min-w-0 flex-1 truncate rounded bg-secondary px-2 py-1.5 text-xs">{setupUrl}</code>
               <Button onClick={() => void copy()} size="xs" variant="outline">
                 {copied ? <Check /> : <Copy />}{copied ? "Copied" : "Copy"}
               </Button>
