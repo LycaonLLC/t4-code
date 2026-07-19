@@ -44,6 +44,8 @@ export interface ToolRenderHost {
   hasAgent?(id: string): boolean;
   /** Open the sub-session/transcript view for an agent id. */
   openAgent?(id: string): void;
+  /** Open this session's focused browser preview workspace. */
+  openPreview?(): void;
 }
 
 export interface ToolRenderProps {

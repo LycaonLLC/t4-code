@@ -370,7 +370,6 @@ async function openSession(page: Page, mobile: boolean): Promise<void> {
 }
 
 test.describe.configure({ mode: "serial" });
-
 test("routes mobile session creation to the selected profile and preserves both profiles", async ({
   page,
 }) => {
@@ -545,6 +544,11 @@ test("@soak mounts the bounded tail of a 10k history on a phone viewport", async
       };
       requestAnimationFrame(inspect);
     });
+    await rail.locator('[data-session-row="host-history/session-history"]').evaluate((element) => {
+      element.addEventListener("click", () => {
+        Object.assign(window, { __t4SessionDomClickAt: performance.now() });
+      }, { capture: true, once: true });
+    });
     const sessionClickStartedAt = await page.evaluate(() => performance.now());
     await rail.locator('[data-session-row="host-history/session-history"]').click();
 
@@ -587,6 +591,10 @@ test("@soak mounts the bounded tail of a 10k history on a phone viewport", async
     ) {
       throw new Error("browser paint observer returned incomplete phases");
     }
+    const sessionDomClickAt = await page.evaluate(() => (
+      window as typeof window & { __t4SessionDomClickAt?: number }
+    ).__t4SessionDomClickAt);
+    if (sessionDomClickAt === undefined) throw new Error("session DOM click timestamp was not captured");
     const phaseOutput = process.env.T4_PERF_PHASE_OUTPUT;
     if (phaseOutput !== undefined) {
       await writeFile(
@@ -595,6 +603,11 @@ test("@soak mounts the bounded tail of a 10k history on a phone viewport", async
           mountDuration,
           navigationDomContentLoaded: navigationTiming.domContentLoaded,
           connectedAfterDomContentLoaded: connectedAt - navigationTiming.domContentLoaded,
+          sessionClickCommandToDomClick: sessionDomClickAt - sessionClickStartedAt,
+          sessionDomClickToTranscriptVisible: phases.transcriptVisibleAt - sessionDomClickAt,
+          sessionDomClickToTailAligned: phases.tailAlignedAt - sessionDomClickAt,
+          sessionDomClickToRealListVisible: phases.realListVisibleAt - sessionDomClickAt,
+          sessionDomClickToTailPainted: phases.tailPaintedAt - sessionDomClickAt,
           sessionClickToTranscriptVisible: phases.transcriptVisibleAt - sessionClickStartedAt,
           sessionClickToTailAligned: phases.tailAlignedAt - sessionClickStartedAt,
           tailAlignedToRealListVisible: phases.realListVisibleAt - phases.tailAlignedAt,
@@ -1425,5 +1438,50 @@ test("manages a session from a phone and converges another live client", async (
     await expect(reloadedRail.getByRole("button", { name: /^New session in /u })).toBeVisible();
   } finally {
     await observerContext.close();
+  }
+});
+
+test("opens a session-linked browser preview, captures a snapshot, and keeps controls mobile-safe", async ({
+  page,
+}) => {
+  const previewFixture = new FixtureProcess("preview-v1");
+  let previewWeb: BuiltWebServer | undefined;
+  try {
+    await previewFixture.start();
+    previewWeb = new BuiltWebServer(previewFixture.wsUrl);
+    await previewWeb.start();
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(previewWeb.url, { waitUntil: "domcontentloaded" });
+    await expect(page.getByText(CONNECTED_COPY, { exact: true })).toBeVisible();
+    const session = page.locator('[data-session-row="host-preview/session-preview"]');
+    await expect(session).toBeVisible();
+    await session.click();
+
+    const openPreview = page.getByRole("button", {
+      name: "Open browser preview for this session",
+    });
+    await expect(openPreview).toBeVisible();
+    await openPreview.click();
+    await expect(page).toHaveURL(/#\/sessions\/[^/]+\/preview$/u);
+    await expect(page.getByRole("heading", { name: "Browser preview" })).toBeVisible();
+    await expect(page.locator(".surface-subheader").getByText("Ready", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Recapture" }).click();
+    const snapshot = page.getByRole("img", { name: "Browser preview snapshot: Fixture preview" });
+    await expect(snapshot).toBeVisible();
+    await expect(snapshot).toHaveAttribute("src", /^blob:/u);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByRole("heading", { name: "Browser preview" })).toBeVisible();
+    const recaptureBox = await page.getByRole("button", { name: "Recapture" }).boundingBox();
+    expect(recaptureBox).not.toBeNull();
+    expect(recaptureBox!.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+  } finally {
+    await previewWeb?.stop();
+    await previewFixture.stop();
   }
 });

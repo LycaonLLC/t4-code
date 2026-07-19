@@ -46,25 +46,29 @@ const SECRET_KEY = /token|secret|password|credential|authorization|cookie|privat
 
 /** Exact byte totals for immutable values created by this module. */
 const retainedJsonByteCache = new WeakMap<object, number>();
+const UTF8_ENCODER = new TextEncoder();
 
-const IMPORTANT_KEYS = [
-  "type",
-  "images",
-  "role",
-  "text",
-  "reasoning",
-  "tool",
-  "title",
-  "args",
-  "result",
-  "details",
-  "customType",
-  "customDetails",
-  "output",
-  "stdout",
-  "stderr",
-  "content",
-] as const;
+const IMPORTANT_KEY_PRIORITY: Readonly<Record<string, number>> = Object.freeze(
+  Object.assign(Object.create(null) as Record<string, number>, {
+    type: 0,
+    images: 1,
+    role: 2,
+    text: 3,
+    reasoning: 4,
+    tool: 5,
+    title: 6,
+    args: 7,
+    result: 8,
+    details: 9,
+    customType: 10,
+    customDetails: 11,
+    output: 12,
+    stdout: 13,
+    stderr: 14,
+    content: 15,
+  }),
+);
+const IMPORTANT_KEY_COUNT = Math.max(...Object.values(IMPORTANT_KEY_PRIORITY)) + 1;
 
 interface SanitizedNode {
   readonly value: unknown;
@@ -97,14 +101,53 @@ export type RetainedTranscriptEvent = Extract<
   { kind: "snapshot" | "entry" | "event" | "agent.transcript" | "gap" }
 >;
 
+function jsonStringBytes(value: string): number {
+  let bytes = 2;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (
+      code === 0x22 ||
+      code === 0x5c ||
+      code === 0x08 ||
+      code === 0x09 ||
+      code === 0x0a ||
+      code === 0x0c ||
+      code === 0x0d
+    ) {
+      bytes += 2;
+    } else if (code < 0x20) {
+      bytes += 6;
+    } else if (code < 0x80) {
+      bytes += 1;
+    } else if (code < 0x800) {
+      bytes += 2;
+    } else if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        index += 1;
+      } else {
+        bytes += 6;
+      }
+    } else {
+      bytes += code >= 0xdc00 && code <= 0xdfff ? 6 : 3;
+    }
+  }
+  return bytes;
+}
+
 export function retainedJsonBytes(value: unknown): number {
-  if (value !== null && (typeof value === "object" || typeof value === "function")) {
+  if (typeof value === "string") return jsonStringBytes(value);
+  if (typeof value === "number") return Number.isFinite(value) ? String(value).length : 4;
+  if (typeof value === "boolean") return value ? 4 : 5;
+  if (value === null) return 4;
+  if (typeof value === "object" || typeof value === "function") {
     const cached = retainedJsonByteCache.get(value);
     if (cached !== undefined) return cached;
   }
   const serialized = JSON.stringify(value);
   if (serialized === undefined) return 0;
-  return new TextEncoder().encode(serialized).byteLength;
+  return UTF8_ENCODER.encode(serialized).byteLength;
 }
 
 function rememberRetainedJsonBytes<T>(value: T, bytes: number): T {
@@ -131,9 +174,8 @@ function boundedInteger(value: number | undefined, fallback: number, ceiling: nu
  */
 export function retainedText(value: string, maxJsonBytes: number): string {
   const budget = Math.max(2, Math.floor(maxJsonBytes));
-  if (retainedJsonBytes(value) <= budget && retainedJsonBytes(value) <= MAX_RETAINED_VALUE_STRING_BYTES + 2) {
-    return value;
-  }
+  const valueBytes = retainedJsonBytes(value);
+  if (valueBytes <= budget && valueBytes <= MAX_RETAINED_VALUE_STRING_BYTES + 2) return value;
 
   const available = Math.max(0, Math.min(value.length, MAX_RETAINED_VALUE_STRING_BYTES));
   let low = 0;
@@ -156,19 +198,26 @@ export function retainedText(value: string, maxJsonBytes: number): string {
 }
 
 function orderedEntries(value: Record<string, unknown>): Array<[string, unknown]> {
-  const priority = new Map<string, number>(IMPORTANT_KEYS.map((key, index) => [key, index]));
-  return Object.entries(value).sort(([left], [right]) => {
-    const leftPriority = priority.get(left) ?? IMPORTANT_KEYS.length;
-    const rightPriority = priority.get(right) ?? IMPORTANT_KEYS.length;
-    return leftPriority - rightPriority;
-  });
+  const entries = Object.entries(value);
+  for (let index = 1; index < entries.length; index += 1) {
+    const previous = IMPORTANT_KEY_PRIORITY[entries[index - 1]![0]] ?? IMPORTANT_KEY_COUNT;
+    const current = IMPORTANT_KEY_PRIORITY[entries[index]![0]] ?? IMPORTANT_KEY_COUNT;
+    if (previous <= current) continue;
+    entries.sort(([left], [right]) => {
+      const leftPriority = IMPORTANT_KEY_PRIORITY[left] ?? IMPORTANT_KEY_COUNT;
+      const rightPriority = IMPORTANT_KEY_PRIORITY[right] ?? IMPORTANT_KEY_COUNT;
+      return leftPriority - rightPriority;
+    });
+    break;
+  }
+  return entries;
 }
 
 function sanitizeNode(
   value: unknown,
   budget: number,
   depth: number,
-  ancestors: ReadonlySet<object>,
+  ancestors: Set<object>,
   imageBlock = false,
 ): SanitizedNode | undefined {
   if (budget < 1 || value === undefined) return undefined;
@@ -190,19 +239,19 @@ function sanitizeNode(
     return undefined;
   }
 
-  const nextAncestors = new Set(ancestors);
-  nextAncestors.add(value);
+  ancestors.add(value);
   if (Array.isArray(value)) {
     let bytes = 2;
     const output: unknown[] = [];
     for (const item of value.slice(0, MAX_RETAINED_VALUE_ARRAY_ITEMS)) {
       const separator = output.length === 0 ? 0 : 1;
-      const child = sanitizeNode(item, budget - bytes - separator, depth + 1, nextAncestors);
+      const child = sanitizeNode(item, budget - bytes - separator, depth + 1, ancestors);
       if (child === undefined) continue;
       output.push(child.value);
       bytes += separator + child.bytes;
       if (bytes >= budget) break;
     }
+    ancestors.delete(value);
     return bytes <= budget ? { value: Object.freeze(output), bytes } : undefined;
   }
 
@@ -231,7 +280,7 @@ function sanitizeNode(
       item,
       budget - bytes - fixedBytes,
       depth + 1,
-      nextAncestors,
+      ancestors,
       sourceIsImageBlock,
     );
     if (child === undefined) continue;
@@ -240,6 +289,7 @@ function sanitizeNode(
     bytes += fixedBytes + child.bytes;
     if (bytes >= budget) break;
   }
+  ancestors.delete(value);
   return bytes <= budget ? { value: Object.freeze(output), bytes } : undefined;
 }
 
@@ -378,7 +428,8 @@ export function appendRetainedValue<T>(
     retainedCount -= 1;
   }
 
-  const candidates = [...values.slice(firstPriorIndex), value];
+  const candidates = values.slice(firstPriorIndex) as T[];
+  candidates.push(value);
   bytes += retainedArrayItemBytes(value) + (retainedCount === 0 ? 0 : 1);
   retainedCount += 1;
 
@@ -390,7 +441,9 @@ export function appendRetainedValue<T>(
     firstRetainedIndex += 1;
   }
 
-  const retained = Object.freeze(candidates.slice(firstRetainedIndex));
+  const retained = Object.freeze(
+    firstRetainedIndex === 0 ? candidates : candidates.slice(firstRetainedIndex),
+  );
   return rememberRetainedJsonBytes(retained, bytes);
 }
 

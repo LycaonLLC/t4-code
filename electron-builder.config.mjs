@@ -46,16 +46,18 @@ const config = {
   },
   mac: {
     category: "public.app-category.developer-tools",
-    executableName: "T4 Code",
     icon: "apps/desktop/build/icon.png",
-    identity: signedMacBuild ? "Developer ID Application" : null,
+    identity: signedMacBuild ? undefined : null,
     hardenedRuntime: signedMacBuild,
     gatekeeperAssess: false,
     entitlements: signedMacBuild ? "apps/desktop/build/entitlements.mac.plist" : undefined,
-    entitlementsInherit: signedMacBuild ? "apps/desktop/build/entitlements.mac.plist" : undefined,
+    entitlementsInherit: signedMacBuild
+      ? "apps/desktop/build/entitlements.mac.plist"
+      : undefined,
     notarize: signedMacBuild,
-    // macOS updates remain off until their signed updater feed is separately
-    // proven. The signed DMG and ZIP stay on the explicit-download path.
+    // The first signed release remains an explicit GitHub download. Keep the
+    // updater feed disabled until signed-to-signed update migration has its
+    // own release proof.
     publish: [],
     extraResources: [
       { from: ".artifacts/omp-runtime", to: "runtime" },

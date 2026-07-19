@@ -18,7 +18,12 @@ if (stageRuntime.status !== 0) process.exit(stageRuntime.status ?? 1);
 
 const prepackage = spawnSync("pnpm", ["prepackage"], {
   cwd: repoRoot,
-  env: { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: "false", T4_MACOS_SIGNED_BUILD: "0", T4_REQUIRE_BUNDLED_OMP: "1" },
+  env: {
+    ...process.env,
+    CSC_IDENTITY_AUTO_DISCOVERY: "false",
+    T4_MACOS_SIGNED_BUILD: "0",
+    T4_REQUIRE_BUNDLED_OMP: "1",
+  },
   stdio: "inherit",
 });
 if (prepackage.error) throw prepackage.error;
@@ -26,4 +31,5 @@ if (prepackage.status !== 0) process.exit(prepackage.status ?? 1);
 
 process.env.CSC_IDENTITY_AUTO_DISCOVERY = "false";
 process.env.T4_MACOS_SIGNED_BUILD = "0";
+process.env.T4_REQUIRE_BUNDLED_OMP = "1";
 process.exitCode = runElectronBuilder(["--mac", "--arm64", ...process.argv.slice(2)]);

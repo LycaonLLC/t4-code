@@ -85,15 +85,24 @@ test("rejects a tag that differs from the package version", () => {
 
 test("tagged releases reject published provenance drift", () => {
   const appWireCases = [
-    ["version", (record) => {
-      record.version = "0.5.8";
-    }],
-    ["commit", (record) => {
-      record.sourceCommit = "0".repeat(40);
-    }],
-    ["source tree", (record) => {
-      record.sourceTreeHash = "0".repeat(40);
-    }],
+    [
+      "version",
+      (record) => {
+        record.version = "0.5.8";
+      },
+    ],
+    [
+      "commit",
+      (record) => {
+        record.sourceCommit = "0".repeat(40);
+      },
+    ],
+    [
+      "source tree",
+      (record) => {
+        record.sourceTreeHash = "0".repeat(40);
+      },
+    ],
   ];
   for (const [field, mutate] of appWireCases) {
     const drifted = changedRuntime("publishedAppWire", mutate);
@@ -107,21 +116,36 @@ test("tagged releases reject published provenance drift", () => {
   }
 
   const runtimeCases = [
-    ["version", (runtime) => {
-      runtime.version = "17.0.0";
-    }],
-    ["commit", (runtime) => {
-      runtime.sourceCommit = "0".repeat(40);
-    }],
-    ["tag", (runtime) => {
-      runtime.sourceTag = "t4code-17.0.4-appserver-3";
-    }],
-    ["upstream commit", (runtime) => {
-      runtime.upstreamCommit = "0".repeat(40);
-    }],
-    ["integration patches", (runtime) => {
-      runtime.integrationPatches = runtime.integrationPatches.slice(0, -1);
-    }],
+    [
+      "version",
+      (runtime) => {
+        runtime.version = "17.0.0";
+      },
+    ],
+    [
+      "commit",
+      (runtime) => {
+        runtime.sourceCommit = "0".repeat(40);
+      },
+    ],
+    [
+      "tag",
+      (runtime) => {
+        runtime.sourceTag = "t4code-17.0.4-appserver-3";
+      },
+    ],
+    [
+      "upstream commit",
+      (runtime) => {
+        runtime.upstreamCommit = "0".repeat(40);
+      },
+    ],
+    [
+      "integration patches",
+      (runtime) => {
+        runtime.integrationPatches = runtime.integrationPatches.slice(0, -1);
+      },
+    ],
   ];
   for (const [field, mutate] of runtimeCases) {
     const drifted = changedRuntime("publishedRuntime", mutate);
@@ -196,10 +220,6 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
     [
       ".github/workflows/release.yml",
       (text) => text.replace("artifacts/latest-linux.yml", "artifacts/missing-linux.yml"),
-    ],
-    [
-      ".github/workflows/release.yml",
-      (text) => text.replace("T4_MACOS_CERTIFICATE_P12_BASE64", "MISSING_MAC_CERTIFICATE"),
     ],
     [
       ".github/workflows/release.yml",
@@ -317,7 +337,7 @@ test("rejects published app-wire provenance drift until release surfaces agree",
 test("rejects drift between the compatibility matrix and vendored app-wire manifest", () => {
   const drifted = changed("vendor/app-wire/manifest.json", (text) =>
     text.replace(
-      '"sourceTreeHash": "5cf488966e3c233764780d3ca7a8d8ea1e3a1f68"',
+      '"sourceTreeHash": "2b8a5f697273f5044789b8ae638b6c264f9f8499"',
       '"sourceTreeHash": "0000000000000000000000000000000000000000"',
     ),
   );
@@ -330,7 +350,7 @@ test("rejects drift between the compatibility matrix and vendored app-wire manif
 
 test("rejects a stale app-wire third-party notice", () => {
   const drifted = changed("THIRD_PARTY_NOTICES.md", (text) =>
-    text.replace("@oh-my-pi/app-wire@0.5.10", "@oh-my-pi/app-wire@0.5.8"),
+    text.replace("@oh-my-pi/app-wire@0.6.0", "@oh-my-pi/app-wire@0.5.8"),
   );
   assert.ok(
     collectReleaseConsistencyErrors(drifted).some((error) =>
@@ -389,20 +409,20 @@ test("accepts a current app-wire update without rewriting published release surf
         .get(path)
         .replace('"version": "0.5.10"', '"version": "0.6.0"')
         .replace(
-          '"sourceCommit": "d57dcd855006c673d8d530237d474fe5ba5645c4"',
+          '"sourceCommit": "93f48ab62e2002b48a0dc2734de33d5328ea76d6"',
           '"sourceCommit": "1111111111111111111111111111111111111111"',
         )
         .replace(
-          '"sourceTreeHash": "5cf488966e3c233764780d3ca7a8d8ea1e3a1f68"',
+          '"sourceTreeHash": "ea8608496731f29addc95d43ea68e44c5c42cb22"',
           '"sourceTreeHash": "2222222222222222222222222222222222222222"',
         )
         .replace("oh-my-pi-app-wire-0.5.10.tgz", "oh-my-pi-app-wire-0.6.0.tgz")
         .replace(
-          '"tarballSha256": "d7cd0c6e52844f2970b8b32d1c7225d3aef2440f7af66c1e9d1bc74cfb695743"',
+          '"tarballSha256": "d30da820ff2bb8a7efa024fc829b654a2dfaf2600688fa369abc64b053ae8ede"',
           '"tarballSha256": "3333333333333333333333333333333333333333333333333333333333333333"',
         )
         .replace(
-          '"goldenCorpusSha256": "5ed120546ba4d5af757e3147b37745e25fa7c252dd60c4aff8973b58ada0a5ae"',
+          '"goldenCorpusSha256": "63480a2359c1b2b4ec2f5cc8890683f0eefc13e92597d1464e442b563bc7375e"',
           '"goldenCorpusSha256": "4444444444444444444444444444444444444444444444444444444444444444"',
         ),
     );
@@ -413,19 +433,19 @@ test("accepts a current app-wire update without rewriting published release surf
       .get("THIRD_PARTY_NOTICES.md")
       .replace("@oh-my-pi/app-wire@0.5.10", "@oh-my-pi/app-wire@0.6.0")
       .replace(
-        "d57dcd855006c673d8d530237d474fe5ba5645c4",
+        "93f48ab62e2002b48a0dc2734de33d5328ea76d6",
         "1111111111111111111111111111111111111111",
       )
       .replace(
-        "5cf488966e3c233764780d3ca7a8d8ea1e3a1f68",
+        "ea8608496731f29addc95d43ea68e44c5c42cb22",
         "2222222222222222222222222222222222222222",
       )
       .replace(
-        "d7cd0c6e52844f2970b8b32d1c7225d3aef2440f7af66c1e9d1bc74cfb695743",
+        "d30da820ff2bb8a7efa024fc829b654a2dfaf2600688fa369abc64b053ae8ede",
         "3333333333333333333333333333333333333333333333333333333333333333",
       )
       .replace(
-        "5ed120546ba4d5af757e3147b37745e25fa7c252dd60c4aff8973b58ada0a5ae",
+        "63480a2359c1b2b4ec2f5cc8890683f0eefc13e92597d1464e442b563bc7375e",
         "4444444444444444444444444444444444444444444444444444444444444444",
       ),
   );

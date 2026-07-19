@@ -771,7 +771,7 @@ describe("deterministic fixture engine", () => {
     engine.disconnect(client.id);
     expect(engine.clientCount).toBe(0);
   });
-  it("emits decodable 0.2 additive watch, lease, agent, file, audit, catalog, settings, preview, and terminal frames", () => {
+  it("emits decodable additive watch, lease, agent, file, audit, catalog, settings, preview, and terminal frames", () => {
     const engine = new FixtureEngine(loadScenario("basic-v1"));
     const client = engine.connect("a");
     ready(engine, client.id);
@@ -788,8 +788,32 @@ describe("deterministic fixture engine", () => {
       ["settings.read", {}],
       ["preview.launch", { url: "http://127.0.0.1/fixture" }],
       ["preview.state", {}],
-      ["preview.navigate", { url: "http://127.0.0.1/fixture" }],
-      ["preview.capture", {}],
+      ["preview.policy.check", { action: "capture", previewId: "preview-fixture" }],
+      ["preview.lease.acquire", { previewId: "preview-fixture", ttlMs: 30_000 }],
+      [
+        "preview.lease.renew",
+        { previewId: "preview-fixture", leaseId: "lease-fixture", ttlMs: 30_000 },
+      ],
+      ["preview.lease.release", { previewId: "preview-fixture", leaseId: "lease-fixture" }],
+      ["preview.navigate", { previewId: "preview-fixture", url: "http://127.0.0.1/fixture" }],
+      ["preview.back", { previewId: "preview-fixture" }],
+      ["preview.forward", { previewId: "preview-fixture" }],
+      ["preview.reload", { previewId: "preview-fixture" }],
+      ["preview.capture", { previewId: "preview-fixture" }],
+      [
+        "preview.capture.read",
+        { previewId: "preview-fixture", captureId: "capture-fixture", offset: 0 },
+      ],
+      ["preview.click", { previewId: "preview-fixture", x: 1, y: 1 }],
+      ["preview.activate", { previewId: "preview-fixture" }],
+      ["preview.fill", { previewId: "preview-fixture", selector: "#input", text: "hello" }],
+      ["preview.select", { previewId: "preview-fixture", selector: "#select", value: "one" }],
+      ["preview.upload", { previewId: "preview-fixture", selector: "#file", path: "file.txt" }],
+      ["preview.handoff", { previewId: "preview-fixture", message: "Continue manually" }],
+      ["preview.scroll", { previewId: "preview-fixture", deltaX: 0, deltaY: 1 }],
+      ["preview.type", { previewId: "preview-fixture", text: "hello" }],
+      ["preview.press", { previewId: "preview-fixture", key: "Enter" }],
+      ["preview.close", { previewId: "preview-fixture" }],
     ];
     for (const [name, args] of commands) {
       const frames = engine.receive(client.id, command(engine.seed, name, name, name, args));

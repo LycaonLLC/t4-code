@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 export const RELEASE_CONTRACT_PATHS = [
   ".github/android-release-identity.json",
+  ".github/macos-release-identity.json",
   ".github/ISSUE_TEMPLATE/bug_report.yml",
   ".github/workflows/ci.yml",
   ".github/workflows/deploy-site.yml",
@@ -19,6 +20,7 @@ export const RELEASE_CONTRACT_PATHS = [
   "apps/web/src/platform/browser-shell-port.ts",
   "compat/omp-app-matrix.json",
   "docs/CURRENT_RELEASE_NOTES.md",
+  "docs/MACOS_SIGNING.md",
   "docs/RELEASE_GATE.md",
   "ops/t4-maintainer/README.md",
   "packages/client/src/omp-client-frames.ts",
@@ -41,6 +43,15 @@ const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const PATCH_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+
+function compareStableVersions(left, right) {
+  const leftParts = left.split(".").map(Number);
+  const rightParts = right.split(".").map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    if (leftParts[index] !== rightParts[index]) return leftParts[index] - rightParts[index];
+  }
+  return 0;
+}
 
 export function expectedReleaseAssetNames(version) {
   return [
@@ -282,6 +293,36 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     errors.push(
       `${androidIdentityPath} certificate baseline asset must have a lowercase SHA-256 digest`,
     );
+  }
+
+  const macosIdentityPath = ".github/macos-release-identity.json";
+  const macosIdentity = parseJson(files, macosIdentityPath, errors);
+  if (macosIdentity?.schemaVersion !== 1) {
+    errors.push(`${macosIdentityPath} schemaVersion must be 1`);
+  }
+  if (macosIdentity?.bundleId !== "com.lycaonsolutions.t4code") {
+    errors.push(`${macosIdentityPath} bundleId must be com.lycaonsolutions.t4code`);
+  }
+  if (!/^[A-Z0-9]{10}$/u.test(macosIdentity?.teamId ?? "")) {
+    errors.push(`${macosIdentityPath} teamId must be 10 uppercase letters or digits`);
+  }
+  if (
+    typeof macosIdentity?.certificateSha256 !== "string" ||
+    !SHA256_PATTERN.test(macosIdentity.certificateSha256)
+  ) {
+    errors.push(`${macosIdentityPath} certificate must be a lowercase SHA-256 digest`);
+  }
+  if (macosIdentity?.certificateAuthority !== "Developer ID Certification Authority") {
+    errors.push(`${macosIdentityPath} must pin the Developer ID Certification Authority`);
+  }
+  if (macosIdentity?.architecture !== "arm64") {
+    errors.push(`${macosIdentityPath} architecture must be arm64`);
+  }
+  if (!/^v\d+\.\d+\.\d+$/u.test(macosIdentity?.firstSignedReleaseTag ?? "")) {
+    errors.push(`${macosIdentityPath} firstSignedReleaseTag must be vX.Y.Z`);
+  }
+  if (macosIdentity?.notarizationRequired !== true) {
+    errors.push(`${macosIdentityPath} must require notarization`);
   }
 
   const packagePaths = [...files.keys()]
@@ -646,9 +687,22 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     requireText(releaseNotes, expected, "docs/CURRENT_RELEASE_NOTES.md", errors);
   }
 
+  const securityPolicy = files.get("SECURITY.md") ?? "";
+  const firstSignedVersion = String(macosIdentity?.firstSignedReleaseTag ?? "").replace(/^v/u, "");
+  const signedRelease = VERSION_PATTERN.test(firstSignedVersion)
+    ? compareStableVersions(version, firstSignedVersion) >= 0
+    : false;
   requireText(
-    files.get("SECURITY.md") ?? "",
-    `The macOS ${expectedTag} build is unsigned and unnotarized`,
+    securityPolicy,
+    signedRelease
+      ? `The macOS ${expectedTag} build is signed with Apple Developer ID and notarized by Apple`
+      : `The macOS ${expectedTag} build is unsigned and unnotarized`,
+    "SECURITY.md",
+    errors,
+  );
+  requireText(
+    securityPolicy,
+    `Starting with ${macosIdentity?.firstSignedReleaseTag ?? "the first signed release"}`,
     "SECURITY.md",
     errors,
   );
@@ -742,13 +796,6 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "pnpm --filter @t4-code/mobile build:android:release",
     "node scripts/inspect-android-release.mjs",
     "node scripts/inspect-linux-update.mjs",
-    "T4_MACOS_CERTIFICATE_P12_BASE64",
-    "T4_MACOS_CERTIFICATE_PASSWORD",
-    "T4_MACOS_NOTARIZATION_KEY_BASE64",
-    "T4_MACOS_NOTARIZATION_KEY_ID",
-    "T4_MACOS_NOTARIZATION_ISSUER_ID",
-    "pnpm package:mac",
-    "node scripts/verify-macos-signature.mjs",
     '--metadata "$metadata"',
     '--aapt "$build_tools/aapt"',
     '--apksigner "$build_tools/apksigner"',
@@ -965,6 +1012,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   const releaseGate = files.get("docs/RELEASE_GATE.md") ?? "";
   for (const expected of [
     "`testDebugUnitTest`, `assembleDebug`, and `lintDebug`",
+    "pinned Developer ID certificate",
     "exact seven-asset GitHub bundle",
     "defers only when the exact GitHub release lookup returns HTTP 404",
     "writes `/releases/latest.json`",

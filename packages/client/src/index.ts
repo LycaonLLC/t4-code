@@ -1,4 +1,18 @@
 export { OmpClient, createOmpClient } from "./omp-client-runtime.ts";
+export type {
+  PreviewCommandTarget,
+  PreviewLaunchIntent,
+  PreviewNavigateIntent,
+  PreviewClickIntent,
+  PreviewScrollIntent,
+  PreviewTypeIntent,
+  PreviewFillIntent,
+  PreviewSelectIntent,
+  PreviewUploadIntent,
+  PreviewPressIntent,
+  PreviewPolicyCheckIntent,
+  PreviewHandoffIntent,
+} from "./omp-client-runtime.ts";
 export {
   ompAppV1ProtocolProvider,
 } from "./omp-app-v1-protocol-provider.ts";
@@ -72,11 +86,34 @@ export {
   MAX_RETAINED_FILES,
   MAX_RETAINED_FILES_BYTES,
   MAX_RETAINED_FILE_BYTES,
+  MAX_RETAINED_PREVIEWS,
+  MAX_RETAINED_PREVIEW_EVENTS,
 } from "./projection.ts";
+export {
+  PreviewCaptureResource,
+  PreviewLeaseManager,
+  previewKey,
+  PREVIEW_CAPTURE_MAX_BYTES,
+  PREVIEW_CAPTURE_MAX_PIXELS,
+  PREVIEW_CAPTURE_READ_CHUNK_BYTES,
+} from "./preview.ts";
+export type {
+  PreviewIdentity,
+  PreviewLeaseIdentity,
+  PreviewCaptureMetadata,
+  PreviewCaptureReadResult,
+  PreviewCaptureResourceOptions,
+  PreviewLeaseManagerClient,
+  PreviewLeaseManagerOptions,
+} from "./preview.ts";
 export type {
   ProjectionFrame,
   ProjectionEventFrame,
   ProjectionFreshness,
+  PreviewFreshness,
+  PreviewProjection,
+  PreviewAuthorityProjection,
+  PreviewEventProjection,
   TerminalProjection,
   ResultProjection,
   AgentTranscriptProjection,
@@ -121,6 +158,32 @@ export {
   DesktopRuntimeController,
   createDesktopRuntimeController,
 } from "./desktop-runtime.ts";
+export { deriveAttentionInbox, readSessionAttention } from "./attention-projection.ts";
+export type {
+  AttentionActionability,
+  AttentionActionabilityInputs,
+  AttentionActionStatus,
+  AttentionApprovalItem,
+  AttentionConfirmationItem,
+  AttentionGroup,
+  AttentionIdentity,
+  AttentionInboxItem,
+  AttentionInboxProjection,
+  AttentionInventoryIssue,
+  AttentionInventoryReason,
+  AttentionInventoryState,
+  AttentionNeedsYouItem,
+  AttentionOutcomeItem,
+  AttentionOutcomeKind,
+  AttentionPendingKind,
+  AttentionPlanItem,
+  AttentionQuestionItem,
+  AttentionQuestionOption,
+  AttentionSessionContext,
+  AttentionUnavailableReason,
+  DeriveAttentionInboxOptions,
+  SessionAttentionRead,
+} from "./attention-projection.ts";
 export type {
   DesktopUpdateOpenEvent,
   DesktopUpdatePhase,

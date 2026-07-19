@@ -10,7 +10,7 @@ const scannedRoots = [join(repoRoot, "apps"), join(repoRoot, "packages")];
 function sourceFiles(directory: string): string[] {
   const files: string[] = [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    if (entry.name === "node_modules") continue;
+    if (["node_modules", "dist", "dist-electron", ".next", ".turbo", "build", ".artifacts"].includes(entry.name)) continue;
     const absolute = join(directory, entry.name);
     if (entry.isDirectory()) files.push(...sourceFiles(absolute));
     else if (entry.isFile() && /\.[cm]?[jt]sx?$/u.test(entry.name)) files.push(absolute);
@@ -19,9 +19,11 @@ function sourceFiles(directory: string): string[] {
 }
 
 function rawAppWireImports(path: string): string[] {
+  const content = readFileSync(path, "utf8");
+  if (!content.includes("@oh-my-pi/app-wire")) return [];
   const source = ts.createSourceFile(
     path,
-    readFileSync(path, "utf8"),
+    content,
     ts.ScriptTarget.Latest,
     false,
     path.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,

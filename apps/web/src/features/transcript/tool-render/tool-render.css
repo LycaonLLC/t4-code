@@ -143,7 +143,20 @@
   text-decoration: underline;
 }
 
+.tv-render .tv-host-link {
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.625rem;
+}
+
+.tv-render .tv-host-link:hover {
+  background: color-mix(in oklch, var(--tv-accent) 22%, transparent);
+  text-decoration: underline;
+}
+
 .tv-render .tv-agent-link:focus-visible,
+.tv-render .tv-host-link:focus-visible,
 .tv-render .tv-expand:focus-visible,
 .tv-render .tv-image-button:focus-visible,
 .tv-render .tv-link:focus-visible {
@@ -507,6 +520,7 @@
 
 @media (max-width: 39.999rem) {
   .tv-render .tv-agent-link,
+  .tv-render .tv-host-link,
   .tv-render .tv-image-button,
   .tv-render .tv-link {
     display: inline-flex;

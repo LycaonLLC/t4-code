@@ -11,7 +11,7 @@ import { createStore, type StoreApi } from "zustand/vanilla";
 import type { SessionListView } from "../lib/workspace-data.ts";
 import type { WorkspacePersistence } from "./persistence.ts";
 
-export const WORKSPACE_STATE_VERSION = 1;
+export const WORKSPACE_STATE_VERSION = 2;
 export const WORKSPACE_STORAGE_KEY = "omp:workspace:v1";
 
 export const RAIL_WIDTH = { minWidth: 208, maxWidth: 400, defaultWidth: 256 } as const;
@@ -22,6 +22,14 @@ export const PANE_FAMILIES = ["agents", "activity", "review", "files", "terminal
 export type PaneFamily = (typeof PANE_FAMILIES)[number];
 
 export type ThemePreference = "light" | "dark" | "system";
+export type PreviewScaleMode = "fit" | "actual";
+
+export interface SessionPreviewSelection {
+  readonly previewId: string | null;
+  readonly optInKind?: string | null;
+  readonly optInAuthorityId?: string | null;
+  readonly optIn: boolean;
+}
 
 /** Per-session view continuity: everything restored on A→B→A switching. */
 export interface SessionViewState {
@@ -33,6 +41,12 @@ export interface SessionViewState {
   readonly paneOpen: boolean;
   readonly paneWidth: number;
   readonly terminalDrawerOpen: boolean;
+  /** Preview tab and scale restored on A→B→A route switching. */
+  readonly previewId: string | null;
+  readonly previewOptIn: boolean;
+  readonly previewOptInKind: string | null;
+  readonly previewOptInAuthorityId: string | null;
+  readonly previewScale: PreviewScaleMode;
 }
 
 export const DEFAULT_SESSION_VIEW: SessionViewState = {
@@ -42,6 +56,11 @@ export const DEFAULT_SESSION_VIEW: SessionViewState = {
   paneOpen: false,
   paneWidth: RIGHT_PANE_WIDTH.defaultWidth,
   terminalDrawerOpen: false,
+  previewId: null,
+  previewOptIn: false,
+  previewOptInKind: null,
+  previewOptInAuthorityId: null,
+  previewScale: "fit",
 };
 
 interface PersistedWorkspaceState {
@@ -55,6 +74,8 @@ interface PersistedWorkspaceState {
   /** Empty Current-tab project headers the user explicitly removed. */
   readonly dismissedEmptyProjectIds?: Record<string, true>;
   readonly lastVisitedAtBySessionId: Record<string, string>;
+  /** Latest terminal attention outcome the user has seen for each session. */
+  readonly lastSeenAttentionOutcomeBySessionKey?: Record<string, string>;
   readonly sessionViewById: Record<string, SessionViewState>;
 }
 
@@ -72,6 +93,8 @@ export interface WorkspaceState {
   /** View-only dismissals; a current session makes its project visible again. */
   readonly dismissedEmptyProjectIds: Record<string, true>;
   readonly lastVisitedAtBySessionId: Record<string, string>;
+  /** Renderer-local read markers; OMP remains the outcome authority. */
+  readonly lastSeenAttentionOutcomeBySessionKey: Record<string, string>;
   readonly sessionViewById: Record<string, SessionViewState>;
 }
 
@@ -86,6 +109,8 @@ export interface WorkspaceActions {
   activateSession(sessionId: string, visitedAt: string): void;
   /** Stamp a visit; timestamps only move forward. */
   markSessionVisited(sessionId: string, visitedAt: string): void;
+  /** Mark one host-authored terminal outcome as seen on this client. */
+  markAttentionOutcomeSeen(sessionKey: string, outcomeId: string): void;
   setProjectExpanded(projectId: string, expanded: boolean): void;
   setEmptyProjectDismissed(projectId: string, dismissed: boolean): void;
   setSessionDraft(sessionId: string, draft: string): void;
@@ -95,6 +120,11 @@ export interface WorkspaceActions {
   setPaneOpen(sessionId: string, open: boolean): void;
   setPaneWidth(sessionId: string, width: number): void;
   setTerminalDrawerOpen(sessionId: string, open: boolean): void;
+  setSessionPreview(
+    sessionId: string,
+    selection: SessionPreviewSelection,
+  ): void;
+  setSessionPreviewScale(sessionId: string, scale: PreviewScaleMode): void;
 }
 
 export type WorkspaceStore = WorkspaceState & WorkspaceActions;
@@ -111,6 +141,7 @@ const INITIAL_STATE: WorkspaceState = {
   projectExpandedById: {},
   dismissedEmptyProjectIds: {},
   lastVisitedAtBySessionId: {},
+  lastSeenAttentionOutcomeBySessionKey: {},
   sessionViewById: {},
 };
 
@@ -141,6 +172,23 @@ function sanitizeTimestampRecord(value: unknown): Record<string, string> {
   return result;
 }
 
+function sanitizeAttentionOutcomeRecord(value: unknown): Record<string, string> {
+  if (typeof value !== "object" || value === null) return {};
+  const result: Record<string, string> = {};
+  for (const [sessionId, outcomeId] of Object.entries(value).slice(0, 1_000)) {
+    if (
+      sessionId.length > 0 &&
+      sessionId.length <= 1_024 &&
+      typeof outcomeId === "string" &&
+      outcomeId.length > 0 &&
+      outcomeId.length <= 1_024
+    ) {
+      result[sessionId] = outcomeId;
+    }
+  }
+  return result;
+}
+
 function sanitizeSessionView(value: unknown): SessionViewState | null {
   if (typeof value !== "object" || value === null) return null;
   const view = value as Record<string, unknown>;
@@ -155,6 +203,27 @@ function sanitizeSessionView(value: unknown): SessionViewState | null {
         ? clampWidth(view.paneWidth, RIGHT_PANE_WIDTH)
         : RIGHT_PANE_WIDTH.defaultWidth,
     terminalDrawerOpen: view.terminalDrawerOpen === true,
+    previewId:
+      typeof view.previewId === "string" &&
+      view.previewId.length > 0 &&
+      view.previewId.length <= 256 &&
+      !/\p{Cc}/u.test(view.previewId)
+        ? view.previewId
+        : null,
+    previewOptInKind:
+      typeof view.previewOptInKind === "string" &&
+      view.previewOptInKind.length > 0 &&
+      view.previewOptInKind.length <= 256
+        ? view.previewOptInKind
+        : null,
+    previewOptInAuthorityId:
+      typeof view.previewOptInAuthorityId === "string" &&
+      view.previewOptInAuthorityId.length > 0 &&
+      view.previewOptInAuthorityId.length <= 256
+        ? view.previewOptInAuthorityId
+        : null,
+    previewOptIn: view.previewOptIn === true,
+    previewScale: view.previewScale === "actual" ? "actual" : "fit",
   };
 }
 
@@ -165,7 +234,7 @@ function sanitizeSessionView(value: unknown): SessionViewState | null {
 export function parsePersistedWorkspace(raw: unknown): WorkspaceState | null {
   if (typeof raw !== "object" || raw === null) return null;
   const parsed = raw as Partial<PersistedWorkspaceState>;
-  if (parsed.version !== WORKSPACE_STATE_VERSION) return null;
+  if (parsed.version !== 1 && parsed.version !== WORKSPACE_STATE_VERSION) return null;
 
   const sessionViewById: Record<string, SessionViewState> = {};
   if (typeof parsed.sessionViewById === "object" && parsed.sessionViewById !== null) {
@@ -191,6 +260,9 @@ export function parsePersistedWorkspace(raw: unknown): WorkspaceState | null {
     projectExpandedById: sanitizeBooleanRecord(parsed.projectExpandedById),
     dismissedEmptyProjectIds: sanitizeTrueRecord(parsed.dismissedEmptyProjectIds),
     lastVisitedAtBySessionId: sanitizeTimestampRecord(parsed.lastVisitedAtBySessionId),
+    lastSeenAttentionOutcomeBySessionKey: sanitizeAttentionOutcomeRecord(
+      parsed.lastSeenAttentionOutcomeBySessionKey,
+    ),
     sessionViewById,
   };
 }
@@ -206,6 +278,7 @@ export function toPersistedWorkspace(state: WorkspaceState): PersistedWorkspaceS
     projectExpandedById: state.projectExpandedById,
     dismissedEmptyProjectIds: state.dismissedEmptyProjectIds,
     lastVisitedAtBySessionId: state.lastVisitedAtBySessionId,
+    lastSeenAttentionOutcomeBySessionKey: state.lastSeenAttentionOutcomeBySessionKey,
     sessionViewById: state.sessionViewById,
   };
 }
@@ -242,6 +315,14 @@ export function isSessionUnread(
   const visitedMs = Date.parse(lastVisitedAt);
   if (Number.isNaN(visitedMs)) return true;
   return completedMs > visitedMs;
+}
+
+export function isAttentionOutcomeSeen(
+  seenBySessionKey: Readonly<Record<string, string>>,
+  sessionKey: string,
+  outcomeId: string,
+): boolean {
+  return seenBySessionKey[sessionKey] === outcomeId;
 }
 
 /** View state for a session, with defaults for sessions never touched. */
@@ -289,6 +370,24 @@ export function createWorkspaceStore(options: CreateWorkspaceStoreOptions): Work
       set((state) => ({
         lastVisitedAtBySessionId: markVisited(state.lastVisitedAtBySessionId, sessionId, visitedAt),
       })),
+    markAttentionOutcomeSeen: (sessionKey, outcomeId) =>
+      set((state) => {
+        if (
+          sessionKey.length === 0 ||
+          sessionKey.length > 1_024 ||
+          outcomeId.length === 0 ||
+          outcomeId.length > 1_024 ||
+          state.lastSeenAttentionOutcomeBySessionKey[sessionKey] === outcomeId
+        ) {
+          return state;
+        }
+        return {
+          lastSeenAttentionOutcomeBySessionKey: {
+            ...state.lastSeenAttentionOutcomeBySessionKey,
+            [sessionKey]: outcomeId,
+          },
+        };
+      }),
     setProjectExpanded: (projectId, expanded) =>
       set((state) => ({
         projectExpandedById: { ...state.projectExpandedById, [projectId]: expanded },
@@ -320,14 +419,25 @@ export function createWorkspaceStore(options: CreateWorkspaceStoreOptions): Work
       }),
     setPaneOpen: (sessionId, open) =>
       set((state) => updateSessionView(state, sessionId, { paneOpen: open })),
-    setPaneWidth: (sessionId, width) =>
+    setPaneWidth: (sessionId, paneWidth) =>
       set((state) =>
         updateSessionView(state, sessionId, {
-          paneWidth: clampWidth(width, RIGHT_PANE_WIDTH),
+          paneWidth: clampWidth(paneWidth, RIGHT_PANE_WIDTH),
         }),
       ),
     setTerminalDrawerOpen: (sessionId, open) =>
       set((state) => updateSessionView(state, sessionId, { terminalDrawerOpen: open })),
+    setSessionPreview: (sessionId, selection) =>
+      set((state) =>
+        updateSessionView(state, sessionId, {
+          previewId: selection.previewId,
+          previewOptInKind: selection.optInKind ?? null,
+          previewOptInAuthorityId: selection.optInAuthorityId ?? null,
+          previewOptIn: selection.optIn,
+        }),
+      ),
+    setSessionPreviewScale: (sessionId, previewScale) =>
+      set((state) => updateSessionView(state, sessionId, { previewScale })),
   }));
 
   store.subscribe((state) => persistence.save(toPersistedWorkspace(state)));

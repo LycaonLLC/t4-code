@@ -1,12 +1,12 @@
 {
   "package": "@oh-my-pi/app-wire",
-  "version": "0.5.10",
+  "version": "0.6.0",
   "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-  "sourceCommit": "d57dcd855006c673d8d530237d474fe5ba5645c4",
-  "sourceTreeHash": "5cf488966e3c233764780d3ca7a8d8ea1e3a1f68",
-  "tarball": "oh-my-pi-app-wire-0.5.10.tgz",
-  "tarballSha256": "d7cd0c6e52844f2970b8b32d1c7225d3aef2440f7af66c1e9d1bc74cfb695743",
+  "sourceCommit": "ae4b53b416f32b200865a32ed9baabd5a4666fa4",
+  "sourceTreeHash": "2b8a5f697273f5044789b8ae638b6c264f9f8499",
+  "tarball": "oh-my-pi-app-wire-0.6.0.tgz",
+  "tarballSha256": "92256497bb8086ab9cefa30e4890293060a52b9d0c5349743ee94ae3224ca32c",
   "appProtocol": "omp-app/1",
-  "goldenCorpusSha256": "5ed120546ba4d5af757e3147b37745e25fa7c252dd60c4aff8973b58ada0a5ae",
-  "createdAt": "2026-07-18T21:09:40Z"
+  "goldenCorpusSha256": "7ebd5fa6cbc37ae0f28cf1d957d9cab841b875581cb42ffbe81cea66f1dc2ef1",
+  "createdAt": "2026-07-19T01:06:38Z"
 }

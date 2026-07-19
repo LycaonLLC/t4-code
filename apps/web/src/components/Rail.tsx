@@ -26,6 +26,7 @@ import {
   ChevronDown,
   ChevronRight,
   CircleStop,
+  Inbox,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -927,6 +928,7 @@ export function Rail({
   view,
   currentCount,
   archivedCount,
+  attentionCount,
 }: {
   groups: readonly ProjectGroup[];
   hiddenEmptyProjectIds: ReadonlySet<string>;
@@ -934,7 +936,9 @@ export function Rail({
   view: SessionListView;
   currentCount: number;
   archivedCount: number;
+  attentionCount: number;
 }) {
+  const navigate = useNavigate();
   const activeSessionId = useWorkspace((state) => state.activeSessionId);
   const [announcement, setAnnouncement] = useState("");
   const navRef = useRef<HTMLElement | null>(null);
@@ -972,6 +976,22 @@ export function Rail({
         <p className="mt-0.5 text-muted-foreground text-xs leading-snug">
           OMP groups sessions by the folder they were started in.
         </p>
+        <button
+          className="mt-2 flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md border border-border bg-card px-2.5 text-left outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-9"
+          onClick={() => {
+            workspaceStore.getState().setRailOverlayOpen(false);
+            void navigate({ to: "/inbox" });
+          }}
+          type="button"
+        >
+          <Inbox aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate font-medium text-sm">Inbox</span>
+          {attentionCount > 0 && (
+            <Badge aria-label={`${attentionCount} items need attention`} variant="secondary">
+              {attentionCount}
+            </Badge>
+          )}
+        </button>
         <SessionListTabs archivedCount={archivedCount} currentCount={currentCount} view={view} />
       </div>
       <p aria-live="polite" className="sr-only">
