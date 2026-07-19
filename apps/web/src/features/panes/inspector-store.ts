@@ -112,6 +112,8 @@ export interface InspectorActions {
   discardReviewFile(path: string): void;
   setFilesQuery(query: string): void;
   setFileExpanded(path: string, expanded: boolean): void;
+  /** Lazy-load a directory listing without touching tree expansion. */
+  requestDir(path: string): void;
   selectFile(path: string | null): void;
   startFileEdit(path: string): void;
   updateFileDraft(path: string, text: string): void;
@@ -288,6 +290,16 @@ export function createInspectorStore(options: CreateInspectorStoreOptions): Insp
         }));
         controller?.loadDir(path);
       }
+    },
+    requestDir: (path) => {
+      if (get().files.childrenByPath[path] !== undefined) return;
+      set((state) => ({
+        files: {
+          ...state.files,
+          childrenByPath: { ...state.files.childrenByPath, [path]: "loading" },
+        },
+      }));
+      controller?.loadDir(path);
     },
     selectFile: (path) => {
       set((state) => ({
