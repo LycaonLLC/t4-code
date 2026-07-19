@@ -49,6 +49,35 @@ interface SettingsRailEntry {
   readonly label: string;
 }
 
+export interface SettingsRailGroup {
+  readonly id: string;
+  readonly label: string;
+  readonly sections: readonly SettingsRailEntry[];
+}
+
+const SETTINGS_RAIL_GROUPS = [
+  {
+    id: "personal",
+    label: "Personal",
+    sectionIds: ["general", "appearance", "interaction", "keybindings", "notifications", "speech"],
+  },
+  {
+    id: "intelligence",
+    label: "AI & agents",
+    sectionIds: ["model", "models", "providers", "roles", "context", "tasks", "agents", "memory"],
+  },
+  {
+    id: "tools",
+    label: "Tools",
+    sectionIds: ["files", "shell", "tools", "browser", "terminal"],
+  },
+  {
+    id: "integrations",
+    label: "Integrations",
+    sectionIds: ["mcp", "extensions", "remote-hosts"],
+  },
+] as const;
+
 export function buildSettingsRailSections(sections: readonly SettingsSection[]): readonly SettingsRailEntry[] {
   const entries = sections.map(({ id, label }) => ({ id, label }));
   const diagnostics = entries.findIndex((section) => section.id === "diagnostics");
@@ -58,6 +87,43 @@ export function buildSettingsRailSections(sections: readonly SettingsSection[]):
     { id: UPDATE_SECTION_ID, label: "Updates" },
     ...entries.slice(index),
   ];
+}
+
+export function buildSettingsRailGroups(
+  sections: readonly SettingsSection[],
+): readonly SettingsRailGroup[] {
+  return groupSettingsRailEntries(buildSettingsRailSections(sections));
+}
+
+function groupSettingsRailEntries(
+  entries: readonly SettingsRailEntry[],
+): readonly SettingsRailGroup[] {
+  const entryById = new Map(entries.map((entry) => [entry.id, entry]));
+  const used = new Set<string>();
+  const groups: SettingsRailGroup[] = [];
+
+  for (const definition of SETTINGS_RAIL_GROUPS) {
+    const grouped = definition.sectionIds.flatMap((id) => {
+      const entry = entryById.get(id);
+      if (entry === undefined) return [];
+      used.add(id);
+      return [entry];
+    });
+    if (grouped.length > 0) {
+      groups.push({ id: definition.id, label: definition.label, sections: grouped });
+    }
+  }
+
+  const systemIds = new Set([UPDATE_SECTION_ID, "diagnostics"]);
+  const hostSections = entries.filter((entry) => !used.has(entry.id) && !systemIds.has(entry.id));
+  if (hostSections.length > 0) {
+    groups.push({ id: "host", label: "Host settings", sections: hostSections });
+  }
+  const systemSections = entries.filter((entry) => systemIds.has(entry.id));
+  if (systemSections.length > 0) {
+    groups.push({ id: "system", label: "System", sections: systemSections });
+  }
+  return groups;
 }
 
 function ScopeTabs({
@@ -112,6 +178,8 @@ function SectionRail({
 }) {
   const drafts = useSettings(api, (state) => state.drafts);
   const itemRefs = useRef(new Map<string, HTMLButtonElement>());
+  const groups = useMemo(() => groupSettingsRailEntries(sections), [sections]);
+  const orderedSections = groups.flatMap((group) => group.sections);
 
   const dirtyBySection = useMemo(() => {
     const counts = new Map<string, number>();
@@ -124,9 +192,14 @@ function SectionRail({
   }, [api, drafts]);
 
   return (
-    <nav aria-label="Settings sections" className="flex w-52 shrink-0 flex-col overflow-y-auto border-border border-e py-2">
-      <ul className="flex flex-col gap-px px-2">
-        {sections.map((section) => {
+    <nav aria-label="Settings sections" className="flex w-56 shrink-0 flex-col overflow-y-auto border-border border-e bg-(--sidebar-background)/40 px-2 py-3">
+      {groups.map((group, groupIndex) => (
+        <div className={cn(groupIndex > 0 && "mt-3")} key={group.id}>
+          <p className="px-2.5 pb-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+            {group.label}
+          </p>
+          <ul className="flex flex-col gap-px">
+            {group.sections.map((section) => {
           const active = section.id === activeSectionId;
           const dimmed = matchedIds !== null && !matchedIds.has(section.id);
           const dirtyCount = dirtyBySection.get(section.id) ?? 0;
@@ -152,7 +225,7 @@ function SectionRail({
                     return;
                   }
                   const target = railFocusTarget(
-                    sections.map((entry) => entry.id),
+                    orderedSections.map((entry) => entry.id),
                     section.id,
                     event.key as RailKey,
                   );
@@ -183,8 +256,10 @@ function SectionRail({
               </button>
             </li>
           );
-        })}
-      </ul>
+            })}
+          </ul>
+        </div>
+      ))}
     </nav>
   );
 }
@@ -205,7 +280,7 @@ function SectionRows({
   const rows = section.rows.filter((row) => !hiddenIds.has(row.id));
   if (rows.length === 0) return null;
   return (
-    <div className="divide-y divide-border rounded-lg border border-border bg-card">
+    <div className="divide-y divide-border rounded-xl border border-border bg-card">
       {rows.map((row) =>
         row.control.kind === "nested" ? (
           <div key={row.id}>
@@ -392,6 +467,7 @@ export function SettingsWorkspace({
   const shownUpdate = searching ? updateMatches : appSectionActive;
   const selectedSectionId = appSectionActive ? UPDATE_SECTION_ID : activeSectionId;
   const sectionsForRail = useMemo(() => buildSettingsRailSections(viewModel.sections), [viewModel.sections]);
+  const railGroups = useMemo(() => buildSettingsRailGroups(viewModel.sections), [viewModel.sections]);
 
   const dirtyCount = Object.keys(drafts).length;
   const errorCount = Object.keys(draftErrors).length;
@@ -552,20 +628,24 @@ export function SettingsWorkspace({
           )}
 
           <div className="min-h-0 flex-1 overflow-y-auto" ref={contentRef}>
-            <div className="mx-auto flex max-w-3xl flex-col gap-6 pt-4 pr-[max(1rem,var(--app-safe-area-right))] pb-[calc(1rem+var(--app-safe-area-bottom))] pl-[max(1rem,var(--app-safe-area-left))]">
+            <div className="mx-auto flex max-w-4xl flex-col gap-8 pt-6 pr-[max(1rem,var(--app-safe-area-right))] pb-[calc(1rem+var(--app-safe-area-bottom))] pl-[max(1rem,var(--app-safe-area-left))] max-sm:gap-6 max-sm:pt-4">
               {railOverlaid && (
                 <label className="flex flex-col gap-1">
-                  <span className="font-medium text-muted-foreground text-xs">Section</span>
+                  <span className="font-medium text-muted-foreground text-xs">Settings category</span>
                   <select
                     className={cn(FIELD_CLASS, "w-full")}
                     onChange={(event) => selectSection(event.target.value)}
                     value={selectedSectionId}
                   >
-                    {sectionsForRail.map((section) => (
-                      <option key={section.id} value={section.id}>
-                        {section.label}
-                        {section.id === UPDATE_SECTION_ID && updateIsAvailable(update.phase) ? " · Update available" : ""}
-                      </option>
+                    {railGroups.map((group) => (
+                      <optgroup key={group.id} label={group.label}>
+                        {group.sections.map((section) => (
+                          <option key={section.id} value={section.id}>
+                            {section.label}
+                            {section.id === UPDATE_SECTION_ID && updateIsAvailable(update.phase) ? " · Update available" : ""}
+                          </option>
+                        ))}
+                      </optgroup>
                     ))}
                   </select>
                 </label>
@@ -584,15 +664,15 @@ export function SettingsWorkspace({
 
               {shownSections.map((section) => (
                 <section aria-labelledby={`section-${section.id}`} key={section.id}>
-                  <div className="mb-2 flex flex-col gap-0.5">
+                  <div className="mb-4 flex flex-col gap-1">
                     <h2
-                      className="font-heading font-semibold text-foreground text-sm"
+                      className="font-heading font-semibold text-foreground text-xl tracking-tight"
                       id={`section-${section.id}`}
                       tabIndex={-1}
                     >
                       {section.label}
                     </h2>
-                    <p className="max-w-[70ch] text-muted-foreground text-xs">{section.summary}</p>
+                    <p className="max-w-[70ch] text-muted-foreground text-sm leading-relaxed">{section.summary}</p>
                   </div>
                   <SectionRows api={api} hiddenIds={hiddenIds} section={section} />
                   {section.id === rolesHome && (

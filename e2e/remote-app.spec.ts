@@ -1119,6 +1119,43 @@ test("shows verified session context and groups command-palette actions", async 
   await expect(page.getByRole("button", { name: "Close terminal drawer", exact: true })).toBeVisible();
 });
 
+test("groups sample settings on desktop and in the mobile category picker", async ({ page }) => {
+  await page.route("**/*", async (route) => {
+    const requestUrl = new URL(route.request().url());
+    const appUrl = new URL(web.url);
+    if (requestUrl.origin === appUrl.origin && requestUrl.pathname === "/") {
+      const response = await route.fetch();
+      const body = (await response.text()).replace(
+        /<script id="t4-backend" type="application\/json">.*?<\/script>/u,
+        "",
+      );
+      await route.fulfill({ body, response });
+      return;
+    }
+    await route.continue();
+  });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`${web.url}#/settings`, { waitUntil: "domcontentloaded" });
+
+  const sections = page.getByRole("navigation", { name: "Settings sections" });
+  await expect(sections.getByText("Personal", { exact: true })).toBeVisible();
+  await expect(sections.getByText("AI & agents", { exact: true })).toBeVisible();
+  await expect(sections.getByText("Tools", { exact: true })).toBeVisible();
+  await expect(sections.getByText("Integrations", { exact: true })).toBeVisible();
+  await expect(sections.getByText("System", { exact: true })).toBeVisible();
+  await sections.getByRole("button", { name: "Diagnostics", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Diagnostics", exact: true })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const picker = page.getByLabel("Settings category");
+  await expect(picker).toBeVisible();
+  await expect(picker.locator('optgroup[label="Personal"] option')).toHaveCount(5);
+  await expect(picker.locator('optgroup[label="AI & agents"] option')).toHaveCount(4);
+  await expect(picker.locator('optgroup[label="System"] option')).toHaveCount(2);
+  await picker.selectOption("general");
+  await expect(page.getByRole("heading", { name: "General", exact: true })).toBeVisible();
+});
+
 for (const viewport of [
   { width: 390, height: 844 },
   { width: 390, height: 500 },
