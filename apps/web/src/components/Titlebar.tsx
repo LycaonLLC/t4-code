@@ -3,7 +3,7 @@
 // Linux window controls are injected by the desktop shell later.
 import { Badge, BrandLockup, IconButton, Tooltip, TooltipPopup, TooltipTrigger } from "@t4-code/ui";
 import { useNavigate } from "@tanstack/react-router";
-import { Command, Moon, PanelLeft, Settings, Sun, UsersRound } from "lucide-react";
+import { Moon, PanelLeft, Search, Settings, Sun, UsersRound } from "lucide-react";
 import { useEffect } from "react";
 
 import { updateIsAvailable } from "../features/updates/update-model.ts";
@@ -149,16 +149,16 @@ export function Titlebar({
         <TooltipTrigger
           render={
             <IconButton
-              aria-label="Search sessions and commands"
+              aria-label="Search sessions and transcripts"
               className="size-11 sm:size-7"
               onClick={() => workspaceStore.getState().setPaletteOpen(true)}
               size="icon-sm"
             >
-              <Command />
+              <Search />
             </IconButton>
           }
         />
-        <TooltipPopup side="bottom">Search sessions and commands (Ctrl+K)</TooltipPopup>
+        <TooltipPopup side="bottom">Search sessions and transcripts (Ctrl+K)</TooltipPopup>
       </Tooltip>
       <ThemeToggle />
       <SettingsButton />

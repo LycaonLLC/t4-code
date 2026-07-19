@@ -3,10 +3,12 @@
 // focus (dialog primitive owns the focus contract).
 import { cn, Dialog, DialogPopup, StatusPill } from "@t4-code/ui";
 import { useNavigate } from "@tanstack/react-router";
-import { CornerDownLeft } from "lucide-react";
+import { CornerDownLeft, Search } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ProjectGroup } from "../lib/session-tree.ts";
+import { handoffTranscriptSearchQuery } from "../features/transcript-search/index.ts";
+import { TRANSCRIPT_SEARCH_ROUTE } from "../features/transcript-search/route.ts";
 import { useWorkspace, workspaceStore } from "../state/store-instance.ts";
 import { resolveTheme } from "../theme/theme.ts";
 interface PaletteItem {
@@ -21,6 +23,7 @@ function buildItems(
   groups: readonly ProjectGroup[],
   navigate: (sessionId: string) => void,
   openInbox: () => void,
+  openTranscriptSearch: (query: string) => void,
   openAgentView: () => void,
   openSettings: () => void,
 ): PaletteItem[] {
@@ -67,6 +70,13 @@ function buildItems(
       run: openInbox,
     },
     {
+      id: "action:transcript-search",
+      label: "Open transcript search",
+      hint: "Prior decisions and code discussions",
+      status: <Search aria-hidden="true" className="size-3.5 text-muted-foreground" />,
+      run: () => openTranscriptSearch(""),
+    },
+    {
       id: "action:agents",
       label: "Open Agent View",
       hint: "Agents",
@@ -101,6 +111,10 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
         () => {
           void navigate({ to: "/inbox" });
         },
+        (searchQuery) => {
+          handoffTranscriptSearchQuery(searchQuery);
+          void navigate({ to: TRANSCRIPT_SEARCH_ROUTE });
+        },
         () => {
           void navigate({ to: "/agents" });
         },
@@ -112,10 +126,26 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
   );
 
   const needle = query.trim().toLowerCase();
-  const filtered =
+  const baseFiltered =
     needle === ""
       ? items
       : items.filter((item) => `${item.label} ${item.hint}`.toLowerCase().includes(needle));
+  const filtered =
+    needle.length < 2
+      ? baseFiltered
+      : [
+          ...baseFiltered,
+          {
+            id: "action:transcript-search-query",
+            label: "View all transcript results",
+            hint: `Search for “${query.trim()}”`,
+            status: <Search aria-hidden="true" className="size-3.5 text-muted-foreground" />,
+            run: () => {
+              handoffTranscriptSearchQuery(query.trim());
+              void navigate({ to: TRANSCRIPT_SEARCH_ROUTE });
+            },
+          },
+        ];
 
   useEffect(() => {
     setHighlighted(0);
@@ -143,7 +173,7 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
   return (
     <Dialog onOpenChange={(next) => workspaceStore.getState().setPaletteOpen(next)} open={open}>
       <DialogPopup
-        aria-label="Search sessions and commands"
+        aria-label="Search sessions, transcripts, and commands"
         className="w-full max-w-lg overflow-hidden p-0"
         showCloseButton={false}
       >
@@ -166,7 +196,7 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
               runItem(filtered[highlighted]);
             }
           }}
-          placeholder="Search sessions and commands"
+          placeholder="Search sessions, transcripts, and commands"
           role="combobox"
           type="text"
           value={query}
@@ -180,7 +210,7 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
         >
           {filtered.length === 0 && (
             <li className="px-2.5 py-6 text-center text-muted-foreground text-sm">
-              Nothing matches "{query}". Try a session title or project name.
+              Nothing matches "{query}". Try a session title, project, or transcript phrase.
             </li>
           )}
           {filtered.map((item, index) => (

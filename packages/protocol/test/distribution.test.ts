@@ -68,6 +68,12 @@ const expectedTarEntries = [
     "snapshot",
     "terminal-output",
     "terminal",
+    "transcript-context-anchor.invalid",
+    "transcript-context-request",
+    "transcript-context-response",
+    "transcript-search-limit.invalid",
+    "transcript-search-request",
+    "transcript-search-response",
     "welcome",
   ].map((name) => `package/fixtures/v1/${name}.json`),
   "package/fixtures/v1/scenarios/agent-view-lifecycle.json",
@@ -97,6 +103,7 @@ const expectedTarEntries = [
     "session-state",
     "snapshot",
     "terminal",
+    "transcript-search",
     "usage",
     "user-terminals",
   ].map((name) => `package/src/${name}.ts`),
@@ -132,15 +139,15 @@ describe("vendored app-wire distribution", () => {
   it("pins the frozen source, protocol, corpus, and tarball checksums", () => {
     expect(manifest).toMatchObject({
       package: "@oh-my-pi/app-wire",
-      version: "0.5.10",
+      version: "0.6.1",
       sourceRepository: "https://github.com/lyc-aon/oh-my-pi",
-      sourceCommit: "93f48ab62e2002b48a0dc2734de33d5328ea76d6",
-      sourceTreeHash: "ea8608496731f29addc95d43ea68e44c5c42cb22",
-      tarball: "oh-my-pi-app-wire-0.5.10.tgz",
+      sourceCommit: "f57d5c96b46adc1c43b76710bb019ba4a3e17a75",
+      sourceTreeHash: "41ef665e518cc914392bb1fea2e7922fca9664f5",
+      tarball: "oh-my-pi-app-wire-0.6.1.tgz",
       appProtocol: "omp-app/1",
-      goldenCorpusSha256: "63480a2359c1b2b4ec2f5cc8890683f0eefc13e92597d1464e442b563bc7375e",
+      goldenCorpusSha256: "f407bb389a3a77e9db7ec046b9cd1cb19b4edb986694ecc4509ac21c7524c66d",
     });
-    expect(manifest.createdAt).toBe("2026-07-19T01:54:54Z");
+    expect(manifest.createdAt).toBe("2026-07-19T03:45:01Z");
     expect(sha256(tarballPath)).toBe(manifest.tarballSha256);
     expect(goldenCorpusSha256(join(installedRoot, "fixtures", "v1"))).toBe(
       manifest.goldenCorpusSha256,
@@ -159,7 +166,7 @@ describe("vendored app-wire distribution", () => {
       .split("\n")
       .sort();
     expect(entries).toEqual(expectedTarEntries);
-    expect(entries).toHaveLength(71);
+    expect(entries).toHaveLength(78);
 
     const protocolPackage = readFileSync(
       join(repoRoot, "packages", "protocol", "package.json"),
@@ -168,9 +175,9 @@ describe("vendored app-wire distribution", () => {
     const lockfile = readFileSync(join(repoRoot, "pnpm-lock.yaml"), "utf8");
     expect(`${protocolPackage}\n${lockfile}`).not.toContain("/home/");
     expect(protocolPackage).toMatch(
-      /"@oh-my-pi\/app-wire": "file:\.\.\/\.\.\/vendor\/app-wire\/oh-my-pi-app-wire-0\.5\.10\.tgz"/u,
+      /"@oh-my-pi\/app-wire": "file:\.\.\/\.\.\/vendor\/app-wire\/oh-my-pi-app-wire-0\.6\.1\.tgz"/u,
     );
-    expect(lockfile).toMatch(/version: file:vendor\/app-wire\/oh-my-pi-app-wire-0\.5\.10\.tgz/u);
+    expect(lockfile).toMatch(/version: file:vendor\/app-wire\/oh-my-pi-app-wire-0\.6\.1\.tgz/u);
     expect(`${protocolPackage}\n${lockfile}`).not.toMatch(/file:\/\//u);
   });
 });
