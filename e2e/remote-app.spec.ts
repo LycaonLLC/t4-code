@@ -1430,29 +1430,44 @@ test("manages a session from a phone and converges another live client", async (
 test("opens a session-linked browser preview, captures a snapshot, and keeps controls mobile-safe", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await openSession(page, false);
+  const previewFixture = new FixtureProcess("preview-v1");
+  let previewWeb: BuiltWebServer | undefined;
+  try {
+    await previewFixture.start();
+    previewWeb = new BuiltWebServer(previewFixture.wsUrl);
+    await previewWeb.start();
 
-  const openPreview = page.getByRole("button", {
-    name: "Open browser preview for this session",
-  });
-  await expect(openPreview).toBeVisible();
-  await openPreview.click();
-  await expect(page).toHaveURL(/#\/sessions\/[^/]+\/preview$/u);
-  await expect(page.getByRole("heading", { name: "Browser preview" })).toBeVisible();
-  await expect(page.locator(".surface-subheader").getByText("Ready", { exact: true })).toBeVisible();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(previewWeb.url, { waitUntil: "domcontentloaded" });
+    await expect(page.getByText(CONNECTED_COPY, { exact: true })).toBeVisible();
+    const session = page.locator('[data-session-row="host-preview/session-preview"]');
+    await expect(session).toBeVisible();
+    await session.click();
 
-  await page.getByRole("button", { name: "Recapture" }).click();
-  const snapshot = page.getByRole("img", { name: "Browser preview snapshot: Fixture preview" });
-  await expect(snapshot).toBeVisible();
-  await expect(snapshot).toHaveAttribute("src", /^blob:/u);
+    const openPreview = page.getByRole("button", {
+      name: "Open browser preview for this session",
+    });
+    await expect(openPreview).toBeVisible();
+    await openPreview.click();
+    await expect(page).toHaveURL(/#\/sessions\/[^/]+\/preview$/u);
+    await expect(page.getByRole("heading", { name: "Browser preview" })).toBeVisible();
+    await expect(page.locator(".surface-subheader").getByText("Ready", { exact: true })).toBeVisible();
 
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.getByRole("heading", { name: "Browser preview" })).toBeVisible();
-  const recaptureBox = await page.getByRole("button", { name: "Recapture" }).boundingBox();
-  expect(recaptureBox).not.toBeNull();
-  expect(recaptureBox!.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
-  expect(
-    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
-  ).toBe(true);
+    await page.getByRole("button", { name: "Recapture" }).click();
+    const snapshot = page.getByRole("img", { name: "Browser preview snapshot: Fixture preview" });
+    await expect(snapshot).toBeVisible();
+    await expect(snapshot).toHaveAttribute("src", /^blob:/u);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByRole("heading", { name: "Browser preview" })).toBeVisible();
+    const recaptureBox = await page.getByRole("button", { name: "Recapture" }).boundingBox();
+    expect(recaptureBox).not.toBeNull();
+    expect(recaptureBox!.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+  } finally {
+    await previewWeb?.stop();
+    await previewFixture.stop();
+  }
 });

@@ -447,14 +447,7 @@ export class PreviewLeaseManager {
     try {
       return await operation(leaseId);
     } catch (error) {
-      let code = "";
-      if (error !== null && typeof error === "object" && "code" in error)
-        code = String(error.code);
-      if (
-        /transport|ownership|owner|lease|closed/i.test(code) ||
-        ["FORBIDDEN", "CONFLICT", "NOT_FOUND"].includes(code)
-      )
-        this.invalidate(identity);
+      this.invalidate(identity);
       throw error;
     }
   }
@@ -470,6 +463,10 @@ export class PreviewLeaseManager {
 
   invalidate(identity: PreviewIdentity): void {
     this.leases.delete(identityKey(identity));
+  }
+
+  invalidateAll(): void {
+    this.leases.clear();
   }
 
   async release(identity: PreviewIdentity): Promise<void> {

@@ -26,6 +26,7 @@ import {
   previewActionSupport,
   previewHostSupport,
   previewTrustLabel,
+  reconcilePreviewState,
   type PreviewAction,
   type PreviewWorkspaceStatus,
 } from "./preview-model.ts";
@@ -54,6 +55,9 @@ export function PreviewWorkspace({
   const snapshot = useDesktopRuntimeSnapshot();
   const controller = desktopRuntime();
   const selectedPreviewId = useWorkspace((state) => selectSessionView(state, session.id).previewId);
+  const selectedOptIn = useWorkspace((state) => selectSessionView(state, session.id).previewOptIn);
+  const selectedOptInKind = useWorkspace((state) => selectSessionView(state, session.id).previewOptInKind);
+  const selectedOptInAuthorityId = useWorkspace((state) => selectSessionView(state, session.id).previewOptInAuthorityId);
   const scale = useWorkspace((state) => selectSessionView(state, session.id).previewScale);
   const address = useMemo(
     () => (snapshot === null ? null : resolveLiveSession(snapshot, session.id)),
@@ -74,9 +78,13 @@ export function PreviewWorkspace({
       ),
     [sessionProjection],
   );
-  const preview = choosePreview(previews, selectedPreviewId);
-  const authenticatedPreviewNeedsOptIn =
-    selectedPreviewId === null && preview?.authority?.kind === "authenticated-profile";
+  const preview = choosePreview(
+    previews,
+    selectedPreviewId,
+    selectedOptIn,
+    selectedOptInKind,
+    selectedOptInAuthorityId,
+  );
   const connected =
     snapshot !== null && address !== null && snapshot.connections.get(address.targetId) === "connected";
   const hostSupport =
@@ -101,15 +109,15 @@ export function PreviewWorkspace({
   const [scrollX, setScrollX] = useState("0");
   const [scrollY, setScrollY] = useState("400");
 
+
   useEffect(() => {
-    if (
-      preview !== undefined &&
-      preview.previewId !== selectedPreviewId &&
-      !authenticatedPreviewNeedsOptIn
-    ) {
-      workspaceStore.getState().setSessionPreview(session.id, preview.previewId);
-    }
-  }, [authenticatedPreviewNeedsOptIn, preview, selectedPreviewId, session.id]);
+    reconcilePreviewState({ selectedPreviewId, previews }, () => {
+      workspaceStore.getState().setSessionPreview(session.id, {
+        previewId: null,
+        optIn: false,
+      });
+    });
+  }, [selectedPreviewId, previews, session.id]);
 
   useEffect(() => {
     setUrl(preview?.url ?? "");
@@ -141,18 +149,13 @@ export function PreviewWorkspace({
   }, [adapter, identity?.previewId, preview?.capture?.captureId, preview?.capture?.sha256]);
 
   const support = (action: PreviewAction) =>
-    authenticatedPreviewNeedsOptIn
-      ? {
-          supported: false,
-          reason: "Select the authenticated preview before controlling it.",
-        }
-      : previewActionSupport(
-          preview,
-          action,
-          status,
-          hostSupport.controlSupported,
-          hostSupport.inputSupported,
-        );
+    previewActionSupport(
+      preview,
+      action,
+      status,
+      hostSupport.controlSupported,
+      hostSupport.inputSupported,
+    );
   const runAction = (
     action: PreviewAction,
     _label: string,
@@ -165,7 +168,9 @@ export function PreviewWorkspace({
         : adapter === null || !hostSupport.supported || !hostSupport.controlSupported
           ? {
               supported: false,
-              reason: hostSupport.reason ?? "This host does not permit browser preview control.",
+              reason:
+                hostSupport.reason ??
+                "This host does not permit browser preview control.",
             }
           : { supported: true };
     if (!actionSupport.supported || adapter === null) {
@@ -240,7 +245,7 @@ export function PreviewWorkspace({
                 className="min-h-11 sm:min-h-8"
                 disabled={
                   url.trim().length === 0 ||
-                  !hostSupport.supported ||
+
                   !hostSupport.controlSupported ||
                   (preview !== undefined && !support("navigate").supported)
                 }
@@ -262,20 +267,24 @@ export function PreviewWorkspace({
               </Button>
             </div>
             <p className="mt-2 text-muted-foreground text-xs">Launch authority: OMP session-only authority. Authenticated profiles are never selected automatically.</p>
-            {(previews.length > 1 || authenticatedPreviewNeedsOptIn) && (
+            {(previews.length > 1 || (previews.length === 1 && preview === undefined)) && (
               <label className="mt-3 block text-muted-foreground text-xs" htmlFor="preview-selection">
                 Preview
                 <select
                   className="mt-1 min-h-11 w-full rounded-md border border-input bg-background px-3 text-sm sm:min-h-8"
                   id="preview-selection"
-                  onChange={(event) => workspaceStore.getState().setSessionPreview(session.id, event.target.value)}
-                  value={selectedPreviewId ?? ""}
+                  onChange={(event) => {
+                    const chosenPreview = previews.find((p) => p.previewId === event.target.value);
+                    workspaceStore.getState().setSessionPreview(session.id, {
+                      previewId: chosenPreview?.previewId ?? null,
+                      optInKind: chosenPreview?.authority?.kind ?? null,
+                      optInAuthorityId: chosenPreview?.authority?.id ?? null,
+                      optIn: chosenPreview !== undefined,
+                    });
+                  }}
+                  value={preview?.previewId ?? ""}
                 >
-                  {authenticatedPreviewNeedsOptIn && (
-                    <option disabled value="">
-                      Select authenticated preview
-                    </option>
-                  )}
+                  <option disabled value="">Choose a preview...</option>
                   {previews.map((entry) => (
                     <option key={entry.previewId} value={entry.previewId}>
                       {entry.title ?? entry.url ?? entry.previewId}

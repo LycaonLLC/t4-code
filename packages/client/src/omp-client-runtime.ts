@@ -407,6 +407,7 @@ export class OmpClient {
   async close(): Promise<void> {
     if (this.stateValue === "closed") return;
     if (this.stateValue === "ready") await this.previewLeaseManager.releaseAll();
+    this.previewLeaseManager.invalidateAll();
     this.closedByUser = true;
     this.fatalError = undefined;
     this.clearInbound();
@@ -1113,6 +1114,7 @@ export class OmpClient {
   }
 
   private handleDisconnect(code?: number, reason?: string): void {
+    this.previewLeaseManager.invalidateAll();
     if (this.closedByUser || isTerminalState(this.stateValue)) return;
     const helloRejected =
       this.stateValue === "handshaking" && code === 1008 && reason?.trim() === "invalid frame";

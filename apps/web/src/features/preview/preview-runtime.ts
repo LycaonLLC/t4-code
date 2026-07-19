@@ -147,14 +147,15 @@ export class PreviewDesktopAdapter {
     if (!result.accepted) throw new Error("The host rejected the preview confirmation.");
   }
 
+  releaseCapture(identity: PreviewIdentity): void {
+    this.captures.release(identity);
+  }
+
   async release(identity: PreviewIdentity): Promise<void> {
     this.captures.release(identity);
     await this.leases.release(identity);
   }
 
-  releaseCapture(identity: PreviewIdentity): void {
-    this.captures.release(identity);
-  }
 
   async dispose(): Promise<void> {
     this.captures.dispose();

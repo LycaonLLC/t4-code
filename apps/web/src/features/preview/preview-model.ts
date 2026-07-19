@@ -56,14 +56,19 @@ export function previewHostSupport(host: {
       reason: "This host does not advertise browser preview control.",
     };
   }
+  if (!host.grantedCapabilities.includes("preview.read")) {
+    return {
+      supported: false,
+      controlSupported: false,
+      inputSupported: false,
+      reason: "This host does not permit browser preview reads.",
+    };
+  }
   const controlSupported = host.grantedCapabilities.includes("preview.control");
   return {
-    supported: host.grantedCapabilities.includes("preview.read"),
+    supported: true,
     controlSupported,
     inputSupported: controlSupported && host.grantedCapabilities.includes("preview.input"),
-    ...(!host.grantedCapabilities.includes("preview.read")
-      ? { reason: "This host does not permit browser preview reads." }
-      : {}),
   };
 }
 
@@ -75,7 +80,7 @@ export function derivePreviewWorkspaceStatus(options: {
   if (!options.supported) return "unsupported";
   if (!options.connected) return "offline";
   if (options.preview === undefined) return "empty";
-  if (options.preview.freshness === "cached" || options.preview.freshness === "stale") {
+  if (options.preview.freshness !== "fresh") {
     return "cached";
   }
   return options.preview.state ?? "ready";
@@ -95,13 +100,16 @@ export function previewActionSupport(
     return { supported: false, reason: "Preview actions are unavailable while this host is offline." };
   }
   if (status === "cached") {
-    return { supported: false, reason: "Preview actions are unavailable until the cached session reconnects." };
+    return { supported: false, reason: "Preview actions are unavailable until preview state is current." };
   }
   if (!controlSupported) {
     return { supported: false, reason: "This host does not permit browser preview control." };
   }
   if (status === "empty" || preview === undefined) {
     return { supported: false, reason: "Launch a preview before using this action." };
+  }
+  if (!controlSupported) {
+    return { supported: false, reason: "This host does not permit browser preview control." };
   }
   if (["click", "fill", "type", "press", "scroll", "select", "upload"].includes(action) && !inputSupported) {
     return { supported: false, reason: "This host does not permit browser preview input." };
@@ -117,15 +125,49 @@ export function defaultLaunchAuthority(): "omp-session" {
 export function choosePreview(
   previews: readonly PreviewProjection[],
   selectedPreviewId: string | null,
+  optIn: boolean,
+  optInKind: string | null,
+  optInAuthorityId: string | null,
 ): PreviewProjection | undefined {
   if (selectedPreviewId !== null) {
     const selected = previews.find((preview) => preview.previewId === selectedPreviewId);
-    if (selected !== undefined) return selected;
+    if (selected !== undefined) {
+      const isDefaultSafe =
+        selected.authority?.kind === "isolated-session" &&
+        selected.authority.requiresExplicitOptIn === false;
+      if (isDefaultSafe) {
+        return selected;
+      }
+      const currentKind = selected.authority?.kind ?? null;
+      const currentId = selected.authority?.id ?? null;
+      if (optIn && currentKind === optInKind && currentId === optInAuthorityId) {
+        return selected;
+      }
+    }
   }
-  const nonAuthenticated = previews.find(
-    (preview) => preview.authority?.kind !== "authenticated-profile",
+  return previews.find(
+    (preview) =>
+      preview.authority?.kind === "isolated-session" &&
+      preview.authority.requiresExplicitOptIn === false,
   );
-  return nonAuthenticated ?? (previews.length === 1 ? previews[0] : undefined);
+}
+
+export interface PreviewStateReconciliation {
+  readonly selectedPreviewId: string | null;
+  readonly previews: readonly PreviewProjection[];
+}
+
+export function reconcilePreviewState(
+  state: PreviewStateReconciliation,
+  clearPreview: () => void,
+): void {
+  if (
+    state.selectedPreviewId !== null &&
+    !state.previews.some((p) => p.previewId === state.selectedPreviewId)
+  ) {
+    clearPreview();
+  }
+
 }
 
 export function previewTrustLabel(preview: PreviewProjection | undefined): string {
@@ -142,7 +184,7 @@ export function isProjectRelativeUploadPath(path: string): boolean {
     value.length > 0 &&
     !value.startsWith("/") &&
     !value.startsWith("\\") &&
-    !/^[A-Za-z]:[\\/]/u.test(value) &&
+    !/^[A-Za-z]:/u.test(value) &&
     !value.split(/[\\/]+/u).includes("..")
   );
 }

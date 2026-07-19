@@ -33,7 +33,12 @@ describe("session continuity (A→B→A)", () => {
     s().togglePaneFamily("A", "review");
     s().setPaneWidth("A", 500);
     s().setTerminalDrawerOpen("A", true);
-    s().setSessionPreview("A", "preview-a");
+    s().setSessionPreview("A", {
+      previewId: "preview-a",
+      optInKind: "authenticated-profile",
+      optInAuthorityId: "auth-a",
+      optIn: true,
+    });
     s().setSessionPreviewScale("A", "actual");
 
     s().activateSession("B", "2026-07-11T10:01:00Z");
@@ -41,7 +46,7 @@ describe("session continuity (A→B→A)", () => {
     s().togglePaneFamily("B", "files");
     s().togglePaneFamily("B", "files"); // close again
     s().setSessionScrollTop("B", 7);
-    s().setSessionPreview("B", "preview-b");
+    s().setSessionPreview("B", { previewId: "preview-b", optIn: false });
 
     s().activateSession("A", "2026-07-11T10:02:00Z");
     const viewA = selectSessionView(s(), "A");
@@ -52,6 +57,9 @@ describe("session continuity (A→B→A)", () => {
     expect(viewA.paneWidth).toBe(500);
     expect(viewA.terminalDrawerOpen).toBe(true);
     expect(viewA.previewId).toBe("preview-a");
+    expect(viewA.previewOptIn).toBe(true);
+    expect(viewA.previewOptInKind).toBe("authenticated-profile");
+    expect(viewA.previewOptInAuthorityId).toBe("auth-a");
     expect(viewA.previewScale).toBe("actual");
 
     const viewB = selectSessionView(s(), "B");
@@ -61,6 +69,7 @@ describe("session continuity (A→B→A)", () => {
     expect(viewB.scrollTop).toBe(7);
     expect(viewB.terminalDrawerOpen).toBe(false);
     expect(viewB.previewId).toBe("preview-b");
+    expect(viewB.previewOptIn).toBe(false);
     expect(viewB.previewScale).toBe("fit");
   });
 
@@ -135,7 +144,12 @@ describe("persistence", () => {
     first.getState().setRailWidth(300);
     first.getState().setTheme("dark");
     first.getState().setEmptyProjectDismissed("host/project", true);
-    first.getState().setSessionPreview("A", "preview-a");
+    first.getState().setSessionPreview("A", {
+      previewId: "preview-a",
+      optInKind: "authenticated-profile",
+      optInAuthorityId: "auth-a",
+      optIn: true,
+    });
     first.getState().setSessionPreviewScale("A", "actual");
     first.getState().markAttentionOutcomeSeen("A", "outcome-1");
     first.getState().setPaletteOpen(true); // ephemeral, must not persist
@@ -145,6 +159,9 @@ describe("persistence", () => {
     expect(state.activeSessionId).toBe("A");
     expect(selectSessionView(state, "A").draft).toBe("resume me");
     expect(selectSessionView(state, "A").previewId).toBe("preview-a");
+    expect(selectSessionView(state, "A").previewOptIn).toBe(true);
+    expect(selectSessionView(state, "A").previewOptInKind).toBe("authenticated-profile");
+    expect(selectSessionView(state, "A").previewOptInAuthorityId).toBe("auth-a");
     expect(selectSessionView(state, "A").previewScale).toBe("actual");
     expect(state.railWidth).toBe(300);
     expect(state.theme).toBe("dark");
@@ -197,6 +214,26 @@ describe("persistence", () => {
     expect(parsed?.sessionViewById.A).toMatchObject({
       previewId: null,
       previewScale: "fit",
+    });
+  });
+
+  it("does not grant consent to persisted preview selections from before the opt-in marker", () => {
+    const parsed = parsePersistedWorkspace({
+      version: WORKSPACE_STATE_VERSION,
+      sessionViewById: {
+        A: {
+          previewId: "legacy-preview",
+          previewOptInKind: null,
+          previewOptInAuthorityId: null,
+        },
+      },
+    });
+
+    expect(parsed?.sessionViewById.A).toMatchObject({
+      previewId: "legacy-preview",
+      previewOptIn: false,
+      previewOptInKind: null,
+      previewOptInAuthorityId: null,
     });
   });
 

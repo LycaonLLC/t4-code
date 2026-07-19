@@ -24,6 +24,13 @@ export type PaneFamily = (typeof PANE_FAMILIES)[number];
 export type ThemePreference = "light" | "dark" | "system";
 export type PreviewScaleMode = "fit" | "actual";
 
+export interface SessionPreviewSelection {
+  readonly previewId: string | null;
+  readonly optInKind?: string | null;
+  readonly optInAuthorityId?: string | null;
+  readonly optIn: boolean;
+}
+
 /** Per-session view continuity: everything restored on A→B→A switching. */
 export interface SessionViewState {
   /** Transcript scroll offset; null follows the tail. */
@@ -36,6 +43,9 @@ export interface SessionViewState {
   readonly terminalDrawerOpen: boolean;
   /** Preview tab and scale restored on A→B→A route switching. */
   readonly previewId: string | null;
+  readonly previewOptIn: boolean;
+  readonly previewOptInKind: string | null;
+  readonly previewOptInAuthorityId: string | null;
   readonly previewScale: PreviewScaleMode;
 }
 
@@ -47,6 +57,9 @@ export const DEFAULT_SESSION_VIEW: SessionViewState = {
   paneWidth: RIGHT_PANE_WIDTH.defaultWidth,
   terminalDrawerOpen: false,
   previewId: null,
+  previewOptIn: false,
+  previewOptInKind: null,
+  previewOptInAuthorityId: null,
   previewScale: "fit",
 };
 
@@ -107,7 +120,10 @@ export interface WorkspaceActions {
   setPaneOpen(sessionId: string, open: boolean): void;
   setPaneWidth(sessionId: string, width: number): void;
   setTerminalDrawerOpen(sessionId: string, open: boolean): void;
-  setSessionPreview(sessionId: string, previewId: string | null): void;
+  setSessionPreview(
+    sessionId: string,
+    selection: SessionPreviewSelection,
+  ): void;
   setSessionPreviewScale(sessionId: string, scale: PreviewScaleMode): void;
 }
 
@@ -194,6 +210,19 @@ function sanitizeSessionView(value: unknown): SessionViewState | null {
       !/\p{Cc}/u.test(view.previewId)
         ? view.previewId
         : null,
+    previewOptInKind:
+      typeof view.previewOptInKind === "string" &&
+      view.previewOptInKind.length > 0 &&
+      view.previewOptInKind.length <= 256
+        ? view.previewOptInKind
+        : null,
+    previewOptInAuthorityId:
+      typeof view.previewOptInAuthorityId === "string" &&
+      view.previewOptInAuthorityId.length > 0 &&
+      view.previewOptInAuthorityId.length <= 256
+        ? view.previewOptInAuthorityId
+        : null,
+    previewOptIn: view.previewOptIn === true,
     previewScale: view.previewScale === "actual" ? "actual" : "fit",
   };
 }
@@ -390,16 +419,23 @@ export function createWorkspaceStore(options: CreateWorkspaceStoreOptions): Work
       }),
     setPaneOpen: (sessionId, open) =>
       set((state) => updateSessionView(state, sessionId, { paneOpen: open })),
-    setPaneWidth: (sessionId, width) =>
+    setPaneWidth: (sessionId, paneWidth) =>
       set((state) =>
         updateSessionView(state, sessionId, {
-          paneWidth: clampWidth(width, RIGHT_PANE_WIDTH),
+          paneWidth: clampWidth(paneWidth, RIGHT_PANE_WIDTH),
         }),
       ),
     setTerminalDrawerOpen: (sessionId, open) =>
       set((state) => updateSessionView(state, sessionId, { terminalDrawerOpen: open })),
-    setSessionPreview: (sessionId, previewId) =>
-      set((state) => updateSessionView(state, sessionId, { previewId })),
+    setSessionPreview: (sessionId, selection) =>
+      set((state) =>
+        updateSessionView(state, sessionId, {
+          previewId: selection.previewId,
+          previewOptInKind: selection.optInKind ?? null,
+          previewOptInAuthorityId: selection.optInAuthorityId ?? null,
+          previewOptIn: selection.optIn,
+        }),
+      ),
     setSessionPreviewScale: (sessionId, previewScale) =>
       set((state) => updateSessionView(state, sessionId, { previewScale })),
   }));

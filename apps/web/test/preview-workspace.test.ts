@@ -51,17 +51,72 @@ describe("preview workspace policy", () => {
     expect(derivePreviewWorkspaceStatus({ preview: preview({ state: "stopped" }), connected: true, supported: true })).toBe("stopped");
     expect(derivePreviewWorkspaceStatus({ preview: preview({ state: "failed" }), connected: true, supported: true })).toBe("failed");
     expect(derivePreviewWorkspaceStatus({ preview: preview({ freshness: "cached" }), connected: true, supported: true })).toBe("cached");
+    expect(derivePreviewWorkspaceStatus({ preview: preview({ freshness: "catching-up" }), connected: true, supported: true })).toBe("cached");
     expect(derivePreviewWorkspaceStatus({ preview: preview(), connected: false, supported: true })).toBe("offline");
     expect(derivePreviewWorkspaceStatus({ preview: preview(), connected: true, supported: false })).toBe("unsupported");
   });
 
-  it("returns a sole authenticated preview for explicit selection", () => {
+  it("does not auto-select previews that require explicit consent", () => {
     const authenticated = preview({ previewId: "authenticated", authority: { id: "auth", label: "Personal", kind: "authenticated-profile", requiresExplicitOptIn: true } });
     const isolated = preview({ previewId: "isolated", authority: { id: "omp-session", label: "Session", kind: "isolated-session", requiresExplicitOptIn: false } });
-    expect(choosePreview([authenticated, isolated], null)?.previewId).toBe("isolated");
-    expect(choosePreview([authenticated], null)?.previewId).toBe("authenticated");
-    expect(choosePreview([authenticated, isolated], "authenticated")?.previewId).toBe("authenticated");
+    const unknownAuth = preview({ previewId: "unknown" });
+    const isolatedOptIn = preview({ previewId: "isolated-opt-in", authority: { id: "omp-session", label: "Session", kind: "isolated-session", requiresExplicitOptIn: true } });
+
+    expect(choosePreview([authenticated, isolated], null, false, null, null)?.previewId).toBe("isolated");
+    expect(choosePreview([authenticated], null, false, null, null)).toBeUndefined();
+    expect(choosePreview([unknownAuth], null, false, null, null)).toBeUndefined();
+    expect(choosePreview([isolatedOptIn], null, false, null, null)).toBeUndefined();
+    expect(choosePreview([authenticated, isolated], "authenticated", true, "authenticated-profile", "auth")?.previewId).toBe("authenticated");
     expect(defaultLaunchAuthority()).toBe("omp-session");
+  });
+
+  it("invalidates user selection if the preview transitions to a different authority or trust class", () => {
+    const isolated = preview({ previewId: "p1", authority: { id: "omp-session", label: "Session", kind: "isolated-session", requiresExplicitOptIn: false } });
+    const authenticatedA = preview({ previewId: "p1", authority: { id: "auth-a", label: "Profile A", kind: "authenticated-profile", requiresExplicitOptIn: true } });
+    const authenticatedB = preview({ previewId: "p1", authority: { id: "auth-b", label: "Profile B", kind: "authenticated-profile", requiresExplicitOptIn: true } });
+    const unknownAuth = preview({ previewId: "p1" });
+    const isolatedOptInA = preview({ previewId: "p1", authority: { id: "auth-x", label: "Opt-in X", kind: "isolated-session", requiresExplicitOptIn: true } });
+    const isolatedOptInB = preview({ previewId: "p1", authority: { id: "auth-y", label: "Opt-in Y", kind: "isolated-session", requiresExplicitOptIn: true } });
+
+    expect(choosePreview([isolated], "p1", false, null, null)?.previewId).toBe("p1");
+
+    expect(
+      choosePreview([authenticatedA], "p1", true, "isolated-session", "omp-session"),
+    ).toBeUndefined();
+    expect(
+      choosePreview([authenticatedA], "p1", true, "authenticated-profile", "auth-a")?.previewId,
+    ).toBe("p1");
+    expect(
+      choosePreview([authenticatedB], "p1", true, "authenticated-profile", "auth-a"),
+    ).toBeUndefined();
+
+    expect(choosePreview([unknownAuth], "p1", false, null, null)).toBeUndefined();
+    expect(choosePreview([unknownAuth], "p1", true, null, null)?.previewId).toBe("p1");
+    expect(
+      choosePreview([isolatedOptInA], "p1", true, null, null),
+    ).toBeUndefined();
+    expect(
+      choosePreview([isolatedOptInA], "p1", true, "isolated-session", "auth-x")?.previewId,
+    ).toBe("p1");
+    expect(
+      choosePreview([isolatedOptInB], "p1", true, "isolated-session", "auth-x"),
+    ).toBeUndefined();
+  });
+
+  it("clears user selection when the selected preview disappears, preventing subsequent auto-authorization on reappearance", () => {
+    const authenticatedA = preview({ previewId: "p1", authority: { id: "auth-a", label: "Profile A", kind: "authenticated-profile", requiresExplicitOptIn: true } });
+
+    expect(
+      choosePreview([authenticatedA], "p1", true, "authenticated-profile", "auth-a")?.previewId,
+    ).toBe("p1");
+
+    expect(
+      choosePreview([], "p1", true, "authenticated-profile", "auth-a"),
+    ).toBeUndefined();
+    expect(
+      choosePreview([authenticatedA], "p1", true, "authenticated-profile", "auth-a")?.previewId,
+    ).toBe("p1");
+    expect(choosePreview([authenticatedA], null, false, null, null)).toBeUndefined();
   });
 
   it("reports host-advertised action reasons and scales snapshot clicks to native coordinates", () => {
@@ -75,7 +130,11 @@ describe("preview workspace policy", () => {
       supported: false,
       reason: "This host does not advertise navigate for this preview.",
     });
-    expect(previewActionSupport(current, "press", "ready", false, true)).toEqual({
+    expect(previewActionSupport(current, "navigate", "cached", true, true)).toEqual({
+      supported: false,
+      reason: "Preview actions are unavailable until preview state is current.",
+    });
+    expect(previewActionSupport(current, "navigate", "ready", false, true)).toEqual({
       supported: false,
       reason: "This host does not permit browser preview control.",
     });
@@ -84,14 +143,16 @@ describe("preview workspace policy", () => {
     ).toEqual({ x: 500, y: 250 });
   });
 
-  it("rejects absolute and parent-traversal uploads before sending them", () => {
+  it("rejects absolute, drive-relative, and parent-traversal uploads before sending them", () => {
     expect(isProjectRelativeUploadPath("assets/image.png")).toBe(true);
     expect(isProjectRelativeUploadPath("/tmp/image.png")).toBe(false);
     expect(isProjectRelativeUploadPath("C:\\temp\\image.png")).toBe(false);
+    expect(isProjectRelativeUploadPath("C:secret.txt")).toBe(false);
+    expect(isProjectRelativeUploadPath("D:secret.txt")).toBe(false);
     expect(isProjectRelativeUploadPath("../image.png")).toBe(false);
   });
 
-  it("separates preview reads from control and input grants", () => {
+  it("distinguishes read-only, control, and input grants", () => {
     expect(previewHostSupport(undefined)).toEqual({
       supported: false,
       controlSupported: false,
@@ -168,7 +229,7 @@ describe("preview desktop adapter", () => {
     );
   });
 
-  it("distinguishes capture release from lease release", async () => {
+  it("keeps cooperative leases while replacing capture object URLs", async () => {
     const command = vi.fn(async (_targetId: string, intent: { command: string }) => {
       if (intent.command === "preview.lease.acquire") {
         return accepted({ previewId: identity.previewId, leaseId: "lease-a", expiresAt: Date.now() + 30_000 });
@@ -182,20 +243,10 @@ describe("preview desktop adapter", () => {
 
     await adapter.mutate("navigate", identity, { url: "https://example.test" });
     command.mockClear();
-
-    // releaseCapture should not trigger a lease release command
     adapter.releaseCapture(identity);
-    expect(command).not.toHaveBeenCalledWith(
-      address.targetId,
-      expect.objectContaining({ command: "preview.lease.release" }),
-    );
 
-    // release should trigger the lease release command
-    await adapter.release(identity);
-    expect(command).toHaveBeenCalledWith(
-      address.targetId,
-      expect.objectContaining({ command: "preview.lease.release" }),
-    );
+    expect(command).not.toHaveBeenCalled();
+    await adapter.dispose();
   });
 
   it("routes a projected preview confirmation through the controller", async () => {
