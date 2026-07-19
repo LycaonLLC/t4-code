@@ -83,9 +83,11 @@ Copy the `wsUrl` from `T4_FIXTURE_READY`, then launch a target from another term
 T4_DEVELOPMENT_ENDPOINT=ws://127.0.0.1:PORT/fixture pnpm dev:flutter -- -d macos
 ```
 
-For the Android emulator, forward the selected fixture port with `adb reverse tcp:PORT tcp:PORT`
-and keep the same loopback URL. The fixture process binds only to local loopback; do not expose it
-through Funnel or a public firewall rule.
+For the Android emulator, run `adb reverse tcp:PORT tcp:PORT`, then keep
+`T4_DEVELOPMENT_ENDPOINT=ws://127.0.0.1:PORT/fixture`. Do not substitute `10.0.2.2`: the
+deterministic fixture intentionally binds only to host loopback, so that address leaves the app
+retrying with no session selected. Do not expose the fixture through Funnel or a public firewall
+rule.
 
 `T4_DEVELOPMENT_ENDPOINT` is only for deterministic fixture work. Without it, the app starts from
 its persisted host directory and accepts an exact Tailnet HTTPS address, then performs normal OMP

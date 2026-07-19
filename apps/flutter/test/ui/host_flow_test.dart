@@ -179,6 +179,10 @@ void main() {
     final code = List<String>.filled(6, '1').join();
     await tester.enterText(find.byType(TextField), code);
     await tester.pump();
+    await tester.ensureVisible(
+      find.widgetWithText(FilledButton, 'Pair device'),
+    );
+    await tester.pump();
     await tester.tap(find.widgetWithText(FilledButton, 'Pair device'));
     await tester.pump();
 
@@ -591,6 +595,76 @@ void main() {
     expect(find.text('Reviewing changes'), findsOneWidget);
     expect(find.text('running'), findsOneWidget);
   });
+
+  testWidgets('developer tools expose activity, files, and review on phones', (
+    tester,
+  ) async {
+    final profile = HostProfile.parseTailnetAddress(
+      'https://alpha.tailnet-name.ts.net',
+    );
+    final actions = _FakeActions();
+    await pumpApp(
+      tester,
+      state: T4ViewState(
+        connectionPhase: ConnectionPhase.ready,
+        hostDirectory: HostDirectory.empty().upsert(profile),
+        authenticationPhase: AuthenticationPhase.paired,
+        grantedCapabilities: t4RequestedCapabilities.toSet(),
+        selectedSessionId: 'session-alpha',
+        sessions: const <SessionSummary>[
+          SessionSummary(
+            hostId: 'host-alpha',
+            sessionId: 'session-alpha',
+            projectId: 'project-alpha',
+            projectName: 'Project Alpha',
+            title: 'First investigation',
+            revision: 'revision-alpha',
+            status: 'active',
+          ),
+        ],
+        activities: <DeveloperActivity>[
+          DeveloperActivity(
+            id: 'activity-1',
+            category: 'tool',
+            title: 'files.read',
+            detail: 'lib/main.dart',
+            at: DateTime.utc(2026, 7, 19),
+            raw: '{"path":"lib/main.dart"}',
+          ),
+        ],
+        fileWorkspace: const FileWorkspaceState(
+          path: 'lib/main.dart',
+          entries: <DeveloperFileEntry>[
+            DeveloperFileEntry(
+              path: 'lib/main.dart',
+              kind: 'file',
+              size: 42,
+              revision: 'revision-file',
+            ),
+          ],
+          content: 'void main() {}',
+          diff: '-void old() {}\n+void main() {}',
+        ),
+      ),
+      actions: actions,
+      size: compactPhone,
+    );
+
+    await tester.tap(find.byTooltip('Open developer tools'));
+    await tester.pumpAndSettle();
+    expect(find.text('Activity'), findsOneWidget);
+    expect(find.text('files.read'), findsOneWidget);
+
+    await tester.tap(find.text('Files'));
+    await tester.pumpAndSettle();
+    expect(find.text('lib/main.dart'), findsWidgets);
+    expect(find.text('void main() {}'), findsOneWidget);
+
+    await tester.tap(find.text('Review'));
+    await tester.pumpAndSettle();
+    expect(find.text('Reload diff'), findsOneWidget);
+    expect(find.textContaining('+void main() {}'), findsOneWidget);
+  });
 }
 
 final class _FakeActions implements T4Actions {
@@ -747,6 +821,45 @@ final class _FakeActions implements T4Actions {
   Future<void> retrySession(String sessionId) async {
     retriedSessionIds.add(sessionId);
   }
+
+  @override
+  Future<void> refreshActivity() async {}
+
+  @override
+  Future<String> openTerminal({String? cwd}) async => 'terminal-test';
+
+  @override
+  void sendTerminalInput(String terminalId, String data) {}
+
+  @override
+  void resizeTerminal(String terminalId, int cols, int rows) {}
+
+  @override
+  void closeTerminal(String terminalId) {}
+
+  @override
+  Future<void> listFiles([String path = '']) async {}
+
+  @override
+  Future<void> readFile(String path) async {}
+
+  @override
+  Future<void> loadSessionDiff() async {}
+
+  @override
+  Future<String> launchPreview(String url) async => 'preview-test';
+
+  @override
+  Future<void> selectPreview(String previewId) async {}
+
+  @override
+  Future<void> navigatePreview(String previewId, String url) async {}
+
+  @override
+  Future<void> runPreviewAction(String previewId, String action) async {}
+
+  @override
+  Future<void> capturePreview(String previewId) async {}
 
   @override
   Future<Uint8List> readTranscriptImage(

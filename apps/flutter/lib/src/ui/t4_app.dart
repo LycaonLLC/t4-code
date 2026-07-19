@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:xterm/xterm.dart';
 
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import '../client/app_state.dart';
@@ -12,9 +13,11 @@ import '../client/app_state.dart';
 part 'adaptive_session_shell.dart';
 part 'attention_pane.dart';
 part 'conversation_pane.dart';
+part 'developer_surfaces.dart';
 part 'host_management.dart';
 part 't4_theme.dart';
 part 'session_navigation.dart';
+part 'terminal_pane.dart';
 
 /// Material 3 application shell for T4.
 ///

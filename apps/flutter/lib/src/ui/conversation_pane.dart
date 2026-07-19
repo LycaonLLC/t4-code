@@ -8,6 +8,7 @@ final class _ConversationPane extends StatelessWidget {
     required this.onConnect,
     this.onOpenSessions,
     required this.onOpenAttention,
+    required this.onOpenDeveloper,
   });
 
   final T4ViewState state;
@@ -16,6 +17,7 @@ final class _ConversationPane extends StatelessWidget {
   final Future<void> Function() onConnect;
   final VoidCallback? onOpenSessions;
   final VoidCallback onOpenAttention;
+  final VoidCallback onOpenDeveloper;
 
   @override
   Widget build(BuildContext context) {
@@ -27,7 +29,11 @@ final class _ConversationPane extends StatelessWidget {
     return Column(
       children: [
         if (showHeader)
-          _ConversationHeader(state: state, onOpenAttention: onOpenAttention),
+          _ConversationHeader(
+            state: state,
+            onOpenAttention: onOpenAttention,
+            onOpenDeveloper: onOpenDeveloper,
+          ),
         if (showError)
           _ConnectionErrorBanner(
             message: error == null || error.isEmpty
@@ -53,10 +59,12 @@ final class _ConversationHeader extends StatelessWidget {
   const _ConversationHeader({
     required this.state,
     required this.onOpenAttention,
+    required this.onOpenDeveloper,
   });
 
   final T4ViewState state;
   final VoidCallback onOpenAttention;
+  final VoidCallback onOpenDeveloper;
 
   @override
   Widget build(BuildContext context) {
@@ -99,6 +107,11 @@ final class _ConversationHeader extends StatelessWidget {
                   ],
                 ],
               ),
+            ),
+            IconButton(
+              onPressed: onOpenDeveloper,
+              tooltip: 'Open developer tools',
+              icon: const Icon(Icons.code),
             ),
             Badge(
               isLabelVisible: state.urgentAttentionCount > 0,

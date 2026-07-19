@@ -40,12 +40,7 @@ void main() {
       final hello = connector.channels.single.sentJson.single;
       expect(hello['type'], 'hello');
       expect(hello['capabilities'], <String, Object?>{
-        'client': <String>[
-          'sessions.read',
-          'sessions.prompt',
-          'sessions.control',
-          'sessions.manage',
-        ],
+        'client': t4RequestedCapabilities,
       });
       expect(hello['authentication'], <String, Object?>{
         'deviceId': 'device-alpha',
@@ -1110,6 +1105,181 @@ void main() {
     expect(channel.sentJson.last, containsPair('type', 'confirm'));
     expect(channel.sentJson.last, containsPair('decision', 'deny'));
   });
+
+  test(
+    'projects terminal, files, audit, and preview developer state',
+    () async {
+      final profile = _profile('alpha');
+      final connector = _FakeConnector();
+      final controller = _controller(
+        _MemoryDirectoryStore(
+          directory: const HostDirectory.empty().upsert(profile),
+        ),
+        _MemoryCredentialStore(),
+        connector,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      final channel = connector.channels.single;
+      channel.emit(
+        _welcome('host-alpha', capabilities: t4RequestedCapabilities),
+      );
+      await _flush();
+      final list = channel.sentJson.last;
+      channel.emit(
+        _response(
+          list,
+          command: 'session.list',
+          result: _sessionListResultFor('host-alpha', const <String>[
+            'session-alpha',
+          ]),
+        ),
+      );
+      await _flush();
+      channel.emit(
+        _snapshot(
+          'host-alpha',
+          'session-alpha',
+          revision: 'revision-session-alpha',
+        ),
+      );
+      await _flush();
+
+      final opening = controller.openTerminal(cwd: 'packages/client');
+      await _flush();
+      final open = channel.sentJson.last;
+      expect(open['command'], 'term.open');
+      expect(open['args'], containsPair('cwd', 'packages/client'));
+      channel.emit(_confirmation(open, 'confirmation-terminal'));
+      await _flush();
+      expect(channel.sentJson.last, containsPair('decision', 'approve'));
+      channel.emit(
+        _response(
+          open,
+          command: 'term.open',
+          result: <String, Object?>{'terminalId': 'terminal-alpha'},
+        ),
+      );
+      expect(await opening, 'terminal-alpha');
+      channel.emit(<String, Object?>{
+        'v': 'omp-app/1',
+        'type': 'terminal.output',
+        'hostId': 'host-alpha',
+        'sessionId': 'session-alpha',
+        'terminalId': 'terminal-alpha',
+        'cursor': <String, Object?>{'epoch': 'terminal', 'seq': 1},
+        'stream': 'stdout',
+        'data': r'$ ready',
+      });
+      await _flush();
+      expect(controller.state.activeTerminal?.output, r'$ ready');
+      controller.sendTerminalInput('terminal-alpha', 'pwd\n');
+      expect(channel.sentJson.last, containsPair('type', 'terminal.input'));
+      expect(channel.sentJson.last, containsPair('data', 'pwd\n'));
+      controller.resizeTerminal('terminal-alpha', 120, 40);
+      expect(channel.sentJson.last, containsPair('type', 'terminal.resize'));
+      expect(channel.sentJson.last, containsPair('cols', 120));
+      channel.emit(<String, Object?>{
+        'v': 'omp-app/1',
+        'type': 'terminal.exit',
+        'hostId': 'host-alpha',
+        'sessionId': 'session-alpha',
+        'terminalId': 'terminal-alpha',
+        'cursor': <String, Object?>{'epoch': 'terminal', 'seq': 2},
+        'exitCode': 0,
+      });
+      await _flush();
+      expect(controller.state.activeTerminal?.running, isFalse);
+      controller.closeTerminal('terminal-alpha');
+      expect(channel.sentJson.last, containsPair('type', 'terminal.close'));
+      expect(controller.state.activeTerminal, isNull);
+
+      final listing = controller.listFiles();
+      await _flush();
+      final filesCommand = channel.sentJson.last;
+      expect(filesCommand['command'], 'files.list');
+      channel.emit(
+        _response(
+          filesCommand,
+          command: 'files.list',
+          result: <String, Object?>{
+            'entries': <Object?>[
+              <String, Object?>{
+                'path': 'lib/main.dart',
+                'kind': 'file',
+                'size': 42,
+                'revision': 'revision-file',
+              },
+            ],
+            'revision': 'revision-files',
+          },
+        ),
+      );
+      await listing;
+      expect(
+        controller.state.fileWorkspace.entries.single.path,
+        'lib/main.dart',
+      );
+
+      final refreshing = controller.refreshActivity();
+      await _flush();
+      final auditCommand = channel.sentJson.last;
+      expect(auditCommand['command'], 'audit.read');
+      channel.emit(
+        _response(
+          auditCommand,
+          command: 'audit.read',
+          result: <String, Object?>{
+            'events': <Object?>[
+              <String, Object?>{
+                'eventId': 'operation-audit-1',
+                'hostId': 'host-alpha',
+                'sessionId': 'session-alpha',
+                'action': 'files.read',
+                'actor': 'fixture',
+                'timestamp': '2026-07-19T00:00:00.000Z',
+                'detail': <String, Object?>{'token': 'must-not-render'},
+              },
+            ],
+          },
+        ),
+      );
+      await refreshing;
+      final audit = controller.state.activities.firstWhere(
+        (activity) => activity.id == 'operation-audit-1',
+      );
+      expect(audit.raw, contains('<redacted>'));
+      expect(audit.raw, isNot(contains('must-not-render')));
+
+      final launching = controller.launchPreview('https://example.test');
+      await _flush();
+      final launch = channel.sentJson.last;
+      expect(launch['command'], 'preview.launch');
+      channel.emit(_confirmation(launch, 'confirmation-preview'));
+      await _flush();
+      channel.emit(
+        _response(
+          launch,
+          command: 'preview.launch',
+          result: <String, Object?>{
+            'preview': <String, Object?>{
+              'previewId': 'preview-alpha',
+              'state': 'ready',
+              'url': 'https://example.test/',
+              'revision': 'revision-preview',
+              'cursor': <String, Object?>{'epoch': 'preview', 'seq': 1},
+              'title': 'Fixture preview',
+              'canGoBack': false,
+              'canGoForward': false,
+            },
+          },
+        ),
+      );
+      expect(await launching, 'preview-alpha');
+      expect(controller.state.activePreview?.title, 'Fixture preview');
+      expect(controller.state.developerOperationPending, isFalse);
+    },
+  );
 
   test('IO transport sends the exact native Origin', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);

@@ -17,6 +17,7 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
   bool _disconnecting = false;
   bool _showHostManager = false;
   bool _showAttention = false;
+  bool _showDeveloper = false;
 
   Future<void> _connect() async {
     if (_connecting) return;
@@ -56,6 +57,7 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
       setState(() {
         _showHostManager = false;
         _showAttention = false;
+        _showDeveloper = false;
       });
       if (closeDrawer) _scaffoldKey.currentState?.closeDrawer();
       return;
@@ -64,6 +66,7 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
     setState(() {
       _showHostManager = false;
       _showAttention = false;
+      _showDeveloper = false;
       _selectingSessionId = sessionId;
     });
     try {
@@ -88,7 +91,11 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
   void _openNavigation() => _scaffoldKey.currentState?.openDrawer();
 
   void _openHostManager({required bool closeDrawer}) {
-    setState(() => _showHostManager = true);
+    setState(() {
+      _showHostManager = true;
+      _showAttention = false;
+      _showDeveloper = false;
+    });
     if (closeDrawer) _scaffoldKey.currentState?.closeDrawer();
   }
 
@@ -96,10 +103,19 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
 
   void _openAttention() => setState(() {
     _showHostManager = false;
+    _showDeveloper = false;
     _showAttention = true;
   });
 
   void _closeAttention() => setState(() => _showAttention = false);
+
+  void _openDeveloper() => setState(() {
+    _showHostManager = false;
+    _showAttention = false;
+    _showDeveloper = true;
+  });
+
+  void _closeDeveloper() => setState(() => _showDeveloper = false);
 
   Widget _primaryContent({required bool showHeader}) {
     if (_showAttention) {
@@ -127,6 +143,15 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
       return _PairingPane(state: widget.state, actions: widget.actions);
     }
 
+    if (_showDeveloper) {
+      return _DeveloperSurfacesPane(
+        state: widget.state,
+        actions: widget.actions,
+        showHeader: showHeader,
+        onDone: _closeDeveloper,
+      );
+    }
+
     return _ConversationPane(
       state: widget.state,
       actions: widget.actions,
@@ -134,6 +159,7 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
       onConnect: _connect,
       onOpenSessions: showHeader ? null : _openNavigation,
       onOpenAttention: _openAttention,
+      onOpenDeveloper: _openDeveloper,
     );
   }
 
@@ -203,6 +229,11 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
         titleSpacing: 0,
         title: _showHostManager
             ? Text('Hosts', style: Theme.of(context).textTheme.titleMedium)
+            : _showDeveloper
+            ? Text(
+                'Developer tools',
+                style: Theme.of(context).textTheme.titleMedium,
+              )
             : Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -221,7 +252,7 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
                 ],
               ),
         actions: [
-          if (!_showHostManager && !_showAttention)
+          if (!_showHostManager && !_showAttention && !_showDeveloper)
             Badge(
               isLabelVisible: widget.state.urgentAttentionCount > 0,
               label: Text('${widget.state.urgentAttentionCount}'),
@@ -230,6 +261,14 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
                 tooltip: 'Open inbox',
                 icon: const Icon(Icons.inbox_outlined),
               ),
+            ),
+          if (!_showHostManager && !_showAttention)
+            IconButton(
+              onPressed: _showDeveloper ? _closeDeveloper : _openDeveloper,
+              tooltip: _showDeveloper
+                  ? 'Close developer tools'
+                  : 'Open developer tools',
+              icon: Icon(_showDeveloper ? Icons.close : Icons.code),
             ),
           if (!_showHostManager)
             IconButton(

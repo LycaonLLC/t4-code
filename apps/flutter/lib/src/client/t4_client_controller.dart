@@ -38,6 +38,13 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   final Map<String, ConfirmationFrame> _attentionConfirmations =
       <String, ConfirmationFrame>{};
   final Map<String, AgentActivity> _agentActivities = <String, AgentActivity>{};
+  final LinkedHashMap<String, DeveloperActivity> _activities = LinkedHashMap();
+  final Map<String, TerminalSession> _terminals = <String, TerminalSession>{};
+  final Map<String, TranscriptCursor> _terminalCursors =
+      <String, TranscriptCursor>{};
+  final Map<String, PreviewWorkspaceState> _previews =
+      <String, PreviewWorkspaceState>{};
+  final Map<String, Uint8List> _previewCaptures = <String, Uint8List>{};
 
   HostDirectory _hostDirectory = const HostDirectory.empty();
   WebSocketChannel? _channel;
@@ -54,11 +61,15 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   Set<String> _grantedCapabilities = const <String>{};
   Set<String> _grantedFeatures = const <String>{};
   List<CatalogItem> _catalogItems = const <CatalogItem>[];
+  FileWorkspaceState _fileWorkspace = const FileWorkspaceState();
+  String? _activeTerminalId;
+  String? _activePreviewId;
   Future<void>? _initialization;
   bool _initialized = false;
   bool _hostOperationPending = false;
   bool _submitting = false;
   bool _sessionOperationPending = false;
+  bool _developerOperationPending = false;
   bool _directoryLoaded = false;
   bool _disposed = false;
   int _connectionGeneration = 0;
@@ -96,6 +107,23 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       0,
       (total, attention) => total + attention.omittedCount,
     ),
+    activities: List<DeveloperActivity>.unmodifiable(
+      _activities.values.toList(growable: false).reversed,
+    ),
+    terminals: List<TerminalSession>.unmodifiable(
+      _terminals.values.where(
+        (terminal) => terminal.sessionId == _selectedSessionId,
+      ),
+    ),
+    activeTerminalId: _activeTerminalId,
+    fileWorkspace: _fileWorkspace,
+    previews: List<PreviewWorkspaceState>.unmodifiable(
+      _previews.values.where(
+        (preview) => preview.sessionId == _selectedSessionId,
+      ),
+    ),
+    activePreviewId: _activePreviewId,
+    developerOperationPending: _developerOperationPending,
   );
 
   SessionComposerState get _composerState {
@@ -583,6 +611,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     final known = _sessions.any((session) => session.sessionId == sessionId);
     if (!known) return;
     _selectedSessionId = sessionId;
+    _selectDeveloperSessionProjection(sessionId);
     _messages.clear();
     _phase = ConnectionPhase.synchronizing;
     _errorMessage = null;
@@ -649,6 +678,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
           .firstOrNull;
       if (replacement == null) {
         _selectedSessionId = null;
+        _selectDeveloperSessionProjection(null);
         _messages.clear();
         _publish();
       } else {
@@ -998,6 +1028,414 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     );
   }
 
+  void _selectDeveloperSessionProjection(String? sessionId) {
+    _fileWorkspace = const FileWorkspaceState();
+    _activeTerminalId = sessionId == null
+        ? null
+        : _terminals.values
+              .where((terminal) => terminal.sessionId == sessionId)
+              .firstOrNull
+              ?.terminalId;
+    _activePreviewId = sessionId == null
+        ? null
+        : _previews.values
+              .where((preview) => preview.sessionId == sessionId)
+              .firstOrNull
+              ?.previewId;
+  }
+
+  SessionSummary _developerSession() =>
+      state.selectedSession ??
+      (throw StateError('Choose a session before opening developer tools.'));
+
+  Future<T> _runDeveloperOperation<T>(Future<T> Function() operation) async {
+    if (_developerOperationPending) {
+      throw StateError('Another developer action is already running.');
+    }
+    _developerOperationPending = true;
+    _publish();
+    try {
+      return await operation();
+    } finally {
+      _developerOperationPending = false;
+      _publish();
+    }
+  }
+
+  @override
+  Future<void> refreshActivity() => _runDeveloperOperation(() async {
+    final frame = await _runSessionOperation(
+      prefix: 'audit-read',
+      command: 'audit.read',
+      capability: 'audit.read',
+    );
+    final result = frame.result;
+    if (result is! Map<String, Object?> || result['events'] is! List<Object?>) {
+      throw const FormatException('audit.read result is invalid');
+    }
+    for (final raw in result['events']! as List<Object?>) {
+      if (raw is Map<String, Object?>) _recordAuditMap(raw);
+    }
+    _publish();
+  });
+
+  @override
+  Future<String> openTerminal({String? cwd}) => _runDeveloperOperation(
+    () async {
+      final session = _developerSession();
+      final frame = await _runSessionOperation(
+        prefix: 'terminal-open',
+        command: 'term.open',
+        capability: 'term.open',
+        session: session,
+        args: <String, Object?>{
+          if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
+          'cols': 80,
+          'rows': 24,
+        },
+        confirmationExpected: true,
+      );
+      final result = frame.result;
+      if (result is! Map<String, Object?> || result['terminalId'] is! String) {
+        throw const FormatException('term.open result is invalid');
+      }
+      final terminalId = result['terminalId']! as String;
+      _terminals[terminalId] = TerminalSession(
+        terminalId: terminalId,
+        sessionId: session.sessionId,
+        title: cwd?.trim().isNotEmpty == true ? cwd!.trim() : 'Terminal',
+      );
+      _activeTerminalId = terminalId;
+      _recordActivity(
+        category: 'shell',
+        title: 'Terminal opened',
+        detail: cwd ?? session.projectName,
+        raw: result,
+      );
+      return terminalId;
+    },
+  );
+
+  @override
+  void sendTerminalInput(String terminalId, String data) {
+    final terminal = _terminals[terminalId];
+    final hostId = _hostId;
+    if (terminal == null ||
+        !terminal.running ||
+        hostId == null ||
+        _phase != ConnectionPhase.ready ||
+        !_grantedCapabilities.contains('term.input')) {
+      return;
+    }
+    _send(
+      WireEncoder.terminalInput(
+        hostId: hostId,
+        sessionId: terminal.sessionId,
+        terminalId: terminalId,
+        data: data,
+      ),
+    );
+  }
+
+  @override
+  void resizeTerminal(String terminalId, int cols, int rows) {
+    final terminal = _terminals[terminalId];
+    final hostId = _hostId;
+    if (terminal == null ||
+        !terminal.running ||
+        hostId == null ||
+        _phase != ConnectionPhase.ready ||
+        !_grantedCapabilities.contains('term.resize')) {
+      return;
+    }
+    _send(
+      WireEncoder.terminalResize(
+        hostId: hostId,
+        sessionId: terminal.sessionId,
+        terminalId: terminalId,
+        cols: cols,
+        rows: rows,
+      ),
+    );
+  }
+
+  @override
+  void closeTerminal(String terminalId) {
+    final terminal = _terminals[terminalId];
+    final hostId = _hostId;
+    if (terminal == null || hostId == null) return;
+    if (_phase == ConnectionPhase.ready) {
+      _send(
+        WireEncoder.terminalClose(
+          hostId: hostId,
+          sessionId: terminal.sessionId,
+          terminalId: terminalId,
+          reason: 'user',
+        ),
+      );
+    }
+    _terminals.remove(terminalId);
+    _terminalCursors.remove(terminalId);
+    _activeTerminalId = _terminals.keys.lastOrNull;
+    _publish();
+  }
+
+  @override
+  Future<void> listFiles([String path = '']) =>
+      _runDeveloperOperation(() async {
+        final session = _developerSession();
+        _fileWorkspace = FileWorkspaceState(
+          path: path,
+          loading: true,
+          content: _fileWorkspace.content,
+          diff: _fileWorkspace.diff,
+        );
+        _publish();
+        final frame = await _runComposerCommand(
+          prefix: 'files-list',
+          command: 'files.list',
+          session: session,
+          capability: 'files.list',
+          args: <String, Object?>{if (path.isNotEmpty) 'path': path},
+        );
+        final result = frame.result;
+        if (result is! Map<String, Object?> ||
+            result['entries'] is! List<Object?>) {
+          throw const FormatException('files.list result is invalid');
+        }
+        final entries = <DeveloperFileEntry>[];
+        for (final raw in result['entries']! as List<Object?>) {
+          if (raw is! Map<String, Object?> ||
+              raw['path'] is! String ||
+              raw['kind'] is! String) {
+            throw const FormatException('files.list entry is invalid');
+          }
+          entries.add(
+            DeveloperFileEntry(
+              path: raw['path']! as String,
+              kind: raw['kind']! as String,
+              size: raw['size'] is int ? raw['size']! as int : null,
+              revision: raw['revision'] is String
+                  ? raw['revision']! as String
+                  : null,
+            ),
+          );
+        }
+        _fileWorkspace = FileWorkspaceState(
+          path: path,
+          entries: List<DeveloperFileEntry>.unmodifiable(entries),
+          revision: result['revision'] is String
+              ? result['revision']! as String
+              : null,
+        );
+      });
+
+  @override
+  Future<void> readFile(String path) => _runDeveloperOperation(() async {
+    final session = _developerSession();
+    final frame = await _runComposerCommand(
+      prefix: 'files-read',
+      command: 'files.read',
+      session: session,
+      capability: 'files.read',
+      args: <String, Object?>{'path': path},
+    );
+    final result = frame.result;
+    if (result is! Map<String, Object?> || result['content'] is! String) {
+      throw const FormatException('files.read result is invalid');
+    }
+    _fileWorkspace = FileWorkspaceState(
+      path: path,
+      entries: _fileWorkspace.entries,
+      content: result['content']! as String,
+      revision: result['revision'] is String
+          ? result['revision']! as String
+          : null,
+    );
+  });
+
+  @override
+  Future<void> loadSessionDiff() => _runDeveloperOperation(() async {
+    final session = _developerSession();
+    final path = _fileWorkspace.path;
+    if (path.isEmpty) {
+      throw StateError('Choose a file before loading its diff.');
+    }
+    final frame = await _runComposerCommand(
+      prefix: 'files-diff',
+      command: 'files.diff',
+      session: session,
+      capability: 'files.diff',
+      args: <String, Object?>{'path': path},
+    );
+    final result = frame.result;
+    if (result is! Map<String, Object?> || result['diff'] is! String) {
+      throw const FormatException('files.diff result is invalid');
+    }
+    _fileWorkspace = FileWorkspaceState(
+      path: path,
+      entries: _fileWorkspace.entries,
+      content: _fileWorkspace.content,
+      diff: result['diff']! as String,
+      revision: result['toRevision'] is String
+          ? result['toRevision']! as String
+          : _fileWorkspace.revision,
+    );
+  });
+
+  @override
+  Future<String> launchPreview(String url) => _runDeveloperOperation(() async {
+    final session = _developerSession();
+    final frame = await _runSessionOperation(
+      prefix: 'preview-launch',
+      command: 'preview.launch',
+      capability: 'preview.control',
+      session: session,
+      args: <String, Object?>{'url': url.trim(), 'authorityId': 'omp-session'},
+      confirmationExpected: true,
+    );
+    final preview = _previewResult(frame, session.sessionId);
+    _activePreviewId = preview.previewId;
+    return preview.previewId;
+  });
+
+  @override
+  Future<void> selectPreview(String previewId) =>
+      _runPreviewMutation(previewId, 'preview.activate');
+
+  @override
+  Future<void> navigatePreview(String previewId, String url) =>
+      _runPreviewMutation(
+        previewId,
+        'preview.navigate',
+        extraArgs: <String, Object?>{'url': url.trim()},
+        confirmationExpected: true,
+      );
+
+  @override
+  Future<void> runPreviewAction(String previewId, String action) {
+    if (!const <String>{
+      'back',
+      'forward',
+      'reload',
+      'close',
+    }.contains(action)) {
+      throw ArgumentError.value(
+        action,
+        'action',
+        'is not a safe preview action',
+      );
+    }
+    return _runPreviewMutation(previewId, 'preview.$action');
+  }
+
+  Future<void> _runPreviewMutation(
+    String previewId,
+    String command, {
+    Map<String, Object?> extraArgs = const <String, Object?>{},
+    bool confirmationExpected = false,
+  }) => _runDeveloperOperation(() async {
+    final session = _developerSession();
+    final frame = confirmationExpected
+        ? await _runSessionOperation(
+            prefix: command.replaceAll('.', '-'),
+            command: command,
+            capability: 'preview.control',
+            session: session,
+            args: <String, Object?>{'previewId': previewId, ...extraArgs},
+            confirmationExpected: true,
+          )
+        : await _runComposerCommand(
+            prefix: command.replaceAll('.', '-'),
+            command: command,
+            session: session,
+            capability: 'preview.control',
+            args: <String, Object?>{'previewId': previewId, ...extraArgs},
+          );
+    final preview = _previewResult(frame, session.sessionId);
+    if (command == 'preview.close' || preview.state == 'closed') {
+      _previews.remove(previewId);
+      _previewCaptures.remove(previewId);
+      _activePreviewId = _previews.keys.lastOrNull;
+    } else {
+      _activePreviewId = previewId;
+    }
+  });
+
+  @override
+  Future<void> capturePreview(String previewId) =>
+      _runDeveloperOperation(() async {
+        final session = _developerSession();
+        final captureFrame = await _runComposerCommand(
+          prefix: 'preview-capture',
+          command: 'preview.capture',
+          session: session,
+          capability: 'preview.read',
+          args: <String, Object?>{'previewId': previewId},
+        );
+        final preview = _previewResult(captureFrame, session.sessionId);
+        final rawPreview =
+            (captureFrame.result! as Map<String, Object?>)['preview'];
+        final capture = rawPreview is Map<String, Object?>
+            ? rawPreview['capture']
+            : null;
+        if (capture is! Map<String, Object?> ||
+            capture['captureId'] is! String ||
+            capture['size'] is! int ||
+            capture['sha256'] is! String ||
+            capture['mimeType'] is! String) {
+          throw const FormatException('preview capture metadata is invalid');
+        }
+        final bytes = BytesBuilder(copy: false);
+        var offset = 0;
+        final size = capture['size']! as int;
+        while (offset < size) {
+          final chunkFrame = await _runComposerCommand(
+            prefix: 'preview-capture-read',
+            command: 'preview.capture.read',
+            session: session,
+            capability: 'preview.read',
+            args: <String, Object?>{
+              'previewId': previewId,
+              'captureId': capture['captureId']! as String,
+              'offset': offset,
+            },
+          );
+          final chunk = chunkFrame.result;
+          if (chunk is! Map<String, Object?> ||
+              chunk['offset'] != offset ||
+              chunk['nextOffset'] is! int ||
+              chunk['content'] is! String) {
+            throw const FormatException('preview capture chunk is invalid');
+          }
+          final decoded = base64Decode(chunk['content']! as String);
+          final nextOffset = chunk['nextOffset']! as int;
+          if (nextOffset - offset != decoded.length || nextOffset <= offset) {
+            throw const FormatException('preview capture offsets are invalid');
+          }
+          bytes.add(decoded);
+          offset = nextOffset;
+        }
+        final content = bytes.takeBytes();
+        if (content.length != size ||
+            sha256.convert(content).toString() != capture['sha256']) {
+          throw const FormatException('preview capture integrity check failed');
+        }
+        _previewCaptures[previewId] = content;
+        _previews[previewId] = PreviewWorkspaceState(
+          previewId: preview.previewId,
+          sessionId: preview.sessionId,
+          state: preview.state,
+          url: preview.url,
+          revision: preview.revision,
+          title: preview.title,
+          canGoBack: preview.canGoBack,
+          canGoForward: preview.canGoForward,
+          capture: content,
+          captureMimeType: capture['mimeType']! as String,
+        );
+      });
+
   @override
   Future<Uint8List> readTranscriptImage(
     String entryId,
@@ -1313,6 +1751,18 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
           _applyEvent(frame.event, frame.cursor);
           _publish();
         }
+      case TerminalOutputFrame():
+        _applyTerminalOutput(frame);
+      case TerminalExitFrame():
+        _applyTerminalExit(frame);
+      case FilesAdditiveFrame():
+        _applyFilesFrame(frame);
+      case AuditTailFrame():
+        _applyAuditEvents(frame.events);
+      case AuditEventFrame():
+        _applyAuditEvents(<AuditEvent>[frame.event]);
+      case PreviewFrame():
+        _applyPreviewFrame(frame);
       case ResponseFrame():
         _applyResponse(frame);
       case SessionDeltaFrame():
@@ -1423,6 +1873,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
               .firstOrNull
               ?.sessionId ??
           _sessions.firstOrNull?.sessionId;
+      _selectDeveloperSessionProjection(_selectedSessionId);
     }
     final selected = _selectedSessionId;
     if (selected == null) {
@@ -1720,6 +2171,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         _sessions.where((session) => !session.archived).firstOrNull ??
         _sessions.firstOrNull;
     _selectedSessionId = replacement?.sessionId;
+    _selectDeveloperSessionProjection(_selectedSessionId);
     if (replacement == null) {
       _phase = ConnectionPhase.ready;
       _publish();
@@ -1797,6 +2249,248 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       status: status,
       progress: frame.progress ?? previous?.progress,
       updatedAt: DateTime.now().toUtc(),
+    );
+    _recordActivity(
+      category: 'agent',
+      title: label,
+      detail: status,
+      raw: frame.raw,
+    );
+    _publish();
+  }
+
+  void _applyTerminalOutput(TerminalOutputFrame frame) {
+    if (frame.hostId != _hostId) return;
+    final terminal = _terminals[frame.terminalId];
+    if (terminal == null || terminal.sessionId != frame.sessionId) return;
+    final current = _terminalCursors[frame.terminalId];
+    if (current != null &&
+        current.epoch == frame.cursor.epoch &&
+        frame.cursor.seq <= current.seq) {
+      return;
+    }
+    _terminalCursors[frame.terminalId] = frame.cursor;
+    final chunk = frame.encoding == 'base64'
+        ? utf8.decode(base64Decode(frame.data), allowMalformed: true)
+        : frame.data;
+    final combined =
+        '${current == null || current.epoch == frame.cursor.epoch ? terminal.output : ''}$chunk';
+    final output = combined.length > 1000000
+        ? combined.substring(combined.length - 1000000)
+        : combined;
+    _terminals[frame.terminalId] = TerminalSession(
+      terminalId: terminal.terminalId,
+      sessionId: terminal.sessionId,
+      title: terminal.title,
+      output: output,
+      running: terminal.running,
+      exitCode: terminal.exitCode,
+      signal: terminal.signal,
+    );
+    _publish();
+  }
+
+  void _applyTerminalExit(TerminalExitFrame frame) {
+    if (frame.hostId != _hostId) return;
+    final terminal = _terminals[frame.terminalId];
+    if (terminal == null || terminal.sessionId != frame.sessionId) return;
+    _terminalCursors[frame.terminalId] = frame.cursor;
+    _terminals[frame.terminalId] = TerminalSession(
+      terminalId: terminal.terminalId,
+      sessionId: terminal.sessionId,
+      title: terminal.title,
+      output: terminal.output,
+      running: false,
+      exitCode: frame.exitCode,
+      signal: frame.signal,
+    );
+    _recordActivity(
+      category: 'shell',
+      title: 'Terminal exited',
+      detail: frame.signal ?? 'Exit code ${frame.exitCode}',
+      raw: frame.raw,
+    );
+    _publish();
+  }
+
+  void _applyFilesFrame(FilesAdditiveFrame frame) {
+    if (frame.hostId != _hostId || frame.sessionId != _selectedSessionId) {
+      return;
+    }
+    _fileWorkspace = FileWorkspaceState(
+      path: frame.path,
+      entries: frame.entries == null
+          ? _fileWorkspace.entries
+          : <DeveloperFileEntry>[
+              for (final entry in frame.entries!)
+                DeveloperFileEntry(
+                  path: entry.path,
+                  kind: entry.kind,
+                  size: entry.size,
+                  revision: entry.revision,
+                ),
+            ],
+      content: frame.content ?? _fileWorkspace.content,
+      diff: frame.diff ?? frame.patch ?? _fileWorkspace.diff,
+      revision: frame.revision ?? frame.toRevision ?? _fileWorkspace.revision,
+    );
+    _recordActivity(
+      category: 'files',
+      title: frame.frameType,
+      detail: frame.path,
+      raw: frame.raw,
+    );
+    _publish();
+  }
+
+  void _applyAuditEvents(List<AuditEvent> events) {
+    for (final event in events) {
+      _recordActivity(
+        id: event.eventId,
+        category: 'audit',
+        title: event.action,
+        detail: event.actor,
+        at: DateTime.tryParse(event.timestamp)?.toUtc(),
+        raw: event.raw,
+      );
+    }
+    _publish();
+  }
+
+  void _recordAuditMap(Map<String, Object?> raw) {
+    final eventId = raw['eventId'];
+    final action = raw['action'];
+    final actor = raw['actor'];
+    final timestamp = raw['timestamp'];
+    if (eventId is! String || action is! String || actor is! String) return;
+    _recordActivity(
+      id: eventId,
+      category: 'audit',
+      title: action,
+      detail: actor,
+      at: timestamp is String ? DateTime.tryParse(timestamp)?.toUtc() : null,
+      raw: raw,
+    );
+  }
+
+  void _recordActivity({
+    String? id,
+    required String category,
+    required String title,
+    required String detail,
+    required Map<String, Object?> raw,
+    DateTime? at,
+  }) {
+    final timestamp = at ?? DateTime.now().toUtc();
+    final key = id ?? '$category:${timestamp.microsecondsSinceEpoch}';
+    _activities[key] = DeveloperActivity(
+      id: key,
+      category: category,
+      title: title,
+      detail: detail,
+      at: timestamp,
+      raw: const JsonEncoder.withIndent('  ').convert(_redact(raw)),
+    );
+    while (_activities.length > 1000) {
+      _activities.remove(_activities.keys.first);
+    }
+  }
+
+  Object? _redact(Object? value) {
+    if (value is List<Object?>) return value.map(_redact).toList();
+    if (value is! Map<String, Object?>) return value;
+    return <String, Object?>{
+      for (final entry in value.entries)
+        entry.key:
+            RegExp(
+              r'token|password|secret|authorization|cookie',
+              caseSensitive: false,
+            ).hasMatch(entry.key)
+            ? '<redacted>'
+            : _redact(entry.value),
+    };
+  }
+
+  PreviewWorkspaceState _previewResult(ResponseFrame frame, String sessionId) {
+    final result = frame.result;
+    if (result is! Map<String, Object?> ||
+        result['preview'] is! Map<String, Object?>) {
+      throw const FormatException('preview command result is invalid');
+    }
+    return _applyPreviewMap(
+      result['preview']! as Map<String, Object?>,
+      sessionId,
+    );
+  }
+
+  PreviewWorkspaceState _applyPreviewMap(
+    Map<String, Object?> raw,
+    String sessionId,
+  ) {
+    if (raw['previewId'] is! String ||
+        raw['state'] is! String ||
+        raw['url'] is! String ||
+        raw['revision'] is! String) {
+      throw const FormatException('preview snapshot is invalid');
+    }
+    final previewId = raw['previewId']! as String;
+    final preview = PreviewWorkspaceState(
+      previewId: previewId,
+      sessionId: sessionId,
+      state: raw['state']! as String,
+      url: raw['url']! as String,
+      revision: raw['revision']! as String,
+      title: raw['title'] is String ? raw['title']! as String : null,
+      canGoBack: raw['canGoBack'] == true,
+      canGoForward: raw['canGoForward'] == true,
+      capture: _previewCaptures[previewId],
+      captureMimeType: raw['capture'] is Map<String, Object?>
+          ? (raw['capture']! as Map<String, Object?>)['mimeType'] as String?
+          : null,
+    );
+    _previews[previewId] = preview;
+    _activePreviewId ??= previewId;
+    return preview;
+  }
+
+  void _applyPreviewFrame(PreviewFrame frame) {
+    if (frame.hostId != _hostId) return;
+    final snapshot = frame.snapshot;
+    if (snapshot != null) {
+      final preview = PreviewWorkspaceState(
+        previewId: snapshot.previewId,
+        sessionId: frame.sessionId,
+        state: snapshot.state,
+        url: snapshot.url,
+        revision: snapshot.revision,
+        title: snapshot.title,
+        canGoBack: snapshot.canGoBack ?? false,
+        canGoForward: snapshot.canGoForward ?? false,
+        capture: _previewCaptures[snapshot.previewId],
+        captureMimeType: snapshot.capture?['mimeType'] as String?,
+      );
+      _previews[preview.previewId] = preview;
+      _activePreviewId ??= preview.previewId;
+    } else if (_previews[frame.previewId] case final previous?) {
+      _previews[frame.previewId] = PreviewWorkspaceState(
+        previewId: previous.previewId,
+        sessionId: previous.sessionId,
+        state: previous.state,
+        url: previous.url,
+        revision: frame.revision,
+        title: previous.title,
+        canGoBack: previous.canGoBack,
+        canGoForward: previous.canGoForward,
+        capture: previous.capture,
+        captureMimeType: previous.captureMimeType,
+        error: frame.message ?? frame.error ?? frame.code,
+      );
+    }
+    _recordActivity(
+      category: 'preview',
+      title: frame.frameType,
+      detail: frame.message ?? frame.error ?? frame.previewId,
+      raw: frame.raw,
     );
     _publish();
   }
@@ -1931,6 +2625,18 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       'event-${cursor.epoch}-${cursor.seq}-$suffix';
 
   void _applyEvent(Map<String, Object?> event, TranscriptCursor cursor) {
+    final eventType = event['type'];
+    _recordActivity(
+      id: 'runtime:${cursor.epoch}:${cursor.seq}',
+      category: eventType is String && eventType.startsWith('tool.')
+          ? 'tool'
+          : 'runtime',
+      title: eventType is String ? eventType : 'Unknown event',
+      detail:
+          _jsonDisplay(event['message'] ?? event['title'] ?? event['note']) ??
+          '',
+      raw: event,
+    );
     switch (event['type']) {
       case 'message.update':
         final entryId = event['entryId'];
@@ -2199,6 +2905,15 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _attentionBySession.clear();
     _attentionConfirmations.clear();
     _agentActivities.clear();
+    _activities.clear();
+    _terminals.clear();
+    _terminalCursors.clear();
+    _previews.clear();
+    _previewCaptures.clear();
+    _fileWorkspace = const FileWorkspaceState();
+    _activeTerminalId = null;
+    _activePreviewId = null;
+    _developerOperationPending = false;
     _cancelPendingCommands(StateError('active host changed'));
     _pendingPair = null;
     _selectedSessionId = null;

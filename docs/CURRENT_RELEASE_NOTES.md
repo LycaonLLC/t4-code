@@ -43,6 +43,14 @@ Actions remain bound to the host session revision, acquire a negotiated prompt l
 dispatch, and reject replaced or expired requests. The full Flutter suite, Web release build,
 compact widget coverage, and an interactive compact-browser decision smoke pass.
 
+Stage 3 developer surfaces are complete locally. A shared developer workspace exposes redacted
+activity with filters and pause/copy controls, file browsing and source inspection, selected-file
+diff review, and protocol-backed PTY tabs with bounded scrollback, resize/input forwarding, exit
+state, and guarded paste. Preview navigation stays host-authoritative: Flutter renders only
+integrity-checked capture bytes and never executes page HTML or JavaScript. Focused controller and
+compact widget coverage, the full Flutter suite, and fixture-connected Web, iOS Simulator, and
+Android emulator smokes exercise the new path.
+
 
 ## Signed and notarized on macOS
 

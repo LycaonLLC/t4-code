@@ -18,6 +18,23 @@ const List<String> t4RequestedCapabilities = <String>[
   'sessions.prompt',
   'sessions.control',
   'sessions.manage',
+  'term.open',
+  'term.input',
+  'term.resize',
+  'files.read',
+  'files.write',
+  'files.list',
+  'files.diff',
+  'agents.control',
+  'audit.read',
+  'config.read',
+  'catalog.read',
+  'config.write',
+  'broker.read',
+  'usage.read',
+  'preview.read',
+  'preview.control',
+  'preview.input',
 ];
 
 final String t4PairCommand = <String>[
@@ -276,6 +293,108 @@ final class AttentionResponse {
   final String text;
 }
 
+enum DeveloperSurface { activity, files, review, terminal, preview }
+
+final class DeveloperActivity {
+  const DeveloperActivity({
+    required this.id,
+    required this.category,
+    required this.title,
+    required this.detail,
+    required this.at,
+    required this.raw,
+  });
+
+  final String id;
+  final String category;
+  final String title;
+  final String detail;
+  final DateTime at;
+  final String raw;
+}
+
+final class TerminalSession {
+  const TerminalSession({
+    required this.terminalId,
+    required this.sessionId,
+    required this.title,
+    this.output = '',
+    this.running = true,
+    this.exitCode,
+    this.signal,
+  });
+
+  final String terminalId;
+  final String sessionId;
+  final String title;
+  final String output;
+  final bool running;
+  final int? exitCode;
+  final String? signal;
+}
+
+final class DeveloperFileEntry {
+  const DeveloperFileEntry({
+    required this.path,
+    required this.kind,
+    this.size,
+    this.revision,
+  });
+
+  final String path;
+  final String kind;
+  final int? size;
+  final String? revision;
+}
+
+final class FileWorkspaceState {
+  const FileWorkspaceState({
+    this.path = '',
+    this.entries = const <DeveloperFileEntry>[],
+    this.content,
+    this.diff,
+    this.revision,
+    this.loading = false,
+    this.error,
+  });
+
+  final String path;
+  final List<DeveloperFileEntry> entries;
+  final String? content;
+  final String? diff;
+  final String? revision;
+  final bool loading;
+  final String? error;
+}
+
+final class PreviewWorkspaceState {
+  const PreviewWorkspaceState({
+    required this.previewId,
+    required this.sessionId,
+    required this.state,
+    required this.url,
+    required this.revision,
+    this.title,
+    this.canGoBack = false,
+    this.canGoForward = false,
+    this.capture,
+    this.captureMimeType,
+    this.error,
+  });
+
+  final String previewId;
+  final String sessionId;
+  final String state;
+  final String url;
+  final String revision;
+  final String? title;
+  final bool canGoBack;
+  final bool canGoForward;
+  final Uint8List? capture;
+  final String? captureMimeType;
+  final String? error;
+}
+
 final class T4ViewState {
   const T4ViewState({
     required this.connectionPhase,
@@ -296,6 +415,13 @@ final class T4ViewState {
     this.agentActivities = const <AgentActivity>[],
     this.attentionPartial = false,
     this.omittedAttentionCount = 0,
+    this.activities = const <DeveloperActivity>[],
+    this.terminals = const <TerminalSession>[],
+    this.activeTerminalId,
+    this.fileWorkspace = const FileWorkspaceState(),
+    this.previews = const <PreviewWorkspaceState>[],
+    this.activePreviewId,
+    this.developerOperationPending = false,
   });
 
   const T4ViewState.disconnected()
@@ -319,6 +445,21 @@ final class T4ViewState {
   final List<AgentActivity> agentActivities;
   final bool attentionPartial;
   final int omittedAttentionCount;
+  final List<DeveloperActivity> activities;
+  final List<TerminalSession> terminals;
+  final String? activeTerminalId;
+  final FileWorkspaceState fileWorkspace;
+  final List<PreviewWorkspaceState> previews;
+  final String? activePreviewId;
+  final bool developerOperationPending;
+
+  TerminalSession? get activeTerminal => terminals
+      .where((terminal) => terminal.terminalId == activeTerminalId)
+      .firstOrNull;
+
+  PreviewWorkspaceState? get activePreview => previews
+      .where((preview) => preview.previewId == activePreviewId)
+      .firstOrNull;
 
   int get urgentAttentionCount =>
       attentionItems.where((item) => item.needsResponse).length +
@@ -383,6 +524,23 @@ abstract interface class T4Actions {
   );
 
   Future<void> retrySession(String sessionId);
+
+  Future<void> refreshActivity();
+
+  Future<String> openTerminal({String? cwd});
+  void sendTerminalInput(String terminalId, String data);
+  void resizeTerminal(String terminalId, int cols, int rows);
+  void closeTerminal(String terminalId);
+
+  Future<void> listFiles([String path = '']);
+  Future<void> readFile(String path);
+  Future<void> loadSessionDiff();
+
+  Future<String> launchPreview(String url);
+  Future<void> selectPreview(String previewId);
+  Future<void> navigatePreview(String previewId, String url);
+  Future<void> runPreviewAction(String previewId, String action);
+  Future<void> capturePreview(String previewId);
 
   Future<Uint8List> readTranscriptImage(
     String entryId,
