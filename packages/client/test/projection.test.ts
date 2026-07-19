@@ -1202,7 +1202,7 @@ describe("client projections", () => {
       detail: {
         title: "Verify parity",
         index: 0,
-        resumable: true,
+        resumable: false,
         contextUsage: { used: 2_000, limit: 8_000 },
       },
     });

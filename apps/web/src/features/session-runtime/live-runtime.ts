@@ -1074,6 +1074,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
               ? derivedControls
               : gateComposerControls(derivedControls, controlGate.controlReason),
           sessionControl,
+          providerTransport: ref?.liveState?.providerTransport ?? null,
           nowMs: Date.now(),
         };
       }

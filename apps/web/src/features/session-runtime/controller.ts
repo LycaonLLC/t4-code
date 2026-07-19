@@ -3,6 +3,8 @@
 // interface; today the deterministic fixture implementation drives it, and
 // the Electron bridge replaces `createFixtureSessionRuntime` with an
 // AppClient-backed implementation without touching a single component.
+import type { ProviderTransportState } from "@t4-code/protocol";
+
 import {
   initialProjection,
   reduceTranscript,
@@ -65,6 +67,8 @@ export interface SessionRuntimeSnapshot {
    * Only set on a live link — cached/offline copy takes precedence.
    */
   readonly sessionControl: SessionControlState | null;
+  /** Redacted provider-owned transport evidence for this session. */
+  readonly providerTransport: ProviderTransportState | null;
   /**
    * Time base for elapsed labels. The fixture runtime reports the fixed
    * scripted "now" so renders are reproducible; a real bridge runtime
@@ -224,6 +228,26 @@ export function createFixtureSessionRuntime(options: FixtureRuntimeOptions): Ses
           queuedFollowUps,
           controls,
           sessionControl: null,
+          providerTransport:
+            link === "live"
+              ? {
+                  provider: "openai-codex",
+                  configuredPolicy: "auto",
+                  websocketPreferred: true,
+                  lastTransport: "websocket",
+                  websocketDisabled: false,
+                  websocketConnected: true,
+                  fallbackCount: 0,
+                  canAppend: true,
+                  prewarmed: true,
+                  hasSessionState: true,
+                  hasTurnState: true,
+                  fullContextRequests: 1,
+                  deltaRequests: 12,
+                  inputJsonBytes: 64_512,
+                  lastInputJsonBytes: 2_048,
+                }
+              : null,
           nowMs: FIXTURE_NOW_MS,
         };
       }

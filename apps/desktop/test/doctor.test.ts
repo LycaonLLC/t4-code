@@ -17,7 +17,7 @@ const contract: SourceContract = {
   nodeEngine: "^24.13.1",
   pnpmVersion: "11.10.0",
   ompVersion: "17.0.4",
-  ompTag: "t4code-17.0.4-appserver-4",
+  ompTag: "t4code-17.0.4-appserver-5",
   ompUrl: "https://example.test/verified-omp",
 };
 
@@ -41,9 +41,9 @@ describe("T4 setup doctor", () => {
     const source = await readSourceContract();
 
     expect(source.ompVersion).toBe("17.0.4");
-    expect(source.ompTag).toBe("t4code-17.0.4-appserver-4");
+    expect(source.ompTag).toBe("t4code-17.0.4-appserver-5");
     expect(source.ompUrl).toBe(
-      "https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.4-appserver-4",
+      "https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.4-appserver-5",
     );
   });
 
