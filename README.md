@@ -123,6 +123,7 @@ pnpm test             # workspace tests
 pnpm test:soak        # headless 10k-history and 20-reconnect stress checks
 pnpm package:linux    # .deb + AppImage into release/
 pnpm package:mac:unsigned  # unsigned macOS build (on a Mac)
+pnpm package:mac      # maintainer-only signed and notarized macOS build
 ```
 
 The soak command needs no phone, Android emulator, or macOS simulator. It checks the shared data
