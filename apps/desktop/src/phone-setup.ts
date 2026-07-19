@@ -57,6 +57,17 @@ export class PhoneSetupService {
     return operation;
   }
 
+  restore(): Promise<PhoneSetupState> {
+    if (this.operation) return this.operation;
+    const operation = this.restoreInternal().catch((error: unknown) => ({
+      phase: "error" as const,
+      message: error instanceof Error ? error.message.slice(0, 512) : "Phone access could not be restored.",
+    }));
+    this.operation = operation;
+    void operation.finally(() => { if (this.operation === operation) this.operation = undefined; });
+    return operation;
+  }
+
   private unsupported(): PhoneSetupState | undefined {
     if (this.platform !== "darwin" || this.arch !== "arm64") {
       return { phase: "unsupported", message: "One-click phone setup currently requires the Apple Silicon Mac app." };
@@ -84,6 +95,26 @@ export class PhoneSetupService {
       env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", ELECTRON_RUN_AS_NODE: "1" },
       timeoutMs: 20_000,
     });
+  }
+
+  private async gatewayIsHealthy(): Promise<boolean> {
+    try {
+      const service = await this.runGatewayService(["status"]);
+      return service.exitCode === 0 && /health:\s*healthy/iu.test(service.stdout);
+    } catch {
+      return false;
+    }
+  }
+
+  private async waitForHealthyGateway(timeoutMs = 10_000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() <= deadline) {
+      if (await this.gatewayIsHealthy()) return true;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(250, remaining)));
+    }
+    return false;
   }
 
   private async hasExpectedServe(executable: string, url: string): Promise<boolean> {
@@ -131,12 +162,20 @@ export class PhoneSetupService {
     }
     try {
       const service = await this.runGatewayService(["status"]);
+      const expectedServe = await this.hasExpectedServe(facts.executable, facts.url);
       if (
         service.exitCode === 0
         && /health:\s*healthy/iu.test(service.stdout)
-        && await this.hasExpectedServe(facts.executable, facts.url)
+        && expectedServe
       ) {
         return { phase: "ready", message: "Phone access is ready on your private Tailscale network.", url: facts.url };
+      }
+      if (expectedServe && /health:\s*unhealthy/iu.test(service.stdout)) {
+        return {
+          phase: "error",
+          message: "Phone access is installed, but the local OMP runtime is not ready. Open Hosts, restart the default OMP profile, then check again.",
+          url: facts.url,
+        };
       }
     } catch {}
     return { phase: "not-configured", message: "Set up private phone access, then scan the QR code with your phone.", url: facts.url };
@@ -172,6 +211,45 @@ export class PhoneSetupService {
     }
     if (!await this.hasExpectedServe(facts.executable, facts.url)) {
       return { phase: "error", message: "Tailscale Serve did not keep the expected private phone route." };
+    }
+    if (!await this.waitForHealthyGateway()) {
+      return {
+        phase: "error",
+        message: "Phone access was installed, but the local OMP runtime is not ready. Open Hosts, restart the default OMP profile, then check again.",
+        url: facts.url,
+      };
+    }
+    return { phase: "ready", message: "Phone access is ready on your private Tailscale network.", url: facts.url };
+  }
+
+  private async restoreInternal(): Promise<PhoneSetupState> {
+    const unsupported = this.unsupported();
+    if (unsupported) return unsupported;
+    let facts: { executable: string; url: string };
+    try {
+      facts = await this.tailscaleFacts();
+    } catch (error) {
+      return { phase: "tailscale-required", message: error instanceof Error ? error.message : "Tailscale is unavailable." };
+    }
+    if (!await this.hasExpectedServe(facts.executable, facts.url)) {
+      return { phase: "not-configured", message: "Set up private phone access, then scan the QR code with your phone.", url: facts.url };
+    }
+    const service = await this.runGatewayService([
+      "install",
+      "--origin", facts.url,
+      "--web-root", join(this.resourcesPath, "web"),
+      "--deployment-identity", await this.identity(),
+      "--electron-run-as-node",
+    ]);
+    if (service.exitCode !== 0) {
+      return { phase: "error", message: service.stderr.trim().slice(0, 512) || "The private phone gateway could not restart." };
+    }
+    if (!await this.waitForHealthyGateway()) {
+      return {
+        phase: "error",
+        message: "Phone access restarted, but the local OMP runtime is not ready yet. Open Hosts, restart the default OMP profile, then check again.",
+        url: facts.url,
+      };
     }
     return { phase: "ready", message: "Phone access is ready on your private Tailscale network.", url: facts.url };
   }

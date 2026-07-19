@@ -231,7 +231,12 @@ function PhoneSetupCard({ api }: { readonly api: PhoneSetupApi }) {
           </div>
           <div className="flex min-w-0 flex-col gap-3">
             <ol className="list-decimal space-y-1 pl-4 text-sm">
-              <li>Connect your phone to the same Tailscale account.</li>
+              <li>Open Tailscale on your phone, sign in to the same account, and connect.</li>
+              <li>
+                For automatic reconnect, tap your Tailscale profile picture, open
+                {" "}<span className="font-medium">VPN On Demand</span>, and set both Wi-Fi and
+                Cellular to <span className="font-medium">Always</span>.
+              </li>
               <li>Scan this code with your phone camera.</li>
               <li>Choose <span className="font-medium">Add to Home Screen</span> in Safari if you want an app icon.</li>
             </ol>

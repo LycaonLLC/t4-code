@@ -190,6 +190,7 @@ export class DesktopLifecycle {
         resourcesPath: process.resourcesPath,
         electronExecutable: process.execPath,
       });
+      void this.phoneSetup.restore();
     }
     this.menuInstaller({ onOpenUpdates: () => this.openUpdatesFromMenu() });
     const identity = this.identityFactory();

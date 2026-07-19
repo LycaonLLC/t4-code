@@ -11,12 +11,15 @@ describe("phone setup", () => {
     await mkdir(join(resourcesPath, "runtime"));
     await writeFile(join(resourcesPath, "runtime", "manifest.json"), '{"tag":"synthetic"}\n');
     const calls: ProcessSpec[] = [];
+    let gatewayInstalled = false;
     const runner: ProcessRunner = {
       spawn: async (spec) => {
         calls.push(spec);
         const isStatus = spec.command === "/tailscale" && spec.args?.[0] === "status";
         const isServeStatus = spec.command === "/tailscale" && spec.args?.join(" ") === "serve status --json";
         const isGatewayInspect = spec.command === "/Applications/T4 Code.app/Contents/MacOS/T4 Code" && spec.args?.[1] === "status";
+        const isGatewayInstall = spec.command === "/Applications/T4 Code.app/Contents/MacOS/T4 Code" && spec.args?.[1] === "install";
+        if (isGatewayInstall) gatewayInstalled = true;
         return {
           kill: () => {},
           result: Promise.resolve(isStatus
@@ -24,7 +27,9 @@ describe("phone setup", () => {
             : isServeStatus
               ? { exitCode: 0, signal: null, stdout: JSON.stringify({ TCP: { "8445": { HTTPS: true } }, Web: { "work-mac.example.ts.net:8445": { Handlers: { "/": { Proxy: "http://127.0.0.1:4194" } } } } }), stderr: "", stdoutTruncated: false, stderrTruncated: false }
               : isGatewayInspect
-              ? { exitCode: 1, signal: null, stdout: "", stderr: "not installed", stdoutTruncated: false, stderrTruncated: false }
+              ? gatewayInstalled
+                ? { exitCode: 0, signal: null, stdout: "health: healthy", stderr: "", stdoutTruncated: false, stderrTruncated: false }
+                : { exitCode: 1, signal: null, stdout: "", stderr: "not installed", stdoutTruncated: false, stderrTruncated: false }
               : { exitCode: 0, signal: null, stdout: "ok", stderr: "", stdoutTruncated: false, stderrTruncated: false }),
         };
       },
@@ -47,7 +52,11 @@ describe("phone setup", () => {
       phase: "ready",
       url: "https://work-mac.example.ts.net:8445/",
     });
-    const serve = calls.find((call) => call.command === "/tailscale" && call.args?.[0] === "serve");
+    const serve = calls.find((call) =>
+      call.command === "/tailscale"
+      && call.args?.[0] === "serve"
+      && call.args?.[1] === "--bg"
+    );
     expect(serve?.args).toEqual(["serve", "--bg", "--https=8445", "http://127.0.0.1:4194"]);
     expect(JSON.stringify(calls)).not.toContain("funnel");
     const install = calls.find((call) => call.command.includes("T4 Code") && call.args?.includes("install"));
@@ -79,5 +88,75 @@ describe("phone setup", () => {
     });
 
     expect(await service.inspect()).toMatchObject({ phase: "not-configured" });
+  });
+
+  it("restarts previously configured phone access when the desktop app opens", async () => {
+    const resourcesPath = await mkdtemp(join(tmpdir(), "t4-phone-setup-restore-"));
+    await mkdir(join(resourcesPath, "runtime"));
+    await writeFile(join(resourcesPath, "runtime", "manifest.json"), '{"tag":"synthetic"}\n');
+    const calls: ProcessSpec[] = [];
+    let gatewayInstalled = false;
+    const runner: ProcessRunner = {
+      spawn: async (spec) => {
+        calls.push(spec);
+        const isStatus = spec.command === "/tailscale" && spec.args?.[0] === "status";
+        const isServeStatus = spec.command === "/tailscale" && spec.args?.join(" ") === "serve status --json";
+        const isGatewayStatus = spec.command.includes("T4 Code") && spec.args?.[1] === "status";
+        const isGatewayInstall = spec.command.includes("T4 Code") && spec.args?.[1] === "install";
+        if (isGatewayInstall) gatewayInstalled = true;
+        return {
+          kill: () => {},
+          result: Promise.resolve(isStatus
+            ? { exitCode: 0, signal: null, stdout: JSON.stringify({ Self: { DNSName: "work-mac.example.ts.net." } }), stderr: "", stdoutTruncated: false, stderrTruncated: false }
+            : isServeStatus
+              ? { exitCode: 0, signal: null, stdout: JSON.stringify({ TCP: { "8445": { HTTPS: true } }, Web: { "work-mac.example.ts.net:8445": { Handlers: { "/": { Proxy: "http://127.0.0.1:4194" } } } } }), stderr: "", stdoutTruncated: false, stderrTruncated: false }
+              : isGatewayStatus && gatewayInstalled
+                ? { exitCode: 0, signal: null, stdout: "health: healthy", stderr: "", stdoutTruncated: false, stderrTruncated: false }
+                : { exitCode: isGatewayInstall ? 0 : 1, signal: null, stdout: "", stderr: "", stdoutTruncated: false, stderrTruncated: false }),
+        };
+      },
+    };
+    const service = new PhoneSetupService({
+      platform: "darwin",
+      arch: "arm64",
+      resourcesPath,
+      electronExecutable: "/Applications/T4 Code.app/Contents/MacOS/T4 Code",
+      runner,
+      discoverTailscale: async () => "/tailscale",
+    });
+
+    expect(await service.restore()).toMatchObject({ phase: "ready" });
+    expect(calls.some((call) => call.args?.[1] === "install")).toBe(true);
+    expect(calls.some((call) => call.args?.[0] === "serve" && call.args?.[1] === "--bg")).toBe(false);
+  });
+
+  it("does not call phone access ready while the local OMP runtime is unreachable", async () => {
+    const resourcesPath = await mkdtemp(join(tmpdir(), "t4-phone-setup-offline-"));
+    await mkdir(join(resourcesPath, "runtime"));
+    await writeFile(join(resourcesPath, "runtime", "manifest.json"), '{"tag":"synthetic"}\n');
+    const runner: ProcessRunner = {
+      spawn: async (spec) => ({
+        kill: () => {},
+        result: Promise.resolve(spec.command === "/tailscale" && spec.args?.[0] === "status"
+          ? { exitCode: 0, signal: null, stdout: JSON.stringify({ Self: { DNSName: "work-mac.example.ts.net." } }), stderr: "", stdoutTruncated: false, stderrTruncated: false }
+          : spec.command === "/tailscale"
+            ? { exitCode: 0, signal: null, stdout: JSON.stringify({ TCP: { "8445": { HTTPS: true } }, Web: { "work-mac.example.ts.net:8445": { Handlers: { "/": { Proxy: "http://127.0.0.1:4194" } } } } }), stderr: "", stdoutTruncated: false, stderrTruncated: false }
+            : { exitCode: 1, signal: null, stdout: "health: unhealthy", stderr: "", stdoutTruncated: false, stderrTruncated: false }),
+      }),
+    };
+    const service = new PhoneSetupService({
+      platform: "darwin",
+      arch: "arm64",
+      resourcesPath,
+      electronExecutable: "/Applications/T4 Code.app/Contents/MacOS/T4 Code",
+      runner,
+      discoverTailscale: async () => "/tailscale",
+    });
+
+    expect(await service.inspect()).toEqual({
+      phase: "error",
+      message: "Phone access is installed, but the local OMP runtime is not ready. Open Hosts, restart the default OMP profile, then check again.",
+      url: "https://work-mac.example.ts.net:8445/",
+    });
   });
 });
