@@ -4,13 +4,13 @@ T4 Code is a free, open-source (MIT) desktop app for [Oh My Pi](https://github.c
 
 ![T4 Code main window](docs/assets/t4-code-main.png)
 
-[**Download v0.1.27**](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.27) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
+[**Download v0.1.28**](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.28) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
 
 ## Requirements
 
-T4 Code needs an OMP build with desktop appserver support. For v0.1.27, use the public integration build below.
+T4 Code needs an OMP build with desktop appserver support. For v0.1.28, use the public integration build below.
 
-T4 Code v0.1.27 was verified with OMP 17.0.5 built from [`772e5e41`](https://github.com/lyc-aon/oh-my-pi/commit/772e5e41eb1537177349247add96a851721c5bfa), tagged [`t4code-17.0.5-appserver-5`](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-5). That public integration is based on the official upstream [`v17.0.5`](https://github.com/can1357/oh-my-pi/tree/v17.0.5) tag at [`9fd6e971`](https://github.com/can1357/oh-my-pi/commit/9fd6e97113f5ed3a847e66d346970efdf8afcad9). It adds faster appserver startup, cross-session attention and transcript search, the negotiated browser-preview command surface, redacted Codex transport diagnostics, the versioned Agent View lifecycle contract, session-owned cancellation, macOS system-temp aliases, workspace-native build artifacts, retry-safe release metadata, lock-aware session observation, complete transcript reconciliation, missing-lock-only promotion, the cooperative `/continue-in-t4` handoff, and deterministic session ordering. Fork CI verifies the exact upstream base, ancestry, release gates, and published binaries. The official upstream v17.0.5 tag has no `appserver` command, so it cannot host T4 Code. The verified runtime is a normal build from the public `lyc-aon/oh-my-pi` source. T4 Code vendors `@oh-my-pi/app-wire` 0.6.1 from integration commit [`e3e15c03`](https://github.com/lyc-aon/oh-my-pi/commit/e3e15c03ae95ebbda5f26495cd21213cc53518b1), source tree `e0f32b279eb4b8cbc403e47d765a226bee99c99f`.
+T4 Code v0.1.28 was verified with OMP 17.0.5 built from [`25295f6f`](https://github.com/lyc-aon/oh-my-pi/commit/25295f6f2e03033cb545c513f476e7e51532524c), tagged [`t4code-17.0.5-appserver-6`](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-6). That public integration is based on the official upstream [`v17.0.5`](https://github.com/can1357/oh-my-pi/tree/v17.0.5) tag at [`9fd6e971`](https://github.com/can1357/oh-my-pi/commit/9fd6e97113f5ed3a847e66d346970efdf8afcad9). It opens its socket before indexing session history, reads small previews for the session list, and loads a complete transcript only when that session is first used. It also includes cross-session attention and transcript search, the negotiated browser-preview command surface, redacted Codex transport diagnostics, the versioned Agent View lifecycle contract, session-owned cancellation, lock-aware session observation, complete transcript reconciliation, the cooperative `/continue-in-t4` handoff, and deterministic session ordering. Fork CI verifies the exact upstream base, ancestry, release gates, and published binaries. The official upstream v17.0.5 tag has no `appserver` command, so it cannot host T4 Code. The verified runtime is a normal build from the public `lyc-aon/oh-my-pi` source. T4 Code vendors `@oh-my-pi/app-wire` 0.6.1 from integration commit [`e3e15c03`](https://github.com/lyc-aon/oh-my-pi/commit/e3e15c03ae95ebbda5f26495cd21213cc53518b1), source tree `e0f32b279eb4b8cbc403e47d765a226bee99c99f`.
 
 The current source tree advances the vendored contract to `@oh-my-pi/app-wire` 0.6.1 from integration commit [`e3e15c03`](https://github.com/lyc-aon/oh-my-pi/commit/e3e15c03ae95ebbda5f26495cd21213cc53518b1), source tree `e0f32b279eb4b8cbc403e47d765a226bee99c99f`. It supplies bounded cross-session transcript search, historical context, and the browser-preview wire contract.
 
@@ -20,18 +20,15 @@ The current source tree advances the vendored contract to `@oh-my-pi/app-wire` 0
 | Linux    | x86_64                | `.deb`, AppImage                          |
 | macOS    | Apple Silicon (arm64) | `.dmg`, `.zip` (**signed and notarized**) |
 
-No Windows build and no Intel Mac build in v0.1.27. The iOS TestFlight build is coming soon.
+No Windows build and no Intel Mac build in v0.1.28. The iOS TestFlight build is coming soon.
 
-## What changed in v0.1.27
+## What changed in v0.1.28
 
-- Mac packaging now waits for code signing to finish before Apple notarization begins.
-- Signed Mac builds now start their bundled OMP backend correctly. Only the OMP executable receives permission to load OMP's native module; the T4 Code app and Electron helpers keep normal library validation enabled.
-- The app verifies the backend's exact Developer ID certificate before copying the signed bytes, while packaging still verifies the original public OMP download hash.
-- macOS downloads remain signed with the project's pinned Developer ID identity, notarized by Apple, stapled, and checked by Gatekeeper before publication.
-- The new attention inbox gathers sessions that need a decision, confirmation, or reply, while keeping the host's state authoritative.
-- Session transport health now explains reconnecting, delayed, and degraded connections instead of reducing them to a generic disconnected state.
-- Browser preview opens session-linked pages in a permission-gated workspace with bounded captures, coordinate-mapped input, and lease-based concurrency control.
-- Bounded transcript and attention projections do less repeated work, improving responsiveness without weakening ordering or safety checks.
+- Large session libraries no longer block backend startup. On the measured 831-session Mac profile, initial indexing fell from 59.2 seconds to 4.0 seconds; full transcripts still load when opened.
+- The signed Mac app automatically installs the exact backend build recorded in its compatibility matrix, so users do not need a separate developer install.
+- Phone access configured through the QR flow now restores itself whenever the desktop app launches, including after a reboot or gateway restart.
+- The public site includes a no-install browser demo with fixture sessions, panes, agent views, and browser previews, so people can explore T4 Code before downloading it.
+- The left rail has clearer information grouping and larger touch targets while keeping the existing layout and shortcuts.
 
 ![An OMP TUI session followed in T4 Code: the transcript fills in read-only under an "Active in another app" banner, /continue-in-t4 runs in the terminal, T4 takes over, and the composer accepts input again.](docs/assets/t4-code-tui-handoff.gif)
 
@@ -49,7 +46,7 @@ No Windows build and no Intel Mac build in v0.1.27. The iOS TestFlight build is 
 ### Android
 
 1. On the Android phone, sign in to Tailscale with an account that can reach the T4 Code host.
-2. Download [`T4-Code-0.1.27-android.apk`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.27/T4-Code-0.1.27-android.apk).
+2. Download [`T4-Code-0.1.28-android.apk`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.28/T4-Code-0.1.28-android.apk).
 3. If Android asks, allow your browser or file manager to install unknown apps, then install the APK.
 4. Open T4 Code and enter the host's HTTPS Tailscale address, including its port. The app saves the address; you can add more hosts later and switch between them.
 
@@ -58,8 +55,8 @@ The APK does not contain an appserver or expose one to the public internet. It c
 ### Linux (Debian/Ubuntu)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.27/T4-Code-0.1.27-linux-amd64.deb
-sudo apt install ./T4-Code-0.1.27-linux-amd64.deb
+wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.28/T4-Code-0.1.28-linux-amd64.deb
+sudo apt install ./T4-Code-0.1.28-linux-amd64.deb
 ```
 
 Use `apt install` rather than `dpkg -i` so system dependencies resolve automatically.
@@ -67,14 +64,14 @@ Use `apt install` rather than `dpkg -i` so system dependencies resolve automatic
 ### Linux (AppImage)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.27/T4-Code-0.1.27-linux-x86_64.AppImage
-chmod +x T4-Code-0.1.27-linux-x86_64.AppImage
-./T4-Code-0.1.27-linux-x86_64.AppImage
+wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.28/T4-Code-0.1.28-linux-x86_64.AppImage
+chmod +x T4-Code-0.1.28-linux-x86_64.AppImage
+./T4-Code-0.1.28-linux-x86_64.AppImage
 ```
 
 ### macOS (Apple Silicon)
 
-1. Download [`T4-Code-0.1.27-mac-arm64.dmg`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.27/T4-Code-0.1.27-mac-arm64.dmg) (or [`T4-Code-0.1.27-mac-arm64.zip`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.27/T4-Code-0.1.27-mac-arm64.zip)).
+1. Download [`T4-Code-0.1.28-mac-arm64.dmg`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.28/T4-Code-0.1.28-mac-arm64.dmg) (or [`T4-Code-0.1.28-mac-arm64.zip`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.28/T4-Code-0.1.28-mac-arm64.zip)).
 2. Drag `T4 Code.app` into `/Applications`.
 3. Open T4 Code normally. The release workflow verifies the pinned publisher, hardened runtime, secure timestamp, Apple notarization, stapled ticket, and Gatekeeper acceptance before publication.
 

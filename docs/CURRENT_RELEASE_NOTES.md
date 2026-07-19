@@ -1,6 +1,14 @@
+## Faster startup, reliable phone access, and a browser demo
+
+T4 Code v0.1.28 makes the normal first-run path substantially easier. The bundled OMP backend now opens its socket before scanning session history, builds the session list from small bounded previews, and loads a full transcript only when that session is first used. On a real Mac profile with 831 sessions, initial indexing fell from 59.2 seconds to 4.0 seconds while preserving complete transcripts on demand.
+
+Phone access configured through the desktop QR flow now restores itself when the app launches. If the private gateway stopped after a reboot or app update, T4 reinstalls the same verified configuration and waits for a healthy local runtime instead of leaving the saved phone route broken.
+
+The public site now ships a no-install browser demo with fixture sessions, panes, agent views, and browser previews. The left rail also has clearer grouping and larger touch targets.
+
 ## Signed Mac backend startup
 
-T4 Code v0.1.27 completes the signed Mac backend fix. Packaging now waits for the Promise-based signer to finish before notarization begins. The signed, bundled OMP backend can load OMP's native module, with that permission applied only to the OMP executable inside the app. The top-level T4 Code app and its Electron helpers keep normal library validation enabled.
+The v0.1.27 signing fix remains in place. Packaging waits for the Promise-based signer to finish before notarization begins. The signed, bundled OMP backend can load OMP's native module, with that permission applied only to the OMP executable inside the app. The top-level T4 Code app and its Electron helpers keep normal library validation enabled.
 
 The v0.1.26 tag did not publish release files: its Mac job stopped when notarization detected that the legacy callback signer had returned before signing finished. No partial v0.1.26 GitHub Release was published.
 
@@ -28,9 +36,9 @@ Session-linked browser previews now open in a dedicated workspace. The client pr
 
 ## Runtime provenance
 
-T4 Code v0.1.27 vendors app-wire 0.6.1 from integration commit [e3e15c03](https://github.com/lyc-aon/oh-my-pi/commit/e3e15c03ae95ebbda5f26495cd21213cc53518b1), source tree `e0f32b279eb4b8cbc403e47d765a226bee99c99f`. The client contract remains `omp-app/1`.
+T4 Code v0.1.28 vendors app-wire 0.6.1 from integration commit [e3e15c03](https://github.com/lyc-aon/oh-my-pi/commit/e3e15c03ae95ebbda5f26495cd21213cc53518b1), source tree `e0f32b279eb4b8cbc403e47d765a226bee99c99f`. The client contract remains `omp-app/1`.
 
-The verified OMP 17.0.5 runtime is built from commit [772e5e41](https://github.com/lyc-aon/oh-my-pi/commit/772e5e41eb1537177349247add96a851721c5bfa) and tagged [t4code-17.0.5-appserver-5](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-5). It provides the appserver used by the desktop and remote workflows, including faster startup, cross-session attention and transcript search, and the complete negotiated browser-preview command surface. Unsupported optional capabilities remain hidden when the host does not advertise them.
+The verified OMP 17.0.5 runtime is built from commit [25295f6f](https://github.com/lyc-aon/oh-my-pi/commit/25295f6f2e03033cb545c513f476e7e51532524c) and tagged [t4code-17.0.5-appserver-6](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-6). It provides the appserver used by the desktop and remote workflows, including bounded lazy session indexing, cross-session attention and transcript search, and the complete negotiated browser-preview command surface. Unsupported optional capabilities remain hidden when the host does not advertise them.
 
 The integration is based on the official upstream [v17.0.5 tag](https://github.com/can1357/oh-my-pi/tree/v17.0.5), commit [9fd6e971](https://github.com/can1357/oh-my-pi/commit/9fd6e97113f5ed3a847e66d346970efdf8afcad9). Official upstream OMP v17.0.5 has no `appserver` command and cannot host T4 Code.
 

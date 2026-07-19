@@ -21,14 +21,14 @@
     "package": "omp",
     "version": "17.0.5",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "772e5e41eb1537177349247add96a851721c5bfa",
-    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/772e5e41eb1537177349247add96a851721c5bfa",
-    "sourceTag": "t4code-17.0.5-appserver-5",
+    "sourceCommit": "25295f6f2e03033cb545c513f476e7e51532524c",
+    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/25295f6f2e03033cb545c513f476e7e51532524c",
+    "sourceTag": "t4code-17.0.5-appserver-6",
     "artifacts": {
       "darwin-arm64": {
         "name": "omp-darwin-arm64",
         "size": 120777424,
-        "sha256": "12dce7a582466ab7068fd5ba9bab9c4697e603dada1519f5a0097ad3eb09466b"
+        "sha256": "0ab83485470562edbad3f7d828f31c6ce8ac6c19e28767d66a74e1a7b8d46877"
       }
     },
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
@@ -92,6 +92,7 @@
       "cross-session-attention-contract",
       "cross-session-transcript-search",
       "fast-appserver-startup",
+      "lazy-session-transcript-indexing",
       "browser-preview-contract",
       "hardened-preview-frame-decoding",
       "complete-preview-command-surface"
@@ -102,14 +103,14 @@
     "package": "omp",
     "version": "17.0.5",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "772e5e41eb1537177349247add96a851721c5bfa",
-    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/772e5e41eb1537177349247add96a851721c5bfa",
-    "sourceTag": "t4code-17.0.5-appserver-5",
+    "sourceCommit": "25295f6f2e03033cb545c513f476e7e51532524c",
+    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/25295f6f2e03033cb545c513f476e7e51532524c",
+    "sourceTag": "t4code-17.0.5-appserver-6",
     "artifacts": {
       "darwin-arm64": {
         "name": "omp-darwin-arm64",
         "size": 120777424,
-        "sha256": "12dce7a582466ab7068fd5ba9bab9c4697e603dada1519f5a0097ad3eb09466b"
+        "sha256": "0ab83485470562edbad3f7d828f31c6ce8ac6c19e28767d66a74e1a7b8d46877"
       }
     },
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
@@ -173,6 +174,7 @@
       "cross-session-attention-contract",
       "cross-session-transcript-search",
       "fast-appserver-startup",
+      "lazy-session-transcript-indexing",
       "browser-preview-contract",
       "hardened-preview-frame-decoding",
       "complete-preview-command-surface"
@@ -181,6 +183,6 @@
   },
   "desktop": {
     "package": "@t4-code/protocol",
-    "version": "0.1.27"
+    "version": "0.1.28"
   }
 }

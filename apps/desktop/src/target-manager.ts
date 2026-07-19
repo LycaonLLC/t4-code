@@ -383,7 +383,7 @@ export class DesktopTargetManager {
       capabilities: requestedCapabilities,
       requestedFeatures: REQUESTED_FEATURES,
       compatibilityRequestedFeatures: COMPATIBILITY_FEATURES,
-      client: { name: "T4 Code", version: "0.1.27", build: "desktop", platform: process.platform },
+      client: { name: "T4 Code", version: "0.1.28", build: "desktop", platform: process.platform },
       reconnect: { baseMs: 250, maxMs: 10_000 },
     };
     const client = createOmpClient(clientOptions);
