@@ -26,9 +26,9 @@ Session-linked browser previews now open in a dedicated workspace. The client pr
 
 T4 Code v0.1.24 vendors app-wire 0.6.0 from integration commit [ae4b53b4](https://github.com/lyc-aon/oh-my-pi/commit/ae4b53b416f32b200865a32ed9baabd5a4666fa4), source tree `2b8a5f697273f5044789b8ae638b6c264f9f8499`. The client contract remains `omp-app/1`.
 
-The verified OMP 17.0.4 runtime is built from commit [d57dcd85](https://github.com/lyc-aon/oh-my-pi/commit/d57dcd855006c673d8d530237d474fe5ba5645c4) and tagged [t4code-17.0.4-appserver-5](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.4-appserver-5). It provides the stable appserver base used by the desktop and remote workflows. Newer optional capabilities remain hidden when the host does not advertise them.
+The verified OMP 17.0.5 runtime is built from commit [3393ae0f](https://github.com/lyc-aon/oh-my-pi/commit/3393ae0f7fc5b2ea9919d8bdb3a2d5719b1cbc2f) and tagged [t4code-17.0.5-appserver-3](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-3). It provides the stable appserver base used by the desktop and remote workflows, including faster startup, cross-session attention, and cross-session transcript search. Newer optional capabilities remain hidden when the host does not advertise them.
 
-The integration is based on the official upstream [v17.0.4 tag](https://github.com/can1357/oh-my-pi/tree/v17.0.4), commit [3fdd85ab](https://github.com/can1357/oh-my-pi/commit/3fdd85ab6c6bab6c0cdee80abbbec0981740a5c0). Official upstream OMP v17.0.4 has no `appserver` command and cannot host T4 Code.
+The integration is based on the official upstream [v17.0.5 tag](https://github.com/can1357/oh-my-pi/tree/v17.0.5), commit [9fd6e971](https://github.com/can1357/oh-my-pi/commit/9fd6e97113f5ed3a847e66d346970efdf8afcad9). Official upstream OMP v17.0.5 has no `appserver` command and cannot host T4 Code.
 
 ## Packages
 
