@@ -49,6 +49,14 @@ describe("docs structure", () => {
   it("defaults to the install topic", () => {
     expect(DEFAULT_TOPIC_ID).toBe("install");
   });
+
+  it("describes the signed macOS release without Gatekeeper bypass instructions", () => {
+    const publicCopy = JSON.stringify(DOC_TOPICS);
+
+    expect(publicCopy).toContain("signed with the project's pinned Developer ID identity");
+    expect(publicCopy).toContain("notarized by Apple");
+    expect(publicCopy).not.toContain("com.apple.quarantine");
+  });
 });
 
 describe("resolveTopicForHash", () => {
