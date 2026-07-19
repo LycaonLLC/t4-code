@@ -86,6 +86,40 @@ export class PhoneSetupService {
     });
   }
 
+  private async hasExpectedServe(executable: string, url: string): Promise<boolean> {
+    try {
+      const result = await runProcess({
+        runner: this.runner,
+        command: executable,
+        args: ["serve", "status", "--json"],
+        timeoutMs: 3_000,
+      });
+      if (result.exitCode !== 0 || result.stderr.trim().length > 0) return false;
+      const parsed: unknown = JSON.parse(result.stdout);
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+      const record = parsed as Record<string, unknown>;
+      const tcp = record.TCP;
+      const web = record.Web;
+      if (tcp === null || typeof tcp !== "object" || Array.isArray(tcp)) return false;
+      if (web === null || typeof web !== "object" || Array.isArray(web)) return false;
+      const destination = new URL(url);
+      const port = destination.port || "443";
+      const tcpPort = (tcp as Record<string, unknown>)[port];
+      if (tcpPort === null || typeof tcpPort !== "object" || Array.isArray(tcpPort)) return false;
+      if ((tcpPort as Record<string, unknown>).HTTPS !== true) return false;
+      const authority = destination.port ? `${destination.hostname}:${destination.port}` : destination.hostname;
+      const webRoute = (web as Record<string, unknown>)[authority];
+      if (webRoute === null || typeof webRoute !== "object" || Array.isArray(webRoute)) return false;
+      const handlers = (webRoute as Record<string, unknown>).Handlers;
+      if (handlers === null || typeof handlers !== "object" || Array.isArray(handlers)) return false;
+      const root = (handlers as Record<string, unknown>)["/"];
+      return root !== null && typeof root === "object" && !Array.isArray(root)
+        && (root as Record<string, unknown>).Proxy === `http://127.0.0.1:${LOCAL_GATEWAY_PORT}`;
+    } catch {
+      return false;
+    }
+  }
+
   private async inspectInternal(): Promise<PhoneSetupState> {
     const unsupported = this.unsupported();
     if (unsupported) return unsupported;
@@ -97,7 +131,11 @@ export class PhoneSetupService {
     }
     try {
       const service = await this.runGatewayService(["status"]);
-      if (service.exitCode === 0 && /health:\s*healthy/iu.test(service.stdout)) {
+      if (
+        service.exitCode === 0
+        && /health:\s*healthy/iu.test(service.stdout)
+        && await this.hasExpectedServe(facts.executable, facts.url)
+      ) {
         return { phase: "ready", message: "Phone access is ready on your private Tailscale network.", url: facts.url };
       }
     } catch {}
@@ -131,6 +169,9 @@ export class PhoneSetupService {
     const result = await runProcess({ runner: this.runner, command: serve.executable, args: serve.args, timeoutMs: 10_000 });
     if (result.exitCode !== 0) {
       return { phase: "error", message: result.stderr.trim().slice(0, 512) || "Tailscale Serve could not expose the private gateway." };
+    }
+    if (!await this.hasExpectedServe(facts.executable, facts.url)) {
+      return { phase: "error", message: "Tailscale Serve did not keep the expected private phone route." };
     }
     return { phase: "ready", message: "Phone access is ready on your private Tailscale network.", url: facts.url };
   }
