@@ -545,6 +545,11 @@ test("@soak mounts the bounded tail of a 10k history on a phone viewport", async
       };
       requestAnimationFrame(inspect);
     });
+    await rail.locator('[data-session-row="host-history/session-history"]').evaluate((element) => {
+      element.addEventListener("click", () => {
+        Object.assign(window, { __t4SessionDomClickAt: performance.now() });
+      }, { capture: true, once: true });
+    });
     const sessionClickStartedAt = await page.evaluate(() => performance.now());
     await rail.locator('[data-session-row="host-history/session-history"]').click();
 
@@ -587,6 +592,10 @@ test("@soak mounts the bounded tail of a 10k history on a phone viewport", async
     ) {
       throw new Error("browser paint observer returned incomplete phases");
     }
+    const sessionDomClickAt = await page.evaluate(() => (
+      window as typeof window & { __t4SessionDomClickAt?: number }
+    ).__t4SessionDomClickAt);
+    if (sessionDomClickAt === undefined) throw new Error("session DOM click timestamp was not captured");
     const phaseOutput = process.env.T4_PERF_PHASE_OUTPUT;
     if (phaseOutput !== undefined) {
       await writeFile(
@@ -595,6 +604,11 @@ test("@soak mounts the bounded tail of a 10k history on a phone viewport", async
           mountDuration,
           navigationDomContentLoaded: navigationTiming.domContentLoaded,
           connectedAfterDomContentLoaded: connectedAt - navigationTiming.domContentLoaded,
+          sessionClickCommandToDomClick: sessionDomClickAt - sessionClickStartedAt,
+          sessionDomClickToTranscriptVisible: phases.transcriptVisibleAt - sessionDomClickAt,
+          sessionDomClickToTailAligned: phases.tailAlignedAt - sessionDomClickAt,
+          sessionDomClickToRealListVisible: phases.realListVisibleAt - sessionDomClickAt,
+          sessionDomClickToTailPainted: phases.tailPaintedAt - sessionDomClickAt,
           sessionClickToTranscriptVisible: phases.transcriptVisibleAt - sessionClickStartedAt,
           sessionClickToTailAligned: phases.tailAlignedAt - sessionClickStartedAt,
           tailAlignedToRealListVisible: phases.realListVisibleAt - phases.tailAlignedAt,
