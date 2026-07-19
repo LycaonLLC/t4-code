@@ -1876,7 +1876,7 @@ export function Rail({
                   setAnnouncement(`${group.displayName} ${pinned ? "unpinned" : "pinned"}.`);
                 }}
                 onRestore={() => {
-                  workspaceStore.getState().setEmptyProjectDismissed(group.project.id, false);
+                  workspaceStore.getState().setProjectHidden(group.project.id, false);
                   setAnnouncement(
                     `Restored ${group.displayName} to Projects on this T4 Code client.`,
                   );

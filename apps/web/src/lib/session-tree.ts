@@ -263,7 +263,11 @@ export function buildProjectGroups(
       0,
       ...right.sessions.map((row) => Date.parse(row.session.updatedAt)),
     );
-    return rightUpdated - leftUpdated || left.displayName.localeCompare(right.displayName);
+    return (
+      rightUpdated - leftUpdated ||
+      left.displayName.localeCompare(right.displayName) ||
+      left.project.id.localeCompare(right.project.id)
+    );
   });
 }
 

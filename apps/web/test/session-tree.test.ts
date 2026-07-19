@@ -107,6 +107,31 @@ describe("buildProjectGroups", () => {
     expect(sessionPriority(groups[0]!.sessions[0]!)).toBe(6);
   });
 
+  it("uses the project id as a stable tiebreaker for identical aliases and timestamps", () => {
+    const tied = {
+      ...SHELL_FIXTURE,
+      sessions: SHELL_FIXTURE.sessions.map((session) => ({
+        ...session,
+        updatedAt: "2026-07-19T12:00:00Z",
+      })),
+    };
+    const groups = buildProjectGroups(
+      tied,
+      {},
+      {},
+      "current",
+      {},
+      {
+        projectAliasById: Object.fromEntries(
+          SHELL_FIXTURE.projects.map((project) => [project.id, "Same name"]),
+        ),
+        sort: "updated",
+      },
+    );
+
+    expect(groups.map((group) => group.project.id)).toEqual(["proj-notes", "proj-omp", "proj-t4"]);
+  });
+
   it("honors stable manual project, grouped-session, and flat-session order", () => {
     const groups = buildProjectGroups(
       SHELL_FIXTURE,

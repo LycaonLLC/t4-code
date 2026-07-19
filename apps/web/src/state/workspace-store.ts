@@ -489,9 +489,14 @@ export function createWorkspaceStore(options: CreateWorkspaceStoreOptions): Work
     setProjectHidden: (projectId, hidden) =>
       set((state) => {
         const hiddenProjectIds = { ...state.hiddenProjectIds };
-        if (hidden) hiddenProjectIds[projectId] = true;
-        else delete hiddenProjectIds[projectId];
-        return { hiddenProjectIds };
+        if (hidden) {
+          hiddenProjectIds[projectId] = true;
+          return { hiddenProjectIds };
+        }
+        delete hiddenProjectIds[projectId];
+        const dismissedEmptyProjectIds = { ...state.dismissedEmptyProjectIds };
+        delete dismissedEmptyProjectIds[projectId];
+        return { dismissedEmptyProjectIds, hiddenProjectIds };
       }),
     setProjectManualOrder: (projectManualOrder) =>
       set({ projectManualOrder: sanitizeIdList(projectManualOrder) }),

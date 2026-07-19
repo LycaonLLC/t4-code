@@ -409,9 +409,12 @@ describe("persistence", () => {
   it("renames and hides projects without changing runtime-backed ids", () => {
     const { store } = makeStore();
     store.getState().setProjectAlias("host/project", "  My   Project  ");
-    store.getState().setProjectHidden("host/project", true);
+    store.getState().setEmptyProjectDismissed("host/project", true);
     expect(store.getState().projectAliasById).toEqual({ "host/project": "My Project" });
     expect(store.getState().hiddenProjectIds).toEqual({ "host/project": true });
+    store.getState().setProjectHidden("host/project", false);
+    expect(store.getState().dismissedEmptyProjectIds).toEqual({});
+    expect(store.getState().hiddenProjectIds).toEqual({});
 
     store.getState().setProjectAlias("host/project", null);
     store.getState().setProjectHidden("host/project", false);
