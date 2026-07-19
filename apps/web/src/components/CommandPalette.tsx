@@ -4,7 +4,7 @@
 import { cn, Dialog, DialogPopup, StatusPill } from "@t4-code/ui";
 import { useNavigate } from "@tanstack/react-router";
 import { CornerDownLeft, Search, SquareTerminal } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ProjectGroup } from "../lib/session-tree.ts";
 import { handoffTranscriptSearchQuery } from "../features/transcript-search/index.ts";
@@ -15,11 +15,21 @@ import { resolveTheme } from "../theme/theme.ts";
 import { PANE_FAMILY_META } from "./pane-families.tsx";
 interface PaletteItem {
   readonly id: string;
+  readonly group: "recent" | "workspace" | "navigate" | "app";
   readonly label: string;
   readonly hint: string;
   readonly status: ReactNode;
   readonly run: () => void;
 }
+
+const GROUP_LABEL = {
+  recent: "Recent work",
+  workspace: "Workspace",
+  navigate: "Navigate",
+  app: "App",
+} as const;
+
+const DEFAULT_RECENT_LIMIT = 5;
 
 function buildItems(
   groups: readonly ProjectGroup[],
@@ -34,6 +44,7 @@ function buildItems(
     for (const row of group.sessions) {
       items.push({
         id: `session:${row.session.id}`,
+        group: "recent",
         label: row.session.title,
         hint: `${group.project.name} · ${row.session.model}`,
         status:
@@ -57,6 +68,7 @@ function buildItems(
       const label = meta.id === "terminals" ? "Agent terminals" : meta.label;
       items.push({
         id: `action:pane:${meta.id}`,
+        group: "workspace",
         label: active ? `Close ${label}` : `Open ${label}`,
         hint: "Workspace · Right",
         status: <Icon aria-hidden="true" className="size-3.5 text-muted-foreground" />,
@@ -65,6 +77,7 @@ function buildItems(
     }
     items.push({
       id: "action:terminal",
+      group: "workspace",
       label: view.terminalDrawerOpen ? "Close terminal" : "Open terminal",
       hint: "Workspace · Below · ⌘J",
       status: <SquareTerminal aria-hidden="true" className="size-3.5 text-muted-foreground" />,
@@ -77,7 +90,48 @@ function buildItems(
   }
   items.push(
     {
+      id: "action:rail",
+      group: "workspace",
+      label: state.railCollapsed ? "Show session list" : "Hide session list",
+      hint: "Sidebar",
+      status: null,
+      run: () => workspaceStore.getState().setRailCollapsed(!state.railCollapsed),
+    },
+    {
+      id: "action:inbox",
+      group: "navigate",
+      label: "Open Inbox",
+      hint: "Attention across sessions",
+      status: null,
+      run: openInbox,
+    },
+    {
+      id: "action:transcript-search",
+      group: "navigate",
+      label: "Open transcript search",
+      hint: "Prior decisions and code discussions",
+      status: <Search aria-hidden="true" className="size-3.5 text-muted-foreground" />,
+      run: () => openTranscriptSearch(""),
+    },
+    {
+      id: "action:agents",
+      group: "navigate",
+      label: "Open Agent View",
+      hint: "Agents",
+      status: null,
+      run: openAgentView,
+    },
+    {
+      id: "action:settings",
+      group: "app",
+      label: "Open settings",
+      hint: "Preferences",
+      status: null,
+      run: openSettings,
+    },
+    {
       id: "action:theme",
+      group: "app",
       label:
         resolveTheme(state.theme) === "dark" ? "Switch to light colors" : "Switch to dark colors",
       hint: "Appearance",
@@ -86,41 +140,6 @@ function buildItems(
         const current = resolveTheme(workspaceStore.getState().theme);
         workspaceStore.getState().setTheme(current === "dark" ? "light" : "dark");
       },
-    },
-    {
-      id: "action:rail",
-      label: state.railCollapsed ? "Show session list" : "Hide session list",
-      hint: "Layout",
-      status: null,
-      run: () => workspaceStore.getState().setRailCollapsed(!state.railCollapsed),
-    },
-    {
-      id: "action:inbox",
-      label: "Open Inbox",
-      hint: "Attention across sessions",
-      status: null,
-      run: openInbox,
-    },
-    {
-      id: "action:transcript-search",
-      label: "Open transcript search",
-      hint: "Prior decisions and code discussions",
-      status: <Search aria-hidden="true" className="size-3.5 text-muted-foreground" />,
-      run: () => openTranscriptSearch(""),
-    },
-    {
-      id: "action:agents",
-      label: "Open Agent View",
-      hint: "Agents",
-      status: null,
-      run: openAgentView,
-    },
-    {
-      id: "action:settings",
-      label: "Open settings",
-      hint: "App",
-      status: null,
-      run: openSettings,
     },
   );
   return items;
@@ -158,9 +177,15 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
   );
 
   const needle = query.trim().toLowerCase();
+  const defaultRecentIds = new Set(
+    items
+      .filter((item) => item.group === "recent")
+      .slice(0, DEFAULT_RECENT_LIMIT)
+      .map((item) => item.id),
+  );
   const baseFiltered =
     needle === ""
-      ? items
+      ? items.filter((item) => item.group !== "recent" || defaultRecentIds.has(item.id))
       : items.filter((item) => `${item.label} ${item.hint}`.toLowerCase().includes(needle));
   const filtered =
     needle.length < 2
@@ -169,6 +194,7 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
           ...baseFiltered,
           {
             id: "action:transcript-search-query",
+            group: "navigate" as const,
             label: "View all transcript results",
             hint: `Search for “${query.trim()}”`,
             status: <Search aria-hidden="true" className="size-3.5 text-muted-foreground" />,
@@ -235,7 +261,7 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
         />
         <ul
           aria-label="Results"
-          className="max-h-80 overflow-y-auto p-1.5"
+          className="max-h-[min(34rem,calc(100dvh-8rem))] overflow-y-auto p-1.5"
           id="palette-results"
           ref={listRef}
           role="listbox"
@@ -245,31 +271,43 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
               Nothing matches "{query}". Try a session title, project, or transcript phrase.
             </li>
           )}
-          {filtered.map((item, index) => (
-            <li
-              aria-selected={index === highlighted}
-              className={cn(
-                "flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2",
-                index === highlighted && "bg-secondary",
-              )}
-              data-index={index}
-              id={`palette-item-${index}`}
-              key={item.id}
-              onClick={() => runItem(item)}
-              onMouseMove={() => setHighlighted(index)}
-              role="option"
-            >
-              <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
-              <span className="shrink-0 text-muted-foreground text-xs">{item.hint}</span>
-              {item.status}
-              {index === highlighted && (
-                <CornerDownLeft
-                  aria-hidden="true"
-                  className="size-3.5 shrink-0 text-muted-foreground"
-                />
-              )}
-            </li>
-          ))}
+          {filtered.map((item, index) => {
+            const startsGroup = index === 0 || filtered[index - 1]?.group !== item.group;
+            return (
+              <Fragment key={item.id}>
+                {startsGroup && (
+                  <li
+                    className="px-2.5 pt-2 pb-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider first:pt-1"
+                    role="presentation"
+                  >
+                    {GROUP_LABEL[item.group]}
+                  </li>
+                )}
+                <li
+                  aria-selected={index === highlighted}
+                  className={cn(
+                    "flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2",
+                    index === highlighted && "bg-secondary",
+                  )}
+                  data-index={index}
+                  id={`palette-item-${index}`}
+                  onClick={() => runItem(item)}
+                  onMouseMove={() => setHighlighted(index)}
+                  role="option"
+                >
+                  <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
+                  <span className="shrink-0 text-muted-foreground text-xs">{item.hint}</span>
+                  {item.status}
+                  {index === highlighted && (
+                    <CornerDownLeft
+                      aria-hidden="true"
+                      className="size-3.5 shrink-0 text-muted-foreground"
+                    />
+                  )}
+                </li>
+              </Fragment>
+            );
+          })}
         </ul>
       </DialogPopup>
     </Dialog>

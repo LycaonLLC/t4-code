@@ -149,6 +149,8 @@ describe("phone touch targets", () => {
     expect(hostedAppAction).toContain('className="size-11 lg:size-7"');
     expect(session).toContain('aria-label="Workspace tools"');
     expect(session).toContain("flex size-11 shrink-0 cursor-pointer");
+    expect(session).toContain("Session context:");
+    expect(session).toContain("View host health");
     expect(session).toContain("flex min-h-11 w-full cursor-pointer items-center");
     expect(session).toContain("Agent terminals");
     expect(session).toContain("⌘J");

@@ -1089,6 +1089,36 @@ test("opens supporting tools from one workspace menu and toggles the terminal sh
   ).toBeHidden();
 });
 
+test("shows verified session context and groups command-palette actions", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openSession(page, false);
+
+  const context = page.getByRole("button", { name: /^Session context:/u });
+  await expect(context).toBeVisible();
+  await context.click();
+  await expect(page.getByText("Host", { exact: true })).toBeVisible();
+  await expect(page.getByText("Model", { exact: true })).toBeVisible();
+  await expect(page.getByText("Connection", { exact: true })).toBeVisible();
+  await expect(page.getByText("Live connection", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "View host health", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await page.keyboard.press("Control+k");
+  const palette = page.getByRole("dialog", {
+    name: "Search sessions, transcripts, and commands",
+  });
+  await expect(palette.getByText("Recent work", { exact: true })).toBeVisible();
+  await expect(palette.getByText("Workspace", { exact: true })).toBeVisible();
+  await expect(palette.getByText("Navigate", { exact: true })).toBeVisible();
+  await expect(palette.getByText("App", { exact: true })).toBeVisible();
+
+  const search = palette.getByRole("combobox");
+  await search.fill("open terminal");
+  await expect(palette.getByText("Workspace", { exact: true })).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "Close terminal drawer", exact: true })).toBeVisible();
+});
+
 for (const viewport of [
   { width: 390, height: 844 },
   { width: 390, height: 500 },

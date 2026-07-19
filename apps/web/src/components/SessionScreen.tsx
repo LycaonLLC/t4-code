@@ -14,10 +14,25 @@ import {
 } from "@t4-code/ui";
 import { Popover } from "@base-ui/react/popover";
 import { Link } from "@tanstack/react-router";
-import { Check, ChevronDown, PanelsTopLeft, SquareTerminal, X } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Cpu,
+  FolderGit2,
+  Laptop,
+  PanelsTopLeft,
+  Server,
+  SquareTerminal,
+  Wifi,
+  X,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 
-import type { WorkspaceProject, WorkspaceSession } from "../lib/workspace-data.ts";
+import type {
+  WorkspaceHost,
+  WorkspaceProject,
+  WorkspaceSession,
+} from "../lib/workspace-data.ts";
 import { PaneContent } from "../features/panes/PaneContent.tsx";
 import { TerminalDrawer } from "../features/terminal/TerminalDrawer.tsx";
 import { FreshnessBadge, SessionMain, SessionOwnershipBadge } from "../features/transcript/SessionMain.tsx";
@@ -25,6 +40,7 @@ import { RIGHT_PANE_DOCK_QUERY, useMediaQuery } from "../hooks/useMediaQuery.ts"
 import { useWorkspace, workspaceStore } from "../state/store-instance.ts";
 import { useDesktopRuntimeSnapshot } from "../platform/desktop-runtime.ts";
 import { resolveLiveSession } from "../platform/live-workspace.ts";
+import { useShellData } from "../state/shell-data.ts";
 import {
   type PaneFamily,
   RIGHT_PANE_WIDTH,
@@ -32,6 +48,90 @@ import {
 } from "../state/workspace-store.ts";
 import { PANE_FAMILY_META } from "./pane-families.tsx";
 import { ResizeHandle } from "./ResizeHandle.tsx";
+
+const FRESHNESS_LABEL = {
+  live: "Live connection",
+  cached: "Cached session",
+  offline: "Host offline",
+} as const;
+
+function SessionContextMenu({
+  host,
+  onOpenHostHealth,
+  project,
+  session,
+}: {
+  host: WorkspaceHost | undefined;
+  onOpenHostHealth: () => void;
+  project: WorkspaceProject;
+  session: WorkspaceSession;
+}) {
+  const [open, setOpen] = useState(false);
+  const HostIcon = host?.kind === "remote" ? Server : Laptop;
+  return (
+    <Popover.Root onOpenChange={setOpen} open={open}>
+      <Popover.Trigger
+        aria-label={`Session context: ${project.name}${host === undefined ? "" : ` on ${host.name}`}`}
+        className="flex size-11 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-transparent text-muted-foreground outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:h-7 sm:w-auto sm:max-w-56 sm:justify-start sm:rounded-md sm:px-1.5"
+      >
+        <FolderGit2 aria-hidden="true" className="size-3.5 shrink-0" />
+        <span className="hidden truncate text-xs sm:inline">{project.name}</span>
+        <ChevronDown aria-hidden="true" className="hidden size-3 shrink-0 sm:block" />
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner align="start" className="z-50" side="bottom" sideOffset={6}>
+          <Popover.Popup className="w-[min(19rem,calc(100vw-1rem))] rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-(--overlay-shadow) outline-none transition-[scale,opacity] duration-(--motion-duration-fast) data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0">
+            <div className="flex items-start gap-2 px-1.5 pt-1 pb-2">
+              <div className="min-w-0 flex-1">
+                <Popover.Title className="truncate font-medium text-sm">{project.name}</Popover.Title>
+                <Popover.Description className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
+                  {project.path}
+                </Popover.Description>
+              </div>
+              <span
+                className={cn(
+                  "mt-1.5 size-2 shrink-0 rounded-full",
+                  session.freshness === "live"
+                    ? "bg-success"
+                    : session.freshness === "cached"
+                      ? "bg-warning"
+                      : "bg-muted-foreground",
+                )}
+              />
+            </div>
+            <dl className="rounded-lg bg-secondary/60 px-2.5 py-1">
+              <div className="flex min-h-9 items-center gap-2 border-border border-b">
+                <HostIcon aria-hidden="true" className="size-3.5 text-muted-foreground" />
+                <dt className="text-muted-foreground text-xs">Host</dt>
+                <dd className="ml-auto max-w-40 truncate text-xs">{host?.name ?? "Unknown host"}</dd>
+              </div>
+              <div className="flex min-h-9 items-center gap-2 border-border border-b">
+                <Cpu aria-hidden="true" className="size-3.5 text-muted-foreground" />
+                <dt className="text-muted-foreground text-xs">Model</dt>
+                <dd className="ml-auto max-w-40 truncate font-mono text-[10px]">{session.model}</dd>
+              </div>
+              <div className="flex min-h-9 items-center gap-2">
+                <Wifi aria-hidden="true" className="size-3.5 text-muted-foreground" />
+                <dt className="text-muted-foreground text-xs">Connection</dt>
+                <dd className="ml-auto text-xs">{FRESHNESS_LABEL[session.freshness]}</dd>
+              </div>
+            </dl>
+            <button
+              className="mt-1 flex min-h-9 w-full cursor-pointer items-center justify-center rounded-lg text-muted-foreground text-xs outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => {
+                setOpen(false);
+                onOpenHostHealth();
+              }}
+              type="button"
+            >
+              View host health
+            </button>
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
 
 function WorkspaceMenu({
   sessionId,
@@ -148,6 +248,8 @@ export function SessionScreen({
     (state) => selectSessionView(state, session.id).terminalDrawerOpen,
   );
   const paneDocks = useMediaQuery(RIGHT_PANE_DOCK_QUERY);
+  const shellData = useShellData();
+  const host = shellData.hosts.find((entry) => entry.id === project.hostId);
   const runtimeSnapshot = useDesktopRuntimeSnapshot();
   const previewAddress =
     runtimeSnapshot === null ? null : resolveLiveSession(runtimeSnapshot, session.id);
@@ -191,11 +293,13 @@ export function SessionScreen({
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <span className="min-w-0 truncate font-medium text-sm">{session.title}</span>
           <span aria-hidden="true" className="hidden shrink-0 text-border sm:inline">/</span>
-          <span className="hidden shrink-0 text-muted-foreground text-xs sm:inline">
-            {project.name}
-          </span>
-          <span className="hidden shrink-0 rounded-md bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground md:inline">
-            {session.model}
+          <span className="shrink-0 sm:min-w-0 sm:shrink">
+            <SessionContextMenu
+              host={host}
+              onOpenHostHealth={onOpenHostHealth}
+              project={project}
+              session={session}
+            />
           </span>
         </div>
         {archived && <Badge variant="outline">Archived · read-only</Badge>}
