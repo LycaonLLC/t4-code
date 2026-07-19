@@ -75,6 +75,8 @@ export const DESKTOP_IPC_CHANNELS = [
   "app:update:renderer-ready",
   "app:projection-cache:load",
   "app:projection-cache:save",
+  "app:phone-setup:inspect",
+  "app:phone-setup:configure",
 ] as const;
 export type DesktopInvokeChannel = (typeof DESKTOP_IPC_CHANNELS)[number];
 export const DESKTOP_IPC_EVENTS = [
@@ -110,6 +112,33 @@ export type ServiceAction = "install" | "start" | "stop" | "restart" | "uninstal
 export interface ServiceActionRequest {}
 export interface ServiceActionResult {
   completed: true;
+}
+export type PhoneSetupPhase = "unsupported" | "tailscale-required" | "not-configured" | "ready" | "error";
+export interface PhoneSetupState {
+  readonly phase: PhoneSetupPhase;
+  readonly message: string;
+  readonly url?: string;
+}
+export interface PhoneSetupRequest {}
+export function decodePhoneSetupState(value: unknown): PhoneSetupState {
+  const item = object(value, "phone setup state");
+  exact(item, ["phase", "message", "url"]);
+  if (!["unsupported", "tailscale-required", "not-configured", "ready", "error"].includes(item.phase as string)) {
+    throw new Error("invalid phone setup phase");
+  }
+  const message = controlFree(item.message, "phone setup message", 512);
+  let url: string | undefined;
+  if (item.url !== undefined) {
+    const parsed = new URL(controlFree(item.url, "phone setup URL", 2_048));
+    if (
+      parsed.protocol !== "https:" || parsed.username !== "" || parsed.password !== "" ||
+      !parsed.hostname.endsWith(".ts.net") || parsed.port !== "8445" || parsed.pathname !== "/" ||
+      parsed.search !== "" || parsed.hash !== ""
+    ) throw new Error("invalid phone setup URL");
+    url = parsed.toString();
+  }
+  if (item.phase === "ready" && url === undefined) throw new Error("ready phone setup requires a URL");
+  return Object.freeze({ phase: item.phase as PhoneSetupPhase, message, ...(url === undefined ? {} : { url }) });
 }
 export interface LocalProfile {
   readonly profileId: string;
@@ -477,6 +506,8 @@ export interface DesktopInvokeRequestMap {
   "app:update:renderer-ready": DesktopUpdateRequest;
   "app:projection-cache:load": ProjectionCacheLoadRequest;
   "app:projection-cache:save": ProjectionCacheSaveRequest;
+  "app:phone-setup:inspect": PhoneSetupRequest;
+  "app:phone-setup:configure": PhoneSetupRequest;
 }
 export interface DesktopInvokeResponseMap {
   "omp:targets:list": TargetListResult;
@@ -515,6 +546,8 @@ export interface DesktopInvokeResponseMap {
   "app:update:renderer-ready": DesktopUpdateRendererReadyResult;
   "app:projection-cache:load": ProjectionCacheLoadResult;
   "app:projection-cache:save": ProjectionCacheSaveResult;
+  "app:phone-setup:inspect": PhoneSetupState;
+  "app:phone-setup:configure": PhoneSetupState;
 }
 export interface RendererServerEventEnvelope {
   targetId: string;
@@ -881,6 +914,8 @@ export function decodeDesktopInvokeRequest(input: unknown): DesktopInvokeRequest
     case "app:update:download":
     case "app:update:restart":
     case "app:update:renderer-ready":
+    case "app:phone-setup:inspect":
+    case "app:phone-setup:configure":
       exact(payload, []);
       return { channel, payload: {} };
     case "app:projection-cache:load":

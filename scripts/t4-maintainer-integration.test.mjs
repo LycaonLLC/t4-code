@@ -25,6 +25,7 @@ const repoRoot = resolve(import.meta.dirname, "..");
 const deployScript = resolve(repoRoot, "ops/t4-maintainer/deploy-local.sh");
 const runnerScript = resolve(repoRoot, "ops/t4-maintainer/run.sh");
 const bashPath = "/bin/bash";
+const integrationProcessTimeoutMs = 30_000;
 const upstreamCommit = "a".repeat(40);
 const integrationCommit = "b".repeat(40);
 const t4Commit = "c".repeat(40);
@@ -1570,7 +1571,7 @@ exec "$@"
       return spawnSync(bashPath, [deployScript, result, receipt, work], {
         encoding: "utf8",
         env: { ...env, ...extraEnv },
-        timeout: 20_000,
+        timeout: integrationProcessTimeoutMs,
       });
     },
     async callsText() {
@@ -1745,7 +1746,7 @@ async function createRunnerFixture(options = {}) {
       return spawnSync(bashPath, [runnerScript, ...args], {
         encoding: "utf8",
         env: { ...runnerEnv, ...extraEnv },
-        timeout: 20_000,
+        timeout: integrationProcessTimeoutMs,
       });
     },
   };

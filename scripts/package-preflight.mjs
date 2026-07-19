@@ -1,4 +1,5 @@
 import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, relative, resolve, sep } from "node:path";
 
 import { verifyDesktopIcon } from "./desktop-icon-checks.mjs";
@@ -63,6 +64,24 @@ export function runPreflight(repoRoot = resolve(import.meta.dirname, "..")) {
   const webDist = join(repoRoot, "apps", "web", "dist");
   const preloadEntry = join(electronDist, "preload.cjs");
   const errors = [];
+
+  if (process.env.T4_REQUIRE_BUNDLED_OMP === "1") {
+    const runtimeRoot = join(repoRoot, ".artifacts", "omp-runtime");
+    const manifestPath = join(runtimeRoot, "manifest.json");
+    const executablePath = join(runtimeRoot, "omp");
+    try {
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      const matrix = JSON.parse(readFileSync(join(repoRoot, "compat", "omp-app-matrix.json"), "utf8"));
+      const pinned = matrix.verifiedRuntime?.artifacts?.["darwin-arm64"];
+      const digest = createHash("sha256").update(readFileSync(executablePath)).digest("hex");
+      if (
+        manifest.tag !== matrix.verifiedRuntime?.sourceTag || manifest.sha256 !== pinned?.sha256 ||
+        manifest.size !== pinned?.size || lstatSync(executablePath).size !== pinned?.size || digest !== pinned?.sha256
+      ) errors.push("staged OMP runtime does not match compat/omp-app-matrix.json");
+    } catch {
+      errors.push("missing or invalid staged OMP runtime");
+    }
+  }
 
   for (const required of [join(electronDist, "main.cjs"), preloadEntry, join(webDist, "index.html")]) {
     if (!existsSync(required) || !lstatSync(required).isFile() || lstatSync(required).size === 0) {

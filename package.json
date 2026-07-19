@@ -18,6 +18,7 @@
     "package:linux": "pnpm prepackage && node scripts/run-electron-builder.mjs --linux --x64",
     "package:mac:unsigned": "node scripts/package-mac-unsigned.mjs",
     "package:mac": "node scripts/package-mac-signed.mjs",
+    "stage:omp-runtime:mac": "node scripts/stage-omp-runtime.mjs --platform darwin --arch arm64",
     "package:dir": "pnpm prepackage && node scripts/run-electron-builder.mjs --linux --x64 --dir",
     "inspect:package": "node scripts/inspect-package.mjs",
     "inspect:dmg": "node scripts/inspect-macos-dmg.mjs",

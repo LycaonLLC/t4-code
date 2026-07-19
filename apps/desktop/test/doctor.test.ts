@@ -37,13 +37,13 @@ function runtime(overrides: Partial<DoctorRuntime> = {}): DoctorRuntime {
 }
 
 describe("T4 setup doctor", () => {
-  it("uses current verified runtime metadata instead of published release provenance", async () => {
+  it("uses current verified runtime metadata", async () => {
     const source = await readSourceContract();
 
-    expect(source.ompVersion).toBe("17.0.4");
-    expect(source.ompTag).toBe("t4code-17.0.4-appserver-5");
+    expect(source.ompVersion).toBe("17.0.5");
+    expect(source.ompTag).toBe("t4code-17.0.5-appserver-3");
     expect(source.ompUrl).toBe(
-      "https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.4-appserver-5",
+      "https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-3",
     );
   });
 

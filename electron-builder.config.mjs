@@ -59,6 +59,12 @@ const config = {
     // updater feed disabled until signed-to-signed update migration has its
     // own release proof.
     publish: [],
+    extraResources: [
+      { from: ".artifacts/omp-runtime", to: "runtime" },
+      { from: "scripts/tailnet-gateway.mjs", to: "gateway/tailnet-gateway.mjs" },
+      { from: "scripts/tailnet-service.mjs", to: "gateway/tailnet-service.mjs" },
+      { from: "apps/desktop/node_modules/ws", to: "node_modules/ws" },
+    ],
     target: [
       { target: "dmg", arch: ["arm64"] },
       { target: "zip", arch: ["arm64"] },

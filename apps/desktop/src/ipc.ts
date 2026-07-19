@@ -7,6 +7,7 @@ import {
   decodeDesktopUpdateState,
   decodeProjectionCacheLoadResult,
   decodeProjectionCacheSaveResult,
+  decodePhoneSetupState,
   type BootstrapResult,
   type CommandRequest,
   type CommandResult,
@@ -30,6 +31,7 @@ import {
   type PairLinkEvent,
   type PairRequest,
   type PairResult,
+  type PhoneSetupState,
   type PairLinksDrainResult,
   type ProjectionCacheLoadResult,
   type ProjectionCacheSaveRequest,
@@ -80,6 +82,10 @@ export interface IpcRuntime {
   readonly projectionCache?: {
     readonly load: () => ProjectionCacheLoadResult | Promise<ProjectionCacheLoadResult>;
     readonly save: (value: string) => ProjectionCacheSaveResult | Promise<ProjectionCacheSaveResult>;
+  };
+  readonly phoneSetup?: {
+    readonly inspect: () => Promise<PhoneSetupState>;
+    readonly configure: () => Promise<PhoneSetupState>;
   };
 }
 export class RemotePairingUnavailableError extends Error {
@@ -258,6 +264,16 @@ export class DesktopIpcRegistry {
       decodeRequest("app:update:get-state", payload);
       return decodeDesktopUpdateState(this.updateController().getState());
     });
+    this.ipc.handle("app:phone-setup:inspect", async (event, payload: unknown): Promise<PhoneSetupState> => {
+      this.assertSender(event);
+      decodeRequest("app:phone-setup:inspect", payload);
+      return decodePhoneSetupState(await this.phoneSetup().inspect());
+    });
+    this.ipc.handle("app:phone-setup:configure", async (event, payload: unknown): Promise<PhoneSetupState> => {
+      this.assertSender(event);
+      decodeRequest("app:phone-setup:configure", payload);
+      return decodePhoneSetupState(await this.phoneSetup().configure());
+    });
     this.ipc.handle("app:update:check", async (event, payload: unknown): Promise<DesktopUpdateState> => {
       this.assertSender(event);
       decodeRequest("app:update:check", payload);
@@ -296,6 +312,11 @@ export class DesktopIpcRegistry {
       this.emit("app:update:state", state);
     });
   }
+
+  private phoneSetup(): NonNullable<IpcRuntime["phoneSetup"]> {
+    if (!this.runtime.phoneSetup) throw new Error("Phone setup is unavailable in this build.");
+    return this.runtime.phoneSetup;
+  }
   uninstall(): void {
     this.updateUnsubscribe?.();
     this.updateUnsubscribe = undefined;
@@ -311,6 +332,7 @@ export class DesktopIpcRegistry {
       "app:update:get-state", "app:update:check", "app:update:download", "app:update:restart",
       "app:update:renderer-ready",
       "app:projection-cache:load", "app:projection-cache:save",
+      "app:phone-setup:inspect", "app:phone-setup:configure",
     ] as const) this.ipc.removeHandler(channel);
     this.installed = false;
   }

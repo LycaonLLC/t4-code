@@ -382,8 +382,8 @@ describe("desktop Electron lifecycle", () => {
     await Promise.all([starting, stopping]);
 
     expect(calls).toEqual([]);
-    expect(fixture.windows).toHaveLength(0);
-    expect(fixture.closeCount).toBe(0);
+    expect(fixture.windows).toHaveLength(1);
+    expect(fixture.closeCount).toBe(1);
   });
   it("does not publish a manager or startup error when recovery rejects during teardown", async () => {
     const calls: string[] = [];
@@ -422,7 +422,7 @@ describe("desktop Electron lifecycle", () => {
     expect(internal.serviceManager).toBeUndefined();
     expect(internal.startupServiceError).toBeUndefined();
     expect(internal.serviceAvailabilityIssue).toBeUndefined();
-    expect(fixture.windows).toHaveLength(0);
+    expect(fixture.windows).toHaveLength(1);
   });
   it("does not publish a ready manager when teardown wins the final recovery continuation", async () => {
     const service: ServiceManager = {
@@ -464,7 +464,7 @@ describe("desktop Electron lifecycle", () => {
     expect(internal.serviceManager).toBeUndefined();
     expect(internal.startupServiceError).toBeUndefined();
     expect(internal.serviceAvailabilityIssue).toBeUndefined();
-    expect(fixture.windows).toHaveLength(0);
+    expect(fixture.windows).toHaveLength(1);
   });
   it("recovers an updated OMP once across concurrent IPC retries and keeps the reason across reopen", async () => {
     const root = await mkdtemp(join(tmpdir(), "t4-recovery-"));

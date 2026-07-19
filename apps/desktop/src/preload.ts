@@ -5,6 +5,7 @@ import {
   decodeDesktopUpdateState,
   decodeProjectionCacheLoadResult,
   decodeProjectionCacheSaveResult,
+  decodePhoneSetupState,
   type BootstrapResult,
   type CommandRequest,
   type CommandResult,
@@ -26,6 +27,7 @@ import {
   type PairLinksDrainResult,
   type PairRequest,
   type PairResult,
+  type PhoneSetupState,
   type RendererServerEventEnvelope,
   type RuntimeErrorEvent,
   type ServiceActionResult,
@@ -87,6 +89,8 @@ export interface OmpShellBridge {
   readonly profileStart: (request: LocalProfileRequest) => Promise<LocalProfileResult>;
   readonly profileStop: (request: LocalProfileRequest) => Promise<LocalProfileResult>;
   readonly profileRestart: (request: LocalProfileRequest) => Promise<LocalProfileResult>;
+  readonly inspectPhoneSetup: () => Promise<PhoneSetupState>;
+  readonly configurePhoneSetup: () => Promise<PhoneSetupState>;
   readonly onServerEvent: (listener: (event: RendererServerEventEnvelope) => void) => () => void;
   readonly onConnectionState: (listener: (event: ConnectionStateEvent) => void) => () => void;
   readonly onRuntimeError: (listener: (event: RuntimeErrorEvent) => void) => () => void;
@@ -96,7 +100,7 @@ export interface OmpShellBridge {
   readonly onOpenUpdateSettings: (listener: (event: DesktopUpdateOpenEvent) => void) => () => void;
 }
 
-function invoke<C extends "omp:bootstrap" | "omp:connect" | "omp:disconnect" | "omp:command" | "omp:confirm" | "omp:terminal:input" | "omp:terminal:resize" | "omp:terminal:close" | "omp:pair" | "omp:pair-links:drain" | "omp:speech:speak" | "omp:speech:stop" | "omp:service:inspect" | "omp:service:install" | "omp:service:start" | "omp:service:stop" | "omp:service:restart" | "omp:service:uninstall" | "omp:targets:list" | "omp:targets:add" | "omp:targets:remove" | "omp:profiles:list" | "omp:profiles:add" | "omp:profiles:update" | "omp:profiles:remove" | "omp:profiles:status" | "omp:profiles:start" | "omp:profiles:stop" | "omp:profiles:restart" | "app:update:get-state" | "app:update:check" | "app:update:download" | "app:update:restart" | "app:update:renderer-ready", R>(channel: C, payload: unknown): Promise<R> {
+function invoke<C extends "omp:bootstrap" | "omp:connect" | "omp:disconnect" | "omp:command" | "omp:confirm" | "omp:terminal:input" | "omp:terminal:resize" | "omp:terminal:close" | "omp:pair" | "omp:pair-links:drain" | "omp:speech:speak" | "omp:speech:stop" | "omp:service:inspect" | "omp:service:install" | "omp:service:start" | "omp:service:stop" | "omp:service:restart" | "omp:service:uninstall" | "omp:targets:list" | "omp:targets:add" | "omp:targets:remove" | "omp:profiles:list" | "omp:profiles:add" | "omp:profiles:update" | "omp:profiles:remove" | "omp:profiles:status" | "omp:profiles:start" | "omp:profiles:stop" | "omp:profiles:restart" | "app:update:get-state" | "app:update:check" | "app:update:download" | "app:update:restart" | "app:update:renderer-ready" | "app:phone-setup:inspect" | "app:phone-setup:configure", R>(channel: C, payload: unknown): Promise<R> {
   return ipcRenderer.invoke(channel, { channel, payload }) as Promise<R>;
 }
 
@@ -178,6 +182,8 @@ const bridge: OmpShellBridge = {
   profileStart: (request) => invoke("omp:profiles:start", request),
   profileStop: (request) => invoke("omp:profiles:stop", request),
   profileRestart: (request) => invoke("omp:profiles:restart", request),
+  inspectPhoneSetup: () => invoke<"app:phone-setup:inspect", unknown>("app:phone-setup:inspect", {}).then(decodePhoneSetupState),
+  configurePhoneSetup: () => invoke<"app:phone-setup:configure", unknown>("app:phone-setup:configure", {}).then(decodePhoneSetupState),
   onServerEvent: (listener) => subscribe("omp:server-event", listener),
   onConnectionState: (listener) => subscribe("omp:connection-state", listener),
   onRuntimeError: (listener) => subscribe("omp:runtime-error", listener),

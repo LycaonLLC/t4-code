@@ -21,6 +21,7 @@ import type {
   PairRequest,
   PairResult,
   PairLinksDrainResult,
+  PhoneSetupState,
   RendererServerEventEnvelope,
   RendererServerEvent,
   RuntimeErrorEvent,
@@ -81,6 +82,8 @@ export interface DesktopShellPort {
   readonly updateRendererReady?: () => Promise<DesktopUpdateRendererReadyResult>;
   readonly loadProjectionCache?: () => Promise<ProjectionCacheLoadResult>;
   readonly saveProjectionCache?: (request: ProjectionCacheSaveRequest) => Promise<ProjectionCacheSaveResult>;
+  readonly inspectPhoneSetup?: () => Promise<PhoneSetupState>;
+  readonly configurePhoneSetup?: () => Promise<PhoneSetupState>;
   readonly listTargets: () => Promise<TargetListResult>;
   readonly addTarget: (request: TargetAddRequest) => Promise<TargetAddResult>;
   readonly removeTarget: (request: TargetRequest) => Promise<TargetRemoveResult>;

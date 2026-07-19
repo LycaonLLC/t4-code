@@ -16,26 +16,39 @@ interface. It accepts WebSocket connections from the exact configured `.ts.net`
 HTTPS origin and the two fixed Capacitor WebView origins described below. No
 token or password is passed through the browser or mobile UI.
 
-> This is a source-hosted feature in the current release. The downloadable
-> desktop packages do not install or manage the Tailnet gateway. Keep the
-> checkout used to install the service in place, or reinstall the service from
-> its new path after moving it.
+The Apple Silicon Mac package contains the gateway. Open **Settings → Hosts**,
+choose **Set up phone access**, and scan the QR code after setup finishes. T4
+Code installs a per-user background service and configures tailnet-only
+Tailscale Serve. The source procedure below remains available for Linux and
+for maintainers who need a custom gateway layout.
 
 ## Prerequisites
 
 - Linux with a systemd user session, or macOS with a logged-in launchd GUI
   session.
-- Node.js 24 and pnpm 11 (the versions declared by this repository).
+- Node.js 24 and pnpm 11 only when using the manual source procedure.
 - Tailscale installed, signed in, and using MagicDNS/HTTPS.
 - A running local OMP appserver. Opening the T4 desktop app normally installs
   and starts it; `omp appserver status --json` is a direct check.
-- A T4 Code source checkout with dependencies installed.
+- A T4 Code source checkout with dependencies installed only for manual setup.
 
 Do not use Tailscale Funnel for this. Funnel is the public-internet product;
 this setup is meant to remain tailnet-only. Tailscale documents the distinction
 and current Serve syntax in its [Serve reference](https://tailscale.com/docs/reference/tailscale-cli/serve).
 
-## Install
+## Automatic Mac setup
+
+1. Install and sign in to Tailscale on the Mac and phone.
+2. Open T4 Code on the Mac and go to **Settings → Hosts**.
+3. Choose **Set up phone access**.
+4. Scan the displayed QR code with the phone camera.
+5. In Safari, optionally choose **Add to Home Screen** for an app icon.
+
+This action is explicit because it changes this Mac's Tailscale Serve
+configuration. It binds only the private tailnet HTTPS address to the gateway
+on `127.0.0.1:4194`; it does not open a LAN listener or enable Funnel.
+
+## Manual source install
 
 Choose the HTTPS port you will open on your tailnet. The examples use `8445`.
 Find this machine's full MagicDNS name with `tailscale status`; it looks like
