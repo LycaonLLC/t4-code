@@ -71,7 +71,7 @@ test("rejects duplicate keys in JSON release contracts", () => {
 
 test("keeps verified and published runtime records aligned after promotion", () => {
   const matrix = JSON.parse(files.get("compat/omp-app-matrix.json"));
-  assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.4-appserver-5");
+  assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.5-appserver-3");
   assert.deepEqual(matrix.publishedRuntime, matrix.verifiedRuntime);
 });
 
@@ -131,7 +131,7 @@ test("tagged releases reject published provenance drift", () => {
     [
       "tag",
       (runtime) => {
-        runtime.sourceTag = "t4code-17.0.4-appserver-3";
+        runtime.sourceTag = "t4code-17.0.5-appserver-2";
       },
     ],
     [
