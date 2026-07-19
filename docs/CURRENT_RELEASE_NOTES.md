@@ -1,8 +1,10 @@
-## Automatic backend installation on signed Macs
+## Signed Mac backend startup
 
-T4 Code v0.1.25 fixes first-launch backend installation in signed Mac builds. Apple signing adds a cryptographic signature to the bundled OMP executable, which changes its file hash after the original public download was verified. The app now accepts either the exact original download or an executable signed with the project's exact Developer ID certificate, then copies and rechecks the actual signed bytes atomically.
+T4 Code v0.1.26 lets the signed, bundled OMP backend load OMP's native module on macOS. The permission is applied only to the OMP executable inside the app. The top-level T4 Code app and its Electron helpers keep normal library validation enabled.
 
-The protected release job still verifies the original OMP download's pinned size and SHA-256 hash before packaging. It then reopens the DMG and ZIP and checks their certificate and Team ID, hardened runtime, secure timestamp, stapled notarization ticket, and Gatekeeper result before publication. Signing secrets are never bundled into the app.
+The protected release job verifies this boundary in both the DMG and ZIP before publication. It also checks the original OMP download's pinned size and SHA-256 hash, the project's exact Developer ID certificate and Team ID, hardened runtime, secure timestamp, stapled notarization ticket, and Gatekeeper result. Signing secrets are never bundled into the app.
+
+The v0.1.25 signed-backend integrity fix remains in place: the app accepts either the exact original OMP download or an executable signed with the project's pinned Developer ID certificate, then copies and rechecks the actual signed bytes atomically.
 
 ## One inbox for sessions that need attention
 
@@ -24,7 +26,7 @@ Session-linked browser previews now open in a dedicated workspace. The client pr
 
 ## Runtime provenance
 
-T4 Code v0.1.25 vendors app-wire 0.6.1 from integration commit [e3e15c03](https://github.com/lyc-aon/oh-my-pi/commit/e3e15c03ae95ebbda5f26495cd21213cc53518b1), source tree `e0f32b279eb4b8cbc403e47d765a226bee99c99f`. The client contract remains `omp-app/1`.
+T4 Code v0.1.26 vendors app-wire 0.6.1 from integration commit [e3e15c03](https://github.com/lyc-aon/oh-my-pi/commit/e3e15c03ae95ebbda5f26495cd21213cc53518b1), source tree `e0f32b279eb4b8cbc403e47d765a226bee99c99f`. The client contract remains `omp-app/1`.
 
 The verified OMP 17.0.5 runtime is built from commit [772e5e41](https://github.com/lyc-aon/oh-my-pi/commit/772e5e41eb1537177349247add96a851721c5bfa) and tagged [t4code-17.0.5-appserver-5](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-5). It provides the appserver used by the desktop and remote workflows, including faster startup, cross-session attention and transcript search, and the complete negotiated browser-preview command surface. Unsupported optional capabilities remain hidden when the host does not advertise them.
 

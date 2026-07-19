@@ -5,6 +5,11 @@ import { test } from "node:test";
 import { join, resolve } from "node:path";
 import config from "../electron-builder.config.mjs";
 import { validateMacosIdentityContract } from "./inspect-macos-release.mjs";
+import {
+  createT4MacOptionsForFile,
+  isBundledOmpRuntime,
+  normalizeMacSignOptions,
+} from "./sign-macos.mjs";
 import { createPackage } from "@electron/asar";
 import { runPreflight, validatePreloadArtifact, validateWebIndex } from "./package-preflight.mjs";
 import { inspectPackage, locateAppRoot } from "./inspect-package.mjs";
@@ -93,6 +98,7 @@ test("signed macOS packaging is explicit, credentialed, and release-gated", asyn
     assert.equal(signedConfig.mac.notarize, true);
     assert.equal(signedConfig.mac.entitlements, "apps/desktop/build/entitlements.mac.plist");
     assert.equal(signedConfig.mac.entitlementsInherit, "apps/desktop/build/entitlements.mac.plist");
+    assert.equal(signedConfig.mac.sign, "scripts/sign-macos.mjs");
     assert.deepEqual(signedConfig.mac.publish, []);
   } finally {
     if (previousSignedBuild === undefined) delete process.env.T4_MACOS_SIGNED_BUILD;
@@ -114,6 +120,35 @@ test("signed macOS packaging is explicit, credentialed, and release-gated", asyn
     assert.ok(releaseWorkflow.includes(expected), `release workflow must include ${expected}`);
   }
   assert.doesNotMatch(releaseWorkflow, /Build unsigned macOS packages/u);
+});
+
+test("signed macOS packaging relaxes library validation only for the bundled OMP runtime", () => {
+  const appPath = "/tmp/T4 Code.app";
+  const inherited = () => ({
+    entitlements: "apps/desktop/build/entitlements.mac.plist",
+    hardenedRuntime: true,
+  });
+  const optionsForFile = createT4MacOptionsForFile(inherited);
+  const runtimePath = `${appPath}/Contents/Resources/runtime/omp`;
+  const helperPath = `${appPath}/Contents/Frameworks/T4 Code Helper.app`;
+
+  assert.equal(isBundledOmpRuntime(runtimePath), true);
+  assert.equal(isBundledOmpRuntime(`${runtimePath}.backup`), false);
+  assert.deepEqual(optionsForFile(helperPath), inherited());
+  assert.deepEqual(optionsForFile(runtimePath), {
+    ...inherited(),
+    entitlements: "apps/desktop/build/entitlements.omp-runtime.plist",
+  });
+});
+
+test("macOS signing accepts current and legacy electron-builder callback shapes", () => {
+  const current = { app: "/tmp/current.app", identity: "certificate" };
+  assert.equal(normalizeMacSignOptions(current), current);
+  assert.deepEqual(
+    normalizeMacSignOptions({ path: "/tmp/legacy.app", options: { identity: "certificate" } }),
+    { app: "/tmp/legacy.app", identity: "certificate" },
+  );
+  assert.throws(() => normalizeMacSignOptions({}), /did not provide an application path/u);
 });
 
 test("Android release identity is public, pinned, and wired into the release workflow", () => {

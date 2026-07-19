@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { test } from "node:test";
 import {
   parseCodesignDisplay,
+  validateMacosLibraryValidationBoundary,
   validateMacosIdentityContract,
   validateMacosSignatureReport,
 } from "./inspect-macos-release.mjs";
@@ -28,6 +29,25 @@ test("macOS release identity pins the public Developer ID contract", () => {
   assert.doesNotThrow(() => validateMacosIdentityContract(identity));
   assert.equal(identity.firstSignedReleaseTag, "v0.1.24");
   assert.equal(identity.notarizationRequired, true);
+});
+
+test("library validation is relaxed for the bundled runtime but not the app", () => {
+  const relaxed = `<?xml version="1.0"?><plist><dict>
+    <key>com.apple.security.cs.disable-library-validation</key><true/>
+  </dict></plist>`;
+  const hardened = `<?xml version="1.0"?><plist><dict>
+    <key>com.apple.security.cs.allow-jit</key><true/>
+  </dict></plist>`;
+
+  assert.doesNotThrow(() => validateMacosLibraryValidationBoundary(hardened, relaxed));
+  assert.throws(
+    () => validateMacosLibraryValidationBoundary(relaxed, relaxed),
+    /top-level T4 Code app must keep library validation enabled/u,
+  );
+  assert.throws(
+    () => validateMacosLibraryValidationBoundary(hardened, hardened),
+    /bundled OMP runtime must disable library validation/u,
+  );
 });
 
 test("codesign display parser preserves identity, runtime, and timestamp", () => {
