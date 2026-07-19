@@ -26,6 +26,15 @@ Use Node 24 and install the monorepo dependencies from the repository root:
 mise exec node@24.17.0 -- pnpm install
 ```
 
+Run the readiness check before generating native projects. It explains any
+missing prerequisite and exits successfully only when the selected platform is
+ready:
+
+```bash
+mise exec node@24.17.0 -- pnpm --filter @t4-code/companion doctor:ios
+mise exec node@24.17.0 -- pnpm --filter @t4-code/companion doctor:android
+```
+
 This checkout path must not contain spaces when building the native iOS app.
 Expo SDK 57 otherwise generates a broken native file path.
 
@@ -35,6 +44,11 @@ Run the iOS development build:
 cd apps/companion
 mise exec node@24.17.0 -- pnpm exec expo run:ios
 ```
+
+The first physical-iPhone build requires an Apple Development certificate and
+a provisioning profile for `com.roycorp.t4companion`. Xcode can create both
+after the project owner signs in under **Xcode Settings > Accounts**. This is a
+one-time Apple Developer account change; later local installs reuse it.
 
 Run Android:
 
