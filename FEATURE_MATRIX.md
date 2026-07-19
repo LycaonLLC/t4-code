@@ -31,7 +31,7 @@ OMP authority: `packages/coding-agent/src/session/agent-session.ts`, `session-ma
 
 | Capability | Source command/state | Desktop behavior | T3 reference | Priority |
 |---|---|---|---|---|
-| List/recent/search/filter | session store and metadata | Virtualized left rail; project/host grouping; running/waiting/failed/unread badges; fuzzy search | `Sidebar.tsx`, sidebar logic/tests | Launch |
+| List/recent/search/filter | session store and metadata | Bounded left rail; folder or flat organization; Priority, Last updated, or Manual order; title/folder/host search; attention/running/unread/error filters; pinned shortcuts; running/waiting/failed/unread badges | `Sidebar.tsx`, sidebar logic/tests | Launch |
 | New session | `/new` | Create in selected project/host; model/profile defaults visible before first prompt | draft routes and composer draft store | Launch |
 | Fast switch and tabs | session IDs and snapshots | One-click/keyboard switch; preserve draft, scroll anchor, panel widths/tabs, terminal focus; no white flash | T3 routes, `composerDraftStore`, `rightPanelStore`, terminal store | Launch |
 | Resume | `/resume` | Open existing session by stable ID/path; recover moved/missing files with explicit error | thread routing and reconnect supervisor | Launch |

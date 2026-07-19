@@ -33,6 +33,13 @@ export function AppShell() {
   const railOverlayOpen = useWorkspace((state) => state.railOverlayOpen);
   const focusMode = useWorkspace((state) => state.focusMode);
   const sessionListView = useWorkspace((state) => state.sessionListView);
+  const railSort = useWorkspace((state) => state.railSort);
+  const railQuery = useWorkspace((state) => state.railQuery);
+  const railFilter = useWorkspace((state) => state.railFilter);
+  const projectManualOrder = useWorkspace((state) => state.projectManualOrder);
+  const sessionManualOrderByProjectId = useWorkspace(
+    (state) => state.sessionManualOrderByProjectId,
+  );
   const projectExpandedById = useWorkspace((state) => state.projectExpandedById);
   const dismissedEmptyProjectIds = useWorkspace((state) => state.dismissedEmptyProjectIds);
   const lastVisitedAtBySessionId = useWorkspace((state) => state.lastVisitedAtBySessionId);
@@ -52,12 +59,72 @@ export function AppShell() {
         lastVisitedAtBySessionId,
         "current",
         dismissedEmptyProjectIds,
+        {
+          filter: railFilter,
+          query: railQuery,
+          sort: railSort,
+          projectManualOrder,
+          sessionManualOrderByProjectId,
+        },
       ),
-    [shellData, projectExpandedById, lastVisitedAtBySessionId, dismissedEmptyProjectIds],
+    [
+      shellData,
+      projectExpandedById,
+      lastVisitedAtBySessionId,
+      dismissedEmptyProjectIds,
+      railFilter,
+      railQuery,
+      railSort,
+      projectManualOrder,
+      sessionManualOrderByProjectId,
+    ],
   );
   const archivedGroups = useMemo(
-    () => buildProjectGroups(shellData, projectExpandedById, lastVisitedAtBySessionId, "archived"),
-    [shellData, projectExpandedById, lastVisitedAtBySessionId],
+    () =>
+      buildProjectGroups(
+        shellData,
+        projectExpandedById,
+        lastVisitedAtBySessionId,
+        "archived",
+        {},
+        {
+          filter: railFilter,
+          query: railQuery,
+          sort: railSort,
+          projectManualOrder,
+          sessionManualOrderByProjectId,
+        },
+      ),
+    [
+      shellData,
+      projectExpandedById,
+      lastVisitedAtBySessionId,
+      railFilter,
+      railQuery,
+      railSort,
+      projectManualOrder,
+      sessionManualOrderByProjectId,
+    ],
+  );
+  const allCurrentGroups = useMemo(
+    () =>
+      buildProjectGroups(
+        shellData,
+        projectExpandedById,
+        lastVisitedAtBySessionId,
+        "current",
+        dismissedEmptyProjectIds,
+        { sort: railSort, projectManualOrder, sessionManualOrderByProjectId },
+      ),
+    [
+      shellData,
+      projectExpandedById,
+      lastVisitedAtBySessionId,
+      dismissedEmptyProjectIds,
+      railSort,
+      projectManualOrder,
+      sessionManualOrderByProjectId,
+    ],
   );
   const groups = sessionListView === "archived" ? archivedGroups : currentGroups;
   const currentCount = shellData.sessions.filter(
@@ -137,7 +204,9 @@ export function AppShell() {
       } else if (action.kind === "toggle-terminal") {
         const activeId = state.activeSessionId;
         const activeSession =
-          activeId === null ? undefined : getShellData().sessions.find((session) => session.id === activeId);
+          activeId === null
+            ? undefined
+            : getShellData().sessions.find((session) => session.id === activeId);
         if (activeId !== null && activeSession?.archivedAt === undefined) {
           const view = selectSessionView(state, activeId);
           if (state.focusMode) {
@@ -159,6 +228,13 @@ export function AppShell() {
             state.lastVisitedAtBySessionId,
             state.sessionListView,
             state.dismissedEmptyProjectIds,
+            {
+              filter: state.railFilter,
+              query: state.railQuery,
+              sort: state.railSort,
+              projectManualOrder: state.projectManualOrder,
+              sessionManualOrderByProjectId: state.sessionManualOrderByProjectId,
+            },
           ),
         );
         const sessionId = visible[action.index];
@@ -220,7 +296,7 @@ export function AppShell() {
                 <div className="h-full" style={{ width: RAIL_COLLAPSED_WIDTH }}>
                   <CollapsedRail
                     attentionCount={attentionCount}
-                    groups={currentGroups}
+                    groups={allCurrentGroups}
                     onExpand={(projectId) => {
                       const state = workspaceStore.getState();
                       state.setRailCollapsed(false);
@@ -231,6 +307,7 @@ export function AppShell() {
               ) : (
                 <div className="flex h-full flex-col" style={{ width: effectiveRailWidth }}>
                   <Rail
+                    allGroups={allCurrentGroups}
                     attentionCount={attentionCount}
                     archivedCount={archivedCount}
                     currentCount={currentCount}
@@ -285,6 +362,7 @@ export function AppShell() {
             </div>
             <div className="min-h-0 flex-1">
               <Rail
+                allGroups={allCurrentGroups}
                 attentionCount={attentionCount}
                 archivedCount={archivedCount}
                 currentCount={currentCount}
@@ -298,7 +376,7 @@ export function AppShell() {
         </Sheet>
       )}
 
-      <CommandPalette groups={currentGroups} />
+      <CommandPalette groups={allCurrentGroups} />
     </div>
   );
 }

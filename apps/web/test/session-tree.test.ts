@@ -3,8 +3,11 @@ import { describe, expect, it } from "vite-plus/test";
 import { SHELL_FIXTURE } from "../src/fixture/data.ts";
 import {
   buildProjectGroups,
+  flattenProjectGroups,
   formatRelativeTime,
   listVisibleSessionIds,
+  moveIdInManualOrder,
+  sessionPriority,
 } from "../src/lib/session-tree.ts";
 
 describe("fixture invariants", () => {
@@ -45,6 +48,103 @@ describe("fixture invariants", () => {
 });
 
 describe("buildProjectGroups", () => {
+  it("filters by title, project, runtime state, unread state, and errors", () => {
+    const byText = buildProjectGroups(
+      SHELL_FIXTURE,
+      {},
+      SHELL_FIXTURE.seedLastVisitedAt,
+      "current",
+      {},
+      { query: "pagination" },
+    );
+    expect(byText.map((group) => group.project.id)).toEqual(["proj-notes"]);
+    expect(byText[0]?.sessions.map((row) => row.session.id)).toEqual(["sess-pagination"]);
+
+    const running = buildProjectGroups(SHELL_FIXTURE, {}, {}, "current", {}, { filter: "running" });
+    expect(running.flatMap((group) => group.sessions.map((row) => row.session.id))).toEqual([
+      "sess-stream",
+    ]);
+
+    const unread = buildProjectGroups(
+      SHELL_FIXTURE,
+      {},
+      SHELL_FIXTURE.seedLastVisitedAt,
+      "current",
+      {},
+      { filter: "unread" },
+    );
+    expect(unread.flatMap((group) => group.sessions.map((row) => row.session.id))).toEqual([
+      "sess-motion",
+    ]);
+
+    const errors = buildProjectGroups(SHELL_FIXTURE, {}, {}, "current", {}, { filter: "errors" });
+    expect(errors.flatMap((group) => group.sessions.map((row) => row.session.id))).toEqual([
+      "sess-resize",
+    ]);
+  });
+
+  it("sorts priority by the user-facing attention order", () => {
+    const groups = buildProjectGroups(
+      SHELL_FIXTURE,
+      {},
+      SHELL_FIXTURE.seedLastVisitedAt,
+      "current",
+      {},
+      { sort: "priority" },
+    );
+    expect(groups.map((group) => group.project.id)).toEqual(["proj-omp", "proj-t4", "proj-notes"]);
+    expect(groups[0]?.sessions.map((row) => row.session.id)).toEqual([
+      "sess-settings",
+      "sess-stream",
+      "sess-bundle",
+    ]);
+    expect(groups[1]?.sessions.slice(0, 3).map((row) => row.session.id)).toEqual([
+      "sess-fixtures",
+      "sess-motion",
+      "sess-resize",
+    ]);
+    expect(sessionPriority(groups[0]!.sessions[0]!)).toBe(6);
+  });
+
+  it("honors stable manual project, grouped-session, and flat-session order", () => {
+    const groups = buildProjectGroups(
+      SHELL_FIXTURE,
+      {},
+      {},
+      "current",
+      {},
+      {
+        sort: "manual",
+        projectManualOrder: ["proj-notes", "proj-t4", "proj-omp"],
+        sessionManualOrderByProjectId: {
+          "proj-t4": ["sess-notes", "sess-resize", "sess-motion", "sess-fixtures"],
+        },
+      },
+    );
+    expect(groups.map((group) => group.project.id)).toEqual(["proj-notes", "proj-t4", "proj-omp"]);
+    expect(groups[1]?.sessions.map((row) => row.session.id)).toEqual([
+      "sess-notes",
+      "sess-resize",
+      "sess-motion",
+      "sess-fixtures",
+    ]);
+    expect(
+      flattenProjectGroups(groups, "manual", ["sess-stream", "sess-theme"])
+        .slice(0, 2)
+        .map((entry) => entry.row.session.id),
+    ).toEqual(["sess-stream", "sess-theme"]);
+  });
+
+  it("moves visible manual-order entries without losing hidden entries", () => {
+    expect(moveIdInManualOrder(["hidden", "b"], ["a", "b", "c"], "b", -1)).toEqual([
+      "b",
+      "a",
+      "c",
+      "hidden",
+    ]);
+    expect(moveIdInManualOrder(["a", "b"], ["a", "b"], "a", -1)).toEqual(["a", "b"]);
+  });
+
   it("dismisses an empty Current header without hiding its archived sessions", () => {
     const project = SHELL_FIXTURE.projects[0];
     const session = SHELL_FIXTURE.sessions.find((entry) => entry.projectId === project?.id);
@@ -127,13 +227,9 @@ describe("buildProjectGroups", () => {
       .filter((session) => session.projectId === first.id || session.projectId === second.id)
       .map((session) => ({ ...session, archivedAt: "2026-07-12T12:00:00Z" }));
 
-    const groups = buildProjectGroups(
-      { ...SHELL_FIXTURE, projects, sessions },
-      {},
-      {},
-      "current",
-      { [first.id]: true },
-    );
+    const groups = buildProjectGroups({ ...SHELL_FIXTURE, projects, sessions }, {}, {}, "current", {
+      [first.id]: true,
+    });
     expect(groups.map((group) => group.project.id)).toEqual([second.id]);
   });
 

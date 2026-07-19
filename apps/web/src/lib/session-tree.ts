@@ -17,6 +17,18 @@ export interface SessionRow {
   readonly unread: boolean;
 }
 
+export type RailOrganization = "by-project" | "flat";
+export type RailSort = "priority" | "updated" | "manual";
+export type RailFilter = "all" | "attention" | "running" | "unread" | "errors";
+
+export interface RailViewOptions {
+  readonly filter?: RailFilter;
+  readonly query?: string;
+  readonly sort?: RailSort;
+  readonly projectManualOrder?: readonly string[];
+  readonly sessionManualOrderByProjectId?: Readonly<Record<string, readonly string[]>>;
+}
+
 export interface ProjectGroup {
   readonly project: WorkspaceProject;
   readonly host: WorkspaceHost;
@@ -28,13 +40,114 @@ export interface ProjectGroup {
   readonly pendingApprovals: number;
 }
 
+function manualRank(order: readonly string[] | undefined, id: string): number {
+  const rank = order?.indexOf(id) ?? -1;
+  return rank === -1 ? Number.MAX_SAFE_INTEGER : rank;
+}
+
+/**
+ * T4's visible Priority order is deliberately simple and user-facing:
+ * approval, input, running, unread completion, error, plan, then recency.
+ */
+export function sessionPriority(row: SessionRow): number {
+  if (row.session.pendingApprovals > 0 || row.session.status === "pendingApproval") return 6;
+  if (row.session.status === "awaitingInput") return 5;
+  if (row.session.status === "working" || row.session.status === "connecting") return 4;
+  if (row.unread) return 3;
+  if (row.session.status === "error") return 2;
+  if (row.session.status === "planReady") return 1;
+  return 0;
+}
+
+function compareUpdated(left: WorkspaceSession, right: WorkspaceSession): number {
+  return (
+    Date.parse(right.updatedAt) - Date.parse(left.updatedAt) || left.id.localeCompare(right.id)
+  );
+}
+
+function matchesFilter(row: SessionRow, filter: RailFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "attention") {
+    return row.session.pendingApprovals > 0 || row.session.status === "awaitingInput" || row.unread;
+  }
+  if (filter === "running") {
+    return row.session.status === "working" || row.session.status === "connecting";
+  }
+  if (filter === "unread") return row.unread;
+  return row.session.status === "error";
+}
+
+export function sortSessionRows(
+  rows: readonly SessionRow[],
+  sort: RailSort,
+  manualOrder?: readonly string[],
+): SessionRow[] {
+  return [...rows].sort((left, right) => {
+    if (sort === "manual") {
+      const manual =
+        manualRank(manualOrder, left.session.id) - manualRank(manualOrder, right.session.id);
+      if (manual !== 0) return manual;
+    }
+    if (sort === "priority") {
+      const priority = sessionPriority(right) - sessionPriority(left);
+      if (priority !== 0) return priority;
+    }
+    return compareUpdated(left.session, right.session);
+  });
+}
+
+export function flattenProjectGroups(
+  groups: readonly ProjectGroup[],
+  sort: RailSort,
+  manualOrder?: readonly string[],
+): Array<{ readonly group: ProjectGroup; readonly row: SessionRow }> {
+  const entries = groups.flatMap((group) => group.sessions.map((row) => ({ group, row })));
+  return entries.sort((left, right) => {
+    if (sort === "manual") {
+      const manual =
+        manualRank(manualOrder, left.row.session.id) -
+        manualRank(manualOrder, right.row.session.id);
+      if (manual !== 0) return manual;
+    }
+    if (sort === "priority") {
+      const priority = sessionPriority(right.row) - sessionPriority(left.row);
+      if (priority !== 0) return priority;
+    }
+    return compareUpdated(left.row.session, right.row.session);
+  });
+}
+
+export function moveIdInManualOrder(
+  storedOrder: readonly string[],
+  visibleIds: readonly string[],
+  id: string,
+  direction: -1 | 1,
+): string[] {
+  const complete = storedOrder.filter((entry) => visibleIds.includes(entry));
+  const hidden = storedOrder.filter((entry) => !visibleIds.includes(entry));
+  for (const visibleId of visibleIds) {
+    if (!complete.includes(visibleId)) complete.push(visibleId);
+  }
+  const index = complete.indexOf(id);
+  const target = index + direction;
+  if (index < 0 || target < 0 || target >= complete.length) return [...complete, ...hidden];
+  const next = [...complete];
+  [next[index], next[target]] = [next[target]!, next[index]!];
+  return [...next, ...hidden];
+}
+
 export function buildProjectGroups(
   data: WorkspaceData,
   projectExpandedById: Readonly<Record<string, boolean>>,
   lastVisitedAtBySessionId: Readonly<Record<string, string>>,
   view: SessionListView = "current",
   dismissedEmptyProjectIds: Readonly<Record<string, true>> = {},
+  options: RailViewOptions = {},
 ): ProjectGroup[] {
+  const filter = options.filter ?? "all";
+  const query = options.query?.trim().toLocaleLowerCase() ?? "";
+  const sort = options.sort ?? "updated";
+  const filtering = filter !== "all" || query !== "";
   const groups: ProjectGroup[] = [];
   for (const project of data.projects) {
     const host = data.hosts.find((entry) => entry.id === project.hostId);
@@ -53,14 +166,21 @@ export function buildProjectGroups(
           lastVisitedAtBySessionId[session.id],
           session.latestTurnCompletedAt,
         ),
-      }));
+      }))
+      .filter((row) => {
+        if (!matchesFilter(row, filter)) return false;
+        if (query === "") return true;
+        return `${row.session.title} ${row.session.model} ${project.name} ${host.name}`
+          .toLocaleLowerCase()
+          .includes(query);
+      });
     // Current is also the project-management view. Keep known projects
     // reachable after their final current session is archived so the user can
     // immediately create another session in that working folder, unless they
     // explicitly removed that empty shortcut. A new current session always
     // makes the project visible again. Archived is session-only and never
     // applies the Current-tab dismissal.
-    if (sessions.length === 0 && view === "archived") continue;
+    if (sessions.length === 0 && (view === "archived" || filtering)) continue;
     if (
       sessions.length === 0 &&
       view === "current" &&
@@ -73,13 +193,39 @@ export function buildProjectGroups(
       project,
       host,
       expanded: projectExpandedById[project.id] ?? true,
-      sessions,
+      sessions: sortSessionRows(
+        sessions,
+        sort,
+        options.sessionManualOrderByProjectId?.[project.id],
+      ),
       groupStatus: resolveHighestPriorityStatus(sessions.map((row) => row.session.status)),
       unreadCount: sessions.filter((row) => row.unread).length,
       pendingApprovals: sessions.reduce((sum, row) => sum + row.session.pendingApprovals, 0),
     });
   }
-  return groups;
+  return groups.sort((left, right) => {
+    if (sort === "manual") {
+      const manual =
+        manualRank(options.projectManualOrder, left.project.id) -
+        manualRank(options.projectManualOrder, right.project.id);
+      if (manual !== 0) return manual;
+    }
+    if (sort === "priority") {
+      const priority =
+        Math.max(0, ...right.sessions.map(sessionPriority)) -
+        Math.max(0, ...left.sessions.map(sessionPriority));
+      if (priority !== 0) return priority;
+    }
+    const leftUpdated = Math.max(
+      0,
+      ...left.sessions.map((row) => Date.parse(row.session.updatedAt)),
+    );
+    const rightUpdated = Math.max(
+      0,
+      ...right.sessions.map((row) => Date.parse(row.session.updatedAt)),
+    );
+    return rightUpdated - leftUpdated || left.project.name.localeCompare(right.project.name);
+  });
 }
 
 /** Sessions reachable by Cmd/Ctrl+1..9: rail order, expanded projects only. */
