@@ -9,7 +9,7 @@ import {
 } from "@t4-code/ui";
 import type { PreviewProjection } from "@t4-code/client";
 import { ArrowLeft, ChevronLeft, ChevronRight, Crosshair, RefreshCw, RotateCcw, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 
 import type { WorkspaceProject, WorkspaceSession } from "../../lib/workspace-data.ts";
@@ -63,10 +63,6 @@ export function PreviewWorkspace({
     () => (snapshot === null ? null : resolveLiveSession(snapshot, session.id)),
     [session.id, snapshot],
   );
-  const adapter = useMemo(
-    () => (controller === null || address === null ? null : new PreviewDesktopAdapter(controller, address)),
-    [address?.hostId, address?.sessionId, address?.targetId, controller],
-  );
   const sessionProjection =
     snapshot === null || address === null
       ? undefined
@@ -87,6 +83,19 @@ export function PreviewWorkspace({
   );
   const connected =
     snapshot !== null && address !== null && snapshot.connections.get(address.targetId) === "connected";
+  const adapter = useMemo(
+    () => (controller === null || address === null ? null : new PreviewDesktopAdapter(controller, address)),
+    [
+      address?.hostId,
+      address?.sessionId,
+      address?.targetId,
+      connected,
+      controller,
+      preview?.authority?.id,
+      preview?.authority?.kind,
+      preview?.previewId,
+    ],
+  );
   const hostSupport =
     snapshot === null || address === null ? previewHostSupport(undefined) : previewHostSupport(snapshot.hosts.get(address.hostId));
   const status = derivePreviewWorkspaceStatus({
@@ -98,6 +107,16 @@ export function PreviewWorkspace({
     preview === undefined || address === null
       ? undefined
       : { hostId: address.hostId, sessionId: address.sessionId, previewId: preview.previewId };
+  const operationLifecycleKey = [
+    address?.targetId ?? "",
+    address?.hostId ?? "",
+    address?.sessionId ?? "",
+    preview?.previewId ?? "",
+    preview?.authority?.kind ?? "",
+    preview?.authority?.id ?? "",
+    connected ? "connected" : "disconnected",
+  ].join("\u0000");
+  const operationGeneration = useRef(0);
   const [url, setUrl] = useState("");
   const [captureUrl, setCaptureUrl] = useState<string>();
   const [error, setError] = useState<string>();
@@ -109,6 +128,13 @@ export function PreviewWorkspace({
   const [scrollX, setScrollX] = useState("0");
   const [scrollY, setScrollY] = useState("400");
 
+
+  useLayoutEffect(() => {
+    operationGeneration.current += 1;
+    return () => {
+      operationGeneration.current += 1;
+    };
+  }, [operationLifecycleKey]);
 
   useEffect(() => {
     reconcilePreviewState({ selectedPreviewId, previews }, () => {
@@ -178,16 +204,23 @@ export function PreviewWorkspace({
       return;
     }
     setError(undefined);
-    void adapter
+    const generation = operationGeneration.current;
+    const requestAdapter = adapter;
+    void requestAdapter
       .policy(action, identity, action === "navigate" ? url.trim() : undefined)
       .then((policy) => {
+        if (generation !== operationGeneration.current) return;
         if (!policy.allowed) {
           setError("This preview action is not allowed by the host.");
           return;
         }
         return operation();
       })
-      .catch((cause: unknown) => setError(safePreviewError(cause)));
+      .catch((cause: unknown) => {
+        if (generation === operationGeneration.current) {
+          setError(safePreviewError(cause));
+        }
+      });
   };
 
   const mutate = (action: PreviewAction, args: Readonly<Record<string, unknown>> = {}) => {

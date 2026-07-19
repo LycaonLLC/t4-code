@@ -80,4 +80,44 @@ describe("PreviewLeaseManager", () => {
     expect(await manager.ensure(identity)).toBe("lease-2");
     expect(acquired).toBe(2);
   });
+
+  it("fences and releases a lease acquired after teardown", async () => {
+    const acquire = Promise.withResolvers<{
+      ok: true;
+      result: { previewId: string; leaseId: string; expiresAt: number };
+    }>();
+    const released: string[] = [];
+    let mutations = 0;
+    const manager = new PreviewLeaseManager({
+      previewLeaseAcquire: async () => acquire.promise,
+      previewLeaseRenew: async () => ({ ok: true, result: {} }),
+      previewLeaseRelease: async (identity) => {
+        released.push(identity.leaseId ?? "");
+        return { ok: true };
+      },
+    });
+    const identity: PreviewIdentity = {
+      hostId: "host",
+      sessionId: "session",
+      previewId: "preview",
+    };
+
+    const pending = manager.mutate(identity, async () => {
+      mutations += 1;
+    });
+    await Promise.resolve();
+    await manager.releaseAll();
+    acquire.resolve({
+      ok: true,
+      result: {
+        previewId: identity.previewId,
+        leaseId: "late-lease",
+        expiresAt: Date.now() + 30_000,
+      },
+    });
+
+    await expect(pending).rejects.toThrow("preview lease acquire invalidated");
+    expect(mutations).toBe(0);
+    expect(released).toEqual(["late-lease"]);
+  });
 });

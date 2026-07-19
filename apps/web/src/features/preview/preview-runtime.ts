@@ -64,6 +64,7 @@ export class PreviewDesktopAdapter {
   readonly leases: PreviewLeaseManager;
   private readonly controller: DesktopRuntimeController;
   readonly address: LiveSessionAddress;
+  private disposed = false;
 
 
   constructor(controller: DesktopRuntimeController, address: LiveSessionAddress) {
@@ -98,6 +99,7 @@ export class PreviewDesktopAdapter {
   }
 
   async launch(url: string, authorityId = "omp-session"): Promise<void> {
+    this.assertActive();
     await this.command("preview.launch", undefined, { url, authorityId });
   }
 
@@ -106,6 +108,7 @@ export class PreviewDesktopAdapter {
     identity: PreviewIdentity | undefined,
     url?: string,
   ): Promise<PreviewPolicyDecision> {
+    this.assertActive();
     const result = await this.command("preview.policy.check", identity, {
       action,
       ...(url === undefined ? {} : { url }),
@@ -118,6 +121,7 @@ export class PreviewDesktopAdapter {
     identity: PreviewIdentity,
     args: Readonly<Record<string, unknown>> = {},
   ): Promise<void> {
+    this.assertActive();
     if (action === "upload" && !isProjectRelativeUploadPath(String(args.path ?? ""))) {
       throw new Error("Choose a project-relative upload path.");
     }
@@ -127,6 +131,7 @@ export class PreviewDesktopAdapter {
   }
 
   async objectUrl(identity: PreviewIdentity, capture: PreviewCaptureMetadata): Promise<string> {
+    this.assertActive();
     return this.captures.objectUrl(identity, capture);
   }
 
@@ -139,6 +144,7 @@ export class PreviewDesktopAdapter {
     },
     decision: "approve" | "deny",
   ): Promise<void> {
+    this.assertActive();
     const result = await this.controller.confirm({
       targetId: this.address.targetId,
       ...challenge,
@@ -158,8 +164,14 @@ export class PreviewDesktopAdapter {
 
 
   async dispose(): Promise<void> {
+    if (this.disposed) return;
+    this.disposed = true;
     this.captures.dispose();
     await this.leases.releaseAll();
+  }
+
+  private assertActive(): void {
+    if (this.disposed) throw new Error("Preview workspace is no longer active.");
   }
 
   private async command(

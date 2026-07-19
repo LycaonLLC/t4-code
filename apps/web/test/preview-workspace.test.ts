@@ -208,6 +208,38 @@ describe("preview desktop adapter", () => {
     );
   });
 
+
+  it("acquires a fresh lease after reconnect recreates the adapter", async () => {
+    let acquired = 0;
+    const mutationLeases: unknown[] = [];
+    const command = vi.fn(
+      async (_targetId: string, intent: { command: string; args: Record<string, unknown> }) => {
+        if (intent.command === "preview.lease.acquire") {
+          acquired += 1;
+          return accepted({
+            previewId: identity.previewId,
+            leaseId: `lease-${acquired}`,
+            expiresAt: Date.now() + 30_000,
+          });
+        }
+        if (intent.command === "preview.navigate") {
+          mutationLeases.push(intent.args.leaseId);
+        }
+        return accepted({});
+      },
+    );
+    const controller = { command, confirm: vi.fn() } as unknown as DesktopRuntimeController;
+    const first = new PreviewDesktopAdapter(controller, address);
+    await first.mutate("navigate", identity);
+    await first.dispose();
+
+    const reconnected = new PreviewDesktopAdapter(controller, address);
+    await reconnected.mutate("navigate", identity);
+
+    expect(acquired).toBe(2);
+    expect(mutationLeases).toEqual(["lease-1", "lease-2"]);
+    await reconnected.dispose();
+  });
   it("releases every cooperative lease when the workspace adapter is disposed", async () => {
     const command = vi.fn(async (_targetId: string, intent: { command: string }) => {
       if (intent.command === "preview.lease.acquire") {
@@ -229,6 +261,40 @@ describe("preview desktop adapter", () => {
     );
   });
 
+
+  it("blocks a deferred policy continuation after the adapter lifecycle ends", async () => {
+    const policy = Promise.withResolvers<CommandResult>();
+    const commands: string[] = [];
+    const command = vi.fn(
+      async (_targetId: string, intent: { command: string }): Promise<CommandResult> => {
+        commands.push(intent.command);
+        if (intent.command === "preview.policy.check") return policy.promise;
+        if (intent.command === "preview.lease.acquire") {
+          return accepted({
+            previewId: identity.previewId,
+            leaseId: "lease-a",
+            expiresAt: Date.now() + 30_000,
+          });
+        }
+        return accepted({});
+      },
+    );
+    const adapter = new PreviewDesktopAdapter(
+      { command, confirm: vi.fn() } as unknown as DesktopRuntimeController,
+      address,
+    );
+
+    const pendingPolicy = adapter.policy("navigate", identity, "https://example.test");
+    await Promise.resolve();
+    await adapter.dispose();
+    policy.resolve(accepted({ allowed: true }));
+
+    await expect(pendingPolicy).resolves.toEqual({ allowed: true });
+    await expect(
+      adapter.mutate("navigate", identity, { url: "https://example.test" }),
+    ).rejects.toThrow("no longer active");
+    expect(commands).toEqual(["preview.policy.check"]);
+  });
   it("keeps cooperative leases while replacing capture object URLs", async () => {
     const command = vi.fn(async (_targetId: string, intent: { command: string }) => {
       if (intent.command === "preview.lease.acquire") {

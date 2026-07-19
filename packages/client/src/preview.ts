@@ -386,6 +386,7 @@ export class PreviewLeaseManager {
   private readonly now: () => number;
   private readonly defaultTtlMs: number;
   private readonly client: PreviewLeaseManagerClient;
+  private generation = 0;
 
   constructor(client: PreviewLeaseManagerClient, options: PreviewLeaseManagerOptions = {}) {
     this.client = client;
@@ -400,6 +401,7 @@ export class PreviewLeaseManager {
 
   /** Acquire only when a usable lease is absent; renew once half its TTL has elapsed. */
   async ensure(identity: PreviewIdentity, ttlMs = this.defaultTtlMs): Promise<string> {
+    const generation = this.generation;
     const key = identityKey(identity);
     const previous = this.leases.get(key);
     if (previous !== undefined && this.now() < previous.expiresAt) {
@@ -411,11 +413,16 @@ export class PreviewLeaseManager {
     const response = await this.client.previewLeaseAcquire(identity, ttlMs);
     const lease = validLeaseResult(leaseResponse(response), identity);
     if (lease === undefined) throw new Error("invalid preview lease acquire response");
+    if (generation !== this.generation) {
+      await this.releaseLease(identity, lease.leaseId);
+      throw new Error("preview lease acquire invalidated");
+    }
     this.leases.set(key, Object.freeze({ identity: { ...identity }, ...lease, ttlMs }));
     return lease.leaseId;
   }
 
   async renew(identity: PreviewIdentity, ttlMs = this.defaultTtlMs): Promise<string> {
+    const generation = this.generation;
     const key = identityKey(identity);
     const previous = this.leases.get(key);
     if (previous === undefined) return this.ensure(identity, ttlMs);
@@ -426,6 +433,10 @@ export class PreviewLeaseManager {
       );
       const lease = validLeaseResult(leaseResponse(response), identity);
       if (lease === undefined) throw new Error("invalid preview lease renew response");
+      if (generation !== this.generation) {
+        await this.releaseLease(identity, lease.leaseId);
+        throw new Error("preview lease renew invalidated");
+      }
       this.leases.set(key, Object.freeze({ identity: { ...identity }, ...lease, ttlMs }));
       return lease.leaseId;
     } catch (error) {
@@ -443,7 +454,9 @@ export class PreviewLeaseManager {
     operation: (leaseId: string) => Promise<T>,
     ttlMs = this.defaultTtlMs,
   ): Promise<T> {
+    const generation = this.generation;
     const leaseId = await this.ensure(identity, ttlMs);
+    if (generation !== this.generation) throw new Error("preview lease mutation invalidated");
     try {
       return await operation(leaseId);
     } catch (error) {
@@ -466,6 +479,7 @@ export class PreviewLeaseManager {
   }
 
   invalidateAll(): void {
+    this.generation += 1;
     this.leases.clear();
   }
 
@@ -482,6 +496,19 @@ export class PreviewLeaseManager {
   }
 
   async releaseAll(): Promise<void> {
-    await Promise.all([...this.leases.values()].map((lease) => this.release(lease.identity)));
+    this.generation += 1;
+    const leases = [...this.leases.values()];
+    this.leases.clear();
+    await Promise.all(
+      leases.map((lease) => this.releaseLease(lease.identity, lease.leaseId)),
+    );
+  }
+
+  private async releaseLease(identity: PreviewIdentity, leaseId: string): Promise<void> {
+    try {
+      await this.client.previewLeaseRelease({ ...identity, leaseId });
+    } catch {
+      // Teardown must not retain or resurrect a lease after a transport loss.
+    }
   }
 }
