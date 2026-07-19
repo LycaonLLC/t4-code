@@ -164,6 +164,7 @@ describe("phone touch targets", () => {
     // and model identifiers stay available in hover tooltips instead of
     // competing for the narrow row width.
     expect(rail).toContain("min-w-0 flex-1 break-words font-medium text-foreground text-xs");
+    expect(rail).toContain('aria-label={`${group.project.name}, ${group.sessions.length}');
     expect(rail).toContain('Remote host" : "Host profile"');
     expect(rail).toContain("break-all font-mono text-muted-foreground");
     expect(rail).not.toContain('truncate font-mono text-[11px]">{session.model}');

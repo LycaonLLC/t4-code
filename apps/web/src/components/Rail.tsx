@@ -663,6 +663,7 @@ function ProjectHeaderRow({
             render={
               <button
                 aria-expanded={group.expanded}
+                aria-label={`${group.project.name}, ${group.sessions.length} ${group.sessions.length === 1 ? "session" : "sessions"}${group.unreadCount > 0 ? `, ${group.unreadCount} unread` : ""}`}
                 className="flex min-h-11 min-w-0 flex-1 items-start gap-1 rounded-md px-1.5 py-1 text-left outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background sm:min-h-0"
                 data-project-disclosure={group.project.id}
                 onClick={() =>
@@ -683,7 +684,7 @@ function ProjectHeaderRow({
                 </span>
                 {!group.expanded && group.unreadCount > 0 && (
                   <span
-                    aria-label={`${group.unreadCount} unread`}
+                    aria-hidden="true"
                     className="mt-1 size-1.5 shrink-0 rounded-full bg-brand"
                   />
                 )}
