@@ -319,7 +319,7 @@ jobs:
             exit 1
           fi
           key_path="$RUNNER_TEMP/AuthKey.p8"
-          printf '%s' "$T4_MACOS_NOTARIZATION_KEY_BASE64" | base64 --decode > "$key_path"
+          printf '%s' "$T4_MACOS_NOTARIZATION_KEY_BASE64" | base64 -D > "$key_path"
           chmod 600 "$key_path"
 
       - name: Build signed and notarized macOS packages

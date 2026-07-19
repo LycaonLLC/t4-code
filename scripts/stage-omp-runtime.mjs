@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { Readable } from "node:stream";
@@ -28,8 +28,7 @@ const url = `${runtime.sourceRepository}/releases/download/${runtime.sourceTag}/
 
 async function sha256(path) {
   const hash = createHash("sha256");
-  const bytes = await readFile(path);
-  hash.update(bytes);
+  for await (const chunk of createReadStream(path)) hash.update(chunk);
   return hash.digest("hex");
 }
 
@@ -39,7 +38,7 @@ try {
   current = await stat(output);
 } catch {}
 if (!current || current.size !== artifact.size || (await sha256(output)) !== artifact.sha256) {
-  const response = await fetch(url, { redirect: "follow" });
+  const response = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
   if (!response.ok || !response.body) throw new Error(`runtime download failed with HTTP ${response.status}`);
   await pipeline(Readable.fromWeb(response.body), createWriteStream(temporary, { flags: "wx", mode: 0o600 }));
   const downloaded = await stat(temporary);

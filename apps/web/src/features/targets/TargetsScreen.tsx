@@ -204,7 +204,8 @@ function PhoneSetupCard({ api }: { readonly api: PhoneSetupApi }) {
   };
   const copy = async () => {
     if (!state?.url) return;
-    await navigator.clipboard.writeText(state.url);
+    try { await navigator.clipboard.writeText(state.url); }
+    catch { return; }
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1_500);
   };
