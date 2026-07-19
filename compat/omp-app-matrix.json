@@ -181,6 +181,6 @@
   },
   "desktop": {
     "package": "@t4-code/protocol",
-    "version": "0.1.25"
+    "version": "0.1.26"
   }
 }
