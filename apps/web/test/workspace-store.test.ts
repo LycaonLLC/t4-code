@@ -6,6 +6,7 @@ import { createMemoryPersistence } from "../src/state/persistence.ts";
 import {
   createWorkspaceStore,
   DEFAULT_SESSION_VIEW,
+  isAttentionOutcomeSeen,
   isSessionUnread,
   markVisited,
   parsePersistedWorkspace,
@@ -105,6 +106,17 @@ describe("visited and unread", () => {
     expect(store.getState().railOverlayOpen).toBe(false);
     expect(store.getState().lastVisitedAtBySessionId["A"]).toBe("2026-07-11T10:00:00Z");
   });
+
+  it("tracks the latest seen attention outcome per session", () => {
+    const { store } = makeStore();
+    expect(isAttentionOutcomeSeen(store.getState().lastSeenAttentionOutcomeBySessionKey, "A", "one"))
+      .toBe(false);
+    store.getState().markAttentionOutcomeSeen("A", "one");
+    expect(isAttentionOutcomeSeen(store.getState().lastSeenAttentionOutcomeBySessionKey, "A", "one"))
+      .toBe(true);
+    store.getState().markAttentionOutcomeSeen("A", "two");
+    expect(store.getState().lastSeenAttentionOutcomeBySessionKey).toEqual({ A: "two" });
+  });
 });
 
 describe("persistence", () => {
@@ -116,6 +128,7 @@ describe("persistence", () => {
     first.getState().setRailWidth(300);
     first.getState().setTheme("dark");
     first.getState().setEmptyProjectDismissed("host/project", true);
+    first.getState().markAttentionOutcomeSeen("A", "outcome-1");
     first.getState().setPaletteOpen(true); // ephemeral, must not persist
 
     const second = createWorkspaceStore({ persistence });
@@ -125,6 +138,7 @@ describe("persistence", () => {
     expect(state.railWidth).toBe(300);
     expect(state.theme).toBe("dark");
     expect(state.dismissedEmptyProjectIds).toEqual({ "host/project": true });
+    expect(state.lastSeenAttentionOutcomeBySessionKey).toEqual({ A: "outcome-1" });
     expect(state.paletteOpen).toBe(false);
     expect(state.railOverlayOpen).toBe(false);
   });
@@ -160,6 +174,7 @@ describe("persistence", () => {
       projectExpandedById: { project: false },
       dismissedEmptyProjectIds: {},
       lastVisitedAtBySessionId: { A: "2026-07-11T10:00:00Z" },
+      lastSeenAttentionOutcomeBySessionKey: {},
     });
     expect(parsed?.sessionViewById.A).toMatchObject({
       scrollTop: 42,
@@ -186,6 +201,11 @@ describe("persistence", () => {
       projectExpandedById: { good: true, bad: "nope" },
       dismissedEmptyProjectIds: { good: true, falseEntry: false, bad: "yes" },
       lastVisitedAtBySessionId: { good: "2026-07-11T10:00:00Z", bad: "not a date" },
+      lastSeenAttentionOutcomeBySessionKey: {
+        good: "outcome-1",
+        empty: "",
+        invalid: 42,
+      },
       sessionViewById: {
         good: { paneFamily: "made-up", paneWidth: 5, scrollTop: -3, draft: 9 },
         bad: null,
@@ -199,6 +219,7 @@ describe("persistence", () => {
     expect(parsed?.projectExpandedById).toEqual({ good: true });
     expect(parsed?.dismissedEmptyProjectIds).toEqual({ good: true });
     expect(parsed?.lastVisitedAtBySessionId).toEqual({ good: "2026-07-11T10:00:00Z" });
+    expect(parsed?.lastSeenAttentionOutcomeBySessionKey).toEqual({ good: "outcome-1" });
     const view = parsed?.sessionViewById["good"];
     expect(view?.paneFamily).toBe("agents");
     expect(view?.paneWidth).toBe(RIGHT_PANE_WIDTH.minWidth);

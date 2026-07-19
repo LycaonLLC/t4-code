@@ -25,6 +25,7 @@ import { AppShell } from "./components/AppShell.tsx";
 import { HomePane } from "./components/HomePane.tsx";
 import { SessionScreen } from "./components/SessionScreen.tsx";
 import { AgentViewScreen } from "./features/agent-view/AgentViewScreen.tsx";
+import { LiveAttentionInbox } from "./features/attention/index.ts";
 import { SettingsWorkspace } from "./features/settings/index.ts";
 import { LiveSettingsScreen } from "./features/settings/LiveSettingsScreen.tsx";
 import { TargetsScreen } from "./features/targets/TargetsScreen.tsx";
@@ -79,6 +80,12 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
   component: HomeRoute,
+});
+
+const inboxRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/inbox",
+  component: LiveAttentionInbox,
 });
 
 function SessionRoute() {
@@ -380,6 +387,7 @@ const usageRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
+  inboxRoute,
   sessionRoute,
   agentViewRoute,
   settingsRoute,

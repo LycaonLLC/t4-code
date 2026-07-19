@@ -20,6 +20,7 @@ interface PaletteItem {
 function buildItems(
   groups: readonly ProjectGroup[],
   navigate: (sessionId: string) => void,
+  openInbox: () => void,
   openAgentView: () => void,
   openSettings: () => void,
 ): PaletteItem[] {
@@ -59,6 +60,13 @@ function buildItems(
       run: () => workspaceStore.getState().setRailCollapsed(!state.railCollapsed),
     },
     {
+      id: "action:inbox",
+      label: "Open Inbox",
+      hint: "Attention across sessions",
+      status: null,
+      run: openInbox,
+    },
+    {
       id: "action:agents",
       label: "Open Agent View",
       hint: "Agents",
@@ -89,6 +97,9 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
         groups,
         (sessionId) => {
           void navigate({ params: { sessionId }, to: "/sessions/$sessionId" });
+        },
+        () => {
+          void navigate({ to: "/inbox" });
         },
         () => {
           void navigate({ to: "/agents" });
