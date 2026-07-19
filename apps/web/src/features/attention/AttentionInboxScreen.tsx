@@ -61,7 +61,12 @@ export interface AttentionInboxScreenProps {
 const ITEM_PRESENTATION: Readonly<
   Record<
     AttentionInboxItem["kind"],
-    { readonly label: string; readonly icon: LucideIcon; readonly dot: string; readonly text: string }
+    {
+      readonly label: string;
+      readonly icon: LucideIcon;
+      readonly dot: string;
+      readonly text: string;
+    }
   >
 > = {
   approval: {
@@ -434,7 +439,12 @@ function AttentionRow({
         <Icon aria-hidden="true" className={cn("mt-0.5 size-4 shrink-0", presentation.text)} />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <span className={cn("inline-flex items-center gap-1.5 font-medium text-xs", presentation.text)}>
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5 font-medium text-xs",
+                presentation.text,
+              )}
+            >
               <span aria-hidden="true" className={cn("size-1.5 rounded-full", presentation.dot)} />
               {presentation.label}
             </span>
@@ -446,7 +456,10 @@ function AttentionRow({
             <span className="min-w-0 truncate text-muted-foreground text-xs">
               {itemMetadata(item)}
             </span>
-            <time className="ms-auto shrink-0 font-mono text-muted-foreground text-xs" dateTime={dateTime}>
+            <time
+              className="ms-auto shrink-0 font-mono text-muted-foreground text-xs"
+              dateTime={dateTime}
+            >
               {formatAttentionAge(item.occurredAtMs, nowMs)}
             </time>
           </div>
@@ -546,7 +559,9 @@ function AttentionSection({
           {section.label}
         </h2>
         <span className="font-mono text-muted-foreground text-xs">{items.length}</span>
-        <span className="hidden text-muted-foreground text-xs sm:inline">{section.description}</span>
+        <span className="hidden text-muted-foreground text-xs sm:inline">
+          {section.description}
+        </span>
       </div>
       <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
         {items.map((item) => (
@@ -631,12 +646,23 @@ export function AttentionInboxScreen({
   const focusedKeyRef = useRef<string | null>(null);
   const previousKeysRef = useRef<readonly string[]>(visibleItems.map((item) => item.key));
   const emptyFocusRef = useRef<HTMLDivElement | null>(null);
+  const openTabRef = useRef<HTMLButtonElement | null>(null);
+  const seenTabRef = useRef<HTMLButtonElement | null>(null);
+
+  const selectTab = (next: InboxFilter, moveFocus = false) => {
+    setFilter(next);
+    if (moveFocus) (next === "open" ? openTabRef : seenTabRef).current?.focus();
+  };
 
   useLayoutEffect(() => {
     const previousKeys = previousKeysRef.current;
     const nextKeys = visibleItems.map((item) => item.key);
     const focusedKey = focusedKeyRef.current;
-    if (focusedKey !== null && !nextKeys.includes(focusedKey) && previousKeys.includes(focusedKey)) {
+    if (
+      focusedKey !== null &&
+      !nextKeys.includes(focusedKey) &&
+      previousKeys.includes(focusedKey)
+    ) {
       const removedIndex = previousKeys.indexOf(focusedKey);
       const remaining = nextKeys[removedIndex] ?? nextKeys[removedIndex - 1];
       if (remaining !== undefined) rowRefs.current.get(remaining)?.focus();
@@ -677,7 +703,8 @@ export function AttentionInboxScreen({
           <span>{model.sections[0].items.length} need you</span>
           <span aria-hidden="true">·</span>
           <span>
-            {model.sections[1].items.length} {model.sections[1].items.length === 1 ? "problem" : "problems"}
+            {model.sections[1].items.length}{" "}
+            {model.sections[1].items.length === 1 ? "problem" : "problems"}
           </span>
           <span aria-hidden="true">·</span>
           <span>{model.sections[2].items.length} done</span>
@@ -693,10 +720,19 @@ export function AttentionInboxScreen({
               role="tablist"
             >
               <Button
+                aria-controls="attention-inbox-panel"
                 aria-selected={filter === "open"}
-                onClick={() => setFilter("open")}
+                id="attention-inbox-tab-open"
+                onClick={() => selectTab("open")}
+                onKeyDown={(event) => {
+                  if (event.key !== "ArrowRight" && event.key !== "End") return;
+                  event.preventDefault();
+                  selectTab("seen", true);
+                }}
+                ref={openTabRef}
                 role="tab"
                 size="xs"
+                tabIndex={filter === "open" ? 0 : -1}
                 variant={filter === "open" ? "outline" : "ghost"}
               >
                 Open
@@ -707,10 +743,19 @@ export function AttentionInboxScreen({
                 )}
               </Button>
               <Button
+                aria-controls="attention-inbox-panel"
                 aria-selected={filter === "seen"}
-                onClick={() => setFilter("seen")}
+                id="attention-inbox-tab-seen"
+                onClick={() => selectTab("seen")}
+                onKeyDown={(event) => {
+                  if (event.key !== "ArrowLeft" && event.key !== "Home") return;
+                  event.preventDefault();
+                  selectTab("open", true);
+                }}
+                ref={seenTabRef}
                 role="tab"
                 size="xs"
+                tabIndex={filter === "seen" ? 0 : -1}
                 variant={filter === "seen" ? "outline" : "ghost"}
               >
                 Seen
@@ -727,7 +772,12 @@ export function AttentionInboxScreen({
               </Button>
             )}
           </div>
-          <div aria-label={`${filter === "open" ? "Open" : "Seen"} inbox items`} role="tabpanel">
+          <div
+            aria-label={`${filter === "open" ? "Open" : "Seen"} inbox items`}
+            aria-labelledby={`attention-inbox-tab-${filter}`}
+            id="attention-inbox-panel"
+            role="tabpanel"
+          >
             {visibleItems.length === 0 ? (
               <EmptyInbox filter={filter} focusRef={emptyFocusRef} inventory={inventory} />
             ) : (

@@ -17,6 +17,18 @@ import type {
   AttentionInventoryState as UiAttentionInventoryState,
 } from "./model.ts";
 
+/** Keep expiry copy fresh, then remove a confirmation immediately after its deadline. */
+export function nextAttentionRefreshDelay(
+  items: readonly UiAttentionInboxItem[],
+  nowMs: number,
+): number | null {
+  const nextExpiry = items.reduce<number | null>((nearest, item) => {
+    if (item.kind !== "confirmation" || item.expiresAtMs <= nowMs) return nearest;
+    return nearest === null ? item.expiresAtMs : Math.min(nearest, item.expiresAtMs);
+  }, null);
+  return nextExpiry === null ? null : Math.max(1, Math.min(1_000, nextExpiry - nowMs + 1));
+}
+
 function uiAttentionItem(
   item: ClientAttentionInboxItem,
   hostLabel: string | undefined,
@@ -102,13 +114,14 @@ export function LiveAttentionInbox() {
   );
   const [resolvingKeys, setResolvingKeys] = useState<ReadonlySet<string>>(() => new Set());
   const [actionErrors, setActionErrors] = useState<Readonly<Record<string, string>>>({});
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const projection = useMemo(
     () =>
       snapshot === null
         ? null
-        : deriveAttentionInbox(snapshot, { seenOutcomeIdsBySessionKey }),
-    [seenOutcomeIdsBySessionKey, snapshot],
+        : deriveAttentionInbox(snapshot, { now: nowMs, seenOutcomeIdsBySessionKey }),
+    [nowMs, seenOutcomeIdsBySessionKey, snapshot],
   );
   const liveItems = useMemo(() => {
     if (snapshot === null || projection === null) return null;
@@ -120,7 +133,7 @@ export function LiveAttentionInbox() {
       return uiAttentionItem(item, target?.label);
     });
   }, [projection, snapshot]);
-  const sourceItems = liveItems ?? ATTENTION_INBOX_FIXTURES.mixed.items;
+  const sourceItems = liveItems ?? ATTENTION_INBOX_FIXTURES.sample.items;
   const itemKeys = useMemo(() => new Set(sourceItems.map((item) => item.key)), [sourceItems]);
 
   useEffect(() => {
@@ -135,6 +148,14 @@ export function LiveAttentionInbox() {
       return Object.keys(retained).length === Object.keys(current).length ? current : retained;
     });
   }, [itemKeys]);
+
+  useEffect(() => {
+    if (snapshot === null) return;
+    const delay = nextAttentionRefreshDelay(sourceItems, nowMs);
+    if (delay === null) return;
+    const timer = window.setTimeout(() => setNowMs(Date.now()), delay);
+    return () => window.clearTimeout(timer);
+  }, [nowMs, snapshot, sourceItems]);
 
   const items = useMemo(
     () =>
@@ -154,7 +175,7 @@ export function LiveAttentionInbox() {
 
   const inventory =
     snapshot === null || projection === null
-      ? ATTENTION_INBOX_FIXTURES.mixed.inventory
+      ? ATTENTION_INBOX_FIXTURES.sample.inventory
       : attentionInventory(
           projection.inventory.partial,
           [...snapshot.connections.values()].some((state) => state !== "connected"),
@@ -163,7 +184,10 @@ export function LiveAttentionInbox() {
 
   const openSession = (session: { readonly hostId: string; readonly sessionId: string }) => {
     void navigate({
-      params: { sessionId: sessionViewId(session.hostId, session.sessionId) },
+      params: {
+        sessionId:
+          snapshot === null ? session.sessionId : sessionViewId(session.hostId, session.sessionId),
+      },
       to: "/sessions/$sessionId",
     });
   };
@@ -171,6 +195,15 @@ export function LiveAttentionInbox() {
   const runAction = async (action: AttentionInboxAction) => {
     const item = sourceItems.find((candidate) => candidate.key === action.itemKey);
     if (item === undefined || !("actionState" in item)) return;
+    if (item.kind === "confirmation" && item.expiresAtMs <= Date.now()) {
+      setNowMs(Date.now());
+      setActionErrors((current) => ({
+        ...current,
+        [action.itemKey]:
+          "This security confirmation expired. Open the session to request it again.",
+      }));
+      return;
+    }
     if (action.kind === "plan" && action.decision === "revise") {
       openSession(item.session);
       return;
@@ -237,7 +270,7 @@ export function LiveAttentionInbox() {
     <AttentionInboxScreen
       inventory={inventory}
       items={items}
-      {...(snapshot === null ? { nowMs: ATTENTION_INBOX_FIXTURES.mixed.nowMs } : {})}
+      nowMs={snapshot === null ? ATTENTION_INBOX_FIXTURES.sample.nowMs : nowMs}
       onAction={(action) => void runAction(action)}
       onBack={() => void navigate({ to: "/" })}
       onMarkAllUpdatesSeen={() => {

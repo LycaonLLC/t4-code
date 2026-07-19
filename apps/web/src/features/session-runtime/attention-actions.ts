@@ -71,12 +71,7 @@ function writeGate(
   snapshot: DesktopRuntimeSnapshot,
   address: AttentionActionAddress,
 ): { readonly kind: "rejected"; readonly reason: string } | null {
-  const link = sessionWriteLink(
-    snapshot,
-    address.targetId,
-    address.hostId,
-    address.sessionId,
-  );
+  const link = sessionWriteLink(snapshot, address.targetId, address.hostId, address.sessionId);
   if (link === "offline") return { kind: "rejected", reason: OFFLINE_WRITE_REASON };
   if (link === "cached") return { kind: "rejected", reason: CACHED_WRITE_REASON };
   const ref = snapshot.projection.sessionIndex.get(`${address.hostId}\u0000${address.sessionId}`);
@@ -122,7 +117,16 @@ export async function respondToAttentionItem(
       .projection.sessions.get(`${address.hostId}\u0000${address.sessionId}`);
     const challenge = warm?.confirmations.get(action.requestId);
     if (challenge === undefined) {
-      return { kind: "rejected", reason: "This approval was already resolved on the host." };
+      return {
+        kind: "rejected",
+        reason: "This security confirmation was already resolved or expired on the host.",
+      };
+    }
+    if (Date.parse(challenge.expiresAt) <= Date.now()) {
+      return {
+        kind: "rejected",
+        reason: "This security confirmation expired. Open the session to request it again.",
+      };
     }
     try {
       const result = await controller.confirm({

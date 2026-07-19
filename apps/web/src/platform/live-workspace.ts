@@ -3,7 +3,11 @@
 // protocol truth — session refs, host metadata, connection states — with no
 // fixture reads and no invented data. Remote absolute paths never surface;
 // projects display their advertised name or a basename.
-import type { DesktopRuntimeSnapshot, SessionProjection } from "@t4-code/client";
+import {
+  type DesktopRuntimeSnapshot,
+  readSessionAttention,
+  type SessionProjection,
+} from "@t4-code/client";
 import type { SessionStatus } from "@t4-code/ui";
 
 import type {
@@ -23,6 +27,29 @@ import { hostSessionInventoryIsComplete } from "../features/session-runtime/sess
 /** Composite route id for one live session; unambiguous and URL-safe. */
 export function sessionViewId(hostId: string, sessionId: string): string {
   return `${encodeURIComponent(hostId)}/${encodeURIComponent(sessionId)}`;
+}
+
+export interface SessionAttentionOutcomeMarker {
+  readonly sessionKey: string;
+  readonly outcomeId: string;
+}
+
+/** Latest durable outcome for the route the user is actually viewing. */
+export function sessionAttentionOutcomeMarker(
+  snapshot: DesktopRuntimeSnapshot,
+  viewId: string,
+): SessionAttentionOutcomeMarker | null {
+  for (const ref of snapshot.projection.sessionIndex.values()) {
+    const hostId = String(ref.hostId);
+    const sessionId = String(ref.sessionId);
+    if (sessionViewId(hostId, sessionId) !== viewId) continue;
+    const attention = readSessionAttention(ref);
+    const outcome = attention.status === "valid" ? attention.value.latestOutcome : undefined;
+    return outcome === undefined
+      ? null
+      : { sessionKey: `${hostId}\u0000${sessionId}`, outcomeId: outcome.id };
+  }
+  return null;
 }
 
 export interface LiveSessionAddress {

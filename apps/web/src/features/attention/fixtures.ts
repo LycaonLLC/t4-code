@@ -6,35 +6,40 @@ import type {
 
 export const ATTENTION_FIXTURE_NOW_MS = Date.UTC(2026, 6, 18, 18, 0, 0);
 
-const T4_SESSION: AttentionSessionIdentity = {
+const SETTINGS_SESSION: AttentionSessionIdentity = {
   hostId: "host-local",
-  sessionId: "session-t4-inbox",
-  title: "Build cross-session attention inbox",
-  project: "t4-code",
+  sessionId: "sess-settings",
+  title: "Migrate settings store to schema v3",
+  project: "oh-my-pi",
 };
 
-const OMP_SESSION: AttentionSessionIdentity = {
-  targetId: "target-studio",
-  hostId: "host-studio",
-  hostLabel: "Studio Mac",
-  sessionId: "session-omp-protocol",
-  title: "Publish attention summaries",
+const PLAN_SESSION: AttentionSessionIdentity = {
+  hostId: "host-local",
+  sessionId: "sess-bundle",
+  title: "Split renderer bundle for faster cold start",
   project: "oh-my-pi",
+};
+
+const FIXTURES_SESSION: AttentionSessionIdentity = {
+  hostId: "host-local",
+  sessionId: "sess-fixtures",
+  title: "Pin protocol fixtures for desktop CI",
+  project: "t4-code",
 };
 
 const RESIZE_SESSION: AttentionSessionIdentity = {
   hostId: "host-local",
-  sessionId: "session-resize",
-  title: "Bisect terminal resize failure",
+  sessionId: "sess-resize",
+  title: "Bisect flaky terminal resize test",
   project: "t4-code",
 };
 
 const mixedItems: readonly AttentionInboxItem[] = [
   {
     kind: "approval",
-    key: "host-local:session-t4-inbox:approval:migration",
+    key: "host-local:sess-settings:approval:migration",
     requestId: "approval-migration",
-    session: T4_SESSION,
+    session: SETTINGS_SESSION,
     title: "Migrate the local seen-state store",
     summary: "The agent wants to run the workspace-state migration and its focused tests.",
     occurredAtMs: ATTENTION_FIXTURE_NOW_MS - 2 * 60_000,
@@ -42,9 +47,9 @@ const mixedItems: readonly AttentionInboxItem[] = [
   },
   {
     kind: "question",
-    key: "host-studio:session-omp-protocol:question:fixtures",
+    key: "host-local:sess-fixtures:question:fixtures",
     requestId: "question-fixtures",
-    session: OMP_SESSION,
+    session: FIXTURES_SESSION,
     title: "Choose the protocol fixture set",
     summary: "Which compatibility cases should remain in the first release gate?",
     occurredAtMs: ATTENTION_FIXTURE_NOW_MS - 9 * 60_000,
@@ -58,9 +63,9 @@ const mixedItems: readonly AttentionInboxItem[] = [
   },
   {
     kind: "plan",
-    key: "host-local:session-t4-inbox:plan:vertical-slice",
+    key: "host-local:sess-bundle:plan:vertical-slice",
     requestId: "plan-vertical-slice",
-    session: T4_SESSION,
+    session: PLAN_SESSION,
     title: "Review the end-to-end release plan",
     summary: "The plan covers host projection, the client inbox, focused tests, and release proof.",
     occurredAtMs: ATTENTION_FIXTURE_NOW_MS - 14 * 60_000,
@@ -68,9 +73,9 @@ const mixedItems: readonly AttentionInboxItem[] = [
   },
   {
     kind: "approval",
-    key: "host-local:session-t4-inbox:approval:retry",
+    key: "host-local:sess-settings:approval:retry",
     requestId: "approval-retry",
-    session: T4_SESSION,
+    session: SETTINGS_SESSION,
     title: "Retry the failed fixture update",
     summary: "The previous response did not reach the host. The request is still current.",
     occurredAtMs: ATTENTION_FIXTURE_NOW_MS - 18 * 60_000,
@@ -81,7 +86,7 @@ const mixedItems: readonly AttentionInboxItem[] = [
   },
   {
     kind: "failed",
-    key: "host-local:session-resize:outcome:failed-137",
+    key: "host-local:sess-resize:outcome:failed-137",
     outcomeId: "failed-137",
     session: RESIZE_SESSION,
     title: "Terminal resize check failed",
@@ -91,12 +96,12 @@ const mixedItems: readonly AttentionInboxItem[] = [
   },
   {
     kind: "completed",
-    key: "host-local:session-motion:outcome:complete",
+    key: "host-local:sess-motion:outcome:complete",
     outcomeId: "complete-motion",
     session: {
       hostId: "host-local",
-      sessionId: "session-motion",
-      title: "Audit reduced motion behavior",
+      sessionId: "sess-motion",
+      title: "Add reduced-motion audit to gallery",
       project: "t4-code",
     },
     title: "Reduced-motion audit completed",
@@ -106,15 +111,16 @@ const mixedItems: readonly AttentionInboxItem[] = [
   },
   {
     kind: "completed",
-    key: "host-studio:session-decoder:outcome:complete",
-    outcomeId: "complete-decoder",
+    key: "host-local:sess-notes:outcome:complete",
+    outcomeId: "complete-release-notes",
     session: {
-      ...OMP_SESSION,
-      sessionId: "session-decoder",
-      title: "Harden the session decoder",
+      hostId: "host-local",
+      sessionId: "sess-notes",
+      title: "Draft release notes for v0.1",
+      project: "t4-code",
     },
-    title: "Decoder limits verified",
-    summary: "Legacy and current session references both passed the bounded decoder suite.",
+    title: "Release-notes draft saved",
+    summary: "The current draft is ready for the next release checkpoint.",
     occurredAtMs: ATTENTION_FIXTURE_NOW_MS - 3 * 60 * 60_000,
     seen: true,
   },
@@ -123,9 +129,9 @@ const mixedItems: readonly AttentionInboxItem[] = [
 const unavailableItems: readonly AttentionInboxItem[] = [
   {
     kind: "confirmation",
-    key: "host-local:session-t4-inbox:confirmation:expired",
+    key: "host-local:sess-settings:confirmation:expired",
     requestId: "confirmation-expired",
-    session: T4_SESSION,
+    session: SETTINGS_SESSION,
     title: "Confirm access to the release directory",
     summary: "This security check belonged to an older live connection.",
     occurredAtMs: ATTENTION_FIXTURE_NOW_MS - 3 * 60_000,
@@ -134,9 +140,9 @@ const unavailableItems: readonly AttentionInboxItem[] = [
   },
   {
     kind: "approval",
-    key: "host-studio:session-omp-protocol:approval:offline",
+    key: "host-local:sess-fixtures:approval:offline",
     requestId: "approval-offline",
-    session: OMP_SESSION,
+    session: FIXTURES_SESSION,
     title: "Write the bounded outcome ledger",
     summary: "Reconnect Studio Mac before responding to this request.",
     occurredAtMs: ATTENTION_FIXTURE_NOW_MS - 6 * 60_000,
@@ -144,9 +150,9 @@ const unavailableItems: readonly AttentionInboxItem[] = [
   },
   {
     kind: "question",
-    key: "host-local:session-t4-inbox:question:stale",
+    key: "host-local:sess-fixtures:question:stale",
     requestId: "question-stale",
-    session: T4_SESSION,
+    session: FIXTURES_SESSION,
     title: "Pick the narrow-screen action layout",
     summary: "The host has published a newer session revision.",
     occurredAtMs: ATTENTION_FIXTURE_NOW_MS - 11 * 60_000,
@@ -157,9 +163,9 @@ const unavailableItems: readonly AttentionInboxItem[] = [
   },
   {
     kind: "plan",
-    key: "host-local:session-t4-inbox:plan:unsupported",
+    key: "host-local:sess-bundle:plan:unsupported",
     requestId: "plan-unsupported",
-    session: T4_SESSION,
+    session: PLAN_SESSION,
     title: "Review a plan from an older host",
     summary: "This host version cannot accept plan decisions from the inbox.",
     occurredAtMs: ATTENTION_FIXTURE_NOW_MS - 19 * 60_000,
@@ -174,6 +180,12 @@ export interface AttentionInboxFixture {
 }
 
 export const ATTENTION_INBOX_FIXTURES = {
+  /** Matches the built-in sample rail one-for-one; safe for browser showcase mode. */
+  sample: {
+    nowMs: ATTENTION_FIXTURE_NOW_MS,
+    items: mixedItems,
+    inventory: { status: "complete" },
+  },
   empty: {
     nowMs: ATTENTION_FIXTURE_NOW_MS,
     items: [],
@@ -189,7 +201,8 @@ export const ATTENTION_INBOX_FIXTURES = {
     items: mixedItems.slice(0, 3),
     inventory: {
       status: "partial",
-      message: "Studio Mac has only published part of its session list. This inbox may be incomplete.",
+      message:
+        "Studio Mac has only published part of its session list. This inbox may be incomplete.",
     },
   },
   offline: {

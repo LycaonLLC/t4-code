@@ -1,3 +1,4 @@
+import type { DesktopRuntimeSnapshot } from "@t4-code/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -8,8 +9,11 @@ import {
   buildAttentionInboxViewModel,
   formatAttentionAge,
   formatAttentionExpiry,
+  nextAttentionRefreshDelay,
   type AttentionInboxItem,
 } from "../src/features/attention/index.ts";
+import { SHELL_FIXTURE } from "../src/fixture/data.ts";
+import { sessionAttentionOutcomeMarker, sessionViewId } from "../src/platform/live-workspace.ts";
 
 const callbacks = {
   onAction: () => {},
@@ -56,19 +60,78 @@ describe("attention inbox view model", () => {
     expect(model.unseenOutcomeCount).toBe(2);
   });
 
+  it("keeps every sample inbox item linked to a session visible in the sample rail", () => {
+    const sampleSessionIds = new Set(SHELL_FIXTURE.sessions.map((session) => session.id));
+    expect(
+      ATTENTION_INBOX_FIXTURES.sample.items.every((item) =>
+        sampleSessionIds.has(item.session.sessionId),
+      ),
+    ).toBe(true);
+  });
+
   it("formats short ages and connection-bound expiry without calendar ambiguity", () => {
     expect(formatAttentionAge(ATTENTION_FIXTURE_NOW_MS - 59_000, ATTENTION_FIXTURE_NOW_MS)).toBe(
       "now",
     );
-    expect(formatAttentionAge(ATTENTION_FIXTURE_NOW_MS - 90 * 60_000, ATTENTION_FIXTURE_NOW_MS)).toBe(
-      "1h",
-    );
+    expect(
+      formatAttentionAge(ATTENTION_FIXTURE_NOW_MS - 90 * 60_000, ATTENTION_FIXTURE_NOW_MS),
+    ).toBe("1h");
     expect(formatAttentionExpiry(ATTENTION_FIXTURE_NOW_MS + 31_000, ATTENTION_FIXTURE_NOW_MS)).toBe(
       "Expires in 31s",
     );
     expect(formatAttentionExpiry(ATTENTION_FIXTURE_NOW_MS - 1, ATTENTION_FIXTURE_NOW_MS)).toBe(
       "Expired",
     );
+  });
+
+  it("refreshes live confirmation copy at most once per second and at its deadline", () => {
+    const session = ATTENTION_INBOX_FIXTURES.mixed.items[0]!.session;
+    const item: AttentionInboxItem = {
+      kind: "confirmation",
+      key: "confirmation-timer",
+      requestId: "confirmation-timer",
+      session,
+      title: "Confirm",
+      summary: "Confirm the action",
+      occurredAtMs: ATTENTION_FIXTURE_NOW_MS,
+      expiresAtMs: ATTENTION_FIXTURE_NOW_MS + 2_500,
+      actionState: { status: "ready" },
+    };
+    expect(nextAttentionRefreshDelay([item], ATTENTION_FIXTURE_NOW_MS)).toBe(1_000);
+    expect(nextAttentionRefreshDelay([item], ATTENTION_FIXTURE_NOW_MS + 2_400)).toBe(101);
+    expect(nextAttentionRefreshDelay([item], ATTENTION_FIXTURE_NOW_MS + 2_500)).toBeNull();
+  });
+
+  it("finds the current route outcome marker without attaching the session", () => {
+    const snapshot = {
+      projection: {
+        sessionIndex: new Map([
+          [
+            "host/one\u0000session one",
+            {
+              hostId: "host/one",
+              sessionId: "session one",
+              attention: {
+                pending: [],
+                pendingCount: 0,
+                truncated: false,
+                latestOutcome: {
+                  id: "outcome-1",
+                  kind: "completed",
+                  at: "2026-07-18T18:00:00.000Z",
+                  summary: "Completed.",
+                },
+              },
+            },
+          ],
+        ]),
+      },
+    } as unknown as DesktopRuntimeSnapshot;
+    const viewId = sessionViewId("host/one", "session one");
+    expect(sessionAttentionOutcomeMarker(snapshot, viewId)).toEqual({
+      sessionKey: "host/one\u0000session one",
+      outcomeId: "outcome-1",
+    });
   });
 });
 
@@ -90,6 +153,13 @@ describe("attention inbox screen", () => {
     expect(markup).toContain("Done");
     expect(markup).toContain('role="tablist"');
     expect(markup).toContain('role="tabpanel"');
+    expect(markup).toContain('id="attention-inbox-tab-open"');
+    expect(markup).toContain('id="attention-inbox-tab-seen"');
+    expect(markup).toContain('aria-controls="attention-inbox-panel"');
+    expect(markup).toContain('aria-labelledby="attention-inbox-tab-open"');
+    expect(markup).toContain('id="attention-inbox-panel"');
+    expect(markup).toContain('tabindex="0"');
+    expect(markup).toContain('tabindex="-1"');
     expect(markup).toContain('aria-live="polite"');
     expect(markup).toContain("Mark all updates seen");
   });

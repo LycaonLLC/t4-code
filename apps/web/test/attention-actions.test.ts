@@ -164,7 +164,61 @@ describe("attentionResponseArgs", () => {
         },
         { kind: "approval", requestId: "approval-old", decision: "deny" },
       ),
-    ).resolves.toEqual({ kind: "rejected", reason: "This request was already resolved or replaced." });
+    ).resolves.toEqual({
+      kind: "rejected",
+      reason: "This request was already resolved or replaced.",
+    });
     expect(commandWithPromptLease).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when a security confirmation expires before dispatch", async () => {
+    const base = liveSnapshot([]);
+    const snapshot = {
+      ...base,
+      projection: {
+        ...base.projection,
+        sessions: new Map([
+          [
+            "host-attention\u0000session-attention",
+            {
+              freshness: "fresh",
+              confirmations: new Map([
+                [
+                  "confirmation-expired",
+                  {
+                    confirmationId: "confirmation-expired",
+                    commandId: "command-expired",
+                    hostId: "host-attention",
+                    sessionId: "session-attention",
+                    expiresAt: new Date(Date.now() - 1_000).toISOString(),
+                  },
+                ],
+              ]),
+            },
+          ],
+        ]),
+      },
+    } as unknown as DesktopRuntimeSnapshot;
+    const confirm = vi.fn();
+    const controller = {
+      getSnapshot: () => snapshot,
+      confirm,
+    } as unknown as DesktopRuntimeController;
+
+    await expect(
+      respondToAttentionItem(
+        controller,
+        {
+          targetId: "target-attention",
+          hostId: "host-attention",
+          sessionId: "session-attention",
+        },
+        { kind: "confirmation", requestId: "confirmation-expired", decision: "approve" },
+      ),
+    ).resolves.toEqual({
+      kind: "rejected",
+      reason: "This security confirmation expired. Open the session to request it again.",
+    });
+    expect(confirm).not.toHaveBeenCalled();
   });
 });

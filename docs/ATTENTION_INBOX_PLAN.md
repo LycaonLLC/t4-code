@@ -1,6 +1,7 @@
 # Cross-session Attention Inbox
 
-Status: proposed product and implementation plan. No product code has been built yet.
+Status: the first vertical slice is implemented in T4 Code and the Lycaon OMP fork. The T4 UI
+depends on the host contract in `lyc-aon/oh-my-pi#10` before live attention items can appear.
 
 ## Recommended outcome
 
@@ -23,25 +24,25 @@ client without squeezing the session transcript or creating a permanent dashboar
 The important technical decision is to make OMP's appserver publish a small, bounded attention
 summary as part of each session reference. A T4-only implementation would look convincing in the
 sample UI but would not be complete or honest: T4 keeps full projections for only eight warm
-sessions, and current live session references do not publish enough detail to identify all questions,
-failures, or completions.
+sessions, and before this sprint live session references did not publish enough detail to identify all
+questions, failures, or completions.
 
-## What exists today
+## Baseline before this sprint
 
-| Area | Exists today | Missing for the inbox |
-|---|---|---|
-| Session rail | Status colors, unread dots, and approval counts | One cross-session place to review and act |
-| Session UI | Inline approval, question, plan, and turn-error panels | The panels only appear after opening and attaching to a session |
-| Session index | Up to 1,000 lightweight session references, broadcast through `session.delta` | Reliable attention details and terminal outcome summaries |
-| Warm projections | Full events, confirmations, results, and transcript state | Limited to eight sessions and intentionally evicted by an LRU cache |
-| Sample data | Approval, awaiting-input, plan-ready, completed, and error examples | Some of those states are not currently produced by the live path |
-| Local view state | Per-session visit timestamps and unread-completion logic | Stable seen state for inbox outcome items |
-| OMP appserver | Translates `ask.request`, `approval.request`, `turn.error`, and `agent.end` | It does not currently fold those events into the host-wide session index |
+| Area             | Exists today                                                                  | Missing for the inbox                                                    |
+| ---------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Session rail     | Status colors, unread dots, and approval counts                               | One cross-session place to review and act                                |
+| Session UI       | Inline approval, question, plan, and turn-error panels                        | The panels only appear after opening and attaching to a session          |
+| Session index    | Up to 1,000 lightweight session references, broadcast through `session.delta` | Reliable attention details and terminal outcome summaries                |
+| Warm projections | Full events, confirmations, results, and transcript state                     | Limited to eight sessions and intentionally evicted by an LRU cache      |
+| Sample data      | Approval, awaiting-input, plan-ready, completed, and error examples           | Some of those states are not currently produced by the live path         |
+| Local view state | Per-session visit timestamps and unread-completion logic                      | Stable seen state for inbox outcome items                                |
+| OMP appserver    | Translates `ask.request`, `approval.request`, `turn.error`, and `agent.end`   | It does not currently fold those events into the host-wide session index |
 
-Two current fields need special care:
+Two baseline fields needed special care:
 
-- `SessionRef.pendingApproval`, `pendingUserInput`, and `proposedPlan` are understood by T4, but the
-  current Lycaon appserver does not set them when RPC UI requests arrive.
+- `SessionRef.pendingApproval`, `pendingUserInput`, and `proposedPlan` were understood by T4, but the
+  baseline Lycaon appserver did not set them when RPC UI requests arrived.
 - Security confirmation challenges are live-connection objects. They expire after 60 seconds and
   are bound to the WebSocket that caused them. They must never be restored from disk or presented as
   durable after reconnect.
@@ -90,11 +91,11 @@ without leaving the route.
 
 ### Sections and ordering
 
-| Section | Includes | Ordering | Badge behavior |
-|---|---|---|---|
-| Needs you | Agent approval, question, plan review, live security confirmation | Expiring first, then oldest waiting | Counts toward the urgent badge |
-| Problems | Latest unseen failed or cancelled terminal outcome per session | Newest first | Counts toward the urgent badge until seen |
-| Done | Latest unseen successful terminal outcome per session | Newest first | Quiet dot only |
+| Section   | Includes                                                          | Ordering                            | Badge behavior                            |
+| --------- | ----------------------------------------------------------------- | ----------------------------------- | ----------------------------------------- |
+| Needs you | Agent approval, question, plan review, live security confirmation | Expiring first, then oldest waiting | Counts toward the urgent badge            |
+| Problems  | Latest unseen failed or cancelled terminal outcome per session    | Newest first                        | Counts toward the urgent badge until seen |
+| Done      | Latest unseen successful terminal outcome per session             | Newest first                        | Quiet dot only                            |
 
 Within a section, each row shows the session title, project, host when remote or non-default, safe
 summary, age, freshness, and available actions. Search and filters can wait until real usage proves
@@ -102,18 +103,18 @@ they are necessary; initial filters should be limited to **Open** and **Seen**.
 
 ### What earns an inbox item
 
-| Event | Inbox treatment | Reason |
-|---|---|---|
-| Agent asks a question | Blocking item with answer controls | Work cannot continue without the user |
-| Agent asks for yes/no approval | Blocking item with approve/deny | Work cannot continue without the user |
-| Plan is ready for review | Blocking item with approve/revise/reject | Existing T4 behavior already treats this as attention |
-| Risky T4 command asks for confirmation | Ephemeral blocking item | Safety boundary; valid only on its originating live connection |
-| Root turn ends failed | Problem item | The user needs the failure and the session that owns it |
-| Root turn ends completed | Done item | The user needs to know long-running work landed |
-| Root turn ends cancelled | Problem item unless the current client initiated cancellation | Avoid telling the user about an action they just performed |
-| Subagent completes normally | No standalone item | Too noisy; the root turn remains the unit of user work |
-| Subagent fails but the root recovers | Activity only | The failure was handled and is not asking for attention |
-| Tool call, retry, compaction, reconnect | Activity only | Operational detail, not an inbox by default |
+| Event                                   | Inbox treatment                                               | Reason                                                         |
+| --------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------- |
+| Agent asks a question                   | Blocking item with answer controls                            | Work cannot continue without the user                          |
+| Agent asks for yes/no approval          | Blocking item with approve/deny                               | Work cannot continue without the user                          |
+| Plan is ready for review                | Blocking item with approve/revise/reject                      | Existing T4 behavior already treats this as attention          |
+| Risky T4 command asks for confirmation  | Ephemeral blocking item                                       | Safety boundary; valid only on its originating live connection |
+| Root turn ends failed                   | Problem item                                                  | The user needs the failure and the session that owns it        |
+| Root turn ends completed                | Done item                                                     | The user needs to know long-running work landed                |
+| Root turn ends cancelled                | Problem item unless the current client initiated cancellation | Avoid telling the user about an action they just performed     |
+| Subagent completes normally             | No standalone item                                            | Too noisy; the root turn remains the unit of user work         |
+| Subagent fails but the root recovers    | Activity only                                                 | The failure was handled and is not asking for attention        |
+| Tool call, retry, compaction, reconnect | Activity only                                                 | Operational detail, not an inbox by default                    |
 
 The first release should use one latest outcome per session, not every historical turn. The
 transcript and Activity pane remain the history. A newer successful retry replaces the previous
@@ -161,8 +162,14 @@ interface SessionAttentionState {
 
 type PendingAttentionItem =
   | { kind: "approval"; id: string; title: string; summary: string; requestedAt: string }
-  | { kind: "question"; id: string; question: string; options: AttentionOption[];
-      allowText: boolean; requestedAt: string }
+  | {
+      kind: "question";
+      id: string;
+      question: string;
+      options: AttentionOption[];
+      allowText: boolean;
+      requestedAt: string;
+    }
   | { kind: "plan"; id: string; title: string; summary: string; requestedAt: string };
 
 interface AttentionOutcome {
@@ -181,13 +188,13 @@ the exact `pendingCount` plus `truncated: true`, and T4 says **Open session to s
 
 ### Durable and ephemeral state
 
-| State | Owner | Persistence |
-|---|---|---|
-| Pending agent question/approval/plan | Live OMP RPC child and appserver | Never restored after the child is gone |
-| Risky-command confirmation | Originating T4 connection and appserver | Never persisted; expires and disappears on reconnect |
-| Latest terminal outcome | OMP appserver | Persist a redacted, bounded per-session summary atomically |
-| Seen/unseen state | T4 client view state | Local per client; no claim of cross-device read sync |
-| Transcript and detailed activity | OMP session/runtime | Existing authority and retention rules |
+| State                                | Owner                                   | Persistence                                                |
+| ------------------------------------ | --------------------------------------- | ---------------------------------------------------------- |
+| Pending agent question/approval/plan | Live OMP RPC child and appserver        | Never restored after the child is gone                     |
+| Risky-command confirmation           | Originating T4 connection and appserver | Never persisted; expires and disappears on reconnect       |
+| Latest terminal outcome              | OMP appserver                           | Persist a redacted, bounded per-session summary atomically |
+| Seen/unseen state                    | T4 client view state                    | Local per client; no claim of cross-device read sync       |
+| Transcript and detailed activity     | OMP session/runtime                     | Existing authority and retention rules                     |
 
 Persist latest outcomes in the appserver's existing per-profile private state area, using an atomic
 versioned file with mode `0600`, a maximum of 1,000 session records, and cleanup on permanent session
@@ -345,21 +352,21 @@ index. When a host reports a truncated index, the UI explicitly says the inbox m
 
 ## Verification matrix
 
-| Risk | Required proof |
-|---|---|
-| Cold sessions are missed | Create more than eight sessions; attention from an evicted session still appears |
-| Duplicate replay creates duplicate items | Replay the same index delta and transcript event; stable item count remains one |
-| Stale item is actionable | Resolve on another client, then click the old action; current revision check refuses it |
-| Connection confirmation is restored incorrectly | Reconnect/restart; the expired confirmation is gone |
-| Failure is reported from a diagnostic-only error | Emit stale `turn.error` without terminal lifecycle; no Problem item appears |
-| Successful retry leaves a stale failure | Fail then retry successfully; latest item becomes Done |
-| Offline client pretends to act | Disconnect host; controls disable with a reason and the item remains visible |
-| Observer session bypasses ownership | Open a session active in another app; answer controls remain unavailable |
-| Same raw session ID exists on two hosts | Items remain distinct by target + host + session identity |
-| Session inventory is partial | Inbox shows an incompleteness banner and does not claim all caught up |
-| Sensitive text leaks | Decoder/redaction tests cover tokens, credentials, URLs, and absolute paths |
-| Layout becomes noisy | Desktop and narrow screenshots show compact rows and no dashboard cards |
-| Accessibility regresses | Keyboard flow, focus restoration, live-region, contrast, and 200% text checks pass |
+| Risk                                             | Required proof                                                                          |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| Cold sessions are missed                         | Create more than eight sessions; attention from an evicted session still appears        |
+| Duplicate replay creates duplicate items         | Replay the same index delta and transcript event; stable item count remains one         |
+| Stale item is actionable                         | Resolve on another client, then click the old action; current revision check refuses it |
+| Connection confirmation is restored incorrectly  | Reconnect/restart; the expired confirmation is gone                                     |
+| Failure is reported from a diagnostic-only error | Emit stale `turn.error` without terminal lifecycle; no Problem item appears             |
+| Successful retry leaves a stale failure          | Fail then retry successfully; latest item becomes Done                                  |
+| Offline client pretends to act                   | Disconnect host; controls disable with a reason and the item remains visible            |
+| Observer session bypasses ownership              | Open a session active in another app; answer controls remain unavailable                |
+| Same raw session ID exists on two hosts          | Items remain distinct by target + host + session identity                               |
+| Session inventory is partial                     | Inbox shows an incompleteness banner and does not claim all caught up                   |
+| Sensitive text leaks                             | Decoder/redaction tests cover tokens, credentials, URLs, and absolute paths             |
+| Layout becomes noisy                             | Desktop and narrow screenshots show compact rows and no dashboard cards                 |
+| Accessibility regresses                          | Keyboard flow, focus restoration, live-region, contrast, and 200% text checks pass      |
 
 ## Deliberate non-goals for the first release
 

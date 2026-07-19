@@ -8,10 +8,7 @@ import { Outlet, useNavigate } from "@tanstack/react-router";
 import { X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import {
-  startDesktopRuntime,
-  useDesktopRuntimeSnapshot,
-} from "../platform/desktop-runtime.ts";
+import { startDesktopRuntime, useDesktopRuntimeSnapshot } from "../platform/desktop-runtime.ts";
 import {
   ATTENTION_INBOX_FIXTURES,
   buildAttentionInboxViewModel,
@@ -62,12 +59,14 @@ export function AppShell() {
     [shellData, projectExpandedById, lastVisitedAtBySessionId],
   );
   const groups = sessionListView === "archived" ? archivedGroups : currentGroups;
-  const currentCount = shellData.sessions.filter((session) => session.archivedAt === undefined).length;
+  const currentCount = shellData.sessions.filter(
+    (session) => session.archivedAt === undefined,
+  ).length;
   const archivedCount = shellData.sessions.length - currentCount;
   const attentionCount = useMemo(
     () =>
       runtimeSnapshot === null
-        ? buildAttentionInboxViewModel(ATTENTION_INBOX_FIXTURES.mixed.items).urgentCount
+        ? buildAttentionInboxViewModel(ATTENTION_INBOX_FIXTURES.sample.items).urgentCount
         : deriveAttentionInbox(runtimeSnapshot, {
             seenOutcomeIdsBySessionKey: lastSeenAttentionOutcomeBySessionKey,
           }).urgentCount,

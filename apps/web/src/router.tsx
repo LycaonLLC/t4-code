@@ -43,6 +43,7 @@ import {
   preferredHomeSessionId,
 } from "./lib/session-route.ts";
 import { desktopRuntime, useDesktopRuntimeSnapshot } from "./platform/desktop-runtime.ts";
+import { sessionAttentionOutcomeMarker } from "./platform/live-workspace.ts";
 import { useShellData } from "./state/shell-data.ts";
 import { RAIL_OVERLAY_QUERY, useMediaQuery } from "./hooks/useMediaQuery.ts";
 import { fixtureSettingsStore } from "./state/settings-instance.ts";
@@ -131,6 +132,21 @@ function SessionRoute() {
       workspaceStore.getState().activateSession(target, new Date().toISOString());
     }
   }, [activationGate, decision, session]);
+
+  const attentionOutcome =
+    runtimeSnapshot === null ? null : sessionAttentionOutcomeMarker(runtimeSnapshot, sessionId);
+  const attentionOutcomeId = attentionOutcome?.outcomeId;
+  const attentionSessionKey = attentionOutcome?.sessionKey;
+  useEffect(() => {
+    if (
+      decision.kind !== "present" ||
+      attentionOutcomeId === undefined ||
+      attentionSessionKey === undefined
+    ) {
+      return;
+    }
+    workspaceStore.getState().markAttentionOutcomeSeen(attentionSessionKey, attentionOutcomeId);
+  }, [attentionOutcomeId, attentionSessionKey, decision.kind]);
 
   if (decision.kind === "pending") {
     return (

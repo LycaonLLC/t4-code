@@ -1,5 +1,5 @@
 export { AttentionInboxScreen, type AttentionInboxScreenProps } from "./AttentionInboxScreen.tsx";
-export { LiveAttentionInbox } from "./LiveAttentionInbox.tsx";
+export { LiveAttentionInbox, nextAttentionRefreshDelay } from "./LiveAttentionInbox.tsx";
 export {
   ATTENTION_FIXTURE_NOW_MS,
   ATTENTION_INBOX_FIXTURES,
