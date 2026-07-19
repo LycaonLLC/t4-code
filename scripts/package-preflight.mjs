@@ -72,10 +72,10 @@ export function runPreflight(repoRoot = resolve(import.meta.dirname, "..")) {
     try {
       const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
       const matrix = JSON.parse(readFileSync(join(repoRoot, "compat", "omp-app-matrix.json"), "utf8"));
-      const pinned = matrix.publishedRuntime?.artifacts?.["darwin-arm64"];
+      const pinned = matrix.verifiedRuntime?.artifacts?.["darwin-arm64"];
       const digest = createHash("sha256").update(readFileSync(executablePath)).digest("hex");
       if (
-        manifest.tag !== matrix.publishedRuntime?.sourceTag || manifest.sha256 !== pinned?.sha256 ||
+        manifest.tag !== matrix.verifiedRuntime?.sourceTag || manifest.sha256 !== pinned?.sha256 ||
         manifest.size !== pinned?.size || lstatSync(executablePath).size !== pinned?.size || digest !== pinned?.sha256
       ) errors.push("staged OMP runtime does not match compat/omp-app-matrix.json");
     } catch {

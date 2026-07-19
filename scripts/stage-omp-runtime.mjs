@@ -16,7 +16,7 @@ const option = (name) => {
 const platform = option("platform");
 const arch = option("arch");
 const key = `${platform}-${arch}`;
-const runtime = matrix.publishedRuntime;
+const runtime = matrix.verifiedRuntime;
 const artifact = runtime?.artifacts?.[key];
 if (!artifact || !/^[a-z0-9][a-z0-9._-]{1,80}$/u.test(artifact.name) || !/^[0-9a-f]{64}$/u.test(artifact.sha256)) {
   throw new Error(`compat/omp-app-matrix.json has no valid ${key} runtime artifact`);
