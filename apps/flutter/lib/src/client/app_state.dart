@@ -32,6 +32,11 @@ final class SessionSummary {
     required this.title,
     required this.revision,
     required this.status,
+    this.projectId = 'unknown-project',
+    this.projectName = 'Project',
+    this.updatedAt = '',
+    this.archivedAt,
+    this.working = false,
   });
 
   final String hostId;
@@ -39,6 +44,13 @@ final class SessionSummary {
   final String title;
   final String revision;
   final String status;
+  final String projectId;
+  final String projectName;
+  final String updatedAt;
+  final String? archivedAt;
+  final bool working;
+
+  bool get archived => archivedAt != null;
 }
 
 final class TranscriptMessage {
@@ -69,6 +81,7 @@ final class T4ViewState {
     this.targetConfigured = false,
     this.hostOperationPending = false,
     this.submitting = false,
+    this.sessionOperationPending = false,
   });
 
   const T4ViewState.disconnected()
@@ -86,6 +99,7 @@ final class T4ViewState {
   final bool targetConfigured;
   final bool hostOperationPending;
   final bool submitting;
+  final bool sessionOperationPending;
 
   SessionSummary? get selectedSession {
     for (final session in sessions) {
@@ -113,6 +127,17 @@ abstract interface class T4Actions {
   Future<void> pairHost(String code);
 
   Future<void> selectSession(String sessionId);
+  Future<void> createSession(String projectId, {String? title});
+
+  Future<void> renameSession(String sessionId, String title);
+
+  Future<void> terminateSession(String sessionId);
+
+  Future<void> archiveSession(String sessionId);
+
+  Future<void> restoreSession(String sessionId);
+
+  Future<void> deleteSession(String sessionId);
 
   Future<void> submitPrompt(String message);
 }

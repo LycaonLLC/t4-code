@@ -23,6 +23,12 @@ negotiated device permissions, deliberate disconnect/reconnect controls, cancell
 checks, an exact least-authority pairing command, pairing failures, and confirmed host removal that
 deletes only the device-local address and credential.
 
+Stage 3 project and session parity is also complete locally. The shared session rail consumes the
+canonical session index, groups and searches current or archived sessions, creates and selects
+sessions, and exposes rename, runtime termination, archive, restore, and confirmed permanent
+deletion through revisioned app-wire commands. Compact drawers and wide rails share the same state
+and actions.
+
 
 ## Signed and notarized on macOS
 

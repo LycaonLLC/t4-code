@@ -414,6 +414,275 @@ void main() {
       );
     },
   );
+  test(
+    'creates and manages sessions through index deltas and confirmations',
+    () async {
+      final profile = _profile('alpha');
+      final directory = _MemoryDirectoryStore(
+        directory: const HostDirectory.empty().upsert(profile),
+      );
+      final connector = _FakeConnector();
+      final controller = _controller(
+        directory,
+        _MemoryCredentialStore(),
+        connector,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      final channel = connector.channels.single;
+
+      channel.emit(
+        _welcome(
+          'host-alpha',
+          capabilities: const <String>[
+            'sessions.read',
+            'sessions.control',
+            'sessions.manage',
+          ],
+          features: const <String>['host.watch'],
+        ),
+      );
+      await _flush();
+      final list = channel.sentJson.last;
+      channel.emit(
+        _response(
+          list,
+          command: 'session.list',
+          result: _sessionListResultFor('host-alpha', const <String>[
+            'session-alpha',
+            'session-beta',
+          ]),
+        ),
+      );
+      await _flush();
+      channel.emit(
+        _snapshot(
+          'host-alpha',
+          'session-alpha',
+          revision: 'revision-session-alpha-2',
+        ),
+      );
+      await _flush();
+      expect(controller.state.connectionPhase, ConnectionPhase.ready);
+      expect(controller.state.sessions.first.projectName, 'Project Alpha');
+
+      final creating = controller.createSession(
+        'project-session-alpha',
+        title: 'New investigation',
+      );
+      await _flush();
+      final create = channel.sentJson.last;
+      expect(create['command'], 'session.create');
+      expect(create['args'], <String, Object?>{
+        'projectId': 'project-session-alpha',
+        'title': 'New investigation',
+      });
+      final createdRef = _sessionRef(
+        'host-alpha',
+        'session-created',
+        projectId: 'project-session-alpha',
+        projectName: 'Project Alpha',
+        revision: 'revision-created',
+        title: 'New investigation',
+      );
+      channel.emit(
+        _sessionDelta(
+          'host-alpha',
+          'session-created',
+          revision: 'revision-created',
+          upsert: createdRef,
+          seq: 2,
+        ),
+      );
+      channel.emit(
+        _response(
+          create,
+          command: 'session.create',
+          result: <String, Object?>{'session': createdRef},
+        ),
+      );
+      await creating;
+      expect(controller.state.selectedSessionId, 'session-created');
+      expect(controller.state.selectedSession?.title, 'New investigation');
+      expect(channel.sentJson.last, containsPair('command', 'session.attach'));
+      channel.emit(
+        _snapshot(
+          'host-alpha',
+          'session-created',
+          revision: 'revision-created-2',
+        ),
+      );
+      await _flush();
+
+      final renaming = controller.renameSession(
+        'session-created',
+        'Renamed investigation',
+      );
+      await _flush();
+      final rename = channel.sentJson.last;
+      expect(rename['command'], 'session.rename');
+      expect(rename['expectedRevision'], 'revision-created-2');
+      final renamedRef = _sessionRef(
+        'host-alpha',
+        'session-created',
+        projectId: 'project-session-alpha',
+        projectName: 'Project Alpha',
+        revision: 'revision-created-3',
+        title: 'Renamed investigation',
+      );
+      channel.emit(
+        _sessionDelta(
+          'host-alpha',
+          'session-created',
+          revision: 'revision-created-3',
+          upsert: renamedRef,
+          seq: 3,
+        ),
+      );
+      channel.emit(
+        _response(
+          rename,
+          command: 'session.rename',
+          result: <String, Object?>{'renamed': true},
+        ),
+      );
+      await renaming;
+      expect(controller.state.selectedSession?.title, 'Renamed investigation');
+
+      final archiving = controller.archiveSession('session-created');
+      await _flush();
+      final archive = channel.sentJson.last;
+      final archivedRef = <String, Object?>{
+        ...renamedRef,
+        'revision': 'revision-created-4',
+        'archivedAt': '2026-07-19T01:00:00.000Z',
+      };
+      channel.emit(
+        _sessionDelta(
+          'host-alpha',
+          'session-created',
+          revision: 'revision-created-4',
+          upsert: archivedRef,
+          seq: 4,
+        ),
+      );
+      channel.emit(
+        _response(
+          archive,
+          command: 'session.archive',
+          result: <String, Object?>{'archived': true},
+        ),
+      );
+      await archiving;
+      expect(
+        controller.state.sessions
+            .singleWhere((session) => session.sessionId == 'session-created')
+            .archived,
+        isTrue,
+      );
+      expect(controller.state.selectedSessionId, isNot('session-created'));
+      channel.emit(
+        _snapshot(
+          'host-alpha',
+          controller.state.selectedSessionId!,
+          revision: 'revision-replacement',
+        ),
+      );
+      await _flush();
+
+      final restoring = controller.restoreSession('session-created');
+      await _flush();
+      final restore = channel.sentJson.last;
+      final restoredRef = <String, Object?>{
+        ...renamedRef,
+        'revision': 'revision-created-5',
+      };
+      channel.emit(
+        _sessionDelta(
+          'host-alpha',
+          'session-created',
+          revision: 'revision-created-5',
+          upsert: restoredRef,
+          seq: 5,
+        ),
+      );
+      channel.emit(
+        _response(
+          restore,
+          command: 'session.restore',
+          result: <String, Object?>{'restored': true},
+        ),
+      );
+      await restoring;
+
+      final terminating = controller.terminateSession('session-created');
+      await _flush();
+      final terminate = channel.sentJson.last;
+      expect(terminate['command'], 'session.close');
+      channel.emit(_confirmation(terminate, 'confirmation-close'));
+      await _flush();
+      final closeConfirmation = channel.sentJson.last;
+      expect(closeConfirmation, containsPair('type', 'confirm'));
+      expect(closeConfirmation, containsPair('decision', 'approve'));
+      final closedRef = <String, Object?>{
+        ...restoredRef,
+        'revision': 'revision-created-6',
+        'status': 'closed',
+      };
+      channel.emit(
+        _sessionDelta(
+          'host-alpha',
+          'session-created',
+          revision: 'revision-created-6',
+          upsert: closedRef,
+          seq: 6,
+        ),
+      );
+      channel.emit(
+        _response(
+          terminate,
+          command: 'session.close',
+          result: <String, Object?>{
+            'closed': true,
+            'sessionId': 'session-created',
+          },
+        ),
+      );
+      await terminating;
+
+      final deleting = controller.deleteSession('session-created');
+      await _flush();
+      final delete = channel.sentJson.last;
+      expect(delete['command'], 'session.delete');
+      channel.emit(_confirmation(delete, 'confirmation-delete'));
+      await _flush();
+      channel.emit(
+        _sessionDelta(
+          'host-alpha',
+          'session-created',
+          revision: 'revision-created-7',
+          remove: 'session-created',
+          seq: 7,
+        ),
+      );
+      channel.emit(
+        _response(
+          delete,
+          command: 'session.delete',
+          result: <String, Object?>{'deleted': true},
+        ),
+      );
+      await deleting;
+      expect(
+        controller.state.sessions.any(
+          (session) => session.sessionId == 'session-created',
+        ),
+        isFalse,
+      );
+      expect(controller.state.sessionOperationPending, isFalse);
+    },
+  );
+
   test('IO transport sends the exact native Origin', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final origin = Completer<String?>();
@@ -503,15 +772,16 @@ Map<String, Object?> _sessionListResultFor(
   'cursor': <String, Object?>{'epoch': epoch, 'seq': seq},
   'sessions': sessionIds
       .map(
-        (sessionId) => <String, Object?>{
-          'hostId': hostId,
-          'sessionId': sessionId,
-          'project': <String, Object?>{'projectId': 'project-$sessionId'},
-          'revision': 'revision-$sessionId',
-          'title': '$sessionId title',
-          'status': 'idle',
-          'updatedAt': '2026-07-19T00:00:00.000Z',
-        },
+        (sessionId) => _sessionRef(
+          hostId,
+          sessionId,
+          projectId: 'project-$sessionId',
+          projectName: sessionId == 'session-alpha'
+              ? 'Project Alpha'
+              : 'Project Beta',
+          revision: 'revision-$sessionId',
+          title: '$sessionId title',
+        ),
       )
       .toList(growable: false),
   'totalCount': sessionIds.length,
@@ -532,6 +802,72 @@ Map<String, Object?> _response(
   'command': command,
   'ok': true,
   'result': result,
+};
+
+Map<String, Object?> _sessionRef(
+  String hostId,
+  String sessionId, {
+  required String projectId,
+  required String projectName,
+  required String revision,
+  required String title,
+  String status = 'idle',
+}) => <String, Object?>{
+  'hostId': hostId,
+  'sessionId': sessionId,
+  'project': <String, Object?>{'projectId': projectId, 'name': projectName},
+  'revision': revision,
+  'title': title,
+  'status': status,
+  'updatedAt': '2026-07-19T00:00:00.000Z',
+};
+
+Map<String, Object?> _snapshot(
+  String hostId,
+  String sessionId, {
+  required String revision,
+}) => <String, Object?>{
+  'v': 'omp-app/1',
+  'type': 'snapshot',
+  'hostId': hostId,
+  'sessionId': sessionId,
+  'cursor': <String, Object?>{'epoch': 'transcript', 'seq': 0},
+  'revision': revision,
+  'entries': <Object?>[],
+};
+
+Map<String, Object?> _sessionDelta(
+  String hostId,
+  String sessionId, {
+  required String revision,
+  required int seq,
+  Map<String, Object?>? upsert,
+  String? remove,
+}) => <String, Object?>{
+  'v': 'omp-app/1',
+  'type': 'session.delta',
+  'hostId': hostId,
+  'sessionId': sessionId,
+  'cursor': <String, Object?>{'epoch': 'index', 'seq': seq},
+  'revision': revision,
+  'upsert': ?upsert,
+  'remove': ?remove,
+};
+
+Map<String, Object?> _confirmation(
+  Map<String, Object?> command,
+  String confirmationId,
+) => <String, Object?>{
+  'v': 'omp-app/1',
+  'type': 'confirmation',
+  'confirmationId': confirmationId,
+  'commandId': command['commandId'],
+  'hostId': command['hostId'],
+  if (command['sessionId'] != null) 'sessionId': command['sessionId'],
+  'commandHash': 'sha256:test',
+  'revision': command['expectedRevision'],
+  'expiresAt': '2030-01-01T00:00:00.000Z',
+  'summary': command['command'],
 };
 
 Future<void> _flush() async {

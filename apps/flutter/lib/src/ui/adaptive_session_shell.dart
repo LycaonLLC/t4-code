@@ -142,6 +142,7 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
               width: _T4Layout.sessionRailWidth,
               child: _SessionNavigation(
                 state: widget.state,
+                actions: widget.actions,
                 mode: _SessionNavigationMode.rail,
                 connecting: _connecting,
                 disconnecting: _disconnecting,
@@ -216,6 +217,7 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
       drawer: Drawer(
         child: _SessionNavigation(
           state: widget.state,
+          actions: widget.actions,
           mode: _SessionNavigationMode.drawer,
           connecting: _connecting,
           selectingSessionId: _selectingSessionId,

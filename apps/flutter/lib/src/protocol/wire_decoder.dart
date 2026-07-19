@@ -91,6 +91,12 @@ abstract final class WireDecoder {
     final frozen = _freezeJsonCopy(value, _JsonBudget(), 0);
     return _decodeSessionListResult(_map(frozen, 'result'));
   }
+
+  /// Strictly decodes one session reference returned by session.create.
+  static SessionRef decodeSessionRef(Object? value) {
+    final frozen = _freezeJsonCopy(value, _JsonBudget(), 0);
+    return _sessionRef(frozen, 'session');
+  }
 }
 
 WelcomeFrame _decodeWelcome(Map<String, Object?> raw) {

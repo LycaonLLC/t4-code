@@ -79,12 +79,15 @@ Implement and verify one complete user-visible slice at a time across compact an
 5. Files, review/diff, terminal, browser preview, agents/tasks, activity, diagnostics, and secondary developer surfaces.
 6. Settings, themes, OMP settings, updates, desktop runtime discovery/process lifecycle, and mobile lifecycle.
 
-Status: slice 1 is complete on the local migration branch. The shared client now exposes
+Status: slices 1 and 2 are complete on the local migration branch. The shared client now exposes
 negotiated permissions, supports deliberate disconnect/reconnect without fighting the automatic
 retry loop, cancels abandoned host probes before persistence, presents the exact pairing command
-and host rejection, and requires host-specific confirmation before deleting the saved address and
-credential. The behavior is covered at compact and wide breakpoints and has current Web, macOS,
-iOS Simulator, and Android emulator smoke evidence. Slices 2 through 6 remain.
+and host rejection, and requires host-specific confirmation before deleting saved credentials.
+It also projects the canonical session index, groups sessions by project, supports current and
+archived search, creates and selects sessions, and implements rename, terminate, archive, restore,
+and permanent deletion through revisioned app-wire commands. The behavior is covered at compact
+and wide breakpoints and has current Web builds plus macOS, iOS Simulator, and Android emulator
+smoke evidence. Slices 3 through 6 remain.
 
 For every slice: identify the existing observable behavior and app-wire messages; run the existing fixture; implement shared Dart state; implement the shared Flutter surface plus compact/wide arrangements; run focused tests; smoke test the actual target; compare iOS, Android, desktop, and Web behavior before moving on.
 

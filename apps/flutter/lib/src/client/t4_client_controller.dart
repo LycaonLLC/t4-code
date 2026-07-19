@@ -29,6 +29,8 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       <String, TranscriptCursor>{};
   final Map<String, _PendingCommand> _pendingCommands =
       <String, _PendingCommand>{};
+  final Map<String, _PendingCommand> _pendingSessionOperations =
+      <String, _PendingCommand>{};
 
   HostDirectory _hostDirectory = const HostDirectory.empty();
   WebSocketChannel? _channel;
@@ -48,6 +50,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   bool _initialized = false;
   bool _hostOperationPending = false;
   bool _submitting = false;
+  bool _sessionOperationPending = false;
   bool _directoryLoaded = false;
   bool _disposed = false;
   int _connectionGeneration = 0;
@@ -56,6 +59,8 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   bool _reconnectEnabled = true;
   int _bootstrapGeneration = -1;
   int _commandOrdinal = 0;
+  String? _sessionIndexEpoch;
+  int? _sessionIndexSeq;
   int _reconnectAttempt = 0;
 
   T4ViewState get state => T4ViewState(
@@ -71,6 +76,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     targetConfigured: developmentEndpoint != null || _activeProfile != null,
     hostOperationPending: _hostOperationPending,
     submitting: _submitting,
+    sessionOperationPending: _sessionOperationPending,
   );
 
   Future<void> initialize() => _initialization ??= _initialize();
@@ -112,9 +118,12 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     final previousChannel = _channel;
     _subscription = null;
     _channel = null;
-    _pendingCommands.clear();
+    _cancelPendingCommands(
+      StateError('connection closed before the command completed'),
+    );
     _pendingPair = null;
     _submitting = false;
+    _sessionOperationPending = false;
     _hostId = null;
     _grantedCapabilities = const <String>{};
     _grantedFeatures = const <String>{};
@@ -436,6 +445,169 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   }
 
   @override
+  Future<void> createSession(String projectId, {String? title}) async {
+    final normalizedProjectId = projectId.trim();
+    if (normalizedProjectId.isEmpty) {
+      throw ArgumentError.value(projectId, 'projectId', 'must not be empty');
+    }
+    final normalizedTitle = title?.trim();
+    final frame = await _runSessionOperation(
+      prefix: 'create-session',
+      command: 'session.create',
+      capability: 'sessions.manage',
+      args: <String, Object?>{
+        'projectId': normalizedProjectId,
+        if (normalizedTitle != null && normalizedTitle.isNotEmpty)
+          'title': normalizedTitle,
+      },
+    );
+    final result = frame.result;
+    if (result is! Map<String, Object?> || !result.containsKey('session')) {
+      throw const FormatException('session.create result is missing');
+    }
+    final created = WireDecoder.decodeSessionRef(result['session']);
+    if (created.hostId != _hostId ||
+        created.project['projectId'] != normalizedProjectId) {
+      throw const FormatException('session.create returned another project');
+    }
+    _upsertSession(created);
+    await selectSession(created.sessionId);
+  }
+
+  @override
+  Future<void> renameSession(String sessionId, String title) async {
+    final normalized = title.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError.value(title, 'title', 'must not be empty');
+    }
+    await _runLifecycleCommand(
+      sessionId,
+      command: 'session.rename',
+      args: <String, Object?>{'name': normalized},
+    );
+  }
+
+  @override
+  Future<void> terminateSession(String sessionId) => _runLifecycleCommand(
+    sessionId,
+    command: 'session.close',
+    confirmationExpected: true,
+  );
+
+  @override
+  Future<void> archiveSession(String sessionId) async {
+    await _runLifecycleCommand(sessionId, command: 'session.archive');
+    if (_selectedSessionId == sessionId) {
+      final replacement = _sessions
+          .where((session) => !session.archived)
+          .firstOrNull;
+      if (replacement == null) {
+        _selectedSessionId = null;
+        _messages.clear();
+        _publish();
+      } else {
+        await selectSession(replacement.sessionId);
+      }
+    }
+  }
+
+  @override
+  Future<void> restoreSession(String sessionId) =>
+      _runLifecycleCommand(sessionId, command: 'session.restore');
+
+  @override
+  Future<void> deleteSession(String sessionId) => _runLifecycleCommand(
+    sessionId,
+    command: 'session.delete',
+    confirmationExpected: true,
+  );
+
+  Future<ResponseFrame> _runLifecycleCommand(
+    String sessionId, {
+    required String command,
+    Map<String, Object?> args = const <String, Object?>{},
+    bool confirmationExpected = false,
+  }) {
+    final session = _sessions
+        .where((candidate) => candidate.sessionId == sessionId)
+        .firstOrNull;
+    if (session == null) {
+      throw ArgumentError.value(sessionId, 'sessionId', 'is not indexed');
+    }
+    return _runSessionOperation(
+      prefix: command.replaceAll('.', '-'),
+      command: command,
+      capability: 'sessions.manage',
+      session: session,
+      args: args,
+      confirmationExpected: confirmationExpected,
+    );
+  }
+
+  Future<ResponseFrame> _runSessionOperation({
+    required String prefix,
+    required String command,
+    required String capability,
+    SessionSummary? session,
+    Map<String, Object?> args = const <String, Object?>{},
+    bool confirmationExpected = false,
+  }) async {
+    if (_sessionOperationPending) {
+      throw StateError('another session action is already running');
+    }
+    final hostId = _hostId;
+    if (_phase != ConnectionPhase.ready || hostId == null) {
+      throw StateError('connect before managing sessions');
+    }
+    if (!_grantedCapabilities.contains(capability)) {
+      throw StateError('this device was not granted $capability');
+    }
+    final ids = _nextCommandIds(prefix);
+    final completer = Completer<ResponseFrame>();
+    final pending = _PendingCommand(
+      commandId: ids.commandId,
+      command: command,
+      sessionId: session?.sessionId,
+      completer: completer,
+      expectedRevision: session?.revision,
+      confirmationExpected: confirmationExpected,
+    );
+    _pendingSessionOperations[ids.requestId] = pending;
+    _sessionOperationPending = true;
+    _errorMessage = null;
+    _publish();
+    try {
+      _send(
+        WireEncoder.command(
+          requestId: ids.requestId,
+          commandId: ids.commandId,
+          hostId: hostId,
+          sessionId: session?.sessionId,
+          command: command,
+          expectedRevision: session?.revision,
+          args: args,
+        ),
+      );
+      final frame = await completer.future.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => throw TimeoutException('$command timed out'),
+      );
+      if (!frame.ok) {
+        throw StateError(frame.error?.message ?? '$command failed');
+      }
+      return frame;
+    } on Object catch (error) {
+      _errorMessage = 'Session action failed: $error';
+      _publish();
+      rethrow;
+    } finally {
+      _pendingSessionOperations.remove(ids.requestId);
+      _sessionOperationPending = false;
+      _publish();
+    }
+  }
+
+  @override
   Future<void> submitPrompt(String message) async {
     final text = message.trim();
     final session = state.selectedSession;
@@ -541,6 +713,10 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         }
       case ResponseFrame():
         _applyResponse(frame);
+      case SessionDeltaFrame():
+        _applySessionDelta(frame);
+      case ConfirmationFrame():
+        _applyConfirmation(frame);
       case PairErrorFrame():
         _applyPairError(frame);
       case ErrorFrame():
@@ -608,26 +784,28 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   }
 
   void _applySessions(SessionsFrame frame) {
+    _applySessionListCursor(frame.cursor);
     _applySessionRefs(frame.sessions);
   }
 
+  void _applySessionListCursor(SessionIndexCursor cursor) {
+    _sessionIndexEpoch = cursor.epoch;
+    _sessionIndexSeq = cursor.seq;
+  }
+
   void _applySessionRefs(List<SessionRef> sessions) {
-    _sessions = sessions
-        .map(
-          (session) => SessionSummary(
-            hostId: session.hostId,
-            sessionId: session.sessionId,
-            title: session.title,
-            revision: session.revision,
-            status: session.status,
-          ),
-        )
-        .toList(growable: false);
+    _sessions = sessions.map(_summaryFromRef).toList(growable: false)
+      ..sort(_compareSessions);
     final selectedStillExists = _sessions.any(
       (session) => session.sessionId == _selectedSessionId,
     );
     if (!selectedStillExists) {
-      _selectedSessionId = _sessions.firstOrNull?.sessionId;
+      _selectedSessionId =
+          _sessions
+              .where((session) => !session.archived)
+              .firstOrNull
+              ?.sessionId ??
+          _sessions.firstOrNull?.sessionId;
     }
     final selected = _selectedSessionId;
     if (selected == null) {
@@ -637,6 +815,130 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     }
     _publish();
     _sendAttach(selected, cursor: _savedCursors[selected]);
+  }
+
+  SessionSummary _summaryFromRef(SessionRef session) {
+    final projectId = session.project['projectId'];
+    final projectName = session.project['name'];
+    final archivedAt = session.raw['archivedAt'];
+    final pendingApproval = session.raw['pendingApproval'];
+    final pendingUserInput = session.raw['pendingUserInput'];
+    return SessionSummary(
+      hostId: session.hostId,
+      sessionId: session.sessionId,
+      title: session.title,
+      revision: session.revision,
+      status: session.status,
+      projectId: projectId is String ? projectId : 'unknown-project',
+      projectName: projectName is String && projectName.trim().isNotEmpty
+          ? projectName
+          : 'Project',
+      updatedAt: session.updatedAt,
+      archivedAt: archivedAt is String ? archivedAt : null,
+      working:
+          session.status == 'active' ||
+          pendingApproval == true ||
+          pendingUserInput == true,
+    );
+  }
+
+  int _compareSessions(SessionSummary left, SessionSummary right) {
+    final updated = right.updatedAt.compareTo(left.updatedAt);
+    return updated != 0 ? updated : left.sessionId.compareTo(right.sessionId);
+  }
+
+  void _upsertSession(SessionRef ref) {
+    final next = _summaryFromRef(ref);
+    final index = _sessions.indexWhere(
+      (session) => session.sessionId == next.sessionId,
+    );
+    final sessions = _sessions.toList(growable: true);
+    if (index < 0) {
+      sessions.add(next);
+    } else {
+      sessions[index] = next;
+    }
+    sessions.sort(_compareSessions);
+    _sessions = List<SessionSummary>.unmodifiable(sessions);
+    _publish();
+  }
+
+  void _applySessionDelta(SessionDeltaFrame frame) {
+    final cursor = frame.cursor;
+    final currentEpoch = _sessionIndexEpoch;
+    final currentSeq = _sessionIndexSeq;
+    if (currentEpoch != null && currentSeq != null) {
+      if (cursor.epoch == currentEpoch && cursor.seq <= currentSeq) return;
+      if (cursor.epoch != currentEpoch || cursor.seq != currentSeq + 1) {
+        _sendSessionList();
+        return;
+      }
+    }
+    _sessionIndexEpoch = cursor.epoch;
+    _sessionIndexSeq = cursor.seq;
+    final upsert = frame.upsert;
+    if (upsert != null) {
+      _upsertSession(upsert);
+      return;
+    }
+    final removed = frame.remove;
+    if (removed == null) return;
+    final wasSelected = _selectedSessionId == removed;
+    _sessions = _sessions
+        .where((session) => session.sessionId != removed)
+        .toList(growable: false);
+    _savedCursors.remove(removed);
+    if (!wasSelected) {
+      _publish();
+      return;
+    }
+    _messages.clear();
+    final replacement =
+        _sessions.where((session) => !session.archived).firstOrNull ??
+        _sessions.firstOrNull;
+    _selectedSessionId = replacement?.sessionId;
+    if (replacement == null) {
+      _phase = ConnectionPhase.ready;
+      _publish();
+      return;
+    }
+    _phase = ConnectionPhase.synchronizing;
+    _publish();
+    _sendAttach(
+      replacement.sessionId,
+      cursor: _savedCursors[replacement.sessionId],
+    );
+  }
+
+  void _applyConfirmation(ConfirmationFrame frame) {
+    final pending = _pendingSessionOperations.values
+        .where((candidate) => candidate.commandId == frame.commandId)
+        .firstOrNull;
+    if (pending == null) return;
+    if (!pending.confirmationExpected ||
+        pending.confirmationSent ||
+        frame.hostId != _hostId ||
+        frame.sessionId != pending.sessionId ||
+        frame.summary != pending.command ||
+        frame.revision != pending.expectedRevision) {
+      throw const FormatException('confirmation correlation mismatch');
+    }
+    final expiresAt = DateTime.tryParse(frame.expiresAt);
+    if (expiresAt == null || !expiresAt.isAfter(DateTime.now().toUtc())) {
+      throw const FormatException('confirmation is expired');
+    }
+    pending.confirmationSent = true;
+    final ids = _nextCommandIds('confirm');
+    _send(
+      WireEncoder.confirm(
+        requestId: ids.requestId,
+        confirmationId: frame.confirmationId,
+        commandId: frame.commandId,
+        hostId: frame.hostId,
+        sessionId: frame.sessionId,
+        decision: 'approve',
+      ),
+    );
   }
 
   void _applySnapshot(SnapshotFrame frame) {
@@ -655,6 +957,11 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
                   title: session.title,
                   revision: frame.revision,
                   status: session.status,
+                  projectId: session.projectId,
+                  projectName: session.projectName,
+                  updatedAt: session.updatedAt,
+                  archivedAt: session.archivedAt,
+                  working: session.working,
                 )
               : session,
         )
@@ -720,6 +1027,16 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   }
 
   void _applyResponse(ResponseFrame frame) {
+    final operation = _pendingSessionOperations.remove(frame.requestId);
+    if (operation != null) {
+      if (operation.commandId != frame.commandId ||
+          operation.command != frame.command ||
+          operation.sessionId != frame.sessionId) {
+        throw const FormatException('session operation correlation mismatch');
+      }
+      operation.completer!.complete(frame);
+      return;
+    }
     final pending = _pendingCommands.remove(frame.requestId);
     if (pending == null ||
         pending.commandId != frame.commandId ||
@@ -742,6 +1059,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       if (sessions == null) {
         throw const FormatException('session.list result is missing');
       }
+      _applySessionListCursor(sessions.cursor);
       _applySessionRefs(sessions.sessions);
       if (_grantedFeatures.contains('host.watch')) {
         _sendHostWatch(sessions.cursor);
@@ -759,7 +1077,12 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
 
   void _sendSessionList() {
     final hostId = _hostId;
-    if (hostId == null) return;
+    if (hostId == null ||
+        _pendingCommands.values.any(
+          (pending) => pending.command == 'session.list',
+        )) {
+      return;
+    }
     final ids = _nextCommandIds('session-list');
     _pendingCommands[ids.requestId] = _PendingCommand(
       commandId: ids.commandId,
@@ -846,12 +1169,15 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _sessions = const <SessionSummary>[];
     _messages.clear();
     _savedCursors.clear();
-    _pendingCommands.clear();
+    _cancelPendingCommands(StateError('active host changed'));
     _pendingPair = null;
     _selectedSessionId = null;
     _hostId = null;
     _submitting = false;
+    _sessionOperationPending = false;
     _grantedCapabilities = const <String>{};
+    _sessionIndexEpoch = null;
+    _sessionIndexSeq = null;
     _grantedFeatures = const <String>{};
     _bootstrapGeneration = -1;
     _reconnectAttempt = 0;
@@ -863,9 +1189,10 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     if (_disposed || generation != _connectionGeneration) return;
     _subscription = null;
     _channel = null;
-    _pendingCommands.clear();
+    _cancelPendingCommands(StateError('connection lost'));
     _pendingPair = null;
     _submitting = false;
+    _sessionOperationPending = false;
     if (!_reconnectEnabled) {
       _phase = ConnectionPhase.disconnected;
       _authenticationPhase = AuthenticationPhase.unknown;
@@ -899,10 +1226,23 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _ => MessageRole.assistant,
   };
 
+  void _cancelPendingCommands(Object error) {
+    for (final pending in _pendingSessionOperations.values) {
+      final completer = pending.completer;
+      if (completer != null && !completer.isCompleted) {
+        completer.completeError(error);
+      }
+    }
+    _pendingSessionOperations.clear();
+    _pendingCommands.clear();
+  }
+
   void _fail(String message) {
+    _cancelPendingCommands(StateError(message));
     _phase = ConnectionPhase.failed;
     _errorMessage = message;
     _submitting = false;
+    _sessionOperationPending = false;
     _publish();
   }
 
@@ -921,6 +1261,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _connectionGeneration += 1;
     _hostOperationGeneration += 1;
     _reconnectTimer?.cancel();
+    _cancelPendingCommands(StateError('controller disposed'));
     unawaited(_subscription?.cancel());
     unawaited(_channel?.sink.close());
     super.dispose();
@@ -928,15 +1269,22 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
 }
 
 final class _PendingCommand {
-  const _PendingCommand({
+  _PendingCommand({
     required this.commandId,
     required this.command,
     this.sessionId,
+    this.completer,
+    this.expectedRevision,
+    this.confirmationExpected = false,
   });
 
   final String commandId;
   final String command;
   final String? sessionId;
+  final Completer<ResponseFrame>? completer;
+  final String? expectedRevision;
+  final bool confirmationExpected;
+  bool confirmationSent = false;
 }
 
 final class _PendingPair {

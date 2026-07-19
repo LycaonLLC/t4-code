@@ -326,6 +326,104 @@ void main() {
     expect(find.text('Manage hosts'), findsOneWidget);
     expect(find.text('T4'), findsOneWidget);
   });
+  testWidgets(
+    'session rail groups projects, searches, creates, archives, and restores',
+    (tester) async {
+      final profile = HostProfile.parseTailnetAddress(
+        'https://alpha.tailnet-name.ts.net',
+      );
+      final actions = _FakeActions();
+      final state = T4ViewState(
+        connectionPhase: ConnectionPhase.ready,
+        hostDirectory: HostDirectory.empty().upsert(profile),
+        authenticationPhase: AuthenticationPhase.paired,
+        grantedCapabilities: t4RequestedCapabilities.toSet(),
+        selectedSessionId: 'session-alpha',
+        sessions: const <SessionSummary>[
+          SessionSummary(
+            hostId: 'host-alpha',
+            sessionId: 'session-alpha',
+            projectId: 'project-alpha',
+            projectName: 'Project Alpha',
+            title: 'First investigation',
+            revision: 'revision-alpha',
+            status: 'idle',
+          ),
+          SessionSummary(
+            hostId: 'host-alpha',
+            sessionId: 'session-beta',
+            projectId: 'project-beta',
+            projectName: 'Project Beta',
+            title: 'Second investigation',
+            revision: 'revision-beta',
+            status: 'idle',
+          ),
+          SessionSummary(
+            hostId: 'host-alpha',
+            sessionId: 'session-archived',
+            projectId: 'project-alpha',
+            projectName: 'Project Alpha',
+            title: 'Archived investigation',
+            revision: 'revision-archived',
+            status: 'closed',
+            archivedAt: '2026-07-18T00:00:00.000Z',
+          ),
+        ],
+      );
+      await pumpApp(tester, state: state, actions: actions, size: wideDesktop);
+
+      expect(find.text('Project Alpha'), findsOneWidget);
+      expect(find.text('Project Beta'), findsOneWidget);
+      expect(find.text('Archived investigation'), findsNothing);
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Search sessions'),
+        'second',
+      );
+      await tester.pump();
+      expect(
+        find.ancestor(
+          of: find.text('First investigation'),
+          matching: find.byType(ListTile),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.ancestor(
+          of: find.text('Second investigation'),
+          matching: find.byType(ListTile),
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.byTooltip('Clear search'));
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('New session'));
+      await tester.pumpAndSettle();
+      expect(find.text('New session'), findsOneWidget);
+      await tester.enterText(find.byType(TextField).last, 'Fresh session');
+      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.pumpAndSettle();
+      expect(actions.createdSessions, <({String projectId, String? title})>[
+        (projectId: 'project-alpha', title: 'Fresh session'),
+      ]);
+
+      await tester.tap(find.byTooltip('Session actions').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Archive').last);
+      await tester.pumpAndSettle();
+      expect(actions.archivedSessionIds, <String>['session-alpha']);
+
+      await tester.tap(find.text('Archived'));
+      await tester.pumpAndSettle();
+      expect(find.text('Archived investigation'), findsOneWidget);
+      await tester.tap(find.byTooltip('Session actions').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Restore').last);
+      await tester.pumpAndSettle();
+      expect(actions.restoredSessionIds, <String>['session-archived']);
+    },
+  );
 }
 
 final class _FakeActions implements T4Actions {
@@ -341,6 +439,14 @@ final class _FakeActions implements T4Actions {
   final List<String> pairingCodes = <String>[];
   int cancelHostProbeCalls = 0;
   int disconnectCalls = 0;
+  final List<({String projectId, String? title})> createdSessions =
+      <({String projectId, String? title})>[];
+  final List<({String sessionId, String title})> renamedSessions =
+      <({String sessionId, String title})>[];
+  final List<String> terminatedSessionIds = <String>[];
+  final List<String> archivedSessionIds = <String>[];
+  final List<String> restoredSessionIds = <String>[];
+  final List<String> deletedSessionIds = <String>[];
 
   @override
   Future<void> addHost(
@@ -362,6 +468,36 @@ final class _FakeActions implements T4Actions {
   @override
   Future<void> activateHost(String endpointKey) async {
     activatedEndpointKeys.add(endpointKey);
+  }
+
+  @override
+  Future<void> createSession(String projectId, {String? title}) async {
+    createdSessions.add((projectId: projectId, title: title));
+  }
+
+  @override
+  Future<void> renameSession(String sessionId, String title) async {
+    renamedSessions.add((sessionId: sessionId, title: title));
+  }
+
+  @override
+  Future<void> terminateSession(String sessionId) async {
+    terminatedSessionIds.add(sessionId);
+  }
+
+  @override
+  Future<void> archiveSession(String sessionId) async {
+    archivedSessionIds.add(sessionId);
+  }
+
+  @override
+  Future<void> restoreSession(String sessionId) async {
+    restoredSessionIds.add(sessionId);
+  }
+
+  @override
+  Future<void> deleteSession(String sessionId) async {
+    deletedSessionIds.add(sessionId);
   }
 
   @override
