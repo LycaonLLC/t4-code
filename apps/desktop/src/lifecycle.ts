@@ -18,6 +18,8 @@ import { installApplicationMenu, type ApplicationMenuOptions } from "./menu.ts";
 import { DesktopUpdateController } from "./update-controller.ts";
 import { LocalProfileRegistry } from "./local-profiles.ts";
 import { LocalProfileRuntime } from "./profile-runtime.ts";
+import { installBundledOmpRuntime } from "./bundled-runtime.ts";
+import { PhoneSetupService } from "./phone-setup.ts";
 
 type ProjectionCacheRuntime = NonNullable<IpcRuntime["projectionCache"]>;
 
@@ -101,6 +103,7 @@ export class DesktopLifecycle {
   private readonly serviceRecoveryPromises = new Map<string, Promise<ServiceManager | undefined>>();
   private readonly serviceAvailabilityIssues = new Map<string, ServiceAvailabilityIssue>();
   private updateController: DesktopUpdateController | undefined;
+  private phoneSetup: PhoneSetupService | undefined;
   private pendingUpdateOpen = false;
   private rendererLoaded = false;
   private updateRendererReady = false;
@@ -127,7 +130,15 @@ export class DesktopLifecycle {
       () => new LocalProfileRegistry(new ElectronLocalProfileStore())
     );
     this.projectionCacheFactory = options.createProjectionCache ?? (() => new ElectronProjectionCacheStore());
-    this.executableFactory = options.discoverExecutable ?? (() => discoverOmpExecutable());
+    this.executableFactory = options.discoverExecutable ?? (async () => {
+      if (this.electronApp.isPackaged && process.platform === "darwin" && process.arch === "arm64") {
+        return installBundledOmpRuntime({
+          resourcesPath: process.resourcesPath,
+          applicationSupportPath: this.electronApp.getPath("userData"),
+        });
+      }
+      return discoverOmpExecutable();
+    });
     this.appserverProbe = options.probeAppserver ?? ((executable) => probeOmpAppserver(executable));
     this.serviceFactory = options.createServiceManager ?? createAppserverServiceManager;
     this.targetManagerFactory = options.createTargetManager ?? ((managerOptions) => new LocalTargetManager(managerOptions));
@@ -174,13 +185,17 @@ export class DesktopLifecycle {
     this.projectionCache = this.projectionCacheFactory();
     if (process.platform === "darwin") this.electronApp.setAsDefaultProtocolClient("t4-code");
     this.updateController = this.updateControllerFactory();
+    if (this.electronApp.isPackaged) {
+      this.phoneSetup = new PhoneSetupService({
+        resourcesPath: process.resourcesPath,
+        electronExecutable: process.execPath,
+      });
+    }
     this.menuInstaller({ onOpenUpdates: () => this.openUpdatesFromMenu() });
     const identity = this.identityFactory();
     const remoteRegistry = this.remoteRegistryFactory();
     const credentials = this.credentialsFactory();
     this.localProfileRegistry = this.localProfileRegistryFactory();
-    await this.acquireServiceManager();
-    if (this.stopping) return;
     this.manager = this.targetManagerFactory({
       cursorStore: this.cursorStoreFactory(),
       registry: remoteRegistry,
@@ -205,6 +220,8 @@ export class DesktopLifecycle {
       discoverExecutable: () => this.discoverServiceExecutable(),
     });
     this.bindWindow(this.windowFactory());
+    await this.acquireServiceManager();
+    if (this.stopping) return;
     await this.profileRuntime.startAutomaticProfiles((profileId, error) => {
       this.ipc?.emitRuntimeError(runtimeError(error, `local:${profileId}`));
     });
@@ -234,6 +251,7 @@ export class DesktopLifecycle {
     this.mainWindow = undefined;
     this.updateController?.dispose();
     this.updateController = undefined;
+    this.phoneSetup = undefined;
     this.projectionCache = undefined;
     const manager = this.manager;
     this.manager = undefined;
@@ -435,6 +453,7 @@ export class DesktopLifecycle {
       drainPairLinks: () => this.pendingPairs.drain(),
       drainPendingUpdateOpen: () => this.markUpdateRendererReady(),
       ...(this.updateController === undefined ? {} : { updateController: this.updateController }),
+      ...(this.phoneSetup === undefined ? {} : { phoneSetup: this.phoneSetup }),
     });
     this.ipc.install();
     handle.window.webContents.on("did-start-loading", () => {

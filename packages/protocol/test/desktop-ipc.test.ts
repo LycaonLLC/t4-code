@@ -8,6 +8,7 @@ import {
   decodeProjectionCacheLoadResult,
   decodeProjectionCacheSaveRequestValue,
   decodeProjectionCacheSaveResult,
+  decodePhoneSetupState,
   decodeSpeechText,
   MAX_PROJECTION_CACHE_BYTES,
   MAX_SPEECH_TEXT_BYTES,
@@ -15,6 +16,19 @@ import {
 } from "../src/desktop-ipc.ts";
 
 describe("desktop IPC boundary", () => {
+  it("accepts only private root Tailnet URLs for phone setup", () => {
+    expect(decodePhoneSetupState({
+      phase: "ready",
+      message: "Ready",
+      url: "https://work-mac.example.ts.net:8445/",
+    })).toEqual({ phase: "ready", message: "Ready", url: "https://work-mac.example.ts.net:8445/" });
+    for (const url of [
+      "https://example.com:8445/",
+      "https://work-mac.example.ts.net:8445/path",
+      "https://user:secret@work-mac.example.ts.net:8445/",
+      "http://work-mac.example.ts.net:8445/",
+    ]) expect(() => decodePhoneSetupState({ phase: "ready", message: "Ready", url })).toThrow();
+  });
   it("keeps bounded actionable command errors while redacting secret-shaped details", () => {
     const error = commandResultError({
       code: "stale_revision",

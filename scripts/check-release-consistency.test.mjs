@@ -199,6 +199,10 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
     ],
     [
       ".github/workflows/release.yml",
+      (text) => text.replace("T4_MACOS_CERTIFICATE_P12_BASE64", "MISSING_MAC_CERTIFICATE"),
+    ],
+    [
+      ".github/workflows/release.yml",
       (text) =>
         text.replace(
           "needs: [verify, ci-authority, build-android, build-linux, build-macos]",

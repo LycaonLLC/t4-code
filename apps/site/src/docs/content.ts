@@ -136,11 +136,11 @@ const install: DocTopic = {
 const firstRun: DocTopic = {
   id: "first-run",
   title: "First run",
-  lede: "Desktop builds can manage local Oh My Pi app servers, one per profile. Android connects to the T4 gateway on your computer.",
+  lede: "The Mac app brings its matching Oh My Pi backend and can set up private phone access from one screen.",
   blocks: [
     {
       kind: "note",
-      text: "The discovery and service steps below apply to Linux and macOS. On Android, connect Tailscale to the same tailnet as your computer, then enter the gateway's full HTTPS address in T4 Code.",
+      text: "On an Apple Silicon Mac, T4 Code installs its pinned backend inside its own Application Support folder. It does not replace the `omp` command you may already use in Terminal.",
     },
     { kind: "h2", id: "first-run-discovery", text: "How desktop T4 finds omp" },
     { kind: "p", text: "T4 Code checks these places, in order, and uses the first match:" },
@@ -159,6 +159,11 @@ const firstRun: DocTopic = {
     {
       kind: "p",
       text: "Before trusting a match, T4 runs `omp appserver status --json` and checks the answer. A build that cannot answer is skipped.",
+    },
+    { kind: "h2", id: "first-run-phone", text: "Use your phone" },
+    {
+      kind: "p",
+      text: "Install and connect Tailscale on the Mac and phone. In T4 Code, open **Settings → Hosts**, choose **Set up phone access**, then scan the QR code. T4 Code installs the private loopback gateway and configures Tailscale Serve; it never enables public Tailscale Funnel.",
     },
     { kind: "h2", id: "first-run-service", text: "Who keeps the desktop app server running" },
     {

@@ -348,6 +348,12 @@ function HostsRoute() {
         api={targetsStoreInstance}
         onBack={() => void navigate({ to: "/settings" })}
         profilesAvailable={localProfiles !== undefined}
+        {...(shell?.inspectPhoneSetup && shell.configurePhoneSetup ? {
+          phoneSetup: {
+            inspect: shell.inspectPhoneSetup,
+            configure: shell.configurePhoneSetup,
+          },
+        } : {})}
         serviceAvailable={shell?.serviceInspect !== undefined}
         snapshot={snapshot}
       />

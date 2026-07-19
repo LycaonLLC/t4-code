@@ -3,6 +3,7 @@ const runtimeExternalDependencies = [
   "node_modules/electron-updater/**/*",
   "node_modules/ws/**/*",
 ];
+const signedMacBuild = process.env.T4_MACOS_SIGNED_BUILD === "1";
 
 export const linuxUpdatePublish = {
   provider: "github",
@@ -45,11 +46,23 @@ const config = {
   },
   mac: {
     category: "public.app-category.developer-tools",
+    executableName: "T4 Code",
     icon: "apps/desktop/build/icon.png",
-    // The public macOS build is intentionally unsigned and unnotarized. Keep
-    // it on the explicit-download path until there is an honest signed update
-    // channel; do not emit latest-mac.yml for electron-updater.
+    identity: signedMacBuild ? "Developer ID Application" : null,
+    hardenedRuntime: signedMacBuild,
+    gatekeeperAssess: false,
+    entitlements: signedMacBuild ? "apps/desktop/build/entitlements.mac.plist" : undefined,
+    entitlementsInherit: signedMacBuild ? "apps/desktop/build/entitlements.mac.plist" : undefined,
+    notarize: signedMacBuild,
+    // macOS updates remain off until their signed updater feed is separately
+    // proven. The signed DMG and ZIP stay on the explicit-download path.
     publish: [],
+    extraResources: [
+      { from: ".artifacts/omp-runtime", to: "runtime" },
+      { from: "scripts/tailnet-gateway.mjs", to: "gateway/tailnet-gateway.mjs" },
+      { from: "scripts/tailnet-service.mjs", to: "gateway/tailnet-service.mjs" },
+      { from: "apps/desktop/node_modules/ws", to: "node_modules/ws" },
+    ],
     target: [
       { target: "dmg", arch: ["arm64"] },
       { target: "zip", arch: ["arm64"] },

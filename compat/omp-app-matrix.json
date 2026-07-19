@@ -24,6 +24,13 @@
     "sourceCommit": "d57dcd855006c673d8d530237d474fe5ba5645c4",
     "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/d57dcd855006c673d8d530237d474fe5ba5645c4",
     "sourceTag": "t4code-17.0.4-appserver-5",
+    "artifacts": {
+      "darwin-arm64": {
+        "name": "omp-darwin-arm64",
+        "size": 120628816,
+        "sha256": "cb7274999fcc0a3c19365a0a050a3cdcc52ec819f1fa2e95e2aa86c1f5af490e"
+      }
+    },
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
     "upstreamTag": "v17.0.4",
     "upstreamCommit": "3fdd85ab6c6bab6c0cdee80abbbec0981740a5c0",
@@ -92,6 +99,13 @@
     "sourceCommit": "d57dcd855006c673d8d530237d474fe5ba5645c4",
     "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/d57dcd855006c673d8d530237d474fe5ba5645c4",
     "sourceTag": "t4code-17.0.4-appserver-5",
+    "artifacts": {
+      "darwin-arm64": {
+        "name": "omp-darwin-arm64",
+        "size": 120628816,
+        "sha256": "cb7274999fcc0a3c19365a0a050a3cdcc52ec819f1fa2e95e2aa86c1f5af490e"
+      }
+    },
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
     "upstreamTag": "v17.0.4",
     "upstreamCommit": "3fdd85ab6c6bab6c0cdee80abbbec0981740a5c0",
