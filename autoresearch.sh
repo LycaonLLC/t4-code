@@ -32,8 +32,20 @@ log_path="$output_dir/run.log"
 runner=()
 cpu_affinity="unbound"
 if command -v taskset >/dev/null 2>&1; then
-  cpu_affinity="${T4_AUTORESEARCH_CPU:-6}"
-  runner=(taskset -c "$cpu_affinity")
+  requested_cpu="${T4_AUTORESEARCH_CPU:-}"
+  if [[ -z "$requested_cpu" ]]; then
+    allowed_affinity="$(taskset -pc "$$" 2>/dev/null || true)"
+    allowed_affinity="${allowed_affinity##*: }"
+    first_affinity_range="${allowed_affinity%%,*}"
+    requested_cpu="${first_affinity_range%%-*}"
+  fi
+  if [[ -n "$requested_cpu" ]] && taskset -c "$requested_cpu" true 2>/dev/null; then
+    cpu_affinity="$requested_cpu"
+    runner=(taskset -c "$cpu_affinity")
+  elif [[ -n "${T4_AUTORESEARCH_CPU:-}" ]]; then
+    echo "T4_AUTORESEARCH_CPU is outside this process's allowed CPU set" >&2
+    exit 1
+  fi
 fi
 
 export CI=1

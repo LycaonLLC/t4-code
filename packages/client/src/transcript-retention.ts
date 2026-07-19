@@ -68,7 +68,7 @@ const IMPORTANT_KEY_PRIORITY: Readonly<Record<string, number>> = Object.freeze(
     content: 15,
   }),
 );
-const IMPORTANT_KEY_COUNT = 16;
+const IMPORTANT_KEY_COUNT = Math.max(...Object.values(IMPORTANT_KEY_PRIORITY)) + 1;
 
 interface SanitizedNode {
   readonly value: unknown;
