@@ -24,7 +24,7 @@ Session-linked browser previews now open in a dedicated workspace. The client pr
 
 ## Runtime provenance
 
-T4 Code v0.1.24 vendors app-wire 0.6.0 from integration commit [ae4b53b4](https://github.com/lyc-aon/oh-my-pi/commit/ae4b53b416f32b200865a32ed9baabd5a4666fa4), source tree `2b8a5f697273f5044789b8ae638b6c264f9f8499`. The client contract remains `omp-app/1`.
+T4 Code v0.1.24 vendors app-wire 0.6.1 from integration commit [e3e15c03](https://github.com/lyc-aon/oh-my-pi/commit/e3e15c03ae95ebbda5f26495cd21213cc53518b1), source tree `e0f32b279eb4b8cbc403e47d765a226bee99c99f`. The client contract remains `omp-app/1`.
 
 The verified OMP 17.0.5 runtime is built from commit [3393ae0f](https://github.com/lyc-aon/oh-my-pi/commit/3393ae0f7fc5b2ea9919d8bdb3a2d5719b1cbc2f) and tagged [t4code-17.0.5-appserver-3](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-3). It provides the stable appserver base used by the desktop and remote workflows, including faster startup, cross-session attention, and cross-session transcript search. Newer optional capabilities remain hidden when the host does not advertise them.
 
