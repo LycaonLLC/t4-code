@@ -123,10 +123,20 @@ export function moveIdInManualOrder(
   id: string,
   direction: -1 | 1,
 ): string[] {
-  const complete = storedOrder.filter((entry) => visibleIds.includes(entry));
-  const hidden = storedOrder.filter((entry) => !visibleIds.includes(entry));
+  const visible = new Set(visibleIds);
+  const seen = new Set<string>();
+  const complete: string[] = [];
+  const hidden: string[] = [];
+  for (const entry of storedOrder) {
+    if (seen.has(entry)) continue;
+    seen.add(entry);
+    if (visible.has(entry)) complete.push(entry);
+    else hidden.push(entry);
+  }
   for (const visibleId of visibleIds) {
-    if (!complete.includes(visibleId)) complete.push(visibleId);
+    if (seen.has(visibleId)) continue;
+    seen.add(visibleId);
+    complete.push(visibleId);
   }
   const index = complete.indexOf(id);
   const target = index + direction;

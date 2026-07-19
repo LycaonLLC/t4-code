@@ -1294,7 +1294,7 @@ export function Rail({
       <div className="px-1.5 pb-1.5">
         <div className="flex h-8 items-center gap-1">
           <h2 className="font-medium text-foreground text-xs">Sessions</h2>
-          <span className="ml-auto text-[10px] text-muted-foreground">{matchCount} shown</span>
+          <span className="ml-auto text-[10px] text-muted-foreground">{matchCount} matches</span>
           <RailOptionsMenu organization={organization} sort={sort} />
         </div>
         <label className="mb-1.5 flex h-8 items-center gap-2 rounded-md border border-border/80 bg-background/45 px-2 focus-within:ring-2 focus-within:ring-ring">
