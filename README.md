@@ -12,7 +12,9 @@ T4 Code needs an OMP build with desktop appserver support. For v0.1.23, use the 
 
 T4 Code v0.1.23 was verified with OMP 17.0.4 built from [`d57dcd85`](https://github.com/lyc-aon/oh-my-pi/commit/d57dcd855006c673d8d530237d474fe5ba5645c4), tagged [`t4code-17.0.4-appserver-5`](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.4-appserver-5). That public integration is based on the official upstream [`v17.0.4`](https://github.com/can1357/oh-my-pi/tree/v17.0.4) tag at [`3fdd85ab`](https://github.com/can1357/oh-my-pi/commit/3fdd85ab6c6bab6c0cdee80abbbec0981740a5c0). It adds redacted Codex transport diagnostics, the versioned Agent View lifecycle contract, session-owned cancellation, macOS system-temp aliases, workspace-native build artifacts, retry-safe release metadata, lock-aware session observation, complete transcript reconciliation, missing-lock-only promotion, the cooperative `/continue-in-t4` handoff, and deterministic session ordering. Fork CI verifies the exact upstream base, ancestry, release gates, and published binaries. The official upstream v17.0.4 tag has no `appserver` command, so it cannot host T4 Code. The verified runtime is a normal build from the public `lyc-aon/oh-my-pi` source. T4 Code vendors `@oh-my-pi/app-wire` 0.5.10 from integration commit [`d57dcd85`](https://github.com/lyc-aon/oh-my-pi/commit/d57dcd855006c673d8d530237d474fe5ba5645c4), source tree `5cf488966e3c233764780d3ca7a8d8ea1e3a1f68`.
 
-The current source tree advances the vendored contract to `@oh-my-pi/app-wire` 0.6.1 from integration commit [`614b23b7`](https://github.com/lyc-aon/oh-my-pi/commit/614b23b75345ae0d546056d4c2cda191a9008308), source tree `f45d610346fd4bd27cfbd9409a67e4f8f52bca3a`. This adds the bounded cross-session transcript search and historical context contract. The published v0.1.23 package remains pinned to the `d57dcd85` contract above.
+T4 Code vendors `@oh-my-pi/app-wire` 0.6.0 from integration commit [`ae4b53b4`](https://github.com/lyc-aon/oh-my-pi/commit/ae4b53b416f32b200865a32ed9baabd5a4666fa4), source tree `2b8a5f697273f5044789b8ae638b6c264f9f8499`. The published v0.1.23 package remains pinned to that contract.
+
+The current source tree advances the vendored contract to `@oh-my-pi/app-wire` 0.6.1 from integration commit [`e3e15c03`](https://github.com/lyc-aon/oh-my-pi/commit/e3e15c03ae95ebbda5f26495cd21213cc53518b1), source tree `e0f32b279eb4b8cbc403e47d765a226bee99c99f`. This adds the bounded cross-session transcript search and historical context contract.
 
 | Platform | Arch                  | Package                                  |
 | -------- | --------------------- | ---------------------------------------- |
@@ -89,6 +91,7 @@ chmod +x T4-Code-0.1.23-linux-x86_64.AppImage
 - **Sessions.** Browse sessions grouped by their working folder, create new ones, and switch between them. Rename, terminate a stuck runtime, archive, restore, or permanently delete a session from its menu. Recently used sessions stay warm, so switching back is instant and nothing is replayed twice.
 - **Composer.** Send prompts, use slash commands (`/model`, `/compact`, `/retry`, `/review`, `/terminal`, and more), and change the session's model, thinking level, or fast mode inline.
 - **Panes.** Watch subagents (and cancel them), apply reviews, browse and preview files on the host, and attach to live terminals with real keyboard input and resize.
+- **Browser preview.** Open session-linked browser previews to inspect page layouts, follow live navigations, and interact with the page via coordinate-mapped clicks and keyboard input. Previews use pluggable authority gates, lease-based concurrency locks, and strict opt-in security boundaries.
 - **Settings.** Edit host settings over the wire, with an explicit host selector when several hosts are connected; each host keeps its own drafts. Edits stage locally and only apply when the host confirms; a dropped connection never silently writes anything.
 - **Hosts & usage.** Run one local appserver per OMP profile, pair remote machines, and read each connected host's account usage and broker status. Everything shown is redacted host truth.
 - **Keyboard.** `Ctrl/Cmd+K` search, `Ctrl/Cmd+B` sidebar, `Ctrl/Cmd+1..9` session switch, `Ctrl/Cmd+,` settings. Every workflow is keyboard-operable.
@@ -123,6 +126,7 @@ pnpm test             # workspace tests
 pnpm test:soak        # headless 10k-history and 20-reconnect stress checks
 pnpm package:linux    # .deb + AppImage into release/
 pnpm package:mac:unsigned  # unsigned macOS build (on a Mac)
+pnpm package:mac      # maintainer-only signed and notarized macOS build
 ```
 
 The soak command needs no phone, Android emulator, or macOS simulator. It checks the shared data

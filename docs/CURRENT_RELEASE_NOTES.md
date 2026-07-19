@@ -20,7 +20,7 @@ A completed assistant response has **Read response aloud** when the device provi
 
 ## Runtime provenance
 
-T4 Code v0.1.23 vendors app-wire 0.5.10 from integration commit [d57dcd85](https://github.com/lyc-aon/oh-my-pi/commit/d57dcd855006c673d8d530237d474fe5ba5645c4), source tree `5cf488966e3c233764780d3ca7a8d8ea1e3a1f68`. The client contract remains `omp-app/1`.
+T4 Code v0.1.23 vendors app-wire 0.6.0 from integration commit [ae4b53b4](https://github.com/lyc-aon/oh-my-pi/commit/ae4b53b416f32b200865a32ed9baabd5a4666fa4), source tree `2b8a5f697273f5044789b8ae638b6c264f9f8499`. The client contract remains `omp-app/1`.
 
 The matching OMP 17.0.4 runtime is built from commit [d57dcd85](https://github.com/lyc-aon/oh-my-pi/commit/d57dcd855006c673d8d530237d474fe5ba5645c4) and tagged [t4code-17.0.4-appserver-5](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.4-appserver-5). It adds redacted Codex transport diagnostics, the versioned Agent View lifecycle contract, session-owned cancellation, macOS system-temp aliases, workspace-native build artifacts, retry-safe release metadata, lock-aware session observation, complete transcript reconciliation, missing-lock-only promotion, and the cooperative `/continue-in-t4` handoff.
 

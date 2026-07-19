@@ -917,4 +917,113 @@ describe("OmpClient reconnect stability", () => {
     expect(client.snapshot().attempt).toBe(1);
     await client.close();
   });
+  it("requests preview state after initial and reconnect attachments without delaying readiness", async () => {
+    const clock = new FakeClock();
+    const respond = (frame: ClientFrame, transport: FakeTransport): void => {
+      if (
+        frame.type === "command" &&
+        (frame.command === "session.attach" || frame.command === "preview.state")
+      )
+        transport.emit(responseFor(frame, frame.command === "preview.state" ? { previews: [] } : {}));
+    };
+    const previewCapabilities = [
+      "sessions.read",
+      "sessions.prompt",
+      "sessions.control",
+      "sessions.manage",
+      "preview.read",
+    ];
+    const first = new FakeTransport({
+      welcome: welcome({ grantedCapabilities: previewCapabilities }),
+      onSend: respond,
+    });
+    const second = new FakeTransport({
+      welcome: welcome({ grantedCapabilities: previewCapabilities }),
+      onSend: respond,
+    });
+    const third = new FakeTransport({
+      welcome: welcome({ grantedCapabilities: previewCapabilities }),
+      onSend: respond,
+    });
+    const transports = [first, second, third];
+    const client = new OmpClient({
+      transport: () => transports.shift() ?? new FakeTransport(),
+      hostId: HOST,
+      clock,
+      timers: clock,
+      random: () => 0,
+      reconnect: { baseMs: 0, maxMs: 0 },
+    });
+
+    await client.connect();
+    await client.attach(HOST, SESSION);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(
+      first.sent
+        .map((serialized) => decodeClientFrame(serialized))
+        .filter((frame): frame is CommandFrame => frame.type === "command")
+        .map((frame) => frame.command),
+    ).toEqual(["session.attach", "preview.state"]);
+    first.drop();
+    await flushReconnect(clock);
+    await Promise.resolve();
+    expect(client.state).toBe("ready");
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(
+      second.sent
+        .map((serialized) => decodeClientFrame(serialized))
+        .filter((frame): frame is CommandFrame => frame.type === "command")
+        .map((frame) => frame.command),
+    ).toEqual(["session.attach", "preview.state"]);
+
+    second.drop();
+    await flushReconnect(clock);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(
+      third.sent
+        .map((serialized) => decodeClientFrame(serialized))
+        .filter((frame): frame is CommandFrame => frame.type === "command")
+        .map((frame) => frame.command),
+    ).toEqual(["session.attach", "preview.state"]);
+    await client.close();
+  });
+
+  it("does not request preview state when reconnecting without preview.read", async () => {
+    const clock = new FakeClock();
+    const respondAttach = (frame: ClientFrame, transport: FakeTransport): void => {
+      if (frame.type === "command" && frame.command === "session.attach")
+        transport.emit(responseFor(frame));
+    };
+    const first = new FakeTransport({ welcome: welcome(), onSend: respondAttach });
+    const second = new FakeTransport({ welcome: welcome(), onSend: respondAttach });
+    const transports = [first, second];
+    const client = new OmpClient({
+      transport: () => transports.shift() ?? new FakeTransport(),
+      hostId: HOST,
+      clock,
+      timers: clock,
+      random: () => 0,
+      reconnect: { baseMs: 0, maxMs: 0 },
+    });
+
+    await client.connect();
+    await client.attach(HOST, SESSION);
+    first.drop();
+    await flushReconnect(clock);
+    await Promise.resolve();
+    expect(client.state).toBe("ready");
+    expect(
+      second.sent
+        .map((serialized) => decodeClientFrame(serialized))
+        .filter((frame): frame is CommandFrame => frame.type === "command")
+        .map((frame) => frame.command),
+    ).toEqual(["session.attach"]);
+    await client.close();
+  });
 });

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { test } from "node:test";
 import { join, resolve } from "node:path";
 import config from "../electron-builder.config.mjs";
+import { validateMacosIdentityContract } from "./inspect-macos-release.mjs";
 import { createPackage } from "@electron/asar";
 import { runPreflight, validatePreloadArtifact, validateWebIndex } from "./package-preflight.mjs";
 import { inspectPackage, locateAppRoot } from "./inspect-package.mjs";
@@ -25,6 +26,7 @@ import {
 const repoRoot = resolve(import.meta.dirname, "..");
 
 const androidIdentity = JSON.parse(readFileSync(resolve(repoRoot, ".github/android-release-identity.json"), "utf8"));
+const macosIdentity = JSON.parse(readFileSync(resolve(repoRoot, ".github/macos-release-identity.json"), "utf8"));
 const productionCertificate = "fa58f53c953a078d8db2b633ee8c226cfd2ad3f7220cd55dd03a2e195a81b0ac";
 
 function androidReleaseFixture(overrides = {}) {
@@ -73,7 +75,45 @@ test("builder config keeps release contract", () => {
   ]);
   assert.equal(config.mac.category, "public.app-category.developer-tools");
   assert.deepEqual(config.mac.publish, []);
+  assert.equal(config.mac.identity, null);
+  assert.equal(config.mac.hardenedRuntime, false);
+  assert.equal(config.mac.notarize, false);
   assert.equal(config.artifactName, "T4-Code-${version}-${os}-${arch}.${ext}");
+});
+
+test("signed macOS packaging is explicit, credentialed, and release-gated", async () => {
+  const previousSignedBuild = process.env.T4_MACOS_SIGNED_BUILD;
+  process.env.T4_MACOS_SIGNED_BUILD = "1";
+  try {
+    const signedConfigUrl = new URL("../electron-builder.config.mjs", import.meta.url);
+    signedConfigUrl.searchParams.set("signed-test", String(Date.now()));
+    const { default: signedConfig } = await import(signedConfigUrl.href);
+    assert.equal(signedConfig.mac.identity, undefined);
+    assert.equal(signedConfig.mac.hardenedRuntime, true);
+    assert.equal(signedConfig.mac.notarize, true);
+    assert.equal(signedConfig.mac.entitlements, "apps/desktop/build/entitlements.mac.plist");
+    assert.equal(signedConfig.mac.entitlementsInherit, "apps/desktop/build/entitlements.mac.plist");
+    assert.deepEqual(signedConfig.mac.publish, []);
+  } finally {
+    if (previousSignedBuild === undefined) delete process.env.T4_MACOS_SIGNED_BUILD;
+    else process.env.T4_MACOS_SIGNED_BUILD = previousSignedBuild;
+  }
+
+  assert.doesNotThrow(() => validateMacosIdentityContract(macosIdentity));
+  const releaseWorkflow = readFileSync(resolve(repoRoot, ".github/workflows/release.yml"), "utf8");
+  for (const expected of [
+    "T4_MACOS_CERTIFICATE_BASE64",
+    "T4_MACOS_CERTIFICATE_PASSWORD",
+    "T4_APPLE_API_KEY_BASE64",
+    "T4_APPLE_API_KEY_ID",
+    "T4_APPLE_API_ISSUER_ID",
+    "T4_APPLE_TEAM_ID",
+    "pnpm package:mac",
+    "scripts/inspect-macos-release.mjs",
+  ]) {
+    assert.ok(releaseWorkflow.includes(expected), `release workflow must include ${expected}`);
+  }
+  assert.doesNotMatch(releaseWorkflow, /Build unsigned macOS packages/u);
 });
 
 test("Android release identity is public, pinned, and wired into the release workflow", () => {

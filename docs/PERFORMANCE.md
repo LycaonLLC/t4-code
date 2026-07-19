@@ -29,6 +29,14 @@ settle before replacing the warm copy. The tail paint sample is taken after the 
 that copy and two more browser animation frames have elapsed. These numbers show where a slowdown
 occurs; they are not a claim about a physical display's pixel response time.
 
+Session-click phases have two boundaries. Metrics named `browser.session-dom-click-to-*` start at
+the actual DOM click received by the application and are the primary product-performance signal.
+The older `browser.session-click-to-*` metrics start immediately before Playwright asks Chromium to
+click, so they also include Playwright's actionability checks, pointer movement, and input delivery.
+The separate `browser.playwright-session-click-command-to-dom-click` metric makes that
+automation-only time visible. Do not attribute it to application rendering or use it alone to judge
+a product optimization.
+
 `ui.mount-bounded-10k` stops after the original mount assertions, before the paint-only wait and
 phase-file write. `ui.playwright-scenario-instrumented` records the full instrumented test duration
 under a new name so paint instrumentation cannot silently change an existing comparison boundary.

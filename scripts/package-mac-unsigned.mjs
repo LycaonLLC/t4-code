@@ -11,11 +11,12 @@ if (process.platform !== "darwin") {
 
 const prepackage = spawnSync("pnpm", ["prepackage"], {
   cwd: repoRoot,
-  env: { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: "false" },
+  env: { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: "false", T4_MACOS_SIGNED_BUILD: "0" },
   stdio: "inherit",
 });
 if (prepackage.error) throw prepackage.error;
 if (prepackage.status !== 0) process.exit(prepackage.status ?? 1);
 
 process.env.CSC_IDENTITY_AUTO_DISCOVERY = "false";
+process.env.T4_MACOS_SIGNED_BUILD = "0";
 process.exitCode = runElectronBuilder(["--mac", "--arm64", ...process.argv.slice(2)]);

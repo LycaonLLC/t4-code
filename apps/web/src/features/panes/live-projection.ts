@@ -2,9 +2,14 @@
 // desktop runtime already validated and bounded) to the inspector pane
 // view models. Every function here is derivation only: unknown fields stay
 // null, unsafe paths disappear, and nothing is invented to fill a gap.
-import type { AgentTranscriptProjection, ResultProjection, SessionProjection } from "@t4-code/client";
+import type {
+  AgentTranscriptProjection,
+  PreviewFreshness,
+  ResultProjection,
+  SessionProjection,
+} from "@t4-code/client";
 
-import { classifySessionEvent } from "./activity-log.ts";
+import { classifyPreviewEvent, classifySessionEvent } from "./activity-log.ts";
 import { displayStateFromWire } from "./model.ts";
 import type {
   ActivityEntry,
@@ -203,6 +208,19 @@ export function collectActivity(session: SessionProjection): KeyedActivityEntry[
     entries.push({
       key: `event:${frame.cursor.epoch}:${frame.cursor.seq}`,
       entry: classifySessionEvent(frame.event, 0, ""),
+    });
+  }
+  for (const event of session.previewEvents) {
+    let freshness: PreviewFreshness | undefined;
+    for (const preview of session.previews.values()) {
+      if (preview.previewId === event.previewId) {
+        freshness = preview.freshness;
+        break;
+      }
+    }
+    entries.push({
+      key: `preview:${event.cursor.epoch}:${event.cursor.seq}`,
+      entry: classifyPreviewEvent(event, 0, "", freshness),
     });
   }
   for (const frame of session.audit) {

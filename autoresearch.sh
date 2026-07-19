@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$repo_root"
+
+if [[ "$(node -p 'process.versions.node.split(".")[0]')" != "24" ]]; then
+  echo "autoresearch requires Node 24; found $(node --version)" >&2
+  exit 1
+fi
+for command_name in pnpm tee timeout; do
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "missing required command: $command_name" >&2
+    exit 1
+  fi
+done
+if [[ ! -d node_modules ]]; then
+  echo "dependencies are missing; run pnpm install --frozen-lockfile before autoresearch" >&2
+  exit 1
+fi
+
+entry_count="${T4_PERF_ENTRY_COUNT:-10000}"
+event_count="${T4_PERF_EVENT_COUNT:-100000}"
+repetitions="${T4_PERF_REPETITIONS:-7}"
+warmups="${T4_PERF_WARMUPS:-1}"
+timeout_seconds="${T4_AUTORESEARCH_TIMEOUT_SECONDS:-120}"
+run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+output_dir="test-results/perf/autoresearch/$run_id"
+mkdir -p "$output_dir"
+log_path="$output_dir/run.log"
+
+runner=()
+cpu_affinity="unbound"
+if command -v taskset >/dev/null 2>&1; then
+  requested_cpu="${T4_AUTORESEARCH_CPU:-}"
+  if [[ -z "$requested_cpu" ]]; then
+    allowed_affinity="$(taskset -pc "$$" 2>/dev/null || true)"
+    allowed_affinity="${allowed_affinity##*: }"
+    first_affinity_range="${allowed_affinity%%,*}"
+    requested_cpu="${first_affinity_range%%-*}"
+  fi
+  if [[ -n "$requested_cpu" ]] && taskset -c "$requested_cpu" true 2>/dev/null; then
+    cpu_affinity="$requested_cpu"
+    runner=(taskset -c "$cpu_affinity")
+  elif [[ -n "${T4_AUTORESEARCH_CPU:-}" ]]; then
+    echo "T4_AUTORESEARCH_CPU is outside this process's allowed CPU set" >&2
+    exit 1
+  fi
+fi
+
+export CI=1
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--expose-gc"
+export T4_PERF_ENTRY_COUNT="$entry_count"
+export T4_PERF_EVENT_COUNT="$event_count"
+export T4_PERF_REPETITIONS="$repetitions"
+export T4_PERF_WARMUPS="$warmups"
+export T4_PERF_MACHINE_LABEL="${T4_PERF_MACHINE_LABEL:-linux-vps-x64}"
+export T4_PERF_OUTPUT_DIR="$output_dir"
+export T4_AUTORESEARCH_TIMEOUT_SECONDS_RESOLVED="$timeout_seconds"
+export T4_AUTORESEARCH_CPU_AFFINITY_RESOLVED="$cpu_affinity"
+
+{
+  "${runner[@]}" timeout "$timeout_seconds" pnpm exec vp test run packages/client/test/projection.test.ts
+  "${runner[@]}" timeout "$timeout_seconds" pnpm exec vp test run scripts/perf/core.test.ts
+  node scripts/perf/autoresearch-report.mjs "$output_dir/latest-core.json"
+  printf 'ASI timeout_seconds=%s\n' "$timeout_seconds"
+  printf 'ASI cpu_affinity=%s\n' "$cpu_affinity"
+  printf 'ASI log=%s\n' "$log_path"
+} 2>&1 | tee "$log_path"

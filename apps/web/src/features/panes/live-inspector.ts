@@ -609,6 +609,8 @@ function emptyProjection(): SessionProjection {
     audit: [],
     confirmations: new Map(),
     results: new Map(),
+    previews: new Map(),
+    previewEvents: [],
     freshness: "cached",
     transcriptEventArrivalOrdinal: 0,
     contextMaintenanceEventArrivalOrdinal: 0,

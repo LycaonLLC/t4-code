@@ -11,10 +11,16 @@ import {
   type HostId,
   type Revision,
   type ServerFrame,
+  type PreviewId,
   type SessionId,
   type SessionRef,
 } from "@t4-code/protocol";
-import { buildCommandSideFrames } from "./fixture-command-frames.ts";
+import {
+  buildCommandSideFrames,
+  FIXTURE_PREVIEW_CAPTURE_BASE64,
+  fixturePreviewSnapshot,
+  isPreviewEventCommand,
+} from "./fixture-command-frames.ts";
 import {
   applyCreatedSessionManagementMutation,
   applyCreatedSessionModelMutation,
@@ -80,6 +86,7 @@ export class FixtureEngine {
   private clients = new Map<string, ClientState>();
   private nextClient = 1;
   private seq = 0;
+  private previewSeq = 0;
   private sessionIndexSeq = 0;
   private durableCount = 0;
   private epoch: string;
@@ -375,6 +382,32 @@ export class FixtureEngine {
       ? this.durableEntries
       : (this.createdSessions.get(String(sessionId))?.durableEntries ?? []);
   }
+  private previewCursorFor(sessionId: SessionId | undefined): Cursor {
+    const isDefault = sessionId === undefined || sessionId === this.seed.sessionId;
+    const seq = isDefault ? this.previewSeq : (this.createdSessions.get(String(sessionId))?.previewSeq ?? 0);
+    return sessionCursor(this.seed, seq, `${this.epoch}-preview`);
+  }
+  private previewRevisionFor(sessionId: SessionId | undefined): Revision {
+    const isDefault = sessionId === undefined || sessionId === this.seed.sessionId;
+    if (isDefault) {
+      return derivedRevision(this.seed, `preview-${this.previewSeq}`);
+    }
+    const created = this.createdSessions.get(String(sessionId));
+    const seq = created?.previewSeq ?? 0;
+    const ordinal = created?.ordinal ?? 0;
+    return derivedRevision(this.seed, `created-${ordinal}-preview-${seq}`);
+  }
+  private incrementPreviewSeq(command: string, sessionId: SessionId | undefined): void {
+    if (isPreviewEventCommand(command)) {
+      const session = sessionId ?? branded<SessionId>(this.seed.sessionId);
+      const created = this.createdSessions.get(String(session));
+      if (created === undefined) {
+        this.previewSeq += 1;
+      } else {
+        created.previewSeq += 1;
+      }
+    }
+  }
   private currentSessionIndexCursor(): Cursor {
     return sessionCursor(this.seed, this.sessionIndexSeq, this.epoch);
   }
@@ -420,12 +453,15 @@ export class FixtureEngine {
       grantedCapabilities: [
         "catalog.read",
         "config.read",
+        "preview.control",
+        "preview.input",
+        "preview.read",
         "sessions.read",
         "sessions.prompt",
         "sessions.control",
         "sessions.manage",
       ],
-      grantedFeatures: ["catalog.metadata", "resume", "settings.metadata"],
+      grantedFeatures: ["catalog.metadata", "preview.control", "resume", "settings.metadata"],
       negotiatedLimits: { maxInputBytes: 1_048_576 },
       authentication: "local",
       resumed,
@@ -571,6 +607,7 @@ export class FixtureEngine {
         });
       return;
     }
+    this.incrementPreviewSeq(frame.command, frame.sessionId);
     const response = this.makeCommandResponse(frame, base);
     state.commands.set(key, { payloadHash, response });
     this.emit(state, response);
@@ -613,6 +650,9 @@ export class FixtureEngine {
       hostId: branded<HostId>(this.seed.hostId),
       ...(command.sessionId === undefined ? {} : { sessionId: command.sessionId }),
     };
+    if (frame.decision === "approve") {
+      this.incrementPreviewSeq(command.command, command.sessionId);
+    }
     const response =
       frame.decision === "deny"
         ? {
@@ -694,12 +734,13 @@ export class FixtureEngine {
       return;
     }
     const targetSessionId = frame.sessionId ?? branded<SessionId>(this.seed.sessionId);
+    const isPreview = isPreviewEventCommand(frame.command);
     const ids = {
       v: V,
       hostId: branded<HostId>(this.seed.hostId),
       sessionId: targetSessionId,
-      cursor: this.cursorFor(targetSessionId),
-      revision: this.revisionFor(targetSessionId),
+      cursor: isPreview ? this.previewCursorFor(targetSessionId) : this.cursorFor(targetSessionId),
+      revision: isPreview ? this.previewRevisionFor(targetSessionId) : this.revisionFor(targetSessionId),
     };
     if (frame.command === "session.list") {
       this.emit(state, {
@@ -782,6 +823,7 @@ export class FixtureEngine {
     base: Omit<Extract<ServerFrame, { type: "response" }>, "ok" | "result" | "error">,
   ): Extract<ServerFrame, { type: "response" }> {
     const actualRevision = this.revisionFor(frame.sessionId);
+    const targetSessionId = frame.sessionId ?? branded<SessionId>(this.seed.sessionId);
     if (
       frame.expectedRevision !== undefined &&
       frame.expectedRevision !== actualRevision &&
@@ -867,13 +909,95 @@ export class FixtureEngine {
         ok: true,
         result: { watchId: "watch-fixture", cursor: this.currentCursor },
       };
+    if (frame.command === "preview.policy.check")
+      return {
+        ...base,
+        ok: true,
+        result: { allowed: true, confirmationRequired: false },
+      };
+    if (frame.command === "preview.lease.acquire" || frame.command === "preview.lease.renew") {
+      return {
+        ...base,
+        ok: true,
+        result: {
+          previewId: branded<PreviewId>("preview-fixture"),
+          leaseId: "lease-fixture",
+          expiresAt: Date.parse("2999-01-01T00:00:00.000Z"),
+        },
+      };
+    }
+    if (frame.command === "preview.lease.release")
+      return {
+        ...base,
+        ok: true,
+        result: { previewId: branded<PreviewId>("preview-fixture"), released: true },
+      };
+    if (frame.command === "preview.state") {
+      const previewIds = {
+        v: V,
+        hostId: branded<HostId>(this.seed.hostId),
+        sessionId: targetSessionId,
+        cursor: this.previewCursorFor(targetSessionId),
+        revision: this.previewRevisionFor(targetSessionId),
+      };
+      const preview = fixturePreviewSnapshot(previewIds, this.seed, {
+        capture: true,
+        state: "ready",
+        url: "http://127.0.0.1/fixture",
+      });
+      return { ...base, ok: true, result: { previews: [preview] } };
+    }
+    if (frame.command === "preview.capture.read") {
+      const previewIds = {
+        v: V,
+        hostId: branded<HostId>(this.seed.hostId),
+        sessionId: targetSessionId,
+        cursor: this.previewCursorFor(targetSessionId),
+        revision: this.previewRevisionFor(targetSessionId),
+      };
+      const preview = fixturePreviewSnapshot(previewIds, this.seed, {
+        capture: true,
+        state: "ready",
+        url: "http://127.0.0.1/fixture",
+      });
+      const bytes = Buffer.from(FIXTURE_PREVIEW_CAPTURE_BASE64, "base64");
+      const offset = Number(frame.args.offset);
+      const nextOffset = Math.min(bytes.byteLength, offset + bytes.byteLength);
+      return {
+        ...base,
+        ok: true,
+        result: {
+          previewId: preview.previewId,
+          captureId: preview.capture?.captureId ?? "capture-fixture",
+          size: bytes.byteLength,
+          offset,
+          nextOffset,
+          complete: nextOffset === bytes.byteLength,
+          content: bytes.subarray(offset, nextOffset).toString("base64"),
+        },
+      };
+    }
+    if (frame.command.startsWith("preview.")) {
+      const previewIds = {
+        v: V,
+        hostId: branded<HostId>(this.seed.hostId),
+        sessionId: targetSessionId,
+        cursor: this.previewCursorFor(targetSessionId),
+        revision: this.previewRevisionFor(targetSessionId),
+      };
+      const preview = fixturePreviewSnapshot(previewIds, this.seed, {
+        capture: frame.command === "preview.capture",
+        state: frame.command === "preview.close" ? "stopped" : "ready",
+        url: typeof frame.args.url === "string" ? frame.args.url : "http://127.0.0.1/fixture",
+      });
+      return { ...base, ok: true, result: { preview } };
+    }
     if (frame.command.includes(".lease."))
       return {
         ...base,
         ok: true,
         result: { leaseId: "lease-fixture", cursor: this.currentCursor },
       };
-    if (frame.command === "preview.capture") return { ...base, ok: true, result: { content: "" } };
     return { ...base, ok: true, result: { accepted: true } };
   }
   private createSession(frame: CommandFrame): CreatedFixtureSession {

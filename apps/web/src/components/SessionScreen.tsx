@@ -16,6 +16,7 @@ import {
   useReducedMotion,
 } from "@t4-code/ui";
 import { Popover } from "@base-ui/react/popover";
+import { Link } from "@tanstack/react-router";
 import { Check, PanelBottomClose, PanelBottomOpen, PanelRight, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -25,6 +26,8 @@ import { TerminalDrawer } from "../features/terminal/TerminalDrawer.tsx";
 import { FreshnessBadge, SessionMain, SessionOwnershipBadge } from "../features/transcript/SessionMain.tsx";
 import { RIGHT_PANE_DOCK_QUERY, useMediaQuery } from "../hooks/useMediaQuery.ts";
 import { useWorkspace, workspaceStore } from "../state/store-instance.ts";
+import { useDesktopRuntimeSnapshot } from "../platform/desktop-runtime.ts";
+import { resolveLiveSession } from "../platform/live-workspace.ts";
 import {
   type PaneFamily,
   RIGHT_PANE_WIDTH,
@@ -159,6 +162,15 @@ export function SessionScreen({
     (state) => selectSessionView(state, session.id).terminalDrawerOpen,
   );
   const paneDocks = useMediaQuery(RIGHT_PANE_DOCK_QUERY);
+  const runtimeSnapshot = useDesktopRuntimeSnapshot();
+  const previewAddress =
+    runtimeSnapshot === null ? null : resolveLiveSession(runtimeSnapshot, session.id);
+  const previewCount =
+    previewAddress === null
+      ? 0
+      : (runtimeSnapshot?.projection.sessions
+          .get(`${previewAddress.hostId}\u0000${previewAddress.sessionId}`)
+          ?.previews.size ?? 0);
   const [panePreviewWidth, setPanePreviewWidth] = useState<number | null>(null);
 
   // Transcript scroll ownership lives in TranscriptTimeline (virtualized
@@ -208,7 +220,16 @@ export function SessionScreen({
           <FreshnessBadge session={session} />
           <SessionOwnershipBadge session={session} />
         </span>
-        <span className="min-w-0 flex-1" />
+        {previewCount > 0 && (
+          <Link
+            aria-label={`Open browser preview${previewCount === 1 ? "" : ` (${previewCount})`}`}
+            className="shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            params={{ sessionId: session.id }}
+            to="/sessions/$sessionId/preview"
+          >
+            <Badge variant="outline">Preview{previewCount === 1 ? "" : ` · ${previewCount}`}</Badge>
+          </Link>
+        )}
         {!archived && (
           <FamilyToggles paneFamily={viewPaneFamily} paneOpen={viewPaneOpen} sessionId={session.id} />
         )}

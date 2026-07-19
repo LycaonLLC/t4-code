@@ -40,6 +40,55 @@ function toolResultEntry(index: number): DurableEntry {
 }
 
 describe("retained transcript budgets", () => {
+  it("matches JSON UTF-8 byte lengths for primitive and fallback values", () => {
+    const encoder = new TextEncoder();
+    const values: readonly unknown[] = [
+      "",
+      "\"\\/\b\t\n\f\r\u0000\u001f",
+      "Aé€😀",
+      "\ud800",
+      "\udc00",
+      0,
+      -0,
+      1.5,
+      1e21,
+      1e-7,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      true,
+      false,
+      null,
+      { nested: ["Aé€😀", 1e21, null] },
+      ["value", undefined],
+    ];
+
+    for (const value of values) {
+      const serialized = JSON.stringify(value);
+      if (serialized === undefined) throw new Error("fixture must serialize");
+      expect(retainedJsonBytes(value)).toBe(encoder.encode(serialized).byteLength);
+    }
+
+    for (const value of [undefined, () => "value", Symbol("value")]) {
+      expect(retainedJsonBytes(value)).toBe(0);
+    }
+  });
+
+  it("prioritizes retained fields over prototype-named input fields", () => {
+    const expected = { type: "tool.result", result: "ok" };
+    const retained = sanitizeRetainedRecord(
+      {
+        constructor: "x".repeat(100),
+        type: expected.type,
+        result: expected.result,
+      },
+      retainedJsonBytes(expected),
+    );
+
+    expect(retained).toEqual(expected);
+    expect(retainedJsonBytes(retained)).toBe(retainedJsonBytes(expected));
+  });
+
   it("keeps the newest contiguous suffix under count, entry, and cumulative byte caps", () => {
     const retained = retainDurableEntries(
       Array.from({ length: 200 }, (_, index) => toolResultEntry(index)),

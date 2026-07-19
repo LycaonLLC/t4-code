@@ -69,7 +69,7 @@ describe("OMP integration contract", () => {
     expect(OMP_UPSTREAM_TAG).toBe("v17.0.4");
     expect(OMP_UPSTREAM_COMMIT).toBe("3fdd85ab6c6bab6c0cdee80abbbec0981740a5c0");
     expect(OMP_UPSTREAM_URL).toBe("https://github.com/can1357/oh-my-pi/tree/v17.0.4");
-    expect(APP_WIRE_VERSION).toBe("0.5.10");
+    expect(APP_WIRE_VERSION).toBe("0.6.0");
   });
 });
 

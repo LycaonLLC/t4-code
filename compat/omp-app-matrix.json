@@ -4,18 +4,18 @@
     "package": "@oh-my-pi/app-wire",
     "version": "0.6.1",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "614b23b75345ae0d546056d4c2cda191a9008308",
-    "sourceTreeHash": "f45d610346fd4bd27cfbd9409a67e4f8f52bca3a",
+    "sourceCommit": "e3e15c03ae95ebbda5f26495cd21213cc53518b1",
+    "sourceTreeHash": "e0f32b279eb4b8cbc403e47d765a226bee99c99f",
     "tarball": "vendor/app-wire/oh-my-pi-app-wire-0.6.1.tgz",
-    "tarballSha256": "f51e04544e30c6b4134a56ecfb41f20e408ac2c7faec82c80657dc3d501a5fb3",
-    "goldenCorpusSha256": "f407bb389a3a77e9db7ec046b9cd1cb19b4edb986694ecc4509ac21c7524c66d"
+    "tarballSha256": "78ec6223e7ad0f4f9e14526a822eaa45b363c856065c08196b2817a2f42740b9",
+    "goldenCorpusSha256": "d5e674095de3d9b3b56a5668bc91cbbf1904b409ea9ea6456c2eabdf272e7870"
   },
   "publishedAppWire": {
     "package": "@oh-my-pi/app-wire",
-    "version": "0.5.10",
+    "version": "0.6.0",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "d57dcd855006c673d8d530237d474fe5ba5645c4",
-    "sourceTreeHash": "5cf488966e3c233764780d3ca7a8d8ea1e3a1f68"
+    "sourceCommit": "ae4b53b416f32b200865a32ed9baabd5a4666fa4",
+    "sourceTreeHash": "2b8a5f697273f5044789b8ae638b6c264f9f8499"
   },
   "publishedRuntime": {
     "package": "omp",
