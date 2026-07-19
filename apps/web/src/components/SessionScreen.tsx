@@ -10,6 +10,9 @@ import {
   Sheet,
   SheetPopup,
   StatusPill,
+  Tooltip,
+  TooltipPopup,
+  TooltipTrigger,
   useReducedMotion,
 } from "@t4-code/ui";
 import { Popover } from "@base-ui/react/popover";
@@ -400,25 +403,29 @@ export function SessionScreen({
               className="flex min-h-0 shrink-0 flex-col bg-(--sidebar-background)"
               style={{ width: `min(${paneWidth}px, 42vw)` }}
             >
-              <div className="surface-subheader gap-2 px-3">
-                <span className="font-medium text-xs">{activeMeta.label}</span>
-                <span className="flex-1" />
-                <IconButton
-                  aria-label={`Close ${activeMeta.label}`}
-                  onClick={() => workspaceStore.getState().setPaneOpen(session.id, false)}
-                  size="icon-xs"
-                >
-                  <X />
-                </IconButton>
-              </div>
               <ScrollArea className="min-h-0 flex-1">
                 <div className="pane-content-enter" key={viewPaneFamily}>
-                  <PaneContent family={viewPaneFamily} />
+                  <PaneContent
+                    family={viewPaneFamily}
+                    trailing={
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <IconButton
+                              aria-label={`Close ${activeMeta.label}`}
+                              onClick={() => workspaceStore.getState().setPaneOpen(session.id, false)}
+                              size="icon-xs"
+                            >
+                              <X />
+                            </IconButton>
+                          }
+                        />
+                        <TooltipPopup side="bottom">Close (Esc)</TooltipPopup>
+                      </Tooltip>
+                    }
+                  />
                 </div>
               </ScrollArea>
-              <p className="border-border border-t px-3 py-2 text-muted-foreground text-xs">
-                Esc closes this panel.
-              </p>
             </aside>
           </div>
         )}
@@ -430,9 +437,6 @@ export function SessionScreen({
           open={viewPaneOpen}
         >
           <SheetPopup aria-label={activeMeta.label} side="right">
-            <div className="surface-subheader gap-2 px-3">
-              <span className="font-medium text-xs">{activeMeta.label}</span>
-            </div>
             <PaneContent family={viewPaneFamily} />
           </SheetPopup>
         </Sheet>

@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@t4-code/ui";
 import { memo, useCallback, useMemo, useRef, useState } from "react";
+import type * as React from "react";
 
 import type { TranscriptImageSource } from "../session-runtime/transcript-images.ts";
 import { TranscriptRowContent } from "../transcript/TranscriptRows.tsx";
@@ -103,7 +104,7 @@ const AgentRow = memo(function AgentRow({
       className={cn(
         "flex min-h-11 cursor-pointer flex-col justify-center gap-0.5 rounded-md pe-2 py-1.5 outline-none transition-colors duration-(--motion-duration-fast) sm:min-h-0",
         selected ? "bg-secondary" : "hover:bg-secondary/60",
-        focused && "ring-2 ring-ring ring-offset-1 ring-offset-background",
+        focused && "group-focus-visible/tree:ring-2 group-focus-visible/tree:ring-ring group-focus-visible/tree:ring-offset-1 group-focus-visible/tree:ring-offset-background",
       )}
       id={`agent-row-${id}`}
       onClick={() => onSelect(id)}
@@ -422,10 +423,12 @@ export function AgentsPane({
   api,
   sessionId,
   imageSource,
+  trailing,
 }: {
   readonly api: InspectorStoreApi;
   readonly sessionId: string;
   readonly imageSource?: TranscriptImageSource | undefined;
+  readonly trailing?: React.ReactNode | undefined;
 }) {
   // Structure fingerprint: rows rebuild only when membership/nesting change,
   // never on progress or state patches.
@@ -469,11 +472,11 @@ export function AgentsPane({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <PaneHeading family="agents" summary={summary} />
+      <PaneHeading family="agents" summary={summary} trailing={trailing} />
       <div
         aria-activedescendant={`agent-row-${rows[activeIndex]?.id ?? ""}`}
         aria-label="Agents in this session"
-        className="min-h-0 flex-1 overflow-y-auto p-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+        className="group/tree min-h-0 flex-1 overflow-y-auto p-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
         onKeyDown={(event) => {
           if (event.key === "ArrowDown") {
             event.preventDefault();

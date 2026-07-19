@@ -155,8 +155,8 @@ function MessageRow({
 }) {
   if (row.role === "user") {
     return (
-      <div className="group/message flex justify-end py-2">
-        <div className="relative max-w-[85%] rounded-lg bg-secondary px-3 py-2">
+      <div className="group/message flex justify-end pt-5 pb-2">
+        <div className="relative max-w-[85%] rounded-lg border border-border/50 bg-secondary px-3 py-2">
           <Markdown text={row.text} />
           <TranscriptImages
             images={row.images}
@@ -172,7 +172,7 @@ function MessageRow({
     );
   }
   return (
-    <div className="group/message py-2">
+    <div className="group/message pt-1.5 pb-2.5">
       {row.reasoning !== "" && <ReasoningDisclosure reasoning={row.reasoning} />}
       <Markdown text={row.text} />
       <TranscriptImages
@@ -440,7 +440,8 @@ const ToolCallRow = memo(function ToolCallRow({
         <Icon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="shrink-0 font-medium text-xs">{label}</span>
         <span
-          className="tv-render tv-summary min-w-0 flex-1 truncate"
+          className="tv-render tv-summary min-w-0 flex-1 line-clamp-2 sm:line-clamp-none sm:truncate"
+          data-tool-preview="multi"
           data-tool-renderer={view.known ? "known" : "generic"}
         >
           <Summary {...renderProps} />
@@ -497,7 +498,7 @@ function ToolGroupRow({
   readonly toolHost?: ToolRenderHost | undefined;
 }) {
   return (
-    <div className="my-1.5 rounded-lg border border-border/60 px-1 py-1">
+    <div className="my-1 rounded-lg border border-border/70 bg-card/40 px-1 py-1 divide-y divide-border/40">
       {row.calls.map((call) => (
         <ToolCallRow
           call={call}

@@ -33,6 +33,15 @@
 .tv-render.tv-summary > * {
   white-space: nowrap;
 }
+@media (max-width: 639px) {
+  .tv-render.tv-summary[data-tool-preview="multi"] {
+    white-space: normal;
+    text-overflow: clip;
+  }
+  .tv-render.tv-summary[data-tool-preview="multi"] > * {
+    white-space: normal;
+  }
+}
 
 .tv-render-body {
   display: flex;

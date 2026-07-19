@@ -4,6 +4,7 @@
 // into the bottom drawer, which is the only interactive terminal surface.
 import { Badge, Button, cn } from "@t4-code/ui";
 import { SquareTerminal } from "lucide-react";
+import type * as React from "react";
 
 import { workspaceStore } from "../../state/store-instance.ts";
 import {
@@ -69,9 +70,11 @@ function ShellRow({
 export function TerminalsPane({
   api,
   sessionId,
+  trailing,
 }: {
   readonly api: InspectorStoreApi;
   readonly sessionId: string;
+  readonly trailing?: React.ReactNode | undefined;
 }) {
   const agentShells = useInspector(api, (state) => state.terminals);
   const drawerApi = getTerminalStore(sessionId);
@@ -106,6 +109,7 @@ export function TerminalsPane({
       <PaneHeading
         family="terminals"
         summary={`${agentShells.length + userTabs.length} shells · ${runningCount} running`}
+        trailing={trailing}
       />
       <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
         {agentShells.length > 0 && (

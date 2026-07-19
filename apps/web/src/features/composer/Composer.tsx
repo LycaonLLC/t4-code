@@ -532,6 +532,8 @@ export function Composer({
               onIntent={onIntent}
             />
             <span className="min-w-0 flex-1" />
+            <ContextMeter usedTokens={contextUsedTokens} windowTokens={contextWindowTokens} />
+            <span className="mx-1 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -554,7 +556,6 @@ export function Composer({
                     "This host does not support image prompts yet")}
               </TooltipPopup>
             </Tooltip>
-            <ContextMeter usedTokens={contextUsedTokens} windowTokens={contextWindowTokens} />
             {turnActive && (
               <>
                 <Tooltip>

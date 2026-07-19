@@ -14,6 +14,7 @@ import {
 } from "@t4-code/ui";
 import { Check, MessageSquarePlus, WrapText, X } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
+import type * as React from "react";
 
 import { FamilyEmpty } from "./FamilyEmpty.tsx";
 import { PaneHeading } from "./PaneHeading.tsx";
@@ -383,7 +384,7 @@ function FileBody({
   );
 }
 
-export function ReviewPane({ api }: { readonly api: InspectorStoreApi }) {
+export function ReviewPane({ api, trailing }: { readonly api: InspectorStoreApi; readonly trailing?: React.ReactNode | undefined }) {
   const files = useInspector(api, (state) => state.review.files);
   const selectedPath = useInspector(api, (state) => state.review.selectedPath);
   const view = useInspector(api, (state) => state.review.view);
@@ -407,6 +408,7 @@ export function ReviewPane({ api }: { readonly api: InspectorStoreApi }) {
       <PaneHeading
         family="review"
         summary={`${files.length} ${files.length === 1 ? "file" : "files"} · +${additions} −${deletions} · ${viewedCount}/${files.length} viewed`}
+        trailing={trailing}
       />
       <div
         aria-label="Changed files"
