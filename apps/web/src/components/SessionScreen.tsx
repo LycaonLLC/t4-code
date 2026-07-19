@@ -140,10 +140,12 @@ export function SessionScreen({
   session,
   project,
   nowMs,
+  onOpenHostHealth,
 }: {
   session: WorkspaceSession;
   project: WorkspaceProject;
   nowMs: number;
+  onOpenHostHealth: () => void;
 }) {
   const archived = session.archivedAt !== undefined;
   // Subscribe to the pane/drawer primitives only, never the whole view
@@ -240,7 +242,13 @@ export function SessionScreen({
       <div className="flex min-h-0 flex-1">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="min-h-0 flex-1 overflow-hidden">
-            <SessionMain key={session.id} nowMs={nowMs} project={project} session={session} />
+            <SessionMain
+              key={session.id}
+              nowMs={nowMs}
+              onOpenHostHealth={onOpenHostHealth}
+              project={project}
+              session={session}
+            />
           </div>
           {!archived && <TerminalDrawer open={terminalDrawerOpen} sessionId={session.id} />}
         </div>

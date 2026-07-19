@@ -19,6 +19,7 @@ import {
   TurnErrorBanner,
 } from "../composer/panels.tsx";
 import type { SessionIntent } from "../session-runtime/intents.ts";
+import { ProviderTransportDiagnostics } from "../session-runtime/ProviderTransportDiagnostics.tsx";
 import {
   advanceRecordArrival,
   initialControlAnnouncerState,
@@ -47,6 +48,7 @@ export interface SessionMainProps {
   readonly session: WorkspaceSession;
   readonly project: WorkspaceProject;
   readonly nowMs: number;
+  readonly onOpenHostHealth: () => void;
 }
 
 export function FreshnessBadge({ session }: { readonly session: WorkspaceSession }) {
@@ -337,7 +339,7 @@ export function SessionControlBanner({
   );
 }
 
-export function SessionMain({ session }: SessionMainProps) {
+export function SessionMain({ onOpenHostHealth, session }: SessionMainProps) {
   const archived = session.archivedAt !== undefined;
   const { snapshot, runtime } = useSessionRuntime(session.id, session.freshness);
   const projection = snapshot.projection;
@@ -462,6 +464,12 @@ export function SessionMain({ session }: SessionMainProps) {
         >
           Archived · read-only. Restore this session before continuing work.
         </div>
+      )}
+      {snapshot.providerTransport !== null && (
+        <ProviderTransportDiagnostics
+          onOpenHostHealth={onOpenHostHealth}
+          state={snapshot.providerTransport}
+        />
       )}
       <div aria-label="Transcript" className="relative min-h-0 flex-1" role="log">
         {empty ? (

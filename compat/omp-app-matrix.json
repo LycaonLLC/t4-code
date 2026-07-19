@@ -2,28 +2,28 @@
   "appProtocol": "omp-app/1",
   "appWire": {
     "package": "@oh-my-pi/app-wire",
-    "version": "0.5.9",
+    "version": "0.5.10",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "5633bdd7e5f9062d1822eeeddb9311b2d942bf6f",
-    "sourceTreeHash": "4d8794bad6fc57d86058a46dc4698fcca14263e5",
-    "tarball": "vendor/app-wire/oh-my-pi-app-wire-0.5.9.tgz",
-    "tarballSha256": "b3a891610e919833d16302b1893831f509d264322c3869d28f17adbbff6116f0",
-    "goldenCorpusSha256": "50b087a3a22bb48908718b7786eff6ce618bbd6b6123c055e40c957ef47a805c"
+    "sourceCommit": "d57dcd855006c673d8d530237d474fe5ba5645c4",
+    "sourceTreeHash": "5cf488966e3c233764780d3ca7a8d8ea1e3a1f68",
+    "tarball": "vendor/app-wire/oh-my-pi-app-wire-0.5.10.tgz",
+    "tarballSha256": "d7cd0c6e52844f2970b8b32d1c7225d3aef2440f7af66c1e9d1bc74cfb695743",
+    "goldenCorpusSha256": "5ed120546ba4d5af757e3147b37745e25fa7c252dd60c4aff8973b58ada0a5ae"
   },
   "publishedAppWire": {
     "package": "@oh-my-pi/app-wire",
-    "version": "0.5.9",
+    "version": "0.5.10",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "5633bdd7e5f9062d1822eeeddb9311b2d942bf6f",
-    "sourceTreeHash": "4d8794bad6fc57d86058a46dc4698fcca14263e5"
+    "sourceCommit": "d57dcd855006c673d8d530237d474fe5ba5645c4",
+    "sourceTreeHash": "5cf488966e3c233764780d3ca7a8d8ea1e3a1f68"
   },
   "publishedRuntime": {
     "package": "omp",
     "version": "17.0.4",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "be0301f566ef172b6a7e1864853b3f04d6545758",
-    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/be0301f566ef172b6a7e1864853b3f04d6545758",
-    "sourceTag": "t4code-17.0.4-appserver-4",
+    "sourceCommit": "d57dcd855006c673d8d530237d474fe5ba5645c4",
+    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/d57dcd855006c673d8d530237d474fe5ba5645c4",
+    "sourceTag": "t4code-17.0.4-appserver-5",
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
     "upstreamTag": "v17.0.4",
     "upstreamCommit": "3fdd85ab6c6bab6c0cdee80abbbec0981740a5c0",
@@ -80,7 +80,8 @@
       "workspace-native-build-artifact-preference",
       "retry-safe-integration-release-metadata",
       "versioned-agent-view-lifecycle-corpus",
-      "session-owned-agent-cancellation"
+      "session-owned-agent-cancellation",
+      "codex-provider-transport-diagnostics"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },
@@ -88,9 +89,9 @@
     "package": "omp",
     "version": "17.0.4",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "be0301f566ef172b6a7e1864853b3f04d6545758",
-    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/be0301f566ef172b6a7e1864853b3f04d6545758",
-    "sourceTag": "t4code-17.0.4-appserver-4",
+    "sourceCommit": "d57dcd855006c673d8d530237d474fe5ba5645c4",
+    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/d57dcd855006c673d8d530237d474fe5ba5645c4",
+    "sourceTag": "t4code-17.0.4-appserver-5",
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
     "upstreamTag": "v17.0.4",
     "upstreamCommit": "3fdd85ab6c6bab6c0cdee80abbbec0981740a5c0",
@@ -147,7 +148,8 @@
       "workspace-native-build-artifact-preference",
       "retry-safe-integration-release-metadata",
       "versioned-agent-view-lifecycle-corpus",
-      "session-owned-agent-cancellation"
+      "session-owned-agent-cancellation",
+      "codex-provider-transport-diagnostics"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },

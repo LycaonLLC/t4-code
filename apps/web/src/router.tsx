@@ -197,7 +197,15 @@ function SessionRoute() {
       </div>
     );
   }
-  return <SessionScreen key={session.id} nowMs={nowMs} project={project} session={session} />;
+  return (
+    <SessionScreen
+      key={session.id}
+      nowMs={nowMs}
+      onOpenHostHealth={() => void navigate({ to: "/hosts" })}
+      project={project}
+      session={session}
+    />
+  );
 }
 
 const sessionRoute = createRoute({
