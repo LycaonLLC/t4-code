@@ -72,6 +72,7 @@ async function loadStoredHost(): Promise<CompanionHost | null> {
   const parsed = JSON.parse(raw) as Partial<CompanionHost>;
   if (
     parsed.version !== 1 ||
+    typeof parsed.endpointKey !== "string" ||
     typeof parsed.origin !== "string" ||
     typeof parsed.profileId !== "string" ||
     typeof parsed.deviceId !== "string"
@@ -79,6 +80,7 @@ async function loadStoredHost(): Promise<CompanionHost | null> {
     throw new Error("The saved host is damaged. Add it again.");
   }
   return parseCompanionHost(parsed.origin, parsed.profileId, {
+    endpointKey: parsed.endpointKey,
     deviceId: parsed.deviceId,
     ...(typeof parsed.deviceToken === "string" ? { deviceToken: parsed.deviceToken } : {}),
   });

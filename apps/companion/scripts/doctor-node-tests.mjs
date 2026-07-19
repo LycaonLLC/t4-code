@@ -5,6 +5,7 @@ import { evaluateDoctor, hasPairedIphone } from "./doctor.mjs";
 import {
   appleTeamIdFromCertificateSubject,
   companionDeepLink,
+  launchFailureIsLocked,
   pairedPhysicalIphones,
   parseArguments,
 } from "./ios-device.mjs";
@@ -99,8 +100,11 @@ test("native installer parses safe workflow switches", () => {
     team: "",
     url: "",
     reuseBuild: true,
+    launchOnly: false,
     noLaunch: true,
     help: false,
   });
   assert.throws(() => parseArguments(["--mystery"]), /Unknown option/u);
+  assert.throws(() => parseArguments(["--launch-only", "--no-launch"]), /cannot be used together/u);
+  assert.equal(launchFailureIsLocked("request denied: Locked"), true);
 });

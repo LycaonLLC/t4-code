@@ -69,6 +69,10 @@ export function companionDeepLink(address, appScheme = scheme) {
   return `${appScheme}://?address=${encodeURIComponent(address)}`;
 }
 
+export function launchFailureIsLocked(output) {
+  return /Locked|could not be unlocked/u.test(output);
+}
+
 function listDevices() {
   const temporaryDirectory = mkdtempSync(join(tmpdir(), "t4-companion-devices-"));
   const jsonPath = join(temporaryDirectory, "devices.json");
@@ -133,6 +137,7 @@ Options:
   --team TEAM_ID    Override the Apple team inferred from the development certificate
   --url URL         Override the stable Tailnet address inferred from Tailscale
   --reuse-build     Reinstall the last build without rebuilding it
+  --launch-only     Open the installed app without rebuilding or reinstalling
   --no-launch       Install the app but do not open it
   --help            Show this help
 
@@ -141,20 +146,23 @@ Environment:
 }
 
 export function parseArguments(argumentsList) {
-  const known = new Set(["--device", "--team", "--url", "--reuse-build", "--no-launch", "--help"]);
+  const known = new Set(["--device", "--team", "--url", "--reuse-build", "--launch-only", "--no-launch", "--help"]);
   for (let index = 0; index < argumentsList.length; index += 1) {
     const argument = argumentsList[index];
     if (!known.has(argument)) throw new Error(`Unknown option: ${argument}`);
     if (["--device", "--team", "--url"].includes(argument)) index += 1;
   }
-  return {
+  const parsed = {
     device: argumentValue(argumentsList, "--device"),
     team: argumentValue(argumentsList, "--team"),
     url: argumentValue(argumentsList, "--url"),
     reuseBuild: argumentsList.includes("--reuse-build"),
+    launchOnly: argumentsList.includes("--launch-only"),
     noLaunch: argumentsList.includes("--no-launch"),
     help: argumentsList.includes("--help"),
   };
+  if (parsed.launchOnly && parsed.noLaunch) throw new Error("--launch-only and --no-launch cannot be used together.");
+  return parsed;
 }
 
 function ensureNativeWorkspace() {
@@ -166,7 +174,33 @@ function ensureNativeWorkspace() {
   });
 }
 
-function main(argumentsList) {
+function delay(milliseconds) {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+}
+
+async function launchCompanion(deviceIdentifier, deepLink, waitMilliseconds = 60_000) {
+  const deadline = Date.now() + waitMilliseconds;
+  let announcedWait = false;
+  while (true) {
+    const launch = run("xcrun", [
+      "devicectl", "device", "process", "launch",
+      "--device", deviceIdentifier,
+      "--terminate-existing",
+      "--payload-url", deepLink,
+      bundleIdentifier,
+    ], { timeout: 60_000 });
+    if (launch.status === 0) return commandOutput(launch);
+    const output = commandOutput(launch);
+    if (!launchFailureIsLocked(output) || Date.now() >= deadline) throw new Error(output || "The app installed but did not open.");
+    if (!announcedWait) {
+      announcedWait = true;
+      console.log("The iPhone is locked. Unlock it now; waiting up to one minute…");
+    }
+    await delay(2_000);
+  }
+}
+
+async function main(argumentsList) {
   const options = parseArguments(argumentsList);
   if (options.help) {
     printUsage();
@@ -176,15 +210,15 @@ function main(argumentsList) {
   const deviceIdentifier = device.identifier;
   const deviceUdid = device.hardwareProperties.udid;
   const model = device.hardwareProperties.marketingName;
-  const teamId = resolveAppleTeamId(options.team);
+  const teamId = options.launchOnly ? "" : resolveAppleTeamId(options.team);
   const address = resolveTailnetAddress(options.url);
   const deepLink = companionDeepLink(address);
 
   console.log(`iPhone: ${model} (${deviceUdid})`);
-  console.log(`Apple team: ${teamId}`);
+  if (teamId !== "") console.log(`Apple team: ${teamId}`);
   console.log(`T4 host: ${address}`);
 
-  if (!options.reuseBuild) {
+  if (!options.launchOnly && !options.reuseBuild) {
     ensureNativeWorkspace();
     console.log("Building a signed Release app…");
     runOrThrow("xcodebuild", [
@@ -201,14 +235,16 @@ function main(argumentsList) {
       "-quiet",
     ], { timeout: 20 * 60_000 });
     console.log("Signed Release build finished.");
-  } else if (!existsSync(builtAppPath)) {
+  } else if (!options.launchOnly && !existsSync(builtAppPath)) {
     throw new Error(`No reusable build exists at ${builtAppPath}. Run once without --reuse-build.`);
   }
 
-  console.log("Installing T4 Companion…");
-  runVisible("xcrun", ["devicectl", "device", "install", "app", "--device", deviceIdentifier, builtAppPath], {
-    timeout: 5 * 60_000,
-  });
+  if (!options.launchOnly) {
+    console.log("Installing T4 Companion…");
+    runVisible("xcrun", ["devicectl", "device", "install", "app", "--device", deviceIdentifier, builtAppPath], {
+      timeout: 5 * 60_000,
+    });
+  }
 
   if (options.noLaunch) {
     console.log(`Installed. Open T4 Companion on the iPhone; its host is ${address}`);
@@ -216,27 +252,21 @@ function main(argumentsList) {
   }
 
   console.log("Opening T4 Companion with the saved Tailnet address…");
-  const launch = run("xcrun", [
-    "devicectl", "device", "process", "launch",
-    "--device", deviceIdentifier,
-    "--terminate-existing",
-    "--payload-url", deepLink,
-    bundleIdentifier,
-  ], { timeout: 60_000 });
-  if (launch.status !== 0) {
-    const output = commandOutput(launch);
-    if (/Locked|could not be unlocked/u.test(output)) {
-      throw new Error(`The app is installed, but the iPhone is locked. Unlock it and run:\n\n  pnpm --filter @t4-code/companion ios:device --reuse-build`);
+  try {
+    console.log(await launchCompanion(deviceIdentifier, deepLink));
+  } catch (caught) {
+    const output = caught instanceof Error ? caught.message : String(caught);
+    if (launchFailureIsLocked(output)) {
+      throw new Error(`The app is installed, but the iPhone stayed locked. Unlock it and run:\n\n  pnpm --filter @t4-code/companion ios:device --launch-only`);
     }
-    throw new Error(output || "The app installed but did not open.");
+    throw caught;
   }
-  console.log(commandOutput(launch));
   console.log("T4 Companion is installed, open, and configured.");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    main(process.argv.slice(2));
+    await main(process.argv.slice(2));
   } catch (error) {
     console.error(`\nT4 iPhone setup stopped: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;

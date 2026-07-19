@@ -33,7 +33,7 @@ function deviceId(): string {
 export function parseCompanionHost(
   value: string,
   profileValue?: string,
-  existing?: Pick<CompanionHost, "deviceId" | "deviceToken">,
+  existing?: Pick<CompanionHost, "endpointKey" | "deviceId" | "deviceToken">,
 ): CompanionHost {
   const trimmed = value.trim();
   if (trimmed.length === 0) throw new Error("Enter the HTTPS address shown by T4 Code on your computer.");
@@ -57,6 +57,7 @@ export function parseCompanionHost(
   }
 
   const profileId = normalizeProfileId(profileValue);
+  const endpointKey = `${url.origin}#profile=${profileId}`;
   const websocket = new URL(url.origin);
   websocket.protocol = "wss:";
   websocket.pathname =
@@ -66,12 +67,14 @@ export function parseCompanionHost(
 
   return Object.freeze({
     version: 1,
-    endpointKey: `${url.origin}#profile=${profileId}`,
+    endpointKey,
     origin: url.origin,
     profileId,
     wsUrl: websocket.toString(),
     label: `T4 on ${hostname.slice(0, hostname.indexOf("."))}`,
     deviceId: existing?.deviceId ?? deviceId(),
-    ...(existing?.deviceToken === undefined ? {} : { deviceToken: existing.deviceToken }),
+    ...(existing?.endpointKey !== endpointKey || existing.deviceToken === undefined
+      ? {}
+      : { deviceToken: existing.deviceToken }),
   });
 }

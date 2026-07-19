@@ -46,11 +46,12 @@ installs it, opens it, and passes the address into the app:
 mise exec node@24.17.0 -- pnpm --filter @t4-code/companion ios:device
 ```
 
-The iPhone must be unlocked for the final automatic launch. If it locks during
-the build, unlock it and reuse the finished build instead of rebuilding:
+The iPhone must be unlocked for the final automatic launch. The command waits
+up to one minute if it locks during the build. To retry only the deep link
+without rebuilding or reinstalling, run:
 
 ```bash
-mise exec node@24.17.0 -- pnpm --filter @t4-code/companion ios:device --reuse-build
+mise exec node@24.17.0 -- pnpm --filter @t4-code/companion ios:device --launch-only
 ```
 
 Use `ios:device --help` for explicit device, Apple team, Tailnet URL, and

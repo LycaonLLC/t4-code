@@ -1,5 +1,5 @@
-import { Redirect, useLocalSearchParams } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useState } from "react";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
   ActivityIndicator,
@@ -36,25 +36,14 @@ function TrustNote({ symbol, title, body }: { symbol: string; title: string; bod
   );
 }
 
-function ConnectScreen() {
+function ConnectScreen({ initialAddress = "", initialMessage = null }: {
+  initialAddress?: string;
+  initialMessage?: string | null;
+}) {
   const { configureHost, error } = useCompanionRuntime();
-  const params = useLocalSearchParams<{ address?: string; profile?: string }>();
-  const linkedAddress = Array.isArray(params.address) ? params.address[0] : params.address;
-  const linkedProfile = Array.isArray(params.profile) ? params.profile[0] : params.profile;
-  const [address, setAddress] = useState(linkedAddress ?? "");
-  const [message, setMessage] = useState<string | null>(null);
+  const [address, setAddress] = useState(initialAddress);
+  const [message, setMessage] = useState<string | null>(initialMessage);
   const [submitting, setSubmitting] = useState(false);
-  const handledLink = useRef(false);
-
-  useEffect(() => {
-    if (linkedAddress === undefined || handledLink.current) return;
-    handledLink.current = true;
-    setSubmitting(true);
-    void configureHost(linkedAddress, linkedProfile).catch((caught: unknown) => {
-      setMessage(caught instanceof Error ? caught.message : "Check the address and try again.");
-      setSubmitting(false);
-    });
-  }, [configureHost, linkedAddress, linkedProfile]);
 
   const submit = async () => {
     if (submitting) return;
@@ -151,12 +140,40 @@ function PairScreen() {
   );
 }
 
+function LinkedHostScreen({ address, profile }: { address: string; profile?: string }) {
+  const { configureHost } = useCompanionRuntime();
+  const router = useRouter();
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void configureHost(address, profile).then(
+      () => {
+        if (active) router.replace("/(tabs)");
+      },
+      (caught: unknown) => {
+        if (active) setMessage(caught instanceof Error ? caught.message : "Check the address and try again.");
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [address, configureHost, profile, router]);
+
+  if (message !== null) return <ConnectScreen initialAddress={address} initialMessage={message} />;
+  return <SafeAreaView style={[styles.safe, styles.loading]}><Brand /><ActivityIndicator color={colors.blue} /></SafeAreaView>;
+}
+
 export default function IndexScreen() {
   const { host, connection } = useCompanionRuntime();
+  const params = useLocalSearchParams<{ address?: string; profile?: string }>();
+  const linkedAddress = Array.isArray(params.address) ? params.address[0] : params.address;
+  const linkedProfile = Array.isArray(params.profile) ? params.profile[0] : params.profile;
   if (connection === "loading") {
     return <SafeAreaView style={[styles.safe, styles.loading]}><Brand /><ActivityIndicator color={colors.blue} /></SafeAreaView>;
   }
-  if (host === null) return <ConnectScreen />;
+  if (linkedAddress !== undefined) return <LinkedHostScreen address={linkedAddress} profile={linkedProfile} />;
+  if (host === null) return <ConnectScreen initialAddress={linkedAddress} />;
   if (connection === "pairing") return <PairScreen />;
   return <Redirect href="/(tabs)" />;
 }
