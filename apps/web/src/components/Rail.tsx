@@ -244,53 +244,60 @@ function SessionRowItem({
           session.freshness === "offline" && "opacity-72",
         )}
       >
-        <button
-          aria-current={active ? "true" : undefined}
-          aria-label={`${session.title}, ${session.model}, ${archived ? "archived, " : ""}${ariaState}${row.unread ? ", unread" : ""}`}
-          className="flex min-w-0 flex-1 flex-col gap-0.5 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-          data-session-row={session.id}
-          onClick={() => {
-            workspaceStore.getState().setRailOverlayOpen(false);
-            void navigate({ params: { sessionId: session.id }, to: "/sessions/$sessionId" });
-          }}
-          tabIndex={index === 0 ? 0 : -1}
-          title={session.title}
-          type="button"
-        >
-          <span className="flex w-full items-center gap-1.5">
-            <span
-              className={cn(
-                "min-w-0 flex-1 truncate text-sm",
-                active ? "font-medium text-foreground" : "text-foreground",
-              )}
-            >
-              {session.title}
-            </span>
-            {session.pendingApprovals > 0 && (
-              <Badge
-                aria-label={`${session.pendingApprovals} waiting for approval`}
-                className="shrink-0"
-                variant="warning"
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                aria-current={active ? "true" : undefined}
+                aria-label={`${session.title}, ${session.model}, ${archived ? "archived, " : ""}${ariaState}${row.unread ? ", unread" : ""}`}
+                className="flex min-w-0 flex-1 flex-col gap-0 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                data-session-row={session.id}
+                onClick={() => {
+                  workspaceStore.getState().setRailOverlayOpen(false);
+                  void navigate({
+                    params: { sessionId: session.id },
+                    to: "/sessions/$sessionId",
+                  });
+                }}
+                tabIndex={index === 0 ? 0 : -1}
+                type="button"
               >
-                {session.pendingApprovals}
-              </Badge>
-            )}
-            {row.unread && (
-              <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-brand" />
-            )}
-          </span>
-          <span className="flex w-full items-center gap-1.5 text-muted-foreground text-xs">
-            <span className="truncate font-mono text-[11px]">{session.model}</span>
-            <span aria-hidden="true">·</span>
-            <span className="shrink-0">{formatRelativeTime(session.updatedAt, nowMs)}</span>
-            <span className="min-w-0 flex-1" />
-            {session.status !== null ? (
-              <StatusPill className="shrink-0" status={session.status} />
-            ) : (
-              stateLabel !== "" && <span className="shrink-0">{stateLabel}</span>
-            )}
-          </span>
-        </button>
+                <span className="flex w-full items-center gap-1.5">
+                  <span className="min-w-0 flex-1 truncate font-medium text-foreground text-sm leading-5">
+                    {session.title}
+                  </span>
+                  {session.pendingApprovals > 0 && (
+                    <Badge
+                      aria-label={`${session.pendingApprovals} waiting for approval`}
+                      className="shrink-0"
+                      variant="warning"
+                    >
+                      {session.pendingApprovals}
+                    </Badge>
+                  )}
+                  {row.unread && (
+                    <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-brand" />
+                  )}
+                </span>
+                <span className="flex w-full items-center gap-1 text-[10px] text-muted-foreground leading-4">
+                  <span className="shrink-0">{formatRelativeTime(session.updatedAt, nowMs)}</span>
+                  <span className="min-w-0 flex-1" />
+                  {session.status !== null ? (
+                    <StatusPill className="shrink-0 gap-1 text-[10px]" status={session.status} />
+                  ) : (
+                    stateLabel !== "" && <span className="shrink-0">{stateLabel}</span>
+                  )}
+                </span>
+              </button>
+            }
+          />
+          <TooltipPopup className="max-w-72" side="right">
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="font-medium">{session.title}</span>
+              <span className="break-all font-mono text-muted-foreground">{session.model}</span>
+            </span>
+          </TooltipPopup>
+        </Tooltip>
         {controller !== null && address !== null && (
           <Popover.Root onOpenChange={setMenuOpen} open={menuOpen}>
             <Popover.Trigger
@@ -650,51 +657,54 @@ function ProjectHeaderRow({
 
   return (
     <div className="flex flex-col">
-      <div className="flex items-center gap-0.5">
-        <button
-          aria-expanded={group.expanded}
-          className="flex min-h-11 min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 py-1 text-left outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background sm:min-h-0"
-          data-project-disclosure={group.project.id}
-          onClick={() =>
-            workspaceStore.getState().setProjectExpanded(group.project.id, !group.expanded)
-          }
-          ref={disclosureRef}
-          type="button"
-        >
-          <ChevronRight
-            aria-hidden="true"
-            className={cn(
-              "size-3.5 shrink-0 text-muted-foreground transition-transform duration-(--motion-duration-fast)",
-              group.expanded && "rotate-90",
-            )}
+      <div className="flex items-start gap-0.5">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                aria-expanded={group.expanded}
+                className="flex min-h-11 min-w-0 flex-1 items-start gap-1 rounded-md px-1.5 py-1 text-left outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background sm:min-h-0"
+                data-project-disclosure={group.project.id}
+                onClick={() =>
+                  workspaceStore.getState().setProjectExpanded(group.project.id, !group.expanded)
+                }
+                ref={disclosureRef}
+                type="button"
+              >
+                <ChevronRight
+                  aria-hidden="true"
+                  className={cn(
+                    "mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-transform duration-(--motion-duration-fast)",
+                    group.expanded && "rotate-90",
+                  )}
+                />
+                <span className="min-w-0 flex-1 break-words font-medium text-foreground text-xs leading-4">
+                  {group.project.name}
+                </span>
+                {!group.expanded && group.unreadCount > 0 && (
+                  <span
+                    aria-label={`${group.unreadCount} unread`}
+                    className="mt-1 size-1.5 shrink-0 rounded-full bg-brand"
+                  />
+                )}
+                {!group.expanded && group.groupStatus !== null && (
+                  <StatusPill className="mt-1" labelHidden status={group.groupStatus} />
+                )}
+                <span className="mt-px shrink-0 text-[10px] text-muted-foreground leading-4">
+                  {group.sessions.length}
+                </span>
+              </button>
+            }
           />
-          <span className="truncate font-medium text-foreground text-xs">{group.project.name}</span>
-          {group.host.kind === "remote" && (
-            <span className="flex min-w-0 items-center gap-1 text-muted-foreground text-xs">
-              <Cable aria-hidden="true" className="size-3 shrink-0" />
-              <span className="truncate">{group.host.name}</span>
-            </span>
-          )}
-          {group.host.kind === "local" &&
-            group.host.profileId !== undefined &&
-            group.host.profileId !== "default" && (
-              <span className="flex min-w-0 items-center gap-1 text-muted-foreground text-xs">
-                <UsersRound aria-hidden="true" className="size-3 shrink-0" />
-                <span className="truncate">{group.host.name}</span>
+          <TooltipPopup className="max-w-72" side="right">
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="font-medium">{group.project.name}</span>
+              <span className="break-all text-muted-foreground">
+                {group.host.kind === "remote" ? "Remote host" : "Host profile"}: {group.host.name}
               </span>
-            )}
-          <span className="flex-1" />
-          {!group.expanded && group.unreadCount > 0 && (
-            <span
-              aria-label={`${group.unreadCount} unread`}
-              className="size-1.5 shrink-0 rounded-full bg-brand"
-            />
-          )}
-          {!group.expanded && group.groupStatus !== null && (
-            <StatusPill labelHidden status={group.groupStatus} />
-          )}
-          <span className="text-muted-foreground text-xs">{group.sessions.length}</span>
-        </button>
+            </span>
+          </TooltipPopup>
+        </Tooltip>
         {allowCreate && chooseCreateProfile ? (
           <Popover.Root onOpenChange={setCreateMenuOpen} open={createMenuOpen}>
             <Tooltip>

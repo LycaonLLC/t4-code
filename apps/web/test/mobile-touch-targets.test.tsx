@@ -159,7 +159,14 @@ describe("phone touch targets", () => {
     expect(session).toContain("⌘J");
     expect(session).toContain("Enter focus mode");
     expect(session).toContain("⌘⇧F");
-    expect(rail).toContain("flex min-h-11 min-w-0 flex-1 items-center");
+    expect(rail).toContain("flex min-h-11 min-w-0 flex-1 items-start");
+    // Folder names and session titles are the rail's visible hierarchy. Host
+    // and model identifiers stay available in hover tooltips instead of
+    // competing for the narrow row width.
+    expect(rail).toContain("min-w-0 flex-1 break-words font-medium text-foreground text-xs");
+    expect(rail).toContain('Remote host" : "Host profile"');
+    expect(rail).toContain("break-all font-mono text-muted-foreground");
+    expect(rail).not.toContain('truncate font-mono text-[11px]">{session.model}');
     // Project-row create actions are labeled `New`, stay 44px on touch, and
     // announce that the chosen OMP profile owns the session.
     expect(rail.match(/flex h-11 shrink-0 [^"]*sm:h-6/g)).toHaveLength(2);
