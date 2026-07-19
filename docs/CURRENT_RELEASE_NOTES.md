@@ -1,3 +1,15 @@
+## Flutter migration proof (development)
+
+The local migration branch now contains a single Flutter/Dart Stage 1 client for macOS, iOS,
+Android, and Web, with generated Windows and Linux targets. It decodes the pinned `omp-app/1`
+boundary, connects to the unchanged deterministic fixture server, projects session and transcript
+state, streams prompts, resumes from saved cursors after an unclean disconnect, and adapts between
+compact phone and persistent-rail desktop layouts.
+
+This is a technical proof, not a release cutover. The existing Electron, React, browser, and
+Capacitor clients remain the released implementation until the complete feature matrix, security,
+packaging, update, migration, and release gates pass.
+
 ## Signed and notarized on macOS
 
 T4 Code v0.1.24 is the first macOS release signed with the project's pinned Developer ID identity and notarized by Apple. The protected release job reopens both the DMG and ZIP, checks their certificate and Team ID, hardened runtime, secure timestamp, stapled notarization ticket, and Gatekeeper result, and stops publication if any of them drift.

@@ -69,6 +69,28 @@ The browser build uses deterministic sample sessions and labels them **Sample da
 fastest path for layout, interaction, accessibility, and renderer work. It does not prove that a
 real OMP host can connect or execute a command.
 
+### Flutter Stage 1 proof
+
+Start the deterministic fixture host from the repository root:
+
+```sh
+T4_FIXTURE_SCENARIO=stream-v1 node_modules/.bin/jiti e2e/fixture-process.ts
+```
+
+Copy the `wsUrl` from `T4_FIXTURE_READY`, then launch a target from another terminal:
+
+```sh
+T4_FIXTURE_URL=ws://127.0.0.1:PORT/fixture pnpm dev:flutter -- -d macos
+```
+
+For the Android emulator, forward the selected fixture port with `adb reverse tcp:PORT tcp:PORT`
+and keep the same loopback URL. The fixture process binds only to local loopback; do not expose it
+through Funnel or a public firewall rule.
+
+Use `pnpm check:flutter` for analysis and `pnpm test:flutter` for the Dart protocol and real-fixture
+lifecycle checks. This proof is the migration path under active development; the existing released
+clients remain authoritative until the feature and release gates pass.
+
 ### Live desktop work
 
 Install the exact verified OMP integration shown by the setup check, then run:
