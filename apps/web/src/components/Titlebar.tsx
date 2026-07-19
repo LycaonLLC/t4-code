@@ -3,7 +3,7 @@
 // Linux window controls are injected by the desktop shell later.
 import { Badge, BrandLockup, IconButton, Tooltip, TooltipPopup, TooltipTrigger } from "@t4-code/ui";
 import { useNavigate } from "@tanstack/react-router";
-import { Moon, PanelLeft, Search, Settings, Sun, UsersRound } from "lucide-react";
+import { Minimize2, Moon, PanelLeft, Search, Settings, Sun, UsersRound } from "lucide-react";
 import { useEffect } from "react";
 
 import { updateIsAvailable } from "../features/updates/update-model.ts";
@@ -84,9 +84,13 @@ function SettingsButton() {
 }
 
 export function Titlebar({
+  focusMode,
+  onExitFocus,
   onToggleRail,
   railToggle,
 }: {
+  focusMode: boolean;
+  onExitFocus: () => void;
   onToggleRail: () => void;
   railToggle: RailTogglePresentation;
 }) {
@@ -116,6 +120,23 @@ export function Titlebar({
       </Tooltip>
       <BrandLockup className="min-w-0" />
       <div className="flex-1" />
+      {focusMode && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <IconButton
+                aria-label="Exit focus mode"
+                className="size-11 sm:size-7"
+                onClick={onExitFocus}
+                size="icon-sm"
+              >
+                <Minimize2 />
+              </IconButton>
+            }
+          />
+          <TooltipPopup side="bottom">Exit focus mode (Ctrl+Shift+F)</TooltipPopup>
+        </Tooltip>
+      )}
       {rendererPlatform.mode === "browser" && (
         <Tooltip>
           <TooltipTrigger

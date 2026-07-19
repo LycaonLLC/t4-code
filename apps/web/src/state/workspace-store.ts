@@ -88,6 +88,8 @@ export interface WorkspaceState {
   readonly railOverlayOpen: boolean;
   /** Command palette visibility; ephemeral, never persisted. */
   readonly paletteOpen: boolean;
+  /** Distraction-free presentation; ephemeral and never mutates saved panel state. */
+  readonly focusMode: boolean;
   readonly activeSessionId: string | null;
   readonly projectExpandedById: Record<string, boolean>;
   /** View-only dismissals; a current session makes its project visible again. */
@@ -105,6 +107,7 @@ export interface WorkspaceActions {
   setSessionListView(view: SessionListView): void;
   setRailOverlayOpen(open: boolean): void;
   setPaletteOpen(open: boolean): void;
+  setFocusMode(enabled: boolean): void;
   /** Make a session active and stamp it visited. */
   activateSession(sessionId: string, visitedAt: string): void;
   /** Stamp a visit; timestamps only move forward. */
@@ -137,6 +140,7 @@ const INITIAL_STATE: WorkspaceState = {
   sessionListView: "current",
   railOverlayOpen: false,
   paletteOpen: false,
+  focusMode: false,
   activeSessionId: null,
   projectExpandedById: {},
   dismissedEmptyProjectIds: {},
@@ -360,6 +364,7 @@ export function createWorkspaceStore(options: CreateWorkspaceStoreOptions): Work
     setSessionListView: (view) => set({ sessionListView: view }),
     setRailOverlayOpen: (open) => set({ railOverlayOpen: open }),
     setPaletteOpen: (open) => set({ paletteOpen: open }),
+    setFocusMode: (enabled) => set({ focusMode: enabled }),
     activateSession: (sessionId, visitedAt) =>
       set((state) => ({
         activeSessionId: sessionId,

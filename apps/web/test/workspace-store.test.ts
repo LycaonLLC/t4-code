@@ -90,6 +90,30 @@ describe("session continuity (A→B→A)", () => {
     expect(selectSessionView(s(), "A").paneOpen).toBe(false);
     expect(selectSessionView(s(), "A").paneFamily).toBe("terminals");
   });
+
+  it("keeps the underlying workspace intact while focus mode is active", () => {
+    const { store } = makeStore();
+    const state = () => store.getState();
+    state().setRailOverlayOpen(true);
+    state().togglePaneFamily("A", "activity");
+    state().setTerminalDrawerOpen("A", true);
+
+    state().setFocusMode(true);
+    expect(state().focusMode).toBe(true);
+    expect(state().railOverlayOpen).toBe(true);
+    expect(selectSessionView(state(), "A")).toMatchObject({
+      paneFamily: "activity",
+      paneOpen: true,
+      terminalDrawerOpen: true,
+    });
+
+    state().setFocusMode(false);
+    expect(selectSessionView(state(), "A")).toMatchObject({
+      paneFamily: "activity",
+      paneOpen: true,
+      terminalDrawerOpen: true,
+    });
+  });
 });
 
 describe("visited and unread", () => {
@@ -153,6 +177,7 @@ describe("persistence", () => {
     first.getState().setSessionPreviewScale("A", "actual");
     first.getState().markAttentionOutcomeSeen("A", "outcome-1");
     first.getState().setPaletteOpen(true); // ephemeral, must not persist
+    first.getState().setFocusMode(true); // ephemeral, must not persist
 
     const second = createWorkspaceStore({ persistence });
     const state = second.getState();
@@ -168,6 +193,7 @@ describe("persistence", () => {
     expect(state.dismissedEmptyProjectIds).toEqual({ "host/project": true });
     expect(state.lastSeenAttentionOutcomeBySessionKey).toEqual({ A: "outcome-1" });
     expect(state.paletteOpen).toBe(false);
+    expect(state.focusMode).toBe(false);
     expect(state.railOverlayOpen).toBe(false);
   });
 
@@ -293,9 +319,11 @@ describe("persistence", () => {
     const { store } = makeStore();
     store.getState().setPaletteOpen(true);
     store.getState().setRailOverlayOpen(true);
+    store.getState().setFocusMode(true);
     const snapshot = toPersistedWorkspace(store.getState()) as unknown as Record<string, unknown>;
     expect("paletteOpen" in snapshot).toBe(false);
     expect("railOverlayOpen" in snapshot).toBe(false);
+    expect("focusMode" in snapshot).toBe(false);
   });
 
   it("can clear an empty-project dismissal without disturbing other projects", () => {

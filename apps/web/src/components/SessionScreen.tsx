@@ -20,6 +20,7 @@ import {
   Cpu,
   FolderGit2,
   Laptop,
+  Maximize2,
   PanelsTopLeft,
   Server,
   SquareTerminal,
@@ -214,6 +215,23 @@ function WorkspaceMenu({
               <span className="font-mono text-[10px] text-muted-foreground">⌘J</span>
               {terminalOpen && <Check aria-hidden="true" className="size-4 text-accent-text" />}
             </button>
+            <div aria-hidden="true" className="my-1 h-px bg-border" />
+            <p className="px-2 pb-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+              Layout
+            </p>
+            <button
+              aria-label="Enter focus mode"
+              className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-9"
+              onClick={() => {
+                workspaceStore.getState().setFocusMode(true);
+                setOpen(false);
+              }}
+              type="button"
+            >
+              <Maximize2 aria-hidden="true" className="size-4 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate">Enter focus mode</span>
+              <span className="font-mono text-[10px] text-muted-foreground">⌘⇧F</span>
+            </button>
           </Popover.Popup>
         </Popover.Positioner>
       </Popover.Portal>
@@ -247,6 +265,7 @@ export function SessionScreen({
   const terminalDrawerOpen = useWorkspace(
     (state) => selectSessionView(state, session.id).terminalDrawerOpen,
   );
+  const focusMode = useWorkspace((state) => state.focusMode);
   const paneDocks = useMediaQuery(RIGHT_PANE_DOCK_QUERY);
   const shellData = useShellData();
   const host = shellData.hosts.find((entry) => entry.id === project.hostId);
@@ -323,7 +342,7 @@ export function SessionScreen({
             <Badge variant="outline">Preview{previewCount === 1 ? "" : ` · ${previewCount}`}</Badge>
           </Link>
         )}
-        {!archived && (
+        {!archived && !focusMode && (
           <WorkspaceMenu
             paneFamily={viewPaneFamily}
             paneOpen={viewPaneOpen}
@@ -344,10 +363,12 @@ export function SessionScreen({
               session={session}
             />
           </div>
-          {!archived && <TerminalDrawer open={terminalDrawerOpen} sessionId={session.id} />}
+          {!archived && (
+            <TerminalDrawer open={!focusMode && terminalDrawerOpen} sessionId={session.id} />
+          )}
         </div>
 
-        {!archived && paneDocks && paneRendered && activeMeta !== undefined && (
+        {!archived && !focusMode && paneDocks && paneRendered && activeMeta !== undefined && (
           <div
             aria-hidden={paneOpen ? undefined : "true"}
             className="pane-dock flex min-h-0 shrink-0"
@@ -399,7 +420,7 @@ export function SessionScreen({
         )}
       </div>
 
-      {!archived && !paneDocks && activeMeta !== undefined && (
+      {!archived && !focusMode && !paneDocks && activeMeta !== undefined && (
         <Sheet
           onOpenChange={(open) => workspaceStore.getState().setPaneOpen(session.id, open)}
           open={viewPaneOpen}

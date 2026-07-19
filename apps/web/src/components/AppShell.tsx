@@ -31,6 +31,7 @@ export function AppShell() {
   const railCollapsed = useWorkspace((state) => state.railCollapsed);
   const railWidth = useWorkspace((state) => state.railWidth);
   const railOverlayOpen = useWorkspace((state) => state.railOverlayOpen);
+  const focusMode = useWorkspace((state) => state.focusMode);
   const sessionListView = useWorkspace((state) => state.sessionListView);
   const projectExpandedById = useWorkspace((state) => state.projectExpandedById);
   const dismissedEmptyProjectIds = useWorkspace((state) => state.dismissedEmptyProjectIds);
@@ -105,7 +106,12 @@ export function AppShell() {
         // Dialog-based surfaces (palette, sheets) close themselves; the
         // docked pane is plain layout, so Escape peels it here.
         const state = workspaceStore.getState();
-        if (state.paletteOpen || state.railOverlayOpen) return;
+        if (state.paletteOpen || (state.railOverlayOpen && !state.focusMode)) return;
+        if (state.focusMode) {
+          state.setFocusMode(false);
+          event.preventDefault();
+          return;
+        }
         const activeId = state.activeSessionId;
         if (activeId !== null && selectSessionView(state, activeId).paneOpen) {
           state.setPaneOpen(activeId, false);
@@ -123,7 +129,10 @@ export function AppShell() {
       if (action.kind === "palette") {
         state.setPaletteOpen(!state.paletteOpen);
       } else if (action.kind === "toggle-rail") {
-        if (railOverlaid) state.setRailOverlayOpen(!state.railOverlayOpen);
+        if (state.focusMode) {
+          state.setFocusMode(false);
+          state.setRailCollapsed(false);
+        } else if (railOverlaid) state.setRailOverlayOpen(!state.railOverlayOpen);
         else state.setRailCollapsed(!state.railCollapsed);
       } else if (action.kind === "toggle-terminal") {
         const activeId = state.activeSessionId;
@@ -131,8 +140,15 @@ export function AppShell() {
           activeId === null ? undefined : getShellData().sessions.find((session) => session.id === activeId);
         if (activeId !== null && activeSession?.archivedAt === undefined) {
           const view = selectSessionView(state, activeId);
-          state.setTerminalDrawerOpen(activeId, !view.terminalDrawerOpen);
+          if (state.focusMode) {
+            state.setFocusMode(false);
+            state.setTerminalDrawerOpen(activeId, true);
+          } else {
+            state.setTerminalDrawerOpen(activeId, !view.terminalDrawerOpen);
+          }
         }
+      } else if (action.kind === "toggle-focus") {
+        state.setFocusMode(!state.focusMode);
       } else if (action.kind === "settings") {
         void navigate({ to: "/settings" });
       } else {
@@ -161,21 +177,26 @@ export function AppShell() {
   const railToggle = resolveRailTogglePresentation({
     overlaid: railOverlaid,
     overlayOpen: railOverlayOpen,
-    collapsed: railCollapsed,
+    collapsed: railCollapsed || focusMode,
   });
 
   return (
     <div className="flex h-full min-h-0 min-w-0 max-w-full flex-col overflow-x-hidden bg-background text-foreground">
       <Titlebar
+        focusMode={focusMode}
+        onExitFocus={() => workspaceStore.getState().setFocusMode(false)}
         onToggleRail={() => {
           const state = workspaceStore.getState();
-          if (railOverlaid) state.setRailOverlayOpen(!state.railOverlayOpen);
+          if (state.focusMode) {
+            state.setFocusMode(false);
+            state.setRailCollapsed(false);
+          } else if (railOverlaid) state.setRailOverlayOpen(!state.railOverlayOpen);
           else state.setRailCollapsed(!state.railCollapsed);
         }}
         railToggle={railToggle}
       />
       <div className="flex min-h-0 flex-1">
-        {!railOverlaid && (
+        {!railOverlaid && !focusMode && (
           <>
             <div
               className="rail-dock flex h-full shrink-0 flex-col overflow-hidden border-border/60 border-r bg-(--sidebar-background)"
@@ -227,7 +248,7 @@ export function AppShell() {
       {railOverlaid && (
         <Sheet
           onOpenChange={(open) => workspaceStore.getState().setRailOverlayOpen(open)}
-          open={railOverlayOpen}
+          open={railOverlayOpen && !focusMode}
         >
           <SheetPopup
             aria-label="Working folders and sessions"

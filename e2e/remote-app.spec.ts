@@ -1089,6 +1089,49 @@ test("opens supporting tools from one workspace menu and toggles the terminal sh
   ).toBeHidden();
 });
 
+test("temporarily hides workspace chrome in focus mode and restores it", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openSession(page, false);
+
+  const workspace = page.getByRole("button", { name: "Workspace tools", exact: true });
+  await workspace.click();
+  await page.getByRole("button", { name: "Open Activity panel", exact: true }).click();
+  await page.keyboard.press("Control+j");
+  await expect(page.getByRole("complementary", { name: "Activity", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Close terminal drawer", exact: true })).toBeVisible();
+
+  await workspace.click();
+  await page.getByRole("button", { name: "Enter focus mode", exact: true }).click();
+  await expect(page.getByRole("navigation", { name: "Working folders and sessions" })).toBeHidden();
+  await expect(page.getByRole("complementary", { name: "Activity", exact: true })).toBeHidden();
+  await expect(page.getByRole("button", { name: "Close terminal drawer", exact: true })).toBeHidden();
+  await expect(page.getByRole("button", { name: "Workspace tools", exact: true })).toBeHidden();
+
+  const exitFocus = page.getByRole("button", { name: "Exit focus mode", exact: true });
+  await expect(exitFocus).toBeVisible();
+  await exitFocus.click();
+  await expect(page.getByRole("navigation", { name: "Working folders and sessions" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Activity", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Close terminal drawer", exact: true })).toBeVisible();
+
+  await page.keyboard.press("Control+Shift+f");
+  await expect(exitFocus).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(exitFocus).toBeHidden();
+  await page.getByRole("button", { name: "Close Activity", exact: true }).click();
+  await page.getByRole("button", { name: "Close terminal drawer", exact: true }).click();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.keyboard.press("Control+Shift+f");
+  await expect(exitFocus).toBeVisible();
+  const exitBox = await exitFocus.boundingBox();
+  expect(exitBox).not.toBeNull();
+  expect(exitBox!.width).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+  expect(exitBox!.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+  await exitFocus.click();
+  await expect(page.getByRole("textbox", { name: "Message the session" })).toBeVisible();
+});
+
 test("shows verified session context and groups command-palette actions", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await openSession(page, false);

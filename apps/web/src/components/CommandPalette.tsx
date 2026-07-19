@@ -63,7 +63,7 @@ function buildItems(
   if (activeSessionId !== null && activeSessionVisible) {
     const view = selectSessionView(state, activeSessionId);
     for (const meta of PANE_FAMILY_META) {
-      const active = view.paneOpen && view.paneFamily === meta.id;
+      const active = !state.focusMode && view.paneOpen && view.paneFamily === meta.id;
       const Icon = meta.icon;
       const label = meta.id === "terminals" ? "Agent terminals" : meta.label;
       items.push({
@@ -72,30 +72,62 @@ function buildItems(
         label: active ? `Close ${label}` : `Open ${label}`,
         hint: "Workspace · Right",
         status: <Icon aria-hidden="true" className="size-3.5 text-muted-foreground" />,
-        run: () => workspaceStore.getState().togglePaneFamily(activeSessionId, meta.id),
+        run: () => {
+          const current = workspaceStore.getState();
+          const currentView = selectSessionView(current, activeSessionId);
+          if (current.focusMode) {
+            current.setFocusMode(false);
+            if (!(currentView.paneOpen && currentView.paneFamily === meta.id)) {
+              current.togglePaneFamily(activeSessionId, meta.id);
+            }
+          } else {
+            current.togglePaneFamily(activeSessionId, meta.id);
+          }
+        },
       });
     }
     items.push({
       id: "action:terminal",
       group: "workspace",
-      label: view.terminalDrawerOpen ? "Close terminal" : "Open terminal",
+      label: !state.focusMode && view.terminalDrawerOpen ? "Close terminal" : "Open terminal",
       hint: "Workspace · Below · ⌘J",
       status: <SquareTerminal aria-hidden="true" className="size-3.5 text-muted-foreground" />,
       run: () => {
         const current = workspaceStore.getState();
         const currentView = selectSessionView(current, activeSessionId);
-        current.setTerminalDrawerOpen(activeSessionId, !currentView.terminalDrawerOpen);
+        if (current.focusMode) {
+          current.setFocusMode(false);
+          current.setTerminalDrawerOpen(activeSessionId, true);
+        } else {
+          current.setTerminalDrawerOpen(activeSessionId, !currentView.terminalDrawerOpen);
+        }
       },
     });
   }
   items.push(
     {
+      id: "action:focus",
+      group: "workspace",
+      label: state.focusMode ? "Exit focus mode" : "Enter focus mode",
+      hint: "⌘⇧F",
+      status: null,
+      run: () => workspaceStore.getState().setFocusMode(!state.focusMode),
+    },
+    {
       id: "action:rail",
       group: "workspace",
-      label: state.railCollapsed ? "Show session list" : "Hide session list",
+      label: state.focusMode || state.railCollapsed ? "Show session list" : "Hide session list",
       hint: "Sidebar",
       status: null,
-      run: () => workspaceStore.getState().setRailCollapsed(!state.railCollapsed),
+      run: () => {
+        const current = workspaceStore.getState();
+        if (current.focusMode) {
+          current.setFocusMode(false);
+          current.setRailCollapsed(false);
+        } else {
+          current.setRailCollapsed(!current.railCollapsed);
+        }
+      },
     },
     {
       id: "action:inbox",

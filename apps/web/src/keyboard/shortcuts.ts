@@ -16,20 +16,23 @@ export type ShortcutAction =
   | { readonly kind: "palette" }
   | { readonly kind: "toggle-rail" }
   | { readonly kind: "toggle-terminal" }
+  | { readonly kind: "toggle-focus" }
   | { readonly kind: "settings" }
   | { readonly kind: "session-index"; readonly index: number };
 
 /**
  * Map a keydown to a shell action. Cmd/Ctrl+K → palette, Cmd/Ctrl+B → rail,
- * Cmd/Ctrl+J → terminal, Cmd/Ctrl+Comma → settings,
+ * Cmd/Ctrl+J → terminal, Cmd/Ctrl+Shift+F → focus mode,
+ * Cmd/Ctrl+Comma → settings,
  * Cmd/Ctrl+1..9 → visible session by position.
  * Anything else is null.
  */
 export function resolveShortcut(event: ShortcutEventLike): ShortcutAction | null {
   const mod = event.metaKey || event.ctrlKey;
-  if (!mod || event.altKey || event.shiftKey) return null;
+  if (!mod || event.altKey) return null;
 
   const key = event.key.toLowerCase();
+  if (event.shiftKey) return key === "f" ? { kind: "toggle-focus" } : null;
   if (key === "k") return { kind: "palette" };
   if (key === "b") return { kind: "toggle-rail" };
   if (key === "j") return { kind: "toggle-terminal" };
