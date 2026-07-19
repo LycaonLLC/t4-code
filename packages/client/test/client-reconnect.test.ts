@@ -931,7 +931,6 @@ describe("OmpClient reconnect stability", () => {
       "sessions.prompt",
       "sessions.control",
       "sessions.manage",
-      "preview.control",
       "preview.read",
     ];
     const first = new FakeTransport({
@@ -995,7 +994,7 @@ describe("OmpClient reconnect stability", () => {
     await client.close();
   });
 
-  it("does not request preview state when reconnecting without preview control", async () => {
+  it("does not request preview state when reconnecting without preview.read", async () => {
     const clock = new FakeClock();
     const respondAttach = (frame: ClientFrame, transport: FakeTransport): void => {
       if (frame.type === "command" && frame.command === "session.attach")
