@@ -1,44 +1,22 @@
-## Faster startup, reliable phone access, and a browser demo
+## A session rail built for large libraries
 
-T4 Code v0.1.28 makes the normal first-run path substantially easier. The bundled OMP backend now opens its socket before scanning session history, builds the session list from small bounded previews, and loads a full transcript only when that session is first used. On a real Mac profile with 831 sessions, initial indexing fell from 59.2 seconds to 4.0 seconds while preserving complete transcripts on demand.
+T4 Code v0.1.29 makes a large session library easier to navigate. The rail now supports text search, activity filters, newest/oldest sorting, grouped and flat layouts, collapsible project folders, and saved display preferences. Those controls follow the Codex desktop organization model while keeping OMP as the source of truth.
 
-Phone access configured through the desktop QR flow now restores itself when the app launches. If the private gateway stopped after a reboot or app update, T4 reinstalls the same verified configuration and waits for a healthy local runtime instead of leaving the saved phone route broken.
+Project menus can create a session in that folder, reveal the folder in the system file manager, collapse the group, or hide it from the rail. Hidden projects are not deleted and can be restored from the filter menu. The reveal action is deliberately narrow: the host accepts only project paths already present in its session catalog.
 
-The public site now ships a no-install browser demo with fixture sessions, panes, agent views, and browser previews. The left rail also has clearer grouping and larger touch targets.
+## Workspace polish and stable empty panes
 
-## Signed Mac backend startup
+The workspace shell, transcript, home pane, composer, and supporting panes now share a clearer and denser visual hierarchy. Empty activity, agent, file, review, and terminal panes keep their normal header and close control visible, so an empty result never traps the user in a pane without navigation.
 
-The v0.1.27 signing fix remains in place. Packaging waits for the Promise-based signer to finish before notarization begins. The signed, bundled OMP backend can load OMP's native module, with that permission applied only to the OMP executable inside the app. The top-level T4 Code app and its Electron helpers keep normal library validation enabled.
+## More reliable macOS upgrades
 
-The v0.1.26 tag did not publish release files: its Mac job stopped when notarization detected that the legacy callback signer had returned before signing finished. No partial v0.1.26 GitHub Release was published.
-
-The protected release job verifies this boundary in both the DMG and ZIP before publication. It also checks the original OMP download's pinned size and SHA-256 hash, the project's exact Developer ID certificate and Team ID, hardened runtime, secure timestamp, stapled notarization ticket, and Gatekeeper result. Signing secrets are never bundled into the app.
-
-The v0.1.25 signed-backend integrity fix remains in place: the app accepts either the exact original OMP download or an executable signed with the project's pinned Developer ID certificate, then copies and rechecks the actual signed bytes atomically.
-
-## One inbox for sessions that need attention
-
-The attention inbox gathers sessions waiting for a decision, confirmation, or reply. It keeps the host authoritative: T4 projects the host's events into a useful list, deduplicates repeated signals, and routes an action back through the owning session instead of inventing local state.
-
-Older runtimes remain usable. Attention controls appear only when the connected host advertises the required contract.
-
-## Clearer connection health
-
-Session screens now distinguish reconnecting, delayed, and degraded transport states. Provider diagnostics explain what T4 last confirmed and whether it is safe to act, rather than collapsing every interruption into a generic disconnected message.
-
-## Faster bounded projections
-
-Transcript and attention projections now avoid repeated full-history work where a bounded update is sufficient. Ordering, deduplication, retention, and host-authority checks remain intact.
-
-## Browser preview workspace
-
-Session-linked browser previews now open in a dedicated workspace. The client projects bounded, sanitized preview state from the host, maps pointer and keyboard input through explicit permission gates, and uses leases so two clients cannot silently control the same preview at once. Preview activity records origins and paths without storing query strings, page pixels, credentials, or backend error text.
+When a bundled OMP upgrade temporarily fails to stop the existing macOS service, T4 Code now retries the stop-and-replace sequence. This avoids leaving the installed backend half-updated during normal desktop upgrades while preserving the existing signed-runtime checks.
 
 ## Runtime provenance
 
-T4 Code v0.1.28 vendors app-wire 0.6.1 from integration commit [e3e15c03](https://github.com/lyc-aon/oh-my-pi/commit/e3e15c03ae95ebbda5f26495cd21213cc53518b1), source tree `e0f32b279eb4b8cbc403e47d765a226bee99c99f`. The client contract remains `omp-app/1`.
+T4 Code v0.1.29 vendors app-wire 0.6.2 from integration commit [04229b1f](https://github.com/lyc-aon/oh-my-pi/commit/04229b1f46547ac7c0617e55a993496ec9725f46), source tree `8400a3af618e8af11cccf6b20aadcf3a22baf9a1`. The client contract remains `omp-app/1`.
 
-The verified OMP 17.0.5 runtime is built from commit [25295f6f](https://github.com/lyc-aon/oh-my-pi/commit/25295f6f2e03033cb545c513f476e7e51532524c) and tagged [t4code-17.0.5-appserver-6](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-6). It provides the appserver used by the desktop and remote workflows, including bounded lazy session indexing, cross-session attention and transcript search, and the complete negotiated browser-preview command surface. Unsupported optional capabilities remain hidden when the host does not advertise them.
+The verified OMP 17.0.5 runtime is built from commit [04229b1f](https://github.com/lyc-aon/oh-my-pi/commit/04229b1f46547ac7c0617e55a993496ec9725f46) and tagged [t4code-17.0.5-appserver-7](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-7). It adds privacy-safe local project reveal to the existing appserver capabilities, including lazy session indexing, cross-session attention and transcript search, and the negotiated browser-preview command surface. Unsupported optional capabilities remain hidden when the host does not advertise them.
 
 The integration is based on the official upstream [v17.0.5 tag](https://github.com/can1357/oh-my-pi/tree/v17.0.5), commit [9fd6e971](https://github.com/can1357/oh-my-pi/commit/9fd6e97113f5ed3a847e66d346970efdf8afcad9). Official upstream OMP v17.0.5 has no `appserver` command and cannot host T4 Code.
 
