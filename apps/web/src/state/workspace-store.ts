@@ -8,10 +8,11 @@
 import { clampWidth } from "@t4-code/ui";
 import { createStore, type StoreApi } from "zustand/vanilla";
 
+import type { RailFilter, RailOrganization, RailSort } from "../lib/session-tree.ts";
 import type { SessionListView } from "../lib/workspace-data.ts";
 import type { WorkspacePersistence } from "./persistence.ts";
 
-export const WORKSPACE_STATE_VERSION = 2;
+export const WORKSPACE_STATE_VERSION = 3;
 export const WORKSPACE_STORAGE_KEY = "omp:workspace:v1";
 
 export const RAIL_WIDTH = { minWidth: 208, maxWidth: 400, defaultWidth: 256 } as const;
@@ -69,6 +70,12 @@ interface PersistedWorkspaceState {
   readonly railWidth: number;
   readonly railCollapsed: boolean;
   readonly sessionListView?: SessionListView;
+  readonly railOrganization?: RailOrganization;
+  readonly railSort?: RailSort;
+  readonly pinnedProjectIds?: Record<string, true>;
+  readonly pinnedSessionIds?: Record<string, true>;
+  readonly projectManualOrder?: readonly string[];
+  readonly sessionManualOrderByProjectId?: Readonly<Record<string, readonly string[]>>;
   readonly activeSessionId: string | null;
   readonly projectExpandedById: Record<string, boolean>;
   /** Empty Current-tab project headers the user explicitly removed. */
@@ -84,6 +91,15 @@ export interface WorkspaceState {
   readonly railWidth: number;
   readonly railCollapsed: boolean;
   readonly sessionListView: SessionListView;
+  readonly railOrganization: RailOrganization;
+  readonly railSort: RailSort;
+  /** Search and status filters are intentionally ephemeral so a restart never hides work. */
+  readonly railQuery: string;
+  readonly railFilter: RailFilter;
+  readonly pinnedProjectIds: Record<string, true>;
+  readonly pinnedSessionIds: Record<string, true>;
+  readonly projectManualOrder: readonly string[];
+  readonly sessionManualOrderByProjectId: Readonly<Record<string, readonly string[]>>;
   /** Narrow-width overlay rail; ephemeral, never persisted. */
   readonly railOverlayOpen: boolean;
   /** Command palette visibility; ephemeral, never persisted. */
@@ -105,6 +121,14 @@ export interface WorkspaceActions {
   setRailWidth(width: number): void;
   setRailCollapsed(collapsed: boolean): void;
   setSessionListView(view: SessionListView): void;
+  setRailOrganization(organization: RailOrganization): void;
+  setRailSort(sort: RailSort): void;
+  setRailQuery(query: string): void;
+  setRailFilter(filter: RailFilter): void;
+  setProjectPinned(projectId: string, pinned: boolean): void;
+  setSessionPinned(sessionId: string, pinned: boolean): void;
+  setProjectManualOrder(projectIds: readonly string[]): void;
+  setSessionManualOrder(projectId: string, sessionIds: readonly string[]): void;
   setRailOverlayOpen(open: boolean): void;
   setPaletteOpen(open: boolean): void;
   setFocusMode(enabled: boolean): void;
@@ -123,10 +147,7 @@ export interface WorkspaceActions {
   setPaneOpen(sessionId: string, open: boolean): void;
   setPaneWidth(sessionId: string, width: number): void;
   setTerminalDrawerOpen(sessionId: string, open: boolean): void;
-  setSessionPreview(
-    sessionId: string,
-    selection: SessionPreviewSelection,
-  ): void;
+  setSessionPreview(sessionId: string, selection: SessionPreviewSelection): void;
   setSessionPreviewScale(sessionId: string, scale: PreviewScaleMode): void;
 }
 
@@ -138,6 +159,14 @@ const INITIAL_STATE: WorkspaceState = {
   railWidth: RAIL_WIDTH.defaultWidth,
   railCollapsed: false,
   sessionListView: "current",
+  railOrganization: "by-project",
+  railSort: "priority",
+  railQuery: "",
+  railFilter: "all",
+  pinnedProjectIds: {},
+  pinnedSessionIds: {},
+  projectManualOrder: [],
+  sessionManualOrderByProjectId: {},
   railOverlayOpen: false,
   paletteOpen: false,
   focusMode: false,
@@ -163,6 +192,28 @@ function sanitizeTrueRecord(value: unknown): Record<string, true> {
   const result: Record<string, true> = {};
   for (const [key, entry] of Object.entries(value)) {
     if (entry === true) result[key] = true;
+  }
+  return result;
+}
+
+function sanitizeIdList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(
+      value.filter(
+        (entry): entry is string =>
+          typeof entry === "string" && entry.length > 0 && entry.length <= 1_024,
+      ),
+    ),
+  ].slice(0, 10_000);
+}
+
+function sanitizeNestedIdLists(value: unknown): Record<string, readonly string[]> {
+  if (typeof value !== "object" || value === null) return {};
+  const result: Record<string, readonly string[]> = {};
+  for (const [key, entry] of Object.entries(value).slice(0, 1_000)) {
+    if (key.length === 0 || key.length > 1_024) continue;
+    result[key] = sanitizeIdList(entry);
   }
   return result;
 }
@@ -238,7 +289,8 @@ function sanitizeSessionView(value: unknown): SessionViewState | null {
 export function parsePersistedWorkspace(raw: unknown): WorkspaceState | null {
   if (typeof raw !== "object" || raw === null) return null;
   const parsed = raw as Partial<PersistedWorkspaceState>;
-  if (parsed.version !== 1 && parsed.version !== WORKSPACE_STATE_VERSION) return null;
+  if (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== WORKSPACE_STATE_VERSION)
+    return null;
 
   const sessionViewById: Record<string, SessionViewState> = {};
   if (typeof parsed.sessionViewById === "object" && parsed.sessionViewById !== null) {
@@ -260,6 +312,13 @@ export function parsePersistedWorkspace(raw: unknown): WorkspaceState | null {
         : RAIL_WIDTH.defaultWidth,
     railCollapsed: parsed.railCollapsed === true,
     sessionListView: parsed.sessionListView === "archived" ? "archived" : "current",
+    railOrganization: parsed.railOrganization === "flat" ? "flat" : "by-project",
+    railSort:
+      parsed.railSort === "updated" || parsed.railSort === "manual" ? parsed.railSort : "priority",
+    pinnedProjectIds: sanitizeTrueRecord(parsed.pinnedProjectIds),
+    pinnedSessionIds: sanitizeTrueRecord(parsed.pinnedSessionIds),
+    projectManualOrder: sanitizeIdList(parsed.projectManualOrder),
+    sessionManualOrderByProjectId: sanitizeNestedIdLists(parsed.sessionManualOrderByProjectId),
     activeSessionId: typeof parsed.activeSessionId === "string" ? parsed.activeSessionId : null,
     projectExpandedById: sanitizeBooleanRecord(parsed.projectExpandedById),
     dismissedEmptyProjectIds: sanitizeTrueRecord(parsed.dismissedEmptyProjectIds),
@@ -278,6 +337,12 @@ export function toPersistedWorkspace(state: WorkspaceState): PersistedWorkspaceS
     railWidth: state.railWidth,
     railCollapsed: state.railCollapsed,
     sessionListView: state.sessionListView,
+    railOrganization: state.railOrganization,
+    railSort: state.railSort,
+    pinnedProjectIds: state.pinnedProjectIds,
+    pinnedSessionIds: state.pinnedSessionIds,
+    projectManualOrder: state.projectManualOrder,
+    sessionManualOrderByProjectId: state.sessionManualOrderByProjectId,
     activeSessionId: state.activeSessionId,
     projectExpandedById: state.projectExpandedById,
     dismissedEmptyProjectIds: state.dismissedEmptyProjectIds,
@@ -362,6 +427,33 @@ export function createWorkspaceStore(options: CreateWorkspaceStoreOptions): Work
     setRailWidth: (width) => set({ railWidth: clampWidth(width, RAIL_WIDTH) }),
     setRailCollapsed: (collapsed) => set({ railCollapsed: collapsed }),
     setSessionListView: (view) => set({ sessionListView: view }),
+    setRailOrganization: (railOrganization) => set({ railOrganization }),
+    setRailSort: (railSort) => set({ railSort }),
+    setRailQuery: (railQuery) => set({ railQuery: railQuery.slice(0, 512) }),
+    setRailFilter: (railFilter) => set({ railFilter }),
+    setProjectPinned: (projectId, pinned) =>
+      set((state) => {
+        const pinnedProjectIds = { ...state.pinnedProjectIds };
+        if (pinned) pinnedProjectIds[projectId] = true;
+        else delete pinnedProjectIds[projectId];
+        return { pinnedProjectIds };
+      }),
+    setSessionPinned: (sessionId, pinned) =>
+      set((state) => {
+        const pinnedSessionIds = { ...state.pinnedSessionIds };
+        if (pinned) pinnedSessionIds[sessionId] = true;
+        else delete pinnedSessionIds[sessionId];
+        return { pinnedSessionIds };
+      }),
+    setProjectManualOrder: (projectManualOrder) =>
+      set({ projectManualOrder: sanitizeIdList(projectManualOrder) }),
+    setSessionManualOrder: (projectId, sessionIds) =>
+      set((state) => ({
+        sessionManualOrderByProjectId: {
+          ...state.sessionManualOrderByProjectId,
+          [projectId]: sanitizeIdList(sessionIds),
+        },
+      })),
     setRailOverlayOpen: (open) => set({ railOverlayOpen: open }),
     setPaletteOpen: (open) => set({ paletteOpen: open }),
     setFocusMode: (enabled) => set({ focusMode: enabled }),

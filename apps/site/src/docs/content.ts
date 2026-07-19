@@ -207,7 +207,20 @@ const localSessions: DocTopic = {
     },
     {
       kind: "note",
-      text: "Removing a shortcut is view state for that T4 Code client, so desktop and phone can differ. Archived sessions remain visible, and their folder menu can restore the shortcut. A new or restored Current session always makes the folder visible. T4 Code still does not alias, pin, reorder, delete, or rename the underlying folder.",
+      text: "Removing, pinning, or manually ordering shortcuts is view state for that T4 Code client, so desktop and phone can differ. Archived sessions remain visible, and their folder menu can restore a removed shortcut. A new or restored Current session always makes the folder visible. T4 Code never moves, deletes, or renames the underlying folder.",
+    },
+    { kind: "h2", id: "local-sessions-organize", text: "Organize a large session library" },
+    {
+      kind: "p",
+      text: "Use the rail's organization menu to group sessions by working folder or combine them into one list. Sort by **Priority**, **Last updated**, or **Manual order**. Priority puts approval requests, questions, running work, unread completions, errors, and plans ahead of ordinary recent work in that order.",
+    },
+    {
+      kind: "p",
+      text: "The rail search matches session titles, models, working folders, and host names. Quick filters narrow the list to Attention, Running, Unread, or Errors. Search and filters reset when T4 Code restarts so an old filter never makes work look missing.",
+    },
+    {
+      kind: "p",
+      text: "Pin a session or working folder from its action menu to create a shortcut in the Pinned section. In Manual order, the same menus provide Move up and Move down actions. Large folders initially draw a bounded set of rows; **Show more** reveals the next set without forcing the entire library into the page at once.",
     },
     {
       kind: "h2",

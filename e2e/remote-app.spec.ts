@@ -748,7 +748,7 @@ test("settles a typed incompatible desktop inspection and recovers without a sta
     control.mode = "resolve";
     control.resolvePending?.({ definition: "current", service: "running", diagnostics: "" });
   });
-  await expect(page.getByText("Running", { exact: true })).toBeVisible();
+  await expect(page.getByRole("main").getByText("Running", { exact: true })).toBeVisible();
   await page.clock.fastForward(60_000);
   expect(await inspectCalls()).toBe(2);
 });
@@ -1329,7 +1329,9 @@ test("manages a session from a phone and converges another live client", async (
     const rail = page.getByRole("dialog", { name: "Working folders and sessions" });
     await expect(rail).toBeVisible();
     await expect(rail.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
-    await expect(rail.getByRole("button", { name: /Attention/ })).toBeVisible();
+    await expect(
+      rail.getByRole("button", { name: "Open attention inbox", exact: true }),
+    ).toBeVisible();
     await expect(rail.getByRole("button", { name: "Current · 1", exact: true })).toBeVisible();
     await expect(rail.getByRole("button", { name: "Archived · 0", exact: true })).toBeVisible();
 

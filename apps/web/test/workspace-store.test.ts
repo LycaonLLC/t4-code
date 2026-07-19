@@ -149,11 +149,13 @@ describe("visited and unread", () => {
 
   it("tracks the latest seen attention outcome per session", () => {
     const { store } = makeStore();
-    expect(isAttentionOutcomeSeen(store.getState().lastSeenAttentionOutcomeBySessionKey, "A", "one"))
-      .toBe(false);
+    expect(
+      isAttentionOutcomeSeen(store.getState().lastSeenAttentionOutcomeBySessionKey, "A", "one"),
+    ).toBe(false);
     store.getState().markAttentionOutcomeSeen("A", "one");
-    expect(isAttentionOutcomeSeen(store.getState().lastSeenAttentionOutcomeBySessionKey, "A", "one"))
-      .toBe(true);
+    expect(
+      isAttentionOutcomeSeen(store.getState().lastSeenAttentionOutcomeBySessionKey, "A", "one"),
+    ).toBe(true);
     store.getState().markAttentionOutcomeSeen("A", "two");
     expect(store.getState().lastSeenAttentionOutcomeBySessionKey).toEqual({ A: "two" });
   });
@@ -167,6 +169,14 @@ describe("persistence", () => {
     first.getState().setSessionDraft("A", "resume me");
     first.getState().setRailWidth(300);
     first.getState().setTheme("dark");
+    first.getState().setRailOrganization("flat");
+    first.getState().setRailSort("manual");
+    first.getState().setProjectPinned("project-a", true);
+    first.getState().setSessionPinned("A", true);
+    first.getState().setProjectManualOrder(["project-b", "project-a"]);
+    first.getState().setSessionManualOrder("project-a", ["B", "A"]);
+    first.getState().setRailQuery("hidden on restart");
+    first.getState().setRailFilter("errors");
     first.getState().setEmptyProjectDismissed("host/project", true);
     first.getState().setSessionPreview("A", {
       previewId: "preview-a",
@@ -190,6 +200,14 @@ describe("persistence", () => {
     expect(selectSessionView(state, "A").previewScale).toBe("actual");
     expect(state.railWidth).toBe(300);
     expect(state.theme).toBe("dark");
+    expect(state.railOrganization).toBe("flat");
+    expect(state.railSort).toBe("manual");
+    expect(state.pinnedProjectIds).toEqual({ "project-a": true });
+    expect(state.pinnedSessionIds).toEqual({ A: true });
+    expect(state.projectManualOrder).toEqual(["project-b", "project-a"]);
+    expect(state.sessionManualOrderByProjectId).toEqual({ "project-a": ["B", "A"] });
+    expect(state.railQuery).toBe("");
+    expect(state.railFilter).toBe("all");
     expect(state.dismissedEmptyProjectIds).toEqual({ "host/project": true });
     expect(state.lastSeenAttentionOutcomeBySessionKey).toEqual({ A: "outcome-1" });
     expect(state.paletteOpen).toBe(false);
@@ -229,6 +247,12 @@ describe("persistence", () => {
       dismissedEmptyProjectIds: {},
       lastVisitedAtBySessionId: { A: "2026-07-11T10:00:00Z" },
       lastSeenAttentionOutcomeBySessionKey: {},
+      railOrganization: "by-project",
+      railSort: "priority",
+      pinnedProjectIds: {},
+      pinnedSessionIds: {},
+      projectManualOrder: [],
+      sessionManualOrderByProjectId: {},
     });
     expect(parsed?.sessionViewById.A).toMatchObject({
       scrollTop: 42,
@@ -278,6 +302,12 @@ describe("persistence", () => {
       activeSessionId: 42,
       projectExpandedById: { good: true, bad: "nope" },
       dismissedEmptyProjectIds: { good: true, falseEntry: false, bad: "yes" },
+      railOrganization: "tiles",
+      railSort: "random",
+      pinnedProjectIds: { good: true, bad: false },
+      pinnedSessionIds: { session: true, bad: "yes" },
+      projectManualOrder: ["project", "project", 42],
+      sessionManualOrderByProjectId: { project: ["session", "session", null] },
       lastVisitedAtBySessionId: { good: "2026-07-11T10:00:00Z", bad: "not a date" },
       lastSeenAttentionOutcomeBySessionKey: {
         good: "outcome-1",
@@ -303,6 +333,12 @@ describe("persistence", () => {
     expect(parsed?.activeSessionId).toBeNull();
     expect(parsed?.projectExpandedById).toEqual({ good: true });
     expect(parsed?.dismissedEmptyProjectIds).toEqual({ good: true });
+    expect(parsed?.railOrganization).toBe("by-project");
+    expect(parsed?.railSort).toBe("priority");
+    expect(parsed?.pinnedProjectIds).toEqual({ good: true });
+    expect(parsed?.pinnedSessionIds).toEqual({ session: true });
+    expect(parsed?.projectManualOrder).toEqual(["project"]);
+    expect(parsed?.sessionManualOrderByProjectId).toEqual({ project: ["session"] });
     expect(parsed?.lastVisitedAtBySessionId).toEqual({ good: "2026-07-11T10:00:00Z" });
     expect(parsed?.lastSeenAttentionOutcomeBySessionKey).toEqual({ good: "outcome-1" });
     const view = parsed?.sessionViewById["good"];
@@ -320,10 +356,14 @@ describe("persistence", () => {
     store.getState().setPaletteOpen(true);
     store.getState().setRailOverlayOpen(true);
     store.getState().setFocusMode(true);
+    store.getState().setRailQuery("temporary");
+    store.getState().setRailFilter("running");
     const snapshot = toPersistedWorkspace(store.getState()) as unknown as Record<string, unknown>;
     expect("paletteOpen" in snapshot).toBe(false);
     expect("railOverlayOpen" in snapshot).toBe(false);
     expect("focusMode" in snapshot).toBe(false);
+    expect("railQuery" in snapshot).toBe(false);
+    expect("railFilter" in snapshot).toBe(false);
   });
 
   it("can clear an empty-project dismissal without disturbing other projects", () => {
@@ -335,6 +375,19 @@ describe("persistence", () => {
     expect(store.getState().dismissedEmptyProjectIds).toEqual({
       "same-name/project-b": true,
     });
+  });
+
+  it("pins and unpins shortcuts without touching runtime session state", () => {
+    const { store } = makeStore();
+    store.getState().setProjectPinned("project-a", true);
+    store.getState().setSessionPinned("session-a", true);
+    expect(store.getState().pinnedProjectIds).toEqual({ "project-a": true });
+    expect(store.getState().pinnedSessionIds).toEqual({ "session-a": true });
+
+    store.getState().setProjectPinned("project-a", false);
+    store.getState().setSessionPinned("session-a", false);
+    expect(store.getState().pinnedProjectIds).toEqual({});
+    expect(store.getState().pinnedSessionIds).toEqual({});
   });
 });
 
