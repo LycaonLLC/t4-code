@@ -126,6 +126,29 @@ export function AppShell() {
       sessionManualOrderByProjectId,
     ],
   );
+  const allArchivedGroups = useMemo(
+    () =>
+      buildProjectGroups(
+        shellData,
+        projectExpandedById,
+        lastVisitedAtBySessionId,
+        "archived",
+        {},
+        { sort: railSort, projectManualOrder, sessionManualOrderByProjectId },
+      ),
+    [
+      shellData,
+      projectExpandedById,
+      lastVisitedAtBySessionId,
+      railSort,
+      projectManualOrder,
+      sessionManualOrderByProjectId,
+    ],
+  );
+  const allSessionGroups = useMemo(
+    () => [...allCurrentGroups, ...allArchivedGroups],
+    [allArchivedGroups, allCurrentGroups],
+  );
   const groups = sessionListView === "archived" ? archivedGroups : currentGroups;
   const currentCount = shellData.sessions.filter(
     (session) => session.archivedAt === undefined,
@@ -314,6 +337,7 @@ export function AppShell() {
                     groups={groups}
                     hiddenEmptyProjectIds={hiddenEmptyProjectIds}
                     nowMs={nowMs}
+                    pinnedSessionGroups={allSessionGroups}
                     view={sessionListView}
                   />
                 </div>
@@ -369,6 +393,7 @@ export function AppShell() {
                 groups={groups}
                 hiddenEmptyProjectIds={hiddenEmptyProjectIds}
                 nowMs={nowMs}
+                pinnedSessionGroups={allSessionGroups}
                 view={sessionListView}
               />
             </div>

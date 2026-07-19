@@ -1181,6 +1181,7 @@ export function Rail({
   groups,
   hiddenEmptyProjectIds,
   nowMs,
+  pinnedSessionGroups,
   view,
   currentCount,
   archivedCount,
@@ -1190,6 +1191,7 @@ export function Rail({
   groups: readonly ProjectGroup[];
   hiddenEmptyProjectIds: ReadonlySet<string>;
   nowMs: number;
+  pinnedSessionGroups: readonly ProjectGroup[];
   view: SessionListView;
   currentCount: number;
   archivedCount: number;
@@ -1216,8 +1218,8 @@ export function Rail({
     [groups, sessionManualOrderByProjectId, sort],
   );
   const pinnedSourceEntries = useMemo(
-    () => flattenProjectGroups(allGroups, sort, sessionManualOrderByProjectId["*"]),
-    [allGroups, sessionManualOrderByProjectId, sort],
+    () => flattenProjectGroups(pinnedSessionGroups, sort, sessionManualOrderByProjectId["*"]),
+    [pinnedSessionGroups, sessionManualOrderByProjectId, sort],
   );
   const pinnedEntries = useMemo(() => {
     const seen = new Set<string>();
