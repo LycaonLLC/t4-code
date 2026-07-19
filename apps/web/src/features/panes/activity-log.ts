@@ -2,6 +2,7 @@
 // filter/search them, redact secrets from the raw inspector, and export.
 // Pure functions — the store applies them, tests drive them directly.
 import { isSessionEvent, type SessionEvent } from "@t4-code/protocol";
+import type { PreviewEventProjection, PreviewFreshness } from "@t4-code/client";
 
 import { sessionEventSpec } from "../session-runtime/session-event-vocabulary.ts";
 import type { ActivityEntry, ActivityFilter, ActivityKind } from "./model.ts";
@@ -80,6 +81,71 @@ export function classifySessionEvent(
     raw: event,
     unknown: false,
     shellOutput: kind === "shell" ? (readString(event, "data") ?? "") : null,
+  };
+}
+
+function previewEventAt(event: PreviewEventProjection, fallbackAt: string): string {
+  if (
+    event.timestamp === undefined ||
+    !Number.isFinite(event.timestamp) ||
+    event.timestamp < 0 ||
+    event.timestamp > 8.64e15
+  ) {
+    return fallbackAt;
+  }
+  return new Date(event.timestamp).toISOString();
+}
+
+
+/**
+ * Browser-preview activity is projection metadata, not a browser audit log.
+ * Keep only the already-sanitized origin/path, capture identity, timestamp,
+ * and a generic error outcome. Query/hash values, pixels, credentials, and
+ * backend error text never enter Activity or its export payload.
+ */
+export function classifyPreviewEvent(
+  event: PreviewEventProjection,
+  seq: number,
+  fallbackAt: string,
+  freshness?: PreviewFreshness,
+): ActivityEntry {
+  const url = event.url === undefined ? null : `${event.url.origin}${event.url.pathname}`;
+  const context = freshness === "cached" || freshness === "stale" ? freshness : null;
+  const detailParts: string[] = [];
+  if (url !== null) detailParts.push(url);
+  if (event.type === "capture" && event.captureId !== undefined) {
+    detailParts.push(`Capture ${event.captureId}`);
+  }
+  if (context !== null) detailParts.push(context);
+  const title =
+    event.type === "launch"
+      ? "Browser preview launched"
+      : event.type === "navigation"
+        ? "Browser preview navigated"
+        : event.type === "capture"
+          ? "Browser preview captured"
+          : "Browser preview failed";
+  return {
+    seq,
+    at: previewEventAt(event, fallbackAt),
+    kind: event.type === "error" ? "error" : "system",
+    title,
+    detail: event.type === "error" ? "The browser preview request did not complete." : (detailParts.join(" · ") || null),
+    agentId: null,
+    terminalId: null,
+    raw: {
+      type: `preview.${event.type}`,
+      previewId: event.previewId,
+      cursor: event.cursor,
+      ...(url === null ? {} : { url }),
+      ...(event.type === "capture" && event.captureId !== undefined
+        ? { captureId: event.captureId }
+        : {}),
+      ...(event.timestamp === undefined ? {} : { timestamp: event.timestamp }),
+      ...(context === null ? {} : { freshness: context }),
+    },
+    unknown: false,
+    shellOutput: null,
   };
 }
 

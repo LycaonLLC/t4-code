@@ -16,6 +16,7 @@ import {
   ResultImages,
 } from "../src/features/transcript/tool-render/parts.tsx";
 import type { ToolRenderProps } from "../src/features/transcript/tool-render/types.ts";
+import { sessionPreviewDestination } from "../src/features/transcript/SessionMain.tsx";
 import { initialProjection, reduceTranscript } from "../src/features/transcript/projection.ts";
 import { deriveTranscriptRows } from "../src/features/transcript/rows.ts";
 
@@ -758,5 +759,31 @@ describe("OMP semantic tool renderers", () => {
       />,
     );
     expect(images).toBe("");
+  });
+  it("offers the live session preview without changing export renderers", () => {
+    const renderer = resolveToolRenderer("browser");
+    const Body = renderer.Body;
+    expect(Body).toBeDefined();
+    let openCount = 0;
+    const props: ToolRenderProps = {
+      name: "browser",
+      args: { action: "open", url: "https://example.test/" },
+      host: {
+        openPreview: () => {
+          openCount += 1;
+        },
+      },
+    };
+    const live = Body === undefined ? "" : renderToStaticMarkup(<Body {...props} />);
+    expect(live).toContain("Open Preview");
+    expect(live).toContain('aria-label="Open browser preview for this session"');
+    expect(openCount).toBe(0);
+    const exported =
+      Body === undefined ? "" : renderToStaticMarkup(<Body {...props} host={undefined} />);
+    expect(exported).not.toContain("Open Preview");
+    expect(sessionPreviewDestination("host-a/session-a")).toEqual({
+      params: { sessionId: "host-a/session-a" },
+      to: "/sessions/$sessionId/preview",
+    });
   });
 });

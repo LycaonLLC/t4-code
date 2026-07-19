@@ -22,6 +22,7 @@ export const PANE_FAMILIES = ["agents", "activity", "review", "files", "terminal
 export type PaneFamily = (typeof PANE_FAMILIES)[number];
 
 export type ThemePreference = "light" | "dark" | "system";
+export type PreviewScaleMode = "fit" | "actual";
 
 /** Per-session view continuity: everything restored on A→B→A switching. */
 export interface SessionViewState {
@@ -33,6 +34,9 @@ export interface SessionViewState {
   readonly paneOpen: boolean;
   readonly paneWidth: number;
   readonly terminalDrawerOpen: boolean;
+  /** Preview tab and scale restored on A→B→A route switching. */
+  readonly previewId: string | null;
+  readonly previewScale: PreviewScaleMode;
 }
 
 export const DEFAULT_SESSION_VIEW: SessionViewState = {
@@ -42,6 +46,8 @@ export const DEFAULT_SESSION_VIEW: SessionViewState = {
   paneOpen: false,
   paneWidth: RIGHT_PANE_WIDTH.defaultWidth,
   terminalDrawerOpen: false,
+  previewId: null,
+  previewScale: "fit",
 };
 
 interface PersistedWorkspaceState {
@@ -95,6 +101,8 @@ export interface WorkspaceActions {
   setPaneOpen(sessionId: string, open: boolean): void;
   setPaneWidth(sessionId: string, width: number): void;
   setTerminalDrawerOpen(sessionId: string, open: boolean): void;
+  setSessionPreview(sessionId: string, previewId: string | null): void;
+  setSessionPreviewScale(sessionId: string, scale: PreviewScaleMode): void;
 }
 
 export type WorkspaceStore = WorkspaceState & WorkspaceActions;
@@ -155,6 +163,14 @@ function sanitizeSessionView(value: unknown): SessionViewState | null {
         ? clampWidth(view.paneWidth, RIGHT_PANE_WIDTH)
         : RIGHT_PANE_WIDTH.defaultWidth,
     terminalDrawerOpen: view.terminalDrawerOpen === true,
+    previewId:
+      typeof view.previewId === "string" &&
+      view.previewId.length > 0 &&
+      view.previewId.length <= 256 &&
+      !/[\u0000-\u001f\u007f]/u.test(view.previewId)
+        ? view.previewId
+        : null,
+    previewScale: view.previewScale === "actual" ? "actual" : "fit",
   };
 }
 
@@ -328,6 +344,10 @@ export function createWorkspaceStore(options: CreateWorkspaceStoreOptions): Work
       ),
     setTerminalDrawerOpen: (sessionId, open) =>
       set((state) => updateSessionView(state, sessionId, { terminalDrawerOpen: open })),
+    setSessionPreview: (sessionId, previewId) =>
+      set((state) => updateSessionView(state, sessionId, { previewId })),
+    setSessionPreviewScale: (sessionId, previewScale) =>
+      set((state) => updateSessionView(state, sessionId, { previewScale })),
   }));
 
   store.subscribe((state) => persistence.save(toPersistedWorkspace(state)));

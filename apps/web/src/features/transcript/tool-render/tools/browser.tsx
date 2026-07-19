@@ -69,7 +69,7 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
   );
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+function Body({ args, result, host }: ToolRenderProps): ReactNode {
   const details = detailsOf(result);
   const action = str(args.action) ?? details.action;
   const app = appOf(args);
@@ -95,6 +95,16 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
             {vpWidth}×{vpHeight}
             {vpScale !== null ? `@${vpScale}x` : ""}
           </Badge>
+        )}
+        {host?.openPreview !== undefined && (
+          <button
+            aria-label="Open browser preview for this session"
+            className="tv-badge tv-badge--accent tv-host-link"
+            onClick={() => host.openPreview?.()}
+            type="button"
+          >
+            Open Preview
+          </button>
         )}
       </span>
       {action === "run" && code !== null && (

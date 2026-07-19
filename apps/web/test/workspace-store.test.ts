@@ -22,7 +22,7 @@ function makeStore(initialPersisted?: unknown) {
 }
 
 describe("session continuity (A→B→A)", () => {
-  it("preserves scroll, draft, pane family/open/width, and drawer per session", () => {
+  it("preserves transcript, pane, drawer, and preview state per session", () => {
     const { store } = makeStore();
     const s = () => store.getState();
 
@@ -32,12 +32,15 @@ describe("session continuity (A→B→A)", () => {
     s().togglePaneFamily("A", "review");
     s().setPaneWidth("A", 500);
     s().setTerminalDrawerOpen("A", true);
+    s().setSessionPreview("A", "preview-a");
+    s().setSessionPreviewScale("A", "actual");
 
     s().activateSession("B", "2026-07-11T10:01:00Z");
     s().setSessionDraft("B", "other draft");
     s().togglePaneFamily("B", "files");
     s().togglePaneFamily("B", "files"); // close again
     s().setSessionScrollTop("B", 7);
+    s().setSessionPreview("B", "preview-b");
 
     s().activateSession("A", "2026-07-11T10:02:00Z");
     const viewA = selectSessionView(s(), "A");
@@ -47,6 +50,8 @@ describe("session continuity (A→B→A)", () => {
     expect(viewA.paneOpen).toBe(true);
     expect(viewA.paneWidth).toBe(500);
     expect(viewA.terminalDrawerOpen).toBe(true);
+    expect(viewA.previewId).toBe("preview-a");
+    expect(viewA.previewScale).toBe("actual");
 
     const viewB = selectSessionView(s(), "B");
     expect(viewB.draft).toBe("other draft");
@@ -54,6 +59,8 @@ describe("session continuity (A→B→A)", () => {
     expect(viewB.paneOpen).toBe(false);
     expect(viewB.scrollTop).toBe(7);
     expect(viewB.terminalDrawerOpen).toBe(false);
+    expect(viewB.previewId).toBe("preview-b");
+    expect(viewB.previewScale).toBe("fit");
   });
 
   it("returns defaults for sessions never touched", () => {
@@ -116,12 +123,16 @@ describe("persistence", () => {
     first.getState().setRailWidth(300);
     first.getState().setTheme("dark");
     first.getState().setEmptyProjectDismissed("host/project", true);
+    first.getState().setSessionPreview("A", "preview-a");
+    first.getState().setSessionPreviewScale("A", "actual");
     first.getState().setPaletteOpen(true); // ephemeral, must not persist
 
     const second = createWorkspaceStore({ persistence });
     const state = second.getState();
     expect(state.activeSessionId).toBe("A");
     expect(selectSessionView(state, "A").draft).toBe("resume me");
+    expect(selectSessionView(state, "A").previewId).toBe("preview-a");
+    expect(selectSessionView(state, "A").previewScale).toBe("actual");
     expect(state.railWidth).toBe(300);
     expect(state.theme).toBe("dark");
     expect(state.dismissedEmptyProjectIds).toEqual({ "host/project": true });
@@ -168,6 +179,10 @@ describe("persistence", () => {
       paneOpen: true,
       paneWidth: 400,
     });
+    expect(parsed?.sessionViewById.A).toMatchObject({
+      previewId: null,
+      previewScale: "fit",
+    });
   });
 
   it("rejects wrong versions and non-objects", () => {
@@ -187,7 +202,14 @@ describe("persistence", () => {
       dismissedEmptyProjectIds: { good: true, falseEntry: false, bad: "yes" },
       lastVisitedAtBySessionId: { good: "2026-07-11T10:00:00Z", bad: "not a date" },
       sessionViewById: {
-        good: { paneFamily: "made-up", paneWidth: 5, scrollTop: -3, draft: 9 },
+        good: {
+          paneFamily: "made-up",
+          paneWidth: 5,
+          scrollTop: -3,
+          draft: 9,
+          previewId: "bad\u0000id",
+          previewScale: "giant",
+        },
         bad: null,
       },
     });
@@ -204,6 +226,8 @@ describe("persistence", () => {
     expect(view?.paneWidth).toBe(RIGHT_PANE_WIDTH.minWidth);
     expect(view?.scrollTop).toBeNull();
     expect(view?.draft).toBe("");
+    expect(view?.previewId).toBeNull();
+    expect(view?.previewScale).toBe("fit");
     expect(parsed?.sessionViewById["bad"]).toBeUndefined();
   });
 

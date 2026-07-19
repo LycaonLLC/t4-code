@@ -30,6 +30,7 @@ export interface CreatedFixtureSession {
   archivedAt?: string;
   deleted: boolean;
   seq: number;
+  previewSeq: number;
   durableCount: number;
   nextLiveEntry: number;
   managementRevision: number;
@@ -195,6 +196,7 @@ export function createCreatedFixtureSession(
     updatedAt: new Date(Date.parse(seed.baseTime) + now + ordinal).toISOString(),
     deleted: false,
     seq: 0,
+    previewSeq: 0,
     durableCount: 0,
     nextLiveEntry: 1,
     managementRevision: 0,

@@ -4,11 +4,14 @@
 // frames into a TranscriptProjection; rows derive from the projection; user
 // actions leave through typed SessionIntents. The shell's outer scroll
 // container stays inert — this surface owns its own virtualized scroller.
+import { useNavigate } from "@tanstack/react-router";
 import { Badge, cn, Tooltip, TooltipPopup, TooltipTrigger, useReducedMotion } from "@t4-code/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { WorkspaceProject, WorkspaceSession } from "../../lib/workspace-data.ts";
 import { workspaceStore } from "../../state/store-instance.ts";
+import { useDesktopRuntimeSnapshot } from "../../platform/desktop-runtime.ts";
+import { resolveLiveSession } from "../../platform/live-workspace.ts";
 import { Composer } from "../composer/Composer.tsx";
 import { getInspectorStore } from "../panes/inspector-store.ts";
 import {
@@ -47,6 +50,11 @@ export interface SessionMainProps {
   readonly session: WorkspaceSession;
   readonly project: WorkspaceProject;
   readonly nowMs: number;
+}
+
+/** Stable session-scoped destination; all transcript state stays in the workspace store. */
+export function sessionPreviewDestination(sessionId: string) {
+  return { params: { sessionId }, to: "/sessions/$sessionId/preview" as const };
 }
 
 export function FreshnessBadge({ session }: { readonly session: WorkspaceSession }) {
@@ -339,8 +347,27 @@ export function SessionControlBanner({
 
 export function SessionMain({ session }: SessionMainProps) {
   const archived = session.archivedAt !== undefined;
+  const navigate = useNavigate();
   const { snapshot, runtime } = useSessionRuntime(session.id, session.freshness);
   const projection = snapshot.projection;
+  const desktopSnapshot = useDesktopRuntimeSnapshot();
+  const liveAddress = useMemo(
+    () => (desktopSnapshot === null ? null : resolveLiveSession(desktopSnapshot, session.id)),
+    [desktopSnapshot, session.id],
+  );
+  const previews =
+    desktopSnapshot === null || liveAddress === null
+      ? []
+      : [
+          ...(
+            desktopSnapshot.projection.sessions.get(
+              `${liveAddress.hostId}\u0000${liveAddress.sessionId}`,
+            )?.previews.values() ?? []
+          ),
+        ];
+  const previewFreshness = previews.some((preview) => preview.freshness !== "fresh")
+    ? "Cached"
+    : "Ready";
   const toolHost = useMemo<ToolRenderHost>(
     () => ({
       hasAgent: (agentId) =>
@@ -354,8 +381,11 @@ export function SessionMain({ session }: SessionMainProps) {
         if (view?.paneFamily !== "agents") workspace.togglePaneFamily(session.id, "agents");
         workspace.setPaneOpen(session.id, true);
       },
+      openPreview: () => {
+        void navigate(sessionPreviewDestination(session.id));
+      },
     }),
-    [session.id],
+    [navigate, session.id],
   );
 
   // Leaving this session surface (switch or unmount) ends any read-aloud
@@ -461,6 +491,21 @@ export function SessionMain({ session }: SessionMainProps) {
           role="status"
         >
           Archived · read-only. Restore this session before continuing work.
+        </div>
+      )}
+      {previews.length > 0 && (
+        <div className="flex min-h-9 shrink-0 items-center justify-center border-border/60 border-b bg-secondary px-3 text-xs">
+          <button
+            aria-label={`Open browser preview for this session${previews.length > 1 ? ` (${previews.length} previews)` : ""}`}
+            className="inline-flex min-h-11 items-center gap-2 rounded-md px-3 font-medium text-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8"
+            onClick={toolHost.openPreview}
+            type="button"
+          >
+            Browser preview
+            <Badge variant="outline">
+              {previews.length > 1 ? previews.length : previewFreshness}
+            </Badge>
+          </button>
         </div>
       )}
       <div aria-label="Transcript" className="relative min-h-0 flex-1" role="log">

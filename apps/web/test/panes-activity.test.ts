@@ -1,10 +1,12 @@
 // Activity stream contract: classification, filters, search, pause without
 // loss, secret redaction, unknown-event fallback, and export shape.
 import { describe, expect, it } from "vite-plus/test";
+import type { PreviewEventProjection } from "@t4-code/client";
 
 import {
   ACTIVITY_RETENTION_LIMIT,
   appendActivity,
+  classifyPreviewEvent,
   classifySessionEvent,
   exportActivity,
   redactPayload,
@@ -108,6 +110,56 @@ describe("event classification", () => {
     expect(result.kind).toBe("shell");
     expect(result.shellOutput).toBe("$ pnpm test\nok\n");
     expect(result.terminalId).toBe("term-1");
+  });
+});
+
+describe("preview event classification", () => {
+  it("keeps only origin/path metadata, capture identity, and generic failures", () => {
+    const launch: PreviewEventProjection = {
+      type: "launch",
+      previewId: "preview-1",
+      cursor: { epoch: "preview", seq: 1 },
+      url: { origin: "https://preview.test", pathname: "/workspace", hasQuery: true },
+    };
+    const capture: PreviewEventProjection = {
+      type: "capture",
+      previewId: "preview-1",
+      cursor: { epoch: "preview", seq: 2 },
+      captureId: "capture-2",
+      timestamp: 1_784_392_800_000,
+    };
+    const error: PreviewEventProjection = {
+      type: "error",
+      previewId: "preview-1",
+      cursor: { epoch: "preview", seq: 3 },
+      errorCode: "backend_message_must_not_render",
+    };
+
+    expect(classifyPreviewEvent(launch, 1, AT, "cached")).toMatchObject({
+      kind: "system",
+      title: "Browser preview launched",
+      detail: "https://preview.test/workspace · cached",
+      raw: { url: "https://preview.test/workspace", freshness: "cached" },
+    });
+    expect(classifyPreviewEvent(capture, 2, AT)).toMatchObject({
+      at: "2026-07-18T16:40:00.000Z",
+      title: "Browser preview captured",
+      detail: "Capture capture-2",
+      raw: { captureId: "capture-2", timestamp: 1_784_392_800_000 },
+    });
+    const classifiedError = classifyPreviewEvent(error, 3, AT);
+    expect(classifiedError).toMatchObject({
+      kind: "error",
+      title: "Browser preview failed",
+      detail: "The browser preview request did not complete.",
+    });
+    const serialized = exportActivity([
+      { ...classifyPreviewEvent(launch, 1, AT), seq: 1 },
+      { ...classifiedError, seq: 2 },
+    ]);
+    expect(serialized).not.toContain("token=never");
+    expect(serialized).not.toContain("#never");
+    expect(serialized).not.toContain("backend_message_must_not_render");
   });
 });
 

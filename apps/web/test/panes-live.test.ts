@@ -190,6 +190,24 @@ function responseFrame(
   };
 }
 
+function previewFrame(
+  type: "preview.launch" | "preview.navigation",
+  seq: number,
+  url: string,
+): ProjectionFrame {
+  return {
+    v: PROTOCOL_VERSION,
+    type,
+    hostId: brandHostId(HOST),
+    sessionId: brandSessionId(SESSION),
+    previewId: "preview-1",
+    state: "ready",
+    url,
+    revision: brandRevision(`preview-${seq}`),
+    cursor: { epoch: "preview-epoch", seq },
+  } as ProjectionFrame;
+}
+
 function gapFrame(): GapFrame {
   return {
     v: PROTOCOL_VERSION,
@@ -565,6 +583,26 @@ describe("live projection populates each family", () => {
     expect(store.getState().activity).toHaveLength(3);
     const kinds = store.getState().activity.map((entry) => entry.kind);
     expect(kinds).toEqual(["tool", "system", "error"]);
+  });
+
+  it("adds sanitized preview activity once across projection replays", () => {
+    const fake = new FakeRuntime();
+    const projection = project([
+      previewFrame("preview.launch", 1, "https://preview.test/launch?token=never#secret"),
+      previewFrame("preview.navigation", 2, "https://preview.test/next?token=never#secret"),
+    ]);
+    fake.setProjection(projection);
+    const store = createLiveInspectorStore(fake, VIEW_ID);
+    expect(store.getState().activity.map((entry) => entry.title)).toEqual([
+      "Browser preview launched",
+      "Browser preview navigated",
+    ]);
+    const exported = JSON.stringify(store.getState().activity);
+    expect(exported).not.toContain("token=never");
+    expect(exported).not.toContain("#secret");
+
+    fake.setProjection(projection);
+    expect(store.getState().activity).toHaveLength(2);
   });
 
   it("review rows come from review frames and never fabricate a diff", () => {

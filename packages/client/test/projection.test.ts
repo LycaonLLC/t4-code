@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 import { hostId, revision, sessionId, type DurableEntry, type SessionRef } from "@t4-code/protocol";
 import { MAX_INDEXED_SESSION_REFS } from "../src/projection.ts";
+import { PreviewCaptureResource, previewKey } from "../src/preview.ts";
 import {
   MAX_PROJECTION_CACHE_BYTES,
   ProjectionStore,
@@ -1202,7 +1203,7 @@ describe("client projections", () => {
       detail: {
         title: "Verify parity",
         index: 0,
-        resumable: true,
+        resumable: false,
         contextUsage: { used: 2_000, limit: 8_000 },
       },
     });
@@ -1717,5 +1718,457 @@ describe("client projections", () => {
     dispose();
     store.applyPublicFrame({ ...frame("event"), cursor: { epoch: "e1", seq: 3 } });
     expect(calls).toBe(2);
+  });
+
+  it("orders preview metadata by full identity and requires a fresh baseline after reconnect", () => {
+    const identity = { hostId: String(HOST), sessionId: "session-a", previewId: "preview-a" };
+    const launch = {
+      v: V,
+      type: "preview.launch",
+      ...identity,
+      state: "ready",
+      url: "https://example.test/one",
+      revision: revision("preview-1"),
+      cursor: { epoch: "preview-e1", seq: 1 },
+    } as ProjectionFrame;
+    const skippedNavigation = {
+      ...launch,
+      type: "preview.navigation",
+      url: "https://example.test/stale",
+      revision: revision("preview-3"),
+      cursor: { epoch: "preview-e1", seq: 3 },
+    } as ProjectionFrame;
+    const baseline = {
+      ...launch,
+      type: "preview.state",
+      url: "https://example.test/current",
+      revision: revision("preview-4"),
+      cursor: { epoch: "preview-e1", seq: 4 },
+    } as ProjectionFrame;
+    let state = applyPublicFrame(createProjectionSnapshot(), launch);
+    state = applyPublicFrame(state, skippedNavigation);
+    expect(
+      state.sessions.get(sessionKey("session-a"))?.previews.get(previewKey(identity))?.freshness,
+    ).toBe("stale");
+    state = applyPublicFrame(state, baseline);
+    expect(
+      state.sessions.get(sessionKey("session-a"))?.previews.get(previewKey(identity)),
+    ).toMatchObject({
+      url: "https://example.test/current",
+      freshness: "fresh",
+    });
+    state = applyPublicFrame(state, {
+      ...baseline,
+      type: "preview.navigation",
+      url: "https://example.test/old",
+      cursor: { epoch: "preview-e1", seq: 3 },
+    } as ProjectionFrame);
+    expect(
+      state.sessions.get(sessionKey("session-a"))?.previews.get(previewKey(identity))?.url,
+    ).toBe("https://example.test/current");
+    state = applyPublicFrame(state, frame("welcome"));
+    expect(
+      state.sessions.get(sessionKey("session-a"))?.previews.get(previewKey(identity))?.freshness,
+    ).toBe("catching-up");
+    state = applyPublicFrame(state, {
+      ...baseline,
+      url: "https://example.test/recovered",
+      cursor: { epoch: "preview-e1", seq: 1 },
+      revision: revision("preview-5"),
+    } as ProjectionFrame);
+    expect(
+      state.sessions.get(sessionKey("session-a"))?.previews.get(previewKey(identity))?.freshness,
+    ).toBe("fresh");
+    expect(
+      state.sessions.get(sessionKey("session-a"))?.previews.get(previewKey(identity))?.url,
+    ).toBe("https://example.test/recovered");
+
+    const otherIdentity = {
+      hostId: "preview-other",
+      sessionId: "session-a",
+      previewId: "preview-a",
+    };
+    state = applyPublicFrame(state, {
+      ...launch,
+      ...otherIdentity,
+      hostId: hostId(otherIdentity.hostId),
+      sessionId: sessionId(otherIdentity.sessionId),
+      cursor: { epoch: "preview-other-e1", seq: 1 },
+    } as ProjectionFrame);
+    expect(
+      state.sessions
+        .get(`${otherIdentity.hostId}\u0000${otherIdentity.sessionId}`)
+        ?.previews.get(previewKey(otherIdentity))?.hostId,
+    ).toBe(otherIdentity.hostId);
+    expect(
+      state.sessions.get(sessionKey("session-a"))?.previews.get(previewKey(identity))?.hostId,
+    ).toBe(String(HOST));
+  });
+
+  it("persists preview metadata without capture bytes or object URLs and migrates version-one caches", () => {
+    const identity = { hostId: String(HOST), sessionId: "session-a", previewId: "preview-cache" };
+    const state = applyPublicFrame(createProjectionSnapshot(), {
+      v: V,
+      type: "preview.capture",
+      ...identity,
+      state: "ready",
+      url: "https://example.test/cache",
+      revision: revision("preview-cache-1"),
+      cursor: { epoch: "preview-cache-e1", seq: 1 },
+      capture: {
+        captureId: "capture-cache",
+        mimeType: "image/png",
+        size: 24,
+        width: 1,
+        height: 1,
+        capturedAt: 1,
+        sha256: "a".repeat(64),
+      },
+    } as ProjectionFrame);
+    const serialized = encodeProjectionCache(state);
+    expect(serialized).not.toContain("objectUrl");
+    expect(serialized).not.toContain("base64");
+    const restored = decodeProjectionCacheValue(serialized);
+    expect(
+      restored?.sessions.get(sessionKey("session-a"))?.previews.get(previewKey(identity)),
+    ).toMatchObject({
+      capture: { captureId: "capture-cache" },
+      freshness: "cached",
+    });
+    const versionOne = JSON.parse(serialized) as {
+      version: number;
+      data: { sessions: Array<{ value: Record<string, unknown> }> };
+    };
+    versionOne.version = 1;
+    for (const item of versionOne.data.sessions) delete item.value.previews;
+    expect(
+      decodeProjectionCacheValue(JSON.stringify(versionOne))?.sessions.get(sessionKey("session-a"))
+        ?.previews.size,
+    ).toBe(0);
+  });
+
+  it("assembles bounded preview capture chunks and revokes replaced object URLs", async () => {
+    const identity = {
+      hostId: "capture-host",
+      sessionId: "capture-session",
+      previewId: "capture-preview",
+    };
+    const png = new Uint8Array(24);
+    png.set([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
+    png[19] = 1;
+    png[23] = 1;
+    const content = Buffer.from(png).toString("base64");
+    const revoked: string[] = [];
+    let created = 0;
+    const resource = new PreviewCaptureResource({
+      read: async (_identity, captureId, offset) => ({
+        previewId: identity.previewId,
+        captureId,
+        size: png.byteLength,
+        offset,
+        nextOffset: png.byteLength,
+        complete: true,
+        content,
+      }),
+      sha256: async () => "a".repeat(64),
+      createObjectURL: () => `blob:test-${++created}`,
+      revokeObjectURL: (url) => revoked.push(url),
+    });
+    const capture = {
+      captureId: "capture-one",
+      mimeType: "image/png" as const,
+      size: png.byteLength,
+      width: 1,
+      height: 1,
+      capturedAt: 1,
+      sha256: "a".repeat(64),
+    };
+    expect(await resource.objectUrl(identity, capture)).toBe("blob:test-1");
+    expect(await resource.objectUrl(identity, { ...capture, captureId: "capture-two" })).toBe(
+      "blob:test-2",
+    );
+    expect(revoked).toEqual(["blob:test-1"]);
+    resource.dispose();
+    expect(revoked).toEqual(["blob:test-1", "blob:test-2"]);
+  });
+
+  it("rejects malformed preview chunks and hash mismatches", async () => {
+    const identity = {
+      hostId: "capture-host",
+      sessionId: "capture-session",
+      previewId: "capture-preview",
+    };
+    const capture = {
+      captureId: "capture-invalid",
+      mimeType: "image/png" as const,
+      size: 24,
+      width: 1,
+      height: 1,
+      capturedAt: 1,
+      sha256: "a".repeat(64),
+    };
+    const malformed = new PreviewCaptureResource({
+      read: async () => ({
+        previewId: identity.previewId,
+        captureId: capture.captureId,
+        size: capture.size,
+        offset: 1,
+        nextOffset: capture.size,
+        complete: true,
+        content: Buffer.alloc(capture.size).toString("base64"),
+      }),
+      sha256: async () => capture.sha256,
+      createObjectURL: () => "blob:unused",
+      revokeObjectURL: () => undefined,
+    });
+    await expect(malformed.objectUrl(identity, capture)).rejects.toThrow(
+      "identity or offset mismatch",
+    );
+    const hashMismatch = new PreviewCaptureResource({
+      read: async () => ({
+        previewId: identity.previewId,
+        captureId: capture.captureId,
+        size: capture.size,
+        offset: 0,
+        nextOffset: capture.size,
+        complete: true,
+        content: Buffer.from([
+          137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1,
+        ]).toString("base64"),
+      }),
+      sha256: async () => "b".repeat(64),
+      createObjectURL: () => "blob:unused",
+      revokeObjectURL: () => undefined,
+    });
+    await expect(hashMismatch.objectUrl(identity, capture)).rejects.toThrow("hash mismatch");
+  });
+  it("rejects oversized chunks and raster magic or dimension mismatches", async () => {
+    const identity = {
+      hostId: "capture-host",
+      sessionId: "capture-session",
+      previewId: "capture-preview",
+    };
+    const png = new Uint8Array(24);
+    png.set([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
+    png[19] = 1;
+    png[23] = 1;
+    const capture = {
+      captureId: "capture-raster",
+      mimeType: "image/png" as const,
+      size: png.byteLength,
+      width: 1,
+      height: 1,
+      capturedAt: 1,
+      sha256: "a".repeat(64),
+    };
+    await expect(
+      new PreviewCaptureResource({
+        read: async () => ({
+          previewId: identity.previewId,
+          captureId: "capture-large",
+          size: 256 * 1024 + 1,
+          offset: 0,
+          nextOffset: 256 * 1024 + 1,
+          complete: true,
+          content: "",
+        }),
+        sha256: async () => "a".repeat(64),
+      }).objectUrl(identity, {
+        ...capture,
+        captureId: "capture-large",
+        size: 256 * 1024 + 1,
+      }),
+    ).rejects.toThrow("chunk bounds mismatch");
+    await expect(
+      new PreviewCaptureResource({
+        read: async () => ({
+          previewId: identity.previewId,
+          captureId: capture.captureId,
+          size: capture.size,
+          offset: 0,
+          nextOffset: capture.size,
+          complete: true,
+          content: Buffer.alloc(capture.size).toString("base64"),
+        }),
+        sha256: async () => capture.sha256,
+        createObjectURL: () => "blob:unused",
+        revokeObjectURL: () => undefined,
+      }).objectUrl(identity, capture),
+    ).rejects.toThrow("not PNG");
+    await expect(
+      new PreviewCaptureResource({
+        read: async () => ({
+          previewId: identity.previewId,
+          captureId: capture.captureId,
+          size: capture.size,
+          offset: 0,
+          nextOffset: capture.size,
+          complete: true,
+          content: Buffer.from(png).toString("base64"),
+        }),
+        sha256: async () => capture.sha256,
+        createObjectURL: () => "blob:unused",
+        revokeObjectURL: () => undefined,
+      }).objectUrl(identity, { ...capture, width: 2 }),
+    ).rejects.toThrow("dimensions mismatch");
+  });
+
+  it("deduplicates in-flight loads and drops replaced pending capture ownership", async () => {
+    const identity = {
+      hostId: "capture-host",
+      sessionId: "capture-session",
+      previewId: "capture-preview",
+    };
+    const png = new Uint8Array(24);
+    png.set([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
+    png[19] = 1;
+    png[23] = 1;
+    const capture = {
+      captureId: "capture-race",
+      mimeType: "image/png" as const,
+      size: png.byteLength,
+      width: 1,
+      height: 1,
+      capturedAt: 1,
+      sha256: "a".repeat(64),
+    };
+    const deferred = Promise.withResolvers<{
+      previewId: string;
+      captureId: string;
+      size: number;
+      offset: number;
+      nextOffset: number;
+      complete: boolean;
+      content: string;
+    }>();
+    let reads = 0;
+    let created = 0;
+    const resource = new PreviewCaptureResource({
+      read: async () => {
+        reads += 1;
+        return deferred.promise;
+      },
+      sha256: async () => capture.sha256,
+      createObjectURL: () => `blob:race-${++created}`,
+      revokeObjectURL: () => undefined,
+    });
+    const first = resource.objectUrl(identity, capture);
+    const second = resource.objectUrl(identity, capture);
+    expect(reads).toBe(1);
+    deferred.resolve({
+      previewId: identity.previewId,
+      captureId: capture.captureId,
+      size: capture.size,
+      offset: 0,
+      nextOffset: capture.size,
+      complete: true,
+      content: Buffer.from(png).toString("base64"),
+    });
+    expect(await first).toBe("blob:race-1");
+    expect(await second).toBe("blob:race-1");
+    expect(created).toBe(1);
+
+    const delayed = Promise.withResolvers<{
+      previewId: string;
+      captureId: string;
+      size: number;
+      offset: number;
+      nextOffset: number;
+      complete: boolean;
+      content: string;
+    }>();
+    const replacement = { ...capture, captureId: "capture-replacement" };
+    const racing = new PreviewCaptureResource({
+      read: async (_identity, captureId) =>
+        captureId === capture.captureId
+          ? delayed.promise
+          : {
+              previewId: identity.previewId,
+              captureId,
+              size: replacement.size,
+              offset: 0,
+              nextOffset: replacement.size,
+              complete: true,
+              content: Buffer.from(png).toString("base64"),
+            },
+      sha256: async () => capture.sha256,
+      createObjectURL: () => "blob:replacement",
+      revokeObjectURL: () => undefined,
+    });
+    const pending = racing.objectUrl(identity, capture);
+    racing.replace(identity, replacement);
+    delayed.resolve({
+      previewId: identity.previewId,
+      captureId: capture.captureId,
+      size: capture.size,
+      offset: 0,
+      nextOffset: capture.size,
+      complete: true,
+      content: Buffer.from(png).toString("base64"),
+    });
+    await expect(pending).rejects.toThrow("replaced while loading");
+    expect(await racing.objectUrl(identity, replacement)).toBe("blob:replacement");
+  });
+
+  it("persists authority labels and sanitized preview activity without URL query or hash", () => {
+    const identity = { hostId: String(HOST), sessionId: "session-a", previewId: "preview-authority" };
+    const state = applyPublicFrame(createProjectionSnapshot(), {
+      v: V,
+      type: "preview.launch",
+      hostId: HOST,
+      sessionId: sessionId("session-a"),
+      previewId: "preview-authority" as never,
+      state: "ready",
+      url: "https://preview.test/workspace?token=never-cache#secret",
+      revision: revision("preview-authority-1"),
+      cursor: { epoch: "preview-authority", seq: 1 },
+      authority: {
+        id: "omp-session",
+        label: "OMP session",
+        kind: "isolated-session",
+        requiresExplicitOptIn: false,
+      },
+      availableActions: ["activate", "fill", "select", "upload"],
+    } as ProjectionFrame);
+    const session = state.sessions.get(sessionKey("session-a"))!;
+    expect(session.previews.get(previewKey(identity))).toMatchObject({
+      authority: { id: "omp-session", kind: "isolated-session" },
+      availableActions: ["activate", "fill", "select", "upload"],
+    });
+    expect(session.previewEvents).toEqual([
+      {
+        type: "launch",
+        previewId: "preview-authority",
+        cursor: { epoch: "preview-authority", seq: 1 },
+        url: { origin: "https://preview.test", pathname: "/workspace", hasQuery: true },
+      },
+    ]);
+    const cache = encodeProjectionCache(state);
+    expect(cache).not.toContain("token=never-cache");
+    expect(cache).not.toContain("#secret");
+    expect(decodeProjectionCacheValue(cache)?.sessions.get(sessionKey("session-a"))?.previews
+      .get(previewKey(identity))?.url).toBe("https://preview.test/workspace");
+  });
+
+  it("does not classify preview state reconciliation as an error activity", () => {
+    const identity = { hostId: String(HOST), sessionId: "session-a", previewId: "preview-state" };
+    const state = applyPublicFrame(createProjectionSnapshot(), {
+      v: V,
+      type: "preview.state",
+      hostId: HOST,
+      sessionId: sessionId("session-a"),
+      previewId: "preview-state" as never,
+      state: "ready",
+      url: "https://preview.test/current",
+      revision: revision("preview-state-1"),
+      cursor: { epoch: "preview-state", seq: 1 },
+    } as ProjectionFrame);
+
+    const session = state.sessions.get(sessionKey("session-a"))!;
+    expect(session.previews.get(previewKey(identity))).toMatchObject({
+      state: "ready",
+      url: "https://preview.test/current",
+    });
+    expect(session.previewEvents).toEqual([]);
   });
 });
