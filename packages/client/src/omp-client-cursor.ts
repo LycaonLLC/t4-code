@@ -2,7 +2,10 @@ import { decodeCursor, hostId, sessionId, type Cursor } from "@t4-code/protocol"
 import type { CursorRecord, CursorStore, OmpClientError } from "./omp-client-contracts.ts";
 import { MAX_SAVED, sessionKey } from "./omp-client-contracts.ts";
 
-interface SaveQueue { latest: CursorRecord | undefined; running: boolean; }
+interface SaveQueue {
+  latest: CursorRecord | undefined;
+  running: boolean;
+}
 type EmitError = (error: OmpClientError) => void;
 type ErrorFactory = (message: string, retryable?: boolean) => OmpClientError;
 /** Durable cursor journal: bounded in-memory resume state plus serialized saves. */
@@ -21,10 +24,24 @@ export class CursorJournal {
     this.emitError = emitError;
     this.storageError = storageError;
   }
-  get pendingSaves(): number { return this.drains.size; }
+  get pendingSaves(): number {
+    return this.drains.size;
+  }
+  resetForEpoch(epoch: string): void {
+    for (const [key, record] of this.records) {
+      if (record.cursor.epoch === epoch) continue;
+      this.records.delete(key);
+      this.bySession.delete(key);
+      this.saved.delete(key);
+    }
+  }
   remember(record: CursorRecord): void {
     let cursor: Cursor;
-    try { cursor = decodeCursor(record.cursor); } catch { return; }
+    try {
+      cursor = decodeCursor(record.cursor);
+    } catch {
+      return;
+    }
     const host = hostId(record.hostId);
     const session = sessionId(record.sessionId);
     const key = sessionKey(String(host), String(session));
@@ -45,21 +62,27 @@ export class CursorJournal {
     if (this.store === undefined) return Promise.resolve();
     if (this.loading !== undefined) return this.loading;
     let load!: Promise<void>;
-    load = Promise.resolve().then(() => this.store?.load() ?? []).then((records) => {
-      if (!Array.isArray(records)) throw new Error("invalid cursor store");
-      for (const record of records.slice(0, MAX_SAVED)) {
-        try {
-          const host = hostId(record.hostId);
-          const session = sessionId(record.sessionId);
-          const cursor = decodeCursor(record.cursor);
-          const key = sessionKey(String(host), String(session));
-          this.records.set(key, { hostId: String(host), sessionId: String(session), cursor });
-          this.bySession.set(key, cursor);
-        } catch { continue; }
-      }
-    }).catch(() => this.emitError(this.storageError("cursor could not be loaded", true))).finally(() => {
-      if (this.loading === load) this.loading = undefined;
-    });
+    load = Promise.resolve()
+      .then(() => this.store?.load() ?? [])
+      .then((records) => {
+        if (!Array.isArray(records)) throw new Error("invalid cursor store");
+        for (const record of records.slice(0, MAX_SAVED)) {
+          try {
+            const host = hostId(record.hostId);
+            const session = sessionId(record.sessionId);
+            const cursor = decodeCursor(record.cursor);
+            const key = sessionKey(String(host), String(session));
+            this.records.set(key, { hostId: String(host), sessionId: String(session), cursor });
+            this.bySession.set(key, cursor);
+          } catch {
+            continue;
+          }
+        }
+      })
+      .catch(() => this.emitError(this.storageError("cursor could not be loaded", true)))
+      .finally(() => {
+        if (this.loading === load) this.loading = undefined;
+      });
     this.loading = load;
     return load;
   }
@@ -75,11 +98,18 @@ export class CursorJournal {
           const record = queue.latest;
           queue.latest = undefined;
           const saved = this.saved.get(key);
-          if (saved !== undefined && (saved.epoch !== record.cursor.epoch || saved.seq >= record.cursor.seq)) continue;
+          if (
+            saved !== undefined &&
+            saved.epoch === record.cursor.epoch &&
+            saved.seq >= record.cursor.seq
+          )
+            continue;
           try {
             await Promise.resolve(this.store?.save(record));
             this.saved.set(key, record.cursor);
-          } catch { this.emitError(this.storageError("cursor could not be saved", true)); }
+          } catch {
+            this.emitError(this.storageError("cursor could not be saved", true));
+          }
         }
       } finally {
         queue.running = false;

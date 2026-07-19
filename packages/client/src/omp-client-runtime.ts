@@ -598,7 +598,10 @@ export class OmpClient {
     return this.previewTargetCommand(
       "preview.type",
       intent,
-      { text: intent.text, ...(intent.selector === undefined ? {} : { selector: intent.selector }) },
+      {
+        text: intent.text,
+        ...(intent.selector === undefined ? {} : { selector: intent.selector }),
+      },
       options,
     );
   }
@@ -611,7 +614,10 @@ export class OmpClient {
     return this.previewTargetCommand(
       "preview.fill",
       intent,
-      { text: intent.text, ...(intent.selector === undefined ? {} : { selector: intent.selector }) },
+      {
+        text: intent.text,
+        ...(intent.selector === undefined ? {} : { selector: intent.selector }),
+      },
       options,
     );
   }
@@ -673,7 +679,9 @@ export class OmpClient {
     options: CommandOptions = {},
   ): Promise<OmpResponse> {
     if (identity.leaseId === undefined)
-      return Promise.reject(this.error("protocol", "preview lease renewal requires leaseId", false));
+      return Promise.reject(
+        this.error("protocol", "preview lease renewal requires leaseId", false),
+      );
     return this.previewTargetCommand(
       "preview.lease.renew",
       identity,
@@ -687,7 +695,9 @@ export class OmpClient {
     options: CommandOptions = {},
   ): Promise<OmpResponse> {
     if (identity.leaseId === undefined)
-      return Promise.reject(this.error("protocol", "preview lease release requires leaseId", false));
+      return Promise.reject(
+        this.error("protocol", "preview lease release requires leaseId", false),
+      );
     return this.previewTargetCommand(
       "preview.lease.release",
       identity,
@@ -952,6 +962,11 @@ export class OmpClient {
     if (this.expectedHost !== undefined && frame.hostId !== this.expectedHost) {
       this.fatal(this.error("protocol", "welcome host does not match target"));
       return;
+    }
+    if (this.epochValue !== undefined && this.epochValue !== frame.epoch) {
+      this.cursorJournal.resetForEpoch(frame.epoch);
+      this.cursorValue = undefined;
+      this.desyncedSessions.clear();
     }
     this.authenticationValue = frame.authentication;
     this.epochValue = frame.epoch;
