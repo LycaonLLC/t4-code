@@ -152,6 +152,10 @@ export class PreviewDesktopAdapter {
     await this.leases.release(identity);
   }
 
+  releaseCapture(identity: PreviewIdentity): void {
+    this.captures.release(identity);
+  }
+
   async dispose(): Promise<void> {
     this.captures.dispose();
     await this.leases.releaseAll();

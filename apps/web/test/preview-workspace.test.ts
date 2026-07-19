@@ -168,6 +168,36 @@ describe("preview desktop adapter", () => {
     );
   });
 
+  it("distinguishes capture release from lease release", async () => {
+    const command = vi.fn(async (_targetId: string, intent: { command: string }) => {
+      if (intent.command === "preview.lease.acquire") {
+        return accepted({ previewId: identity.previewId, leaseId: "lease-a", expiresAt: Date.now() + 30_000 });
+      }
+      return accepted({});
+    });
+    const adapter = new PreviewDesktopAdapter(
+      { command, confirm: vi.fn() } as unknown as DesktopRuntimeController,
+      address,
+    );
+
+    await adapter.mutate("navigate", identity, { url: "https://example.test" });
+    command.mockClear();
+
+    // releaseCapture should not trigger a lease release command
+    adapter.releaseCapture(identity);
+    expect(command).not.toHaveBeenCalledWith(
+      address.targetId,
+      expect.objectContaining({ command: "preview.lease.release" }),
+    );
+
+    // release should trigger the lease release command
+    await adapter.release(identity);
+    expect(command).toHaveBeenCalledWith(
+      address.targetId,
+      expect.objectContaining({ command: "preview.lease.release" }),
+    );
+  });
+
   it("routes a projected preview confirmation through the controller", async () => {
     const confirm = vi.fn(async () => ({ accepted: true }));
     const adapter = new PreviewDesktopAdapter(

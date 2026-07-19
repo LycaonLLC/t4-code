@@ -63,4 +63,4 @@ export async function checkProvenance(root = process.cwd()) {
 
 export function formatReport(result) { return `Checked ${result.checked} provenance manifest${result.checked === 1 ? "" : "s"}; ${result.failures.length} failure${result.failures.length === 1 ? "" : "s"}.${result.failures.length ? `\n${result.failures.join("\n")}` : ""}`; }
 
-if (import.meta.url === `file://${process.argv[1]}`) { const result = await checkProvenance(process.cwd()); console.log(formatReport(result)); if (result.failures.length) process.exitCode = 1; }
+if (import.meta.main) { const result = await checkProvenance(process.cwd()); console.log(formatReport(result)); if (result.failures.length) process.exitCode = 1; }

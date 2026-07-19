@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -24,3 +25,27 @@ test("reports stale, malformed, traversal, missing, duplicate with stable diagno
   const first = await checkProvenance(root); const second = await checkProvenance(root);
   assert.deepEqual(first.failures, second.failures); assert(first.failures.some((line) => line.includes("checksum mismatch") || line.includes("targetPath")));
 });
+test("entrypoint executes directly when path has spaces", async () => {
+  const spaceRoot = path.join(os.tmpdir(), "check-prov space-" + Math.random().toString(36).slice(2));
+  await mkdir(path.join(spaceRoot, "provenance/t3code/imports"), { recursive: true });
+  await mkdir(spaceRoot, { recursive: true });
+  const scriptDest = path.join(spaceRoot, "check-provenance.mjs");
+  const scriptContent = await readFile(new URL("./check-provenance.mjs", import.meta.url), "utf8");
+  await writeFile(scriptDest, scriptContent);
+  
+  let error = null;
+  try {
+    // Run the script directly with no manifests in spaceRoot.
+    // It should run and fail (exit code 1) because no manifests exist,
+    // which proves it executed rather than silently exiting with code 0.
+    execFileSync(process.execPath, [scriptDest], { cwd: spaceRoot, stdio: "pipe" });
+  } catch (err) {
+    error = err;
+  }
+  
+  assert.ok(error, "Expected direct execution to fail due to missing manifests");
+  assert.equal(error.status, 1, "Expected exit code 1");
+  const stderr = error.stderr.toString() + error.stdout.toString();
+  assert.ok(stderr.includes("no manifests found"), "Expected 'no manifests found' error in output");
+});
+

@@ -1206,7 +1206,7 @@ export class OmpClient {
     if (
       generation !== this.generation ||
       this.stateValue !== "ready" ||
-      !this.granted.has("preview.control")
+      !this.granted.has("preview.read")
     )
       return;
     if (this.previewStateGeneration !== generation) {

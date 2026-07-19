@@ -523,6 +523,7 @@
   .tv-render .tv-host-link,
   .tv-render .tv-image-button,
   .tv-render .tv-link {
+    display: inline-flex;
     min-height: 2.75rem;
     align-items: center;
   }

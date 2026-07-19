@@ -136,7 +136,7 @@ export function PreviewWorkspace({
     return () => {
       active = false;
       setCaptureUrl(undefined);
-      void adapter.release(identity);
+      adapter.releaseCapture(identity);
     };
   }, [adapter, identity?.previewId, preview?.capture?.captureId, preview?.capture?.sha256]);
 
