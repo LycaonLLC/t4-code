@@ -98,24 +98,13 @@ const install: DocTopic = {
     },
     {
       kind: "note",
-      text: `The v${RELEASE_VERSION} macOS build is unsigned and not notarized. Gatekeeper can report a damaged app or an unidentified developer. Only bypass that warning if you trust the release from this repository.`,
+      text: `The v${RELEASE_VERSION} macOS build is signed with the project's pinned Developer ID identity and notarized by Apple. The release workflow verifies both downloadable formats with Gatekeeper before publication.`,
     },
     { kind: "h3", id: "install-gatekeeper", text: "First launch on macOS" },
-    { kind: "p", text: "After copying the app into Applications, pick either route:" },
-    {
-      kind: "ol",
-      items: [
-        "If Finder offers it, right-click **T4 Code.app**, choose **Open**, then confirm the security prompt.",
-        "If Gatekeeper still blocks it and you choose to proceed, clear the quarantine attribute in a terminal:",
-      ],
-    },
-    {
-      kind: "code",
-      code: 'xattr -dr com.apple.quarantine "/Applications/T4 Code.app"',
-    },
+    { kind: "p", text: "After copying the app into Applications, open T4 Code normally." },
     {
       kind: "note",
-      text: "The `xattr` command does not sign, notarize, or verify T4 Code. It only removes the quarantine attribute from the downloaded app.",
+      text: "If macOS reports that this release is damaged or from an unidentified developer, do not bypass Gatekeeper. Delete that copy, download it again from the linked GitHub release, and verify its SHA-256 entry in `SHA256SUMS.txt`.",
     },
     { kind: "h2", id: "install-requirements", text: "Requirements" },
     {
@@ -557,7 +546,7 @@ const troubleshooting: DocTopic = {
     { kind: "h2", id: "troubleshooting-mac", text: "macOS says the app is damaged" },
     {
       kind: "p",
-      text: "That is Gatekeeper reacting to the unsigned build, not real damage. Follow the [first-launch steps](#install-gatekeeper): right-click → Open, or clear the quarantine flag with `xattr -dr com.apple.quarantine`.",
+      text: "The public macOS release is signed and notarized. Do not bypass Gatekeeper. Delete the blocked copy, download it again from the linked GitHub release, verify its checksum in `SHA256SUMS.txt`, and follow the [first-launch steps](#install-gatekeeper).",
     },
     { kind: "h2", id: "troubleshooting-settings", text: "Settings never load" },
     {
@@ -572,10 +561,10 @@ const security: DocTopic = {
   title: "Security",
   lede: "Plain answers about what T4 Code stores, sends, and never does.",
   blocks: [
-    { kind: "h2", id: "security-unsigned", text: "The unsigned macOS build" },
+    { kind: "h2", id: "security-unsigned", text: "Signed macOS releases" },
     {
       kind: "p",
-      text: `The v${RELEASE_VERSION} macOS build is unsigned and not notarized, so macOS warns before first launch. Clearing \`com.apple.quarantine\` changes Gatekeeper handling but does not sign, notarize, or verify the app. If you would rather not trust a downloaded binary, [build from source](#build-from-source). The repository is public at [LycaonLLC/t4-code](${REPO_URL}).`,
+      text: `The v${RELEASE_VERSION} macOS build is signed with the project's pinned Developer ID identity and notarized by Apple. Publication stops if the certificate, Team ID, hardened runtime, secure timestamp, stapled ticket, or Gatekeeper result drifts. You can also [build from source](#build-from-source). The repository is public at [LycaonLLC/t4-code](${REPO_URL}).`,
     },
     { kind: "h2", id: "security-credentials", text: "Credentials" },
     {
@@ -614,7 +603,7 @@ const buildFromSource: DocTopic = {
     { kind: "code", code: "pnpm package:linux" },
     {
       kind: "p",
-      text: "On a Mac, `pnpm package:mac:unsigned` produces the same unsigned build we ship. Installers land in `release/`.",
+      text: "On a Mac, `pnpm package:mac:unsigned` produces a local unsigned development package. Public release artifacts use the protected signing and notarization workflow instead. Installers land in `release/`.",
     },
   ],
 };

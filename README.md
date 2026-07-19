@@ -4,33 +4,31 @@ T4 Code is a free, open-source (MIT) desktop app for [Oh My Pi](https://github.c
 
 ![T4 Code main window](docs/assets/t4-code-main.png)
 
-[**Download v0.1.23**](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.23) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
+[**Download v0.1.24**](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.24) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
 
 ## Requirements
 
-T4 Code needs an OMP build with desktop appserver support. For v0.1.23, use the public integration build below.
+T4 Code needs an OMP build with desktop appserver support. For v0.1.24, use the public integration build below.
 
-T4 Code v0.1.23 was verified with OMP 17.0.4 built from [`d57dcd85`](https://github.com/lyc-aon/oh-my-pi/commit/d57dcd855006c673d8d530237d474fe5ba5645c4), tagged [`t4code-17.0.4-appserver-5`](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.4-appserver-5). That public integration is based on the official upstream [`v17.0.4`](https://github.com/can1357/oh-my-pi/tree/v17.0.4) tag at [`3fdd85ab`](https://github.com/can1357/oh-my-pi/commit/3fdd85ab6c6bab6c0cdee80abbbec0981740a5c0). It adds redacted Codex transport diagnostics, the versioned Agent View lifecycle contract, session-owned cancellation, macOS system-temp aliases, workspace-native build artifacts, retry-safe release metadata, lock-aware session observation, complete transcript reconciliation, missing-lock-only promotion, the cooperative `/continue-in-t4` handoff, and deterministic session ordering. Fork CI verifies the exact upstream base, ancestry, release gates, and published binaries. The official upstream v17.0.4 tag has no `appserver` command, so it cannot host T4 Code. The verified runtime is a normal build from the public `lyc-aon/oh-my-pi` source. T4 Code vendors `@oh-my-pi/app-wire` 0.5.10 from integration commit [`d57dcd85`](https://github.com/lyc-aon/oh-my-pi/commit/d57dcd855006c673d8d530237d474fe5ba5645c4), source tree `5cf488966e3c233764780d3ca7a8d8ea1e3a1f68`.
-
-T4 Code vendors `@oh-my-pi/app-wire` 0.6.0 from integration commit [`ae4b53b4`](https://github.com/lyc-aon/oh-my-pi/commit/ae4b53b416f32b200865a32ed9baabd5a4666fa4), source tree `2b8a5f697273f5044789b8ae638b6c264f9f8499`. The published v0.1.23 package remains pinned to that contract.
+T4 Code v0.1.24 was verified with OMP 17.0.4 built from [`d57dcd85`](https://github.com/lyc-aon/oh-my-pi/commit/d57dcd855006c673d8d530237d474fe5ba5645c4), tagged [`t4code-17.0.4-appserver-5`](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.4-appserver-5). That public integration is based on the official upstream [`v17.0.4`](https://github.com/can1357/oh-my-pi/tree/v17.0.4) tag at [`3fdd85ab`](https://github.com/can1357/oh-my-pi/commit/3fdd85ab6c6bab6c0cdee80abbbec0981740a5c0). It adds redacted Codex transport diagnostics, the versioned Agent View lifecycle contract, session-owned cancellation, macOS system-temp aliases, workspace-native build artifacts, retry-safe release metadata, lock-aware session observation, complete transcript reconciliation, missing-lock-only promotion, the cooperative `/continue-in-t4` handoff, and deterministic session ordering. Fork CI verifies the exact upstream base, ancestry, release gates, and published binaries. The official upstream v17.0.4 tag has no `appserver` command, so it cannot host T4 Code. The verified runtime is a normal build from the public `lyc-aon/oh-my-pi` source. T4 Code vendors `@oh-my-pi/app-wire` 0.6.0 from integration commit [`ae4b53b4`](https://github.com/lyc-aon/oh-my-pi/commit/ae4b53b416f32b200865a32ed9baabd5a4666fa4), source tree `2b8a5f697273f5044789b8ae638b6c264f9f8499`.
 
 The current source tree advances the vendored contract to `@oh-my-pi/app-wire` 0.6.1 from integration commit [`e3e15c03`](https://github.com/lyc-aon/oh-my-pi/commit/e3e15c03ae95ebbda5f26495cd21213cc53518b1), source tree `e0f32b279eb4b8cbc403e47d765a226bee99c99f`. This adds the bounded cross-session transcript search and historical context contract.
 
-| Platform | Arch                  | Package                                  |
-| -------- | --------------------- | ---------------------------------------- |
-| Android  | arm64, armv7, x86_64  | `.apk` (**signed**)                      |
-| Linux    | x86_64                | `.deb`, AppImage                         |
-| macOS    | Apple Silicon (arm64) | `.dmg`, `.zip` (**unsigned, see below**) |
+| Platform | Arch                  | Package                                   |
+| -------- | --------------------- | ----------------------------------------- |
+| Android  | arm64, armv7, x86_64  | `.apk` (**signed**)                       |
+| Linux    | x86_64                | `.deb`, AppImage                          |
+| macOS    | Apple Silicon (arm64) | `.dmg`, `.zip` (**signed and notarized**) |
 
-No Windows build and no Intel Mac build in v0.1.23. The iOS TestFlight build is coming soon.
+No Windows build and no Intel Mac build in v0.1.24. The iOS TestFlight build is coming soon.
 
-## What changed in v0.1.23
+## What changed in v0.1.24
 
-- File drafts are pinned to the host revision that produced them. If the file changes before Save reaches the host, T4 keeps the draft and shows **Conflict** instead of overwriting newer work. A successful save reloads the host's new revision before another edit.
-- Host and profile controls now share one remote-target registry. Switching an Android connection to another OMP profile returns to that profile's session list instead of retaining a stale route, and the settings capability explorer shows what the selected host can do.
-- Desktop startup restores the recent session list from its local cache while OMP reconnects. Cached state stays visibly read-only until a fresh host snapshot arrives.
-- Completed assistant responses now have **Read response aloud** when the device provides speech and stop controls. Playback never starts on its own, skips fenced code, and stops when the session changes.
-- The client now isolates `omp-app/1` behind a protocol-provider boundary. Current wire behavior, replay, pairing, terminal control, and reconnect semantics stay fixed while unknown or ambiguous providers fail closed.
+- macOS downloads are now signed with the project's pinned Developer ID identity, notarized by Apple, stapled, and checked by Gatekeeper before publication.
+- The new attention inbox gathers sessions that need a decision, confirmation, or reply, while keeping the host's state authoritative.
+- Session transport health now explains reconnecting, delayed, and degraded connections instead of reducing them to a generic disconnected state.
+- Browser preview opens session-linked pages in a permission-gated workspace with bounded captures, coordinate-mapped input, and lease-based concurrency control.
+- Bounded transcript and attention projections do less repeated work, improving responsiveness without weakening ordering or safety checks.
 
 ![An OMP TUI session followed in T4 Code: the transcript fills in read-only under an "Active in another app" banner, /continue-in-t4 runs in the terminal, T4 takes over, and the composer accepts input again.](docs/assets/t4-code-tui-handoff.gif)
 
@@ -48,7 +46,7 @@ No Windows build and no Intel Mac build in v0.1.23. The iOS TestFlight build is 
 ### Android
 
 1. On the Android phone, sign in to Tailscale with an account that can reach the T4 Code host.
-2. Download [`T4-Code-0.1.23-android.apk`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.23/T4-Code-0.1.23-android.apk).
+2. Download [`T4-Code-0.1.24-android.apk`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.24/T4-Code-0.1.24-android.apk).
 3. If Android asks, allow your browser or file manager to install unknown apps, then install the APK.
 4. Open T4 Code and enter the host's HTTPS Tailscale address, including its port. The app saves the address; you can add more hosts later and switch between them.
 
@@ -57,8 +55,8 @@ The APK does not contain an appserver or expose one to the public internet. It c
 ### Linux (Debian/Ubuntu)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.23/T4-Code-0.1.23-linux-amd64.deb
-sudo apt install ./T4-Code-0.1.23-linux-amd64.deb
+wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.24/T4-Code-0.1.24-linux-amd64.deb
+sudo apt install ./T4-Code-0.1.24-linux-amd64.deb
 ```
 
 Use `apt install` rather than `dpkg -i` so system dependencies resolve automatically.
@@ -66,25 +64,16 @@ Use `apt install` rather than `dpkg -i` so system dependencies resolve automatic
 ### Linux (AppImage)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.23/T4-Code-0.1.23-linux-x86_64.AppImage
-chmod +x T4-Code-0.1.23-linux-x86_64.AppImage
-./T4-Code-0.1.23-linux-x86_64.AppImage
+wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.24/T4-Code-0.1.24-linux-x86_64.AppImage
+chmod +x T4-Code-0.1.24-linux-x86_64.AppImage
+./T4-Code-0.1.24-linux-x86_64.AppImage
 ```
 
 ### macOS (Apple Silicon)
 
-> [!WARNING]
-> **The macOS v0.1.23 build is unsigned and unnotarized.** Apple has not signed or notarized it, so Gatekeeper can report a "damaged" app or an unidentified developer. Only continue if you trust the release from this repository. You can always build from source instead.
-
-1. Download [`T4-Code-0.1.23-mac-arm64.dmg`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.23/T4-Code-0.1.23-mac-arm64.dmg) (or [`T4-Code-0.1.23-mac-arm64.zip`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.23/T4-Code-0.1.23-mac-arm64.zip)).
+1. Download [`T4-Code-0.1.24-mac-arm64.dmg`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.24/T4-Code-0.1.24-mac-arm64.dmg) (or [`T4-Code-0.1.24-mac-arm64.zip`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.24/T4-Code-0.1.24-mac-arm64.zip)).
 2. Drag `T4 Code.app` into `/Applications`.
-3. If Gatekeeper blocks the app and you choose to proceed, remove the quarantine attributes from the copied app bundle:
-
-   ```sh
-   xattr -dr com.apple.quarantine "/Applications/T4 Code.app"
-   ```
-
-   This command does not sign, notarize, or verify the app. It only removes the quarantine attribute. If Finder offers **Open** after you right-click the app, that is the no-terminal alternative.
+3. Open T4 Code normally. The release workflow verifies the pinned publisher, hardened runtime, secure timestamp, Apple notarization, stapled ticket, and Gatekeeper acceptance before publication.
 
 ## What the app does
 
