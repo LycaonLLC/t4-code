@@ -79,18 +79,14 @@ export function presentProviderTransport(
       ? ""
       : ` · ${formatDiagnosticBytes(state.lastInputJsonBytes)} last`
   }`;
-  const connection =
-    state.configuredPolicy === "off"
-      ? "WebSocket disabled by policy"
-      : state.websocketDisabled && state.fallbackCount > 0
-        ? "WebSocket disabled after fallback"
-        : state.websocketDisabled
-          ? "WebSocket unavailable"
-    : state.websocketConnected
-      ? "Live socket connected"
-      : state.prewarmed
-        ? "Socket prewarmed"
-        : "No live socket";
+  let connection: string;
+  if (state.configuredPolicy === "off") connection = "WebSocket disabled by policy";
+  else if (state.websocketDisabled && state.fallbackCount > 0)
+    connection = "WebSocket disabled after fallback";
+  else if (state.websocketDisabled) connection = "WebSocket unavailable";
+  else if (state.websocketConnected) connection = "Live socket connected";
+  else if (state.prewarmed) connection = "Socket prewarmed";
+  else connection = "No live socket";
 
   return {
     transport,
