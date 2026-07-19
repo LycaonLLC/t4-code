@@ -79,7 +79,7 @@ Implement and verify one complete user-visible slice at a time across compact an
 5. Files, review/diff, terminal, browser preview, agents/tasks, activity, diagnostics, and secondary developer surfaces.
 6. Settings, themes, OMP settings, updates, desktop runtime discovery/process lifecycle, and mobile lifecycle.
 
-Status: slices 1 through 3 are complete on the local migration branch. The shared client now
+Status: slices 1 through 4 are complete on the local migration branch. The shared client now
 negotiates permissions, supports deliberate disconnect/reconnect without fighting the automatic
 retry loop, cancels abandoned host probes before persistence, presents the exact pairing command
 and host rejection, and requires host-specific confirmation before deleting saved credentials.
@@ -90,9 +90,11 @@ streaming messages, Markdown, reasoning disclosures, structured tool progress/re
 integrity-checked transcript images. The per-session composer preserves drafts, uploads bounded
 image attachments through the chunked app-wire flow, presents catalog-backed slash/model controls,
 applies thinking and fast-mode changes, and exposes steering, queued follow-ups, and cancellation.
-Focused protocol, controller, and compact/wide widget tests pass; the Web release build plus
-fixture-connected macOS, iOS Simulator, and Android emulator smokes are current. Slices 4 through
-6 remain.
+The shared inbox projects host-authoritative approvals, questions, plans, confirmations, outcomes,
+and background-agent status; responses revalidate the indexed request and acquire the negotiated
+prompt lease before dispatch. Focused protocol, controller, and compact/wide widget tests pass; the
+Web release build and a real compact-browser inbox decision smoke pass alongside the existing
+fixture-connected macOS, iOS Simulator, and Android emulator smokes. Slices 5 and 6 remain.
 
 For every slice: identify the existing observable behavior and app-wire messages; run the existing fixture; implement shared Dart state; implement the shared Flutter surface plus compact/wide arrangements; run focused tests; smoke test the actual target; compare iOS, Android, desktop, and Web behavior before moving on.
 

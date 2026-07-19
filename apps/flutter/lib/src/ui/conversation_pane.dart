@@ -7,6 +7,7 @@ final class _ConversationPane extends StatelessWidget {
     required this.showHeader,
     required this.onConnect,
     this.onOpenSessions,
+    required this.onOpenAttention,
   });
 
   final T4ViewState state;
@@ -14,6 +15,7 @@ final class _ConversationPane extends StatelessWidget {
   final bool showHeader;
   final Future<void> Function() onConnect;
   final VoidCallback? onOpenSessions;
+  final VoidCallback onOpenAttention;
 
   @override
   Widget build(BuildContext context) {
@@ -24,7 +26,8 @@ final class _ConversationPane extends StatelessWidget {
 
     return Column(
       children: [
-        if (showHeader) _ConversationHeader(state: state),
+        if (showHeader)
+          _ConversationHeader(state: state, onOpenAttention: onOpenAttention),
         if (showError)
           _ConnectionErrorBanner(
             message: error == null || error.isEmpty
@@ -47,9 +50,13 @@ final class _ConversationPane extends StatelessWidget {
 }
 
 final class _ConversationHeader extends StatelessWidget {
-  const _ConversationHeader({required this.state});
+  const _ConversationHeader({
+    required this.state,
+    required this.onOpenAttention,
+  });
 
   final T4ViewState state;
+  final VoidCallback onOpenAttention;
 
   @override
   Widget build(BuildContext context) {
@@ -93,6 +100,16 @@ final class _ConversationHeader extends StatelessWidget {
                 ],
               ),
             ),
+            Badge(
+              isLabelVisible: state.urgentAttentionCount > 0,
+              label: Text('${state.urgentAttentionCount}'),
+              child: IconButton(
+                onPressed: onOpenAttention,
+                tooltip: 'Open inbox',
+                icon: const Icon(Icons.inbox_outlined),
+              ),
+            ),
+            const SizedBox(width: _T4Space.sm),
             if (streaming) const _StreamingLabel(),
           ],
         ),

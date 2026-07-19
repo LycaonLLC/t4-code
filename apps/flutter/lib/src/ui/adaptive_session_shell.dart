@@ -16,6 +16,7 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
   bool _connecting = false;
   bool _disconnecting = false;
   bool _showHostManager = false;
+  bool _showAttention = false;
 
   Future<void> _connect() async {
     if (_connecting) return;
@@ -52,13 +53,17 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
   }) async {
     if (_selectingSessionId != null) return;
     if (sessionId == widget.state.selectedSessionId) {
-      setState(() => _showHostManager = false);
+      setState(() {
+        _showHostManager = false;
+        _showAttention = false;
+      });
       if (closeDrawer) _scaffoldKey.currentState?.closeDrawer();
       return;
     }
 
     setState(() {
       _showHostManager = false;
+      _showAttention = false;
       _selectingSessionId = sessionId;
     });
     try {
@@ -89,7 +94,25 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
 
   void _closeHostManager() => setState(() => _showHostManager = false);
 
+  void _openAttention() => setState(() {
+    _showHostManager = false;
+    _showAttention = true;
+  });
+
+  void _closeAttention() => setState(() => _showAttention = false);
+
   Widget _primaryContent({required bool showHeader}) {
+    if (_showAttention) {
+      return _AttentionPane(
+        state: widget.state,
+        actions: widget.actions,
+        onDone: _closeAttention,
+        onOpenSession: (sessionId) async {
+          await _selectSession(sessionId, closeDrawer: false);
+          if (mounted) _closeAttention();
+        },
+      );
+    }
     if (_showHostManager) {
       return _HostManagerPane(
         state: widget.state,
@@ -110,6 +133,7 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
       showHeader: showHeader,
       onConnect: _connect,
       onOpenSessions: showHeader ? null : _openNavigation,
+      onOpenAttention: _openAttention,
     );
   }
 
@@ -197,6 +221,16 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
                 ],
               ),
         actions: [
+          if (!_showHostManager && !_showAttention)
+            Badge(
+              isLabelVisible: widget.state.urgentAttentionCount > 0,
+              label: Text('${widget.state.urgentAttentionCount}'),
+              child: IconButton(
+                onPressed: _openAttention,
+                tooltip: 'Open inbox',
+                icon: const Icon(Icons.inbox_outlined),
+              ),
+            ),
           if (!_showHostManager)
             IconButton(
               onPressed: _connecting || _disconnecting

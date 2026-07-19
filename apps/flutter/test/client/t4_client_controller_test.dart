@@ -935,6 +935,182 @@ void main() {
     },
   );
 
+  test('projects attention, responds, retries, and tracks agents', () async {
+    final profile = _profile('alpha');
+    final directory = _MemoryDirectoryStore(
+      directory: const HostDirectory.empty().upsert(profile),
+    );
+    final connector = _FakeConnector();
+    final controller = _controller(
+      directory,
+      _MemoryCredentialStore(),
+      connector,
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    final channel = connector.channels.single;
+
+    channel.emit(
+      _welcome(
+        'host-alpha',
+        capabilities: const <String>[
+          'sessions.read',
+          'sessions.prompt',
+          'sessions.control',
+        ],
+        features: const <String>['prompt.lease'],
+      ),
+    );
+    await _flush();
+    final list = channel.sentJson.last;
+    channel.emit(
+      _response(
+        list,
+        command: 'session.list',
+        result: _sessionListResultFor(
+          'host-alpha',
+          const <String>['session-alpha'],
+          attention: <String, Object?>{
+            'pending': <Object?>[
+              <String, Object?>{
+                'kind': 'question',
+                'id': 'question-1',
+                'question': 'Which environment?',
+                'options': <Object?>[
+                  <String, Object?>{'id': 'staging', 'label': 'Staging'},
+                  <String, Object?>{'id': 'production', 'label': 'Production'},
+                ],
+                'allowText': true,
+                'requestedAt': '2026-07-19T00:00:00.000Z',
+              },
+            ],
+            'pendingCount': 1,
+            'truncated': false,
+            'latestOutcome': <String, Object?>{
+              'id': 'outcome-1',
+              'kind': 'failed',
+              'at': '2026-07-19T00:01:00.000Z',
+              'summary': 'The last turn failed.',
+            },
+          },
+        ),
+      ),
+    );
+    await _flush();
+    channel.emit(
+      _snapshot(
+        'host-alpha',
+        'session-alpha',
+        revision: 'revision-session-alpha',
+      ),
+    );
+    await _flush();
+
+    expect(controller.state.urgentAttentionCount, 1);
+    expect(controller.state.attentionItems, hasLength(2));
+    final question = controller.state.attentionItems.firstWhere(
+      (item) => item.kind == AttentionKind.question,
+    );
+    expect(question.choices.map((choice) => choice.id), <String>[
+      'staging',
+      'production',
+    ]);
+
+    final responding = controller.respondToAttention(
+      question,
+      const AttentionResponse(
+        decision: AttentionDecision.approve,
+        optionIds: <String>['staging'],
+      ),
+    );
+    await _flush();
+    final acquisition = channel.sentJson.last;
+    expect(acquisition['command'], 'prompt.lease.acquire');
+    expect(acquisition['args'], <String, Object?>{
+      'ownerId': 't4-code-flutter',
+    });
+    channel.emit(
+      _response(
+        acquisition,
+        command: 'prompt.lease.acquire',
+        result: <String, Object?>{
+          'accepted': true,
+          'leaseId': 'prompt-lease-1',
+          'expiresAt': '2030-01-01T00:00:00.000Z',
+        },
+      ),
+    );
+    await _flush();
+    final responseCommand = channel.sentJson.last;
+    expect(responseCommand['command'], 'session.ui.respond');
+    expect(responseCommand['expectedRevision'], 'revision-session-alpha');
+    expect(responseCommand['args'], <String, Object?>{
+      'requestId': 'question-1',
+      'value': 'staging',
+      'leaseId': 'prompt-lease-1',
+    });
+    channel.emit(
+      _response(
+        responseCommand,
+        command: 'session.ui.respond',
+        result: <String, Object?>{'accepted': true},
+      ),
+    );
+    expect(await responding, isTrue);
+
+    final retrying = controller.retrySession('session-alpha');
+    await _flush();
+    final retry = channel.sentJson.last;
+    expect(retry['command'], 'session.retry');
+    channel.emit(
+      _response(
+        retry,
+        command: 'session.retry',
+        result: <String, Object?>{'retried': true},
+      ),
+    );
+    await retrying;
+
+    channel.emit(<String, Object?>{
+      'v': 'omp-app/1',
+      'type': 'agent.progress',
+      'hostId': 'host-alpha',
+      'sessionId': 'session-alpha',
+      'agentId': 'agent-1',
+      'cursor': <String, Object?>{'epoch': 'agent', 'seq': 1},
+      'revision': 'revision-session-alpha',
+      'progress': 0.5,
+      'detail': <String, Object?>{'title': 'Reviewing changes'},
+    });
+    await _flush();
+    expect(controller.state.agentActivities.single.label, 'Reviewing changes');
+    expect(controller.state.agentActivities.single.progress, 0.5);
+
+    channel.emit(
+      _confirmation(<String, Object?>{
+        'commandId': 'remote-command',
+        'hostId': 'host-alpha',
+        'sessionId': 'session-alpha',
+        'expectedRevision': 'revision-session-alpha',
+        'command': 'files.write',
+      }, 'confirmation-remote'),
+    );
+    await _flush();
+    final confirmation = controller.state.attentionItems.firstWhere(
+      (item) => item.kind == AttentionKind.confirmation,
+    );
+    expect(controller.state.urgentAttentionCount, 2);
+    expect(
+      await controller.respondToAttention(
+        confirmation,
+        const AttentionResponse(decision: AttentionDecision.deny),
+      ),
+      isTrue,
+    );
+    expect(channel.sentJson.last, containsPair('type', 'confirm'));
+    expect(channel.sentJson.last, containsPair('decision', 'deny'));
+  });
+
   test('IO transport sends the exact native Origin', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final origin = Completer<String?>();
@@ -1019,6 +1195,7 @@ Map<String, Object?> _sessionListResultFor(
   String hostId,
   List<String> sessionIds, {
   String epoch = 'index',
+  Map<String, Object?>? attention,
   int seq = 1,
 }) => <String, Object?>{
   'cursor': <String, Object?>{'epoch': epoch, 'seq': seq},
@@ -1033,6 +1210,7 @@ Map<String, Object?> _sessionListResultFor(
               : 'Project Beta',
           revision: 'revision-$sessionId',
           title: '$sessionId title',
+          attention: sessionId == 'session-alpha' ? attention : null,
         ),
       )
       .toList(growable: false),
@@ -1064,6 +1242,7 @@ Map<String, Object?> _sessionRef(
   required String revision,
   required String title,
   String status = 'idle',
+  Map<String, Object?>? attention,
 }) => <String, Object?>{
   'hostId': hostId,
   'sessionId': sessionId,
@@ -1072,6 +1251,7 @@ Map<String, Object?> _sessionRef(
   'title': title,
   'status': status,
   'updatedAt': '2026-07-19T00:00:00.000Z',
+  'attention': ?attention,
 };
 
 Map<String, Object?> _snapshot(

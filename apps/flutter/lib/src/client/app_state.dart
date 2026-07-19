@@ -182,6 +182,100 @@ final class PromptImageAttachment {
   final Uint8List bytes;
 }
 
+enum AttentionKind {
+  approval,
+  question,
+  plan,
+  confirmation,
+  completed,
+  failed,
+  cancelled,
+}
+
+enum AttentionDecision { approve, deny, revise, reject }
+
+final class AttentionChoice {
+  const AttentionChoice({required this.id, required this.label});
+
+  final String id;
+  final String label;
+}
+
+final class AttentionItem {
+  const AttentionItem({
+    required this.key,
+    required this.kind,
+    required this.sessionId,
+    required this.sessionTitle,
+    required this.revision,
+    required this.title,
+    required this.summary,
+    required this.at,
+    this.requestId,
+    this.confirmationId,
+    this.commandId,
+    this.expiresAt,
+    this.choices = const <AttentionChoice>[],
+    this.allowText = false,
+    this.actionable = false,
+  });
+
+  final String key;
+  final AttentionKind kind;
+  final String sessionId;
+  final String sessionTitle;
+  final String revision;
+  final String title;
+  final String summary;
+  final DateTime at;
+  final String? requestId;
+  final String? confirmationId;
+  final String? commandId;
+  final DateTime? expiresAt;
+  final List<AttentionChoice> choices;
+  final bool allowText;
+  final bool actionable;
+
+  bool get needsResponse =>
+      kind == AttentionKind.approval ||
+      kind == AttentionKind.question ||
+      kind == AttentionKind.plan ||
+      kind == AttentionKind.confirmation;
+
+  bool get isProblem =>
+      kind == AttentionKind.failed || kind == AttentionKind.cancelled;
+}
+
+final class AgentActivity {
+  const AgentActivity({
+    required this.agentId,
+    required this.sessionId,
+    required this.label,
+    required this.status,
+    required this.updatedAt,
+    this.progress,
+  });
+
+  final String agentId;
+  final String sessionId;
+  final String label;
+  final String status;
+  final DateTime updatedAt;
+  final double? progress;
+}
+
+final class AttentionResponse {
+  const AttentionResponse({
+    required this.decision,
+    this.optionIds = const <String>[],
+    this.text = '',
+  });
+
+  final AttentionDecision decision;
+  final List<String> optionIds;
+  final String text;
+}
+
 final class T4ViewState {
   const T4ViewState({
     required this.connectionPhase,
@@ -198,6 +292,10 @@ final class T4ViewState {
     this.submitting = false,
     this.sessionOperationPending = false,
     this.composer = const SessionComposerState(),
+    this.attentionItems = const <AttentionItem>[],
+    this.agentActivities = const <AgentActivity>[],
+    this.attentionPartial = false,
+    this.omittedAttentionCount = 0,
   });
 
   const T4ViewState.disconnected()
@@ -217,6 +315,14 @@ final class T4ViewState {
   final bool submitting;
   final bool sessionOperationPending;
   final SessionComposerState composer;
+  final List<AttentionItem> attentionItems;
+  final List<AgentActivity> agentActivities;
+  final bool attentionPartial;
+  final int omittedAttentionCount;
+
+  int get urgentAttentionCount =>
+      attentionItems.where((item) => item.needsResponse).length +
+      omittedAttentionCount;
 
   SessionSummary? get selectedSession {
     for (final session in sessions) {
@@ -270,6 +376,13 @@ abstract interface class T4Actions {
   Future<void> setSessionThinking(String level);
 
   Future<void> setSessionFast(bool enabled);
+
+  Future<bool> respondToAttention(
+    AttentionItem item,
+    AttentionResponse response,
+  );
+
+  Future<void> retrySession(String sessionId);
 
   Future<Uint8List> readTranscriptImage(
     String entryId,

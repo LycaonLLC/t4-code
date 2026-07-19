@@ -518,6 +518,79 @@ void main() {
       expect(actions.submittedPrompts, <String>['Alpha draft']);
     },
   );
+  testWidgets('attention inbox exposes decisions and agent updates', (
+    tester,
+  ) async {
+    final profile = HostProfile.parseTailnetAddress(
+      'https://alpha.tailnet-name.ts.net',
+    );
+    final actions = _FakeActions();
+    final approval = AttentionItem(
+      key: 'session-alpha:approval:approval-1',
+      kind: AttentionKind.approval,
+      sessionId: 'session-alpha',
+      sessionTitle: 'First investigation',
+      revision: 'revision-alpha',
+      title: 'Allow file write?',
+      summary: 'OMP wants to update lib/main.dart.',
+      at: DateTime.utc(2026, 7, 19),
+      requestId: 'approval-1',
+      actionable: true,
+    );
+    await pumpApp(
+      tester,
+      state: T4ViewState(
+        connectionPhase: ConnectionPhase.ready,
+        hostDirectory: HostDirectory.empty().upsert(profile),
+        authenticationPhase: AuthenticationPhase.paired,
+        grantedCapabilities: t4RequestedCapabilities.toSet(),
+        selectedSessionId: 'session-alpha',
+        sessions: const <SessionSummary>[
+          SessionSummary(
+            hostId: 'host-alpha',
+            sessionId: 'session-alpha',
+            projectId: 'project-alpha',
+            projectName: 'Project Alpha',
+            title: 'First investigation',
+            revision: 'revision-alpha',
+            status: 'active',
+          ),
+        ],
+        attentionItems: <AttentionItem>[approval],
+        agentActivities: <AgentActivity>[
+          AgentActivity(
+            agentId: 'agent-1',
+            sessionId: 'session-alpha',
+            label: 'Reviewing changes',
+            status: 'running',
+            progress: 0.5,
+            updatedAt: DateTime.utc(2026, 7, 19),
+          ),
+        ],
+      ),
+      actions: actions,
+      size: compactPhone,
+    );
+
+    await tester.tap(find.byTooltip('Open inbox'));
+    await tester.pumpAndSettle();
+    expect(find.text('Inbox · 1 waiting'), findsOneWidget);
+    expect(find.text('Needs you (1)'), findsOneWidget);
+    expect(find.text('Allow file write?'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Approve'));
+    await tester.pumpAndSettle();
+    expect(actions.attentionResponses, hasLength(1));
+    expect(
+      actions.attentionResponses.single.response.decision,
+      AttentionDecision.approve,
+    );
+
+    await tester.tap(find.text('Agents (1)'));
+    await tester.pumpAndSettle();
+    expect(find.text('Reviewing changes'), findsOneWidget);
+    expect(find.text('running'), findsOneWidget);
+  });
 }
 
 final class _FakeActions implements T4Actions {
@@ -547,6 +620,9 @@ final class _FakeActions implements T4Actions {
   final List<String> selectedThinkingLevels = <String>[];
   final List<bool> selectedFastModes = <bool>[];
   final List<String> deletedSessionIds = <String>[];
+  final List<({AttentionItem item, AttentionResponse response})>
+  attentionResponses = <({AttentionItem item, AttentionResponse response})>[];
+  final List<String> retriedSessionIds = <String>[];
 
   @override
   Future<void> addHost(
@@ -656,6 +732,20 @@ final class _FakeActions implements T4Actions {
   @override
   Future<void> setSessionFast(bool enabled) async {
     selectedFastModes.add(enabled);
+  }
+
+  @override
+  Future<bool> respondToAttention(
+    AttentionItem item,
+    AttentionResponse response,
+  ) async {
+    attentionResponses.add((item: item, response: response));
+    return true;
+  }
+
+  @override
+  Future<void> retrySession(String sessionId) async {
+    retriedSessionIds.add(sessionId);
   }
 
   @override

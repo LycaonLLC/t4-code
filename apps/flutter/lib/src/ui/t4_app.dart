@@ -10,6 +10,7 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import '../client/app_state.dart';
 
 part 'adaptive_session_shell.dart';
+part 'attention_pane.dart';
 part 'conversation_pane.dart';
 part 'host_management.dart';
 part 't4_theme.dart';

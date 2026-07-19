@@ -33,6 +33,11 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       <String, _PendingCommand>{};
   final Map<String, _PendingCommand> _pendingSessionOperations =
       <String, _PendingCommand>{};
+  final Map<String, _SessionAttention> _attentionBySession =
+      <String, _SessionAttention>{};
+  final Map<String, ConfirmationFrame> _attentionConfirmations =
+      <String, ConfirmationFrame>{};
+  final Map<String, AgentActivity> _agentActivities = <String, AgentActivity>{};
 
   HostDirectory _hostDirectory = const HostDirectory.empty();
   WebSocketChannel? _channel;
@@ -82,6 +87,15 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     submitting: _submitting,
     sessionOperationPending: _sessionOperationPending,
     composer: _composerState,
+    attentionItems: _allAttentionItems,
+    agentActivities: _allAgentActivities,
+    attentionPartial: _attentionBySession.values.any(
+      (attention) => attention.malformed || attention.truncated,
+    ),
+    omittedAttentionCount: _attentionBySession.values.fold(
+      0,
+      (total, attention) => total + attention.omittedCount,
+    ),
   );
 
   SessionComposerState get _composerState {
@@ -144,6 +158,56 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       turnActive: session.turnActive || _submitting,
       queuedFollowUpCount: session.queuedFollowUpCount,
     );
+  }
+
+  String _confirmationSessionId(ConfirmationFrame frame) =>
+      frame.sessionId ??
+      (throw const FormatException(
+        'session confirmation is missing sessionId',
+      ));
+
+  List<AttentionItem> get _allAttentionItems {
+    final items = <AttentionItem>[
+      for (final attention in _attentionBySession.values) ...attention.items,
+      for (final frame in _attentionConfirmations.values)
+        if (DateTime.tryParse(
+              frame.expiresAt,
+            )?.isAfter(DateTime.now().toUtc()) ==
+            true)
+          AttentionItem(
+            key: 'confirmation:${frame.sessionId}:${frame.confirmationId}',
+            kind: AttentionKind.confirmation,
+            sessionId: _confirmationSessionId(frame),
+            sessionTitle:
+                _sessions
+                    .where((session) => session.sessionId == frame.sessionId)
+                    .firstOrNull
+                    ?.title ??
+                'Session',
+            revision: frame.revision,
+            title: 'Security confirmation',
+            summary: frame.preview ?? frame.summary,
+            at: DateTime.now().toUtc(),
+            requestId: frame.confirmationId,
+            confirmationId: frame.confirmationId,
+            commandId: frame.commandId,
+            expiresAt: DateTime.tryParse(frame.expiresAt)?.toUtc(),
+            actionable: true,
+          ),
+    ];
+    items.sort((left, right) {
+      if (left.needsResponse != right.needsResponse) {
+        return left.needsResponse ? -1 : 1;
+      }
+      return right.at.compareTo(left.at);
+    });
+    return List<AttentionItem>.unmodifiable(items);
+  }
+
+  List<AgentActivity> get _allAgentActivities {
+    final activities = _agentActivities.values.toList(growable: false)
+      ..sort((left, right) => right.updatedAt.compareTo(left.updatedAt));
+    return List<AgentActivity>.unmodifiable(activities);
   }
 
   String? _modelSelector(CatalogItem item) {
@@ -722,7 +786,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       for (final image in images) {
         uploaded.add(await _uploadImage(session, image));
       }
-      final frame = await _runComposerCommand(
+      final frame = await _runPromptLeasedCommand(
         prefix: 'prompt',
         command: 'session.prompt',
         session: session,
@@ -756,7 +820,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     if (text.isEmpty || session == null || _phase != ConnectionPhase.ready) {
       return false;
     }
-    final frame = await _runComposerCommand(
+    final frame = await _runPromptLeasedCommand(
       prefix: command.replaceAll('.', '-'),
       command: command,
       session: session,
@@ -816,6 +880,121 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       capability: 'sessions.manage',
       session: session,
       args: <String, Object?>{'enabled': enabled},
+    );
+  }
+
+  @override
+  Future<bool> respondToAttention(
+    AttentionItem item,
+    AttentionResponse response,
+  ) async {
+    final current = _allAttentionItems
+        .where(
+          (candidate) =>
+              candidate.key == item.key &&
+              candidate.revision == item.revision &&
+              candidate.needsResponse,
+        )
+        .firstOrNull;
+    if (current == null) {
+      throw StateError('This attention item was already resolved or replaced.');
+    }
+    if (_phase != ConnectionPhase.ready) {
+      throw StateError('Connect before responding to attention items.');
+    }
+    if (current.kind == AttentionKind.confirmation) {
+      final confirmationId = current.confirmationId;
+      final commandId = current.commandId;
+      final hostId = _hostId;
+      if (confirmationId == null || commandId == null || hostId == null) {
+        throw StateError('The confirmation is incomplete.');
+      }
+      final expiresAt = current.expiresAt;
+      if (expiresAt == null || !expiresAt.isAfter(DateTime.now().toUtc())) {
+        _attentionConfirmations.remove(confirmationId);
+        _publish();
+        throw StateError('The confirmation expired.');
+      }
+      final ids = _nextCommandIds('attention-confirm');
+      _send(
+        WireEncoder.confirm(
+          requestId: ids.requestId,
+          confirmationId: confirmationId,
+          commandId: commandId,
+          hostId: hostId,
+          sessionId: current.sessionId,
+          decision: response.decision == AttentionDecision.approve
+              ? 'approve'
+              : 'deny',
+        ),
+      );
+      _attentionConfirmations.remove(confirmationId);
+      _publish();
+      return true;
+    }
+    if (!_grantedCapabilities.contains('sessions.prompt')) {
+      throw StateError('This device cannot answer session requests.');
+    }
+    final requestId = current.requestId;
+    final session = _sessions
+        .where((candidate) => candidate.sessionId == current.sessionId)
+        .firstOrNull;
+    if (requestId == null || session == null) {
+      throw StateError('The attention item no longer belongs to this host.');
+    }
+    final args = <String, Object?>{'requestId': requestId};
+    switch (current.kind) {
+      case AttentionKind.approval:
+        args['confirmed'] = response.decision == AttentionDecision.approve;
+      case AttentionKind.question:
+        final value = response.text.trim().isNotEmpty
+            ? response.text.trim()
+            : response.optionIds.join(', ');
+        if (value.isEmpty) throw ArgumentError('Choose or enter an answer.');
+        args['value'] = value;
+      case AttentionKind.plan:
+        switch (response.decision) {
+          case AttentionDecision.approve:
+            args['confirmed'] = true;
+          case AttentionDecision.reject:
+          case AttentionDecision.deny:
+            args['confirmed'] = false;
+          case AttentionDecision.revise:
+            args['value'] = response.text.trim();
+        }
+      case AttentionKind.confirmation:
+      case AttentionKind.completed:
+      case AttentionKind.failed:
+      case AttentionKind.cancelled:
+        throw StateError('This attention item cannot be answered.');
+    }
+    final frame = await _runPromptLeasedCommand(
+      prefix: 'attention-response',
+      command: 'session.ui.respond',
+      session: session,
+      expectedRevision: current.revision,
+      args: args,
+      stillCurrent: () => _allAttentionItems.any(
+        (candidate) =>
+            candidate.key == current.key &&
+            candidate.revision == current.revision,
+      ),
+    );
+    final result = frame.result;
+    return result is Map<String, Object?> && result['accepted'] == true;
+  }
+
+  @override
+  Future<void> retrySession(String sessionId) async {
+    final session = _sessions
+        .where((candidate) => candidate.sessionId == sessionId)
+        .firstOrNull;
+    if (session == null) throw StateError('The session no longer exists.');
+    await _runSessionOperation(
+      prefix: 'session-retry',
+      command: 'session.retry',
+      capability: 'sessions.control',
+      session: session,
     );
   }
 
@@ -971,6 +1150,53 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     }
   }
 
+  Future<ResponseFrame> _runPromptLeasedCommand({
+    required String prefix,
+    required String command,
+    required SessionSummary session,
+    required String expectedRevision,
+    required Map<String, Object?> args,
+    bool Function()? stillCurrent,
+  }) async {
+    if (!_grantedFeatures.contains('prompt.lease')) {
+      return _runComposerCommand(
+        prefix: prefix,
+        command: command,
+        session: session,
+        expectedRevision: expectedRevision,
+        args: args,
+      );
+    }
+    final acquisition = await _runComposerCommand(
+      prefix: 'prompt-lease-acquire',
+      command: 'prompt.lease.acquire',
+      session: session,
+      expectedRevision: expectedRevision,
+      args: const <String, Object?>{'ownerId': 't4-code-flutter'},
+    );
+    final result = acquisition.result;
+    if (result is! Map<String, Object?> ||
+        result['accepted'] == false ||
+        result['leaseId'] is! String ||
+        (result['leaseId']! as String).isEmpty) {
+      throw const FormatException('prompt lease acquisition was rejected');
+    }
+    final currentSession = _sessions
+        .where((candidate) => candidate.sessionId == session.sessionId)
+        .firstOrNull;
+    if (currentSession?.revision != expectedRevision ||
+        stillCurrent?.call() == false) {
+      throw StateError('The session request changed before it could be sent.');
+    }
+    return _runComposerCommand(
+      prefix: prefix,
+      command: command,
+      session: currentSession!,
+      expectedRevision: expectedRevision,
+      args: <String, Object?>{...args, 'leaseId': result['leaseId']! as String},
+    );
+  }
+
   Future<ResponseFrame> _runComposerCommand({
     required String prefix,
     required String command,
@@ -1093,6 +1319,8 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         _applySessionDelta(frame);
       case ConfirmationFrame():
         _applyConfirmation(frame);
+      case AgentAdditiveFrame():
+        _applyAgentFrame(frame);
       case PairErrorFrame():
         _applyPairError(frame);
       case CatalogFrame():
@@ -1177,6 +1405,14 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   void _applySessionRefs(List<SessionRef> sessions) {
     _sessions = sessions.map(_summaryFromRef).toList(growable: false)
       ..sort(_compareSessions);
+    _attentionBySession
+      ..clear()
+      ..addEntries(
+        sessions.map(
+          (session) =>
+              MapEntry(session.sessionId, _decodeSessionAttention(session)),
+        ),
+      );
     final selectedStillExists = _sessions.any(
       (session) => session.sessionId == _selectedSessionId,
     );
@@ -1276,6 +1512,142 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     );
   }
 
+  _SessionAttention _decodeSessionAttention(SessionRef session) {
+    final raw = session.raw['attention'];
+    if (raw == null) return const _SessionAttention();
+    if (raw is! Map<String, Object?>) {
+      return const _SessionAttention(malformed: true);
+    }
+    final pending = raw['pending'];
+    final pendingCount = raw['pendingCount'];
+    final truncated = raw['truncated'];
+    if (pending is! List<Object?> ||
+        pending.length > 8 ||
+        pendingCount is! int ||
+        pendingCount < pending.length ||
+        truncated is! bool ||
+        truncated != (pendingCount > pending.length)) {
+      return const _SessionAttention(malformed: true);
+    }
+    final items = <AttentionItem>[];
+    for (final value in pending) {
+      if (value is! Map<String, Object?> ||
+          value['kind'] is! String ||
+          value['id'] is! String ||
+          value['requestedAt'] is! String) {
+        return const _SessionAttention(malformed: true);
+      }
+      final kind = switch (value['kind']) {
+        'approval' => AttentionKind.approval,
+        'question' => AttentionKind.question,
+        'plan' => AttentionKind.plan,
+        _ => null,
+      };
+      final at = DateTime.tryParse(value['requestedAt']! as String);
+      final requestId = value['id']! as String;
+      if (kind == null || requestId.isEmpty || at == null) {
+        return const _SessionAttention(malformed: true);
+      }
+      var title = '';
+      var summary = '';
+      var allowText = false;
+      var choices = const <AttentionChoice>[];
+      if (kind == AttentionKind.question) {
+        final question = value['question'];
+        final options = value['options'];
+        if (question is! String ||
+            options is! List<Object?> ||
+            options.length > 32 ||
+            value['allowText'] is! bool) {
+          return const _SessionAttention(malformed: true);
+        }
+        final parsed = <AttentionChoice>[];
+        for (final option in options) {
+          if (option is! Map<String, Object?> ||
+              option['id'] is! String ||
+              option['label'] is! String) {
+            return const _SessionAttention(malformed: true);
+          }
+          parsed.add(
+            AttentionChoice(
+              id: option['id']! as String,
+              label: option['label']! as String,
+            ),
+          );
+        }
+        title = 'Question';
+        summary = question;
+        allowText = value['allowText']! as bool;
+        choices = List<AttentionChoice>.unmodifiable(parsed);
+      } else {
+        if (value['title'] is! String || value['summary'] is! String) {
+          return const _SessionAttention(malformed: true);
+        }
+        title = value['title']! as String;
+        summary = value['summary']! as String;
+      }
+      items.add(
+        AttentionItem(
+          key: '${session.sessionId}:${kind.name}:$requestId',
+          kind: kind,
+          sessionId: session.sessionId,
+          sessionTitle: session.title,
+          revision: session.revision,
+          title: title,
+          summary: summary,
+          at: at.toUtc(),
+          requestId: requestId,
+          choices: choices,
+          allowText: allowText,
+          actionable: true,
+        ),
+      );
+    }
+    final latest = raw['latestOutcome'];
+    if (latest != null) {
+      if (latest is! Map<String, Object?> ||
+          latest['id'] is! String ||
+          latest['kind'] is! String ||
+          latest['at'] is! String ||
+          latest['summary'] is! String) {
+        return const _SessionAttention(malformed: true);
+      }
+      final kind = switch (latest['kind']) {
+        'completed' => AttentionKind.completed,
+        'failed' => AttentionKind.failed,
+        'cancelled' => AttentionKind.cancelled,
+        _ => null,
+      };
+      final at = DateTime.tryParse(latest['at']! as String);
+      if (kind == null || at == null) {
+        return const _SessionAttention(malformed: true);
+      }
+      final outcomeId = latest['id']! as String;
+      items.add(
+        AttentionItem(
+          key: '${session.sessionId}:${kind.name}:$outcomeId',
+          kind: kind,
+          sessionId: session.sessionId,
+          sessionTitle: session.title,
+          revision: session.revision,
+          title: switch (kind) {
+            AttentionKind.completed => 'Completed',
+            AttentionKind.failed => 'Failed',
+            AttentionKind.cancelled => 'Cancelled',
+            _ => 'Update',
+          },
+          summary: latest['summary']! as String,
+          at: at.toUtc(),
+        ),
+      );
+    }
+    return _SessionAttention(
+      items: List<AttentionItem>.unmodifiable(items),
+      omittedCount: pendingCount - pending.length,
+      truncated: truncated,
+    );
+  }
+
   int _queuedMessageCount(Object? value) {
     if (value is! Map<String, Object?>) return 0;
     var count = 0;
@@ -1303,6 +1675,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     }
     sessions.sort(_compareSessions);
     _sessions = List<SessionSummary>.unmodifiable(sessions);
+    _attentionBySession[ref.sessionId] = _decodeSessionAttention(ref);
     _publish();
   }
 
@@ -1330,6 +1703,13 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _sessions = _sessions
         .where((session) => session.sessionId != removed)
         .toList(growable: false);
+    _attentionBySession.remove(removed);
+    _attentionConfirmations.removeWhere(
+      (_, frame) => frame.sessionId == removed,
+    );
+    _agentActivities.removeWhere(
+      (_, activity) => activity.sessionId == removed,
+    );
     _savedCursors.remove(removed);
     if (!wasSelected) {
       _publish();
@@ -1354,21 +1734,28 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   }
 
   void _applyConfirmation(ConfirmationFrame frame) {
-    final pending = _pendingSessionOperations.values
-        .where((candidate) => candidate.commandId == frame.commandId)
-        .firstOrNull;
-    if (pending == null) return;
-    if (!pending.confirmationExpected ||
-        pending.confirmationSent ||
-        frame.hostId != _hostId ||
-        frame.sessionId != pending.sessionId ||
-        frame.summary != pending.command ||
-        frame.revision != pending.expectedRevision) {
-      throw const FormatException('confirmation correlation mismatch');
+    if (frame.hostId != _hostId ||
+        !_sessions.any((session) => session.sessionId == frame.sessionId)) {
+      return;
     }
     final expiresAt = DateTime.tryParse(frame.expiresAt);
     if (expiresAt == null || !expiresAt.isAfter(DateTime.now().toUtc())) {
       throw const FormatException('confirmation is expired');
+    }
+    final pending = _pendingSessionOperations.values
+        .where((candidate) => candidate.commandId == frame.commandId)
+        .firstOrNull;
+    if (pending == null) {
+      _attentionConfirmations[frame.confirmationId] = frame;
+      _publish();
+      return;
+    }
+    if (!pending.confirmationExpected ||
+        pending.confirmationSent ||
+        frame.sessionId != pending.sessionId ||
+        frame.summary != pending.command ||
+        frame.revision != pending.expectedRevision) {
+      throw const FormatException('confirmation correlation mismatch');
     }
     pending.confirmationSent = true;
     final ids = _nextCommandIds('confirm');
@@ -1382,6 +1769,36 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         decision: 'approve',
       ),
     );
+    _attentionConfirmations.remove(frame.confirmationId);
+  }
+
+  void _applyAgentFrame(AgentAdditiveFrame frame) {
+    if (frame.hostId != _hostId || frame.frameType == 'agent.transcript') {
+      return;
+    }
+    final previous = _agentActivities[frame.agentId];
+    final status =
+        frame.lifecycle ??
+        frame.state ??
+        frame.event ??
+        previous?.status ??
+        'active';
+    final detail = frame.detail;
+    final label = switch (detail?['title'] ??
+        detail?['label'] ??
+        detail?['message']) {
+      final String value when value.trim().isNotEmpty => value.trim(),
+      _ => previous?.label ?? 'Background agent ${frame.agentId}',
+    };
+    _agentActivities[frame.agentId] = AgentActivity(
+      agentId: frame.agentId,
+      sessionId: frame.sessionId,
+      label: label,
+      status: status,
+      progress: frame.progress ?? previous?.progress,
+      updatedAt: DateTime.now().toUtc(),
+    );
+    _publish();
   }
 
   void _applySnapshot(SnapshotFrame frame) {
@@ -1779,6 +2196,9 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _sessions = const <SessionSummary>[];
     _messages.clear();
     _savedCursors.clear();
+    _attentionBySession.clear();
+    _attentionConfirmations.clear();
+    _agentActivities.clear();
     _cancelPendingCommands(StateError('active host changed'));
     _pendingPair = null;
     _selectedSessionId = null;
@@ -1920,4 +2340,18 @@ final class _PendingPair {
   final String deviceName;
   final String platform;
   final List<String> requestedCapabilities;
+}
+
+final class _SessionAttention {
+  const _SessionAttention({
+    this.items = const <AttentionItem>[],
+    this.omittedCount = 0,
+    this.truncated = false,
+    this.malformed = false,
+  });
+
+  final List<AttentionItem> items;
+  final int omittedCount;
+  final bool truncated;
+  final bool malformed;
 }

@@ -37,6 +37,12 @@ thinking and fast-mode controls, and supports steering, queued follow-ups, and c
 cancellation. Focused protocol, controller, and compact/wide widget coverage passes alongside the
 Web release build and fixture-connected macOS, iOS Simulator, and Android emulator smokes.
 
+Stage 3 decisions and attention parity is complete locally. The shared inbox groups approvals,
+questions, plans, security confirmations, failures, completions, and background-agent progress.
+Actions remain bound to the host session revision, acquire a negotiated prompt lease before
+dispatch, and reject replaced or expired requests. The full Flutter suite, Web release build,
+compact widget coverage, and an interactive compact-browser decision smoke pass.
+
 
 ## Signed and notarized on macOS
 
