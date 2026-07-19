@@ -70,10 +70,28 @@ describe("bundled OMP runtime", () => {
     const installed = await installBundledOmpRuntime({
       resourcesPath,
       applicationSupportPath: supportPath,
-      verifySignedRuntime: async (path) => { verified.push(path); },
+      verifySignedRuntime: async (path) => {
+        await stat(path);
+        verified.push(path);
+        return "signed-code-directory-hash";
+      },
+    });
+    const reused = await installBundledOmpRuntime({
+      resourcesPath,
+      applicationSupportPath: supportPath,
+      verifySignedRuntime: async (path) => {
+        await stat(path);
+        verified.push(path);
+        return "signed-code-directory-hash";
+      },
     });
 
-    expect(verified).toEqual([join(runtimeRoot, "omp")]);
+    expect(reused).toBe(installed);
+    expect(verified).toEqual([
+      join(runtimeRoot, "omp"),
+      installed,
+      join(runtimeRoot, "omp"),
+    ]);
     expect(await readFile(installed)).toEqual(signedBytes);
   });
 });

@@ -60,7 +60,7 @@ async function matches(path: string, integrity: RuntimeIntegrity): Promise<boole
   }
 }
 
-async function verifySignedDeveloperIdRuntime(path: string): Promise<void> {
+async function verifySignedDeveloperIdRuntime(path: string): Promise<string> {
   const certificateDirectory = await mkdtemp(join(tmpdir(), "t4-runtime-certificate-"));
   const certificatePrefix = join(certificateDirectory, "certificate");
   try {
@@ -75,6 +75,7 @@ async function verifySignedDeveloperIdRuntime(path: string): Promise<void> {
     const output = `${display.stdout}\n${display.stderr}`;
     const leafCertificate = await readFile(`${certificatePrefix}0`);
     const certificateSha256 = createHash("sha256").update(leafCertificate).digest("hex");
+    const cdHash = /^CDHash=([0-9a-f]+)$/imu.exec(output)?.[1];
     if (
       !output.includes("Identifier=omp") ||
       !output.includes(`TeamIdentifier=${SIGNED_RUNTIME_TEAM_ID}`) ||
@@ -82,21 +83,55 @@ async function verifySignedDeveloperIdRuntime(path: string): Promise<void> {
       !output.includes(`Authority=${SIGNED_RUNTIME_CERTIFICATE_AUTHORITY}`) ||
       (!output.includes("flags=0x10000(runtime)") && !output.includes("Runtime Version=")) ||
       !output.includes("Timestamp=") ||
+      !cdHash ||
       certificateSha256 !== SIGNED_RUNTIME_CERTIFICATE_SHA256
     ) throw new Error("signed bundled OMP runtime identity is invalid");
+    return cdHash;
   } finally {
     await rm(certificateDirectory, { recursive: true, force: true });
   }
 }
 
+async function readSignedRuntimeCodeHash(path: string): Promise<string> {
+  const display = await execFileAsync(
+    "/usr/bin/codesign",
+    ["--display", "--verbose=4", path],
+    { maxBuffer: 1024 * 1024 },
+  );
+  const output = `${display.stdout}\n${display.stderr}`;
+  const cdHash = /^CDHash=([0-9a-f]+)$/imu.exec(output)?.[1];
+  if (!cdHash) throw new Error("bundled OMP runtime code identity is invalid");
+  return cdHash;
+}
+
 export async function installBundledOmpRuntime(options: {
   readonly resourcesPath: string;
   readonly applicationSupportPath: string;
-  readonly verifySignedRuntime?: (path: string) => Promise<void>;
+  readonly verifySignedRuntime?: (path: string) => Promise<string>;
 }): Promise<string> {
   const sourceRoot = join(options.resourcesPath, "runtime");
   const manifest = decodeManifest(JSON.parse(await readFile(join(sourceRoot, "manifest.json"), "utf8")));
   const source = join(sourceRoot, manifest.executable);
+  const destinationRoot = join(options.applicationSupportPath, "runtime", manifest.tag);
+  const destination = join(destinationRoot, "omp");
+  const verifySignedRuntime = options.verifySignedRuntime ?? verifySignedDeveloperIdRuntime;
+
+  try {
+    const destinationCdHash = await verifySignedRuntime(destination);
+    const sourceCdHash = options.verifySignedRuntime
+      ? await options.verifySignedRuntime(source)
+      : await readSignedRuntimeCodeHash(source);
+    if (destinationCdHash === sourceCdHash) {
+      await chmod(destination, 0o755);
+      return destination;
+    }
+  } catch {
+    if (await matches(destination, manifest)) {
+      await chmod(destination, 0o755);
+      return destination;
+    }
+  }
+
   let sourceIntegrity: RuntimeIntegrity;
   try {
     sourceIntegrity = await inspectIntegrity(source);
@@ -104,16 +139,10 @@ export async function installBundledOmpRuntime(options: {
       sourceIntegrity.size !== manifest.size ||
       sourceIntegrity.sha256 !== manifest.sha256
     ) {
-      await (options.verifySignedRuntime ?? verifySignedDeveloperIdRuntime)(source);
+      await verifySignedRuntime(source);
     }
   } catch {
     throw new Error("bundled OMP runtime failed its integrity check");
-  }
-  const destinationRoot = join(options.applicationSupportPath, "runtime", manifest.tag);
-  const destination = join(destinationRoot, "omp");
-  if (await matches(destination, sourceIntegrity)) {
-    await chmod(destination, 0o755);
-    return destination;
   }
   await mkdir(destinationRoot, { recursive: true, mode: 0o700 });
   const temporary = join(destinationRoot, `.omp-${randomUUID()}.partial`);
