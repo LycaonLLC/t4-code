@@ -9,7 +9,7 @@
       "sourceBlobSha": "4a97f0542b4c95e96eae835a8d01db56e7156f1a;70d163306cca5b32d32319359c8ecc9a68c3dbf8",
       "targetPath": "apps/web/src/state/workspace-store.ts",
       "classification": "adapted",
-      "checksum": "sha256:2d072b0089c4e4f58393ec343328f6d7d393f1470eee4cd571689de7a8366fed"
+      "checksum": "sha256:114958f57d4814ff4c9a9a40a9c5455f4b81df5678a58fa1477ba5a0cc6e5ada"
     },
     {
       "sourcePath": "apps/web/src/hooks/useTheme.ts",
