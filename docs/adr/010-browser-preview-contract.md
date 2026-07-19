@@ -7,7 +7,7 @@
 
 To prevent automated credential extraction or session hijacking, preview hosts advertise their authority profile under one of two classifications:
 1. `isolated-session` (e.g. OMP session-only browsers): credential-free, ephemeral, and restricted to the session context.
-2. `authenticated-profile` (e.g. Wolfgang's real logged-in Google Chrome profile): holds active cookies, session tokens, or identity credentials.
+2. `authenticated-profile` (e.g. a user's authenticated local browser profile): holds active cookies, session tokens, or identity credentials.
 
 **Security Contract**:
 - Authenticated-profile previews MUST NEVER be selected automatically.
@@ -17,10 +17,10 @@ To prevent automated credential extraction or session hijacking, preview hosts a
 ## 2. Policy & Confirmation Gates
 
 Browser automation actions (such as clicking, typing, navigating, or upload) are privileged.
-- The client runtime MUST execute a `preview.policy.check` request before sending any mutation command.
-- If the host-level policy check reports `confirmationRequired: true`, the client MUST prompt the user with an explicit approval confirmation dialog.
-- The command is only sent to the transport if approved by the user.
-
+- The client runtime executes a `preview.policy.check` pre-flight request before mutations to verify that the action is allowed by the host's policy.
+- Confirmation is handled dynamically via the host-driven command-challenge flow: when a preview command is sent to the appserver, if the host requires human confirmation, it returns a `confirmation` challenge frame.
+- The client projects this challenge onto the active session's confirmations list and renders a confirmation dialog.
+- The mutation is only executed on the host once the user clicks "Confirm" and the client returns a corresponding `confirm` frame approving the challenge.
 ## 3. Concurrency Lease Locks
 
 To prevent race conditions and multi-agent command collisions over a shared browser instance, mutations are guarded by lease locks:
