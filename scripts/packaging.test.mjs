@@ -111,7 +111,7 @@ test("signed macOS packaging is explicit, credentialed, and release-gated", asyn
     "pnpm package:mac",
     "scripts/inspect-macos-release.mjs",
   ]) {
-    assert.match(releaseWorkflow, new RegExp(expected, "u"));
+    assert.ok(releaseWorkflow.includes(expected), `release workflow must include ${expected}`);
   }
   assert.doesNotMatch(releaseWorkflow, /Build unsigned macOS packages/u);
 });
