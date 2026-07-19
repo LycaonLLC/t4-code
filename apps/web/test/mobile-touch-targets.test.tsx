@@ -71,7 +71,6 @@ describe("phone touch targets", () => {
 
   it("renders every always-visible composer control at 44 CSS pixels", () => {
     const runOptions = renderToStaticMarkup(
-
       <RunOptionsMenu summary="Fixture model · Medium">
         <span>Options</span>
       </RunOptionsMenu>,
@@ -165,13 +164,17 @@ describe("phone touch targets", () => {
     // tooltips instead of competing for the narrow row width; a non-default
     // host icon stays inline so touch surfaces (where tooltips never fire)
     // keep the host differentiator. The model lives tooltip-only.
-    expect(rail).toContain("min-w-0 flex-1 line-clamp-2 break-words font-medium text-foreground text-xs");
+    expect(rail).toContain(
+      "min-w-0 flex-1 line-clamp-2 break-words font-medium text-foreground text-xs",
+    );
     expect(rail).toContain("line-clamp-2 break-words text-foreground text-sm leading-5");
     expect(rail).not.toContain("modelMonogram");
     expect(rail).toContain('group.host.kind === "remote" && (');
-    expect(rail).toContain('Cable aria-hidden="true" className="size-3 shrink-0 text-muted-foreground"');
+    expect(rail).toContain(
+      'Cable aria-hidden="true" className="size-3 shrink-0 text-muted-foreground"',
+    );
     expect(rail).toContain("collisionPadding={8}");
-    expect(rail).toContain('aria-label={`${group.project.name}, ${group.sessions.length}');
+    expect(rail).toContain("aria-label={`${group.displayName}, ${group.sessions.length}");
     expect(rail).toContain('Remote host" : "Host profile"');
     expect(rail).toContain("break-words font-mono text-muted-foreground");
     expect(rail).not.toContain('truncate font-mono text-[11px]">{session.model}');
@@ -180,8 +183,8 @@ describe("phone touch targets", () => {
     expect(rail.match(/flex h-11 shrink-0 [^"]*sm:h-6/g)).toHaveLength(2);
     expect(rail).toContain("choose the OMP profile that will own it");
     expect(rail).toContain("The OMP profile you choose will own this session.");
-    expect(rail).toContain("aria-label={`New session in ${group.project.name}`}");
-    expect(rail).toContain("Actions for ${group.project.name}");
+    expect(rail).toContain("aria-label={`New session in ${group.displayName}`}");
+    expect(rail).toContain("Actions for ${group.displayName}");
     expect(rail).toContain("Only changes this T4 Code client.");
     expect(rail).toContain("flex size-11 shrink-0 cursor-pointer");
     expect(css).toContain('[data-slot="sheet-popup"]');

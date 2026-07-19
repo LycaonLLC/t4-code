@@ -80,10 +80,11 @@ test("rejects duplicate keys in JSON release contracts", () => {
   );
 });
 
-test("keeps verified and published runtime records aligned after promotion", () => {
+test("tracks the newly verified runtime separately from the published desktop runtime", () => {
   const matrix = JSON.parse(files.get("compat/omp-app-matrix.json"));
-  assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.5-appserver-6");
-  assert.deepEqual(matrix.publishedRuntime, matrix.verifiedRuntime);
+  assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.5-appserver-7");
+  assert.equal(matrix.publishedRuntime.sourceTag, "t4code-17.0.5-appserver-6");
+  assert.notDeepEqual(matrix.publishedRuntime, matrix.verifiedRuntime);
 });
 
 test("rejects a tag that differs from the package version", () => {

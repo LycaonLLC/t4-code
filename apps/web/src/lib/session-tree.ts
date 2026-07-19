@@ -27,10 +27,13 @@ export interface RailViewOptions {
   readonly sort?: RailSort;
   readonly projectManualOrder?: readonly string[];
   readonly sessionManualOrderByProjectId?: Readonly<Record<string, readonly string[]>>;
+  readonly projectAliasById?: Readonly<Record<string, string>>;
 }
 
 export interface ProjectGroup {
   readonly project: WorkspaceProject;
+  /** Client-only label; project.name remains the host's real folder name. */
+  readonly displayName: string;
   readonly host: WorkspaceHost;
   readonly expanded: boolean;
   readonly sessions: readonly SessionRow[];
@@ -146,12 +149,43 @@ export function moveIdInManualOrder(
   return [...next, ...hidden];
 }
 
+/** Move an item to the position occupied by another visible item. */
+export function moveIdToManualIndex(
+  storedOrder: readonly string[],
+  visibleIds: readonly string[],
+  id: string,
+  targetId: string,
+): string[] {
+  const visible = new Set(visibleIds);
+  const seen = new Set<string>();
+  const complete: string[] = [];
+  const hidden: string[] = [];
+  for (const entry of storedOrder) {
+    if (seen.has(entry)) continue;
+    seen.add(entry);
+    if (visible.has(entry)) complete.push(entry);
+    else hidden.push(entry);
+  }
+  for (const visibleId of visibleIds) {
+    if (seen.has(visibleId)) continue;
+    seen.add(visibleId);
+    complete.push(visibleId);
+  }
+  const from = complete.indexOf(id);
+  const to = complete.indexOf(targetId);
+  if (from < 0 || to < 0 || from === to) return [...complete, ...hidden];
+  const next = [...complete];
+  next.splice(from, 1);
+  next.splice(to, 0, id);
+  return [...next, ...hidden];
+}
+
 export function buildProjectGroups(
   data: WorkspaceData,
   projectExpandedById: Readonly<Record<string, boolean>>,
   lastVisitedAtBySessionId: Readonly<Record<string, string>>,
   view: SessionListView = "current",
-  dismissedEmptyProjectIds: Readonly<Record<string, true>> = {},
+  hiddenProjectIds: Readonly<Record<string, true>> = {},
   options: RailViewOptions = {},
 ): ProjectGroup[] {
   const filter = options.filter ?? "all";
@@ -162,6 +196,7 @@ export function buildProjectGroups(
   for (const project of data.projects) {
     const host = data.hosts.find((entry) => entry.id === project.hostId);
     if (host === undefined) continue;
+    const displayName = options.projectAliasById?.[project.id] ?? project.name;
     const sessions = data.sessions
       .filter(
         (session) =>
@@ -180,7 +215,7 @@ export function buildProjectGroups(
       .filter((row) => {
         if (!matchesFilter(row, filter)) return false;
         if (query === "") return true;
-        return `${row.session.title} ${row.session.model} ${project.name} ${host.name}`
+        return `${row.session.title} ${row.session.model} ${displayName} ${project.name} ${host.name}`
           .toLocaleLowerCase()
           .includes(query);
       });
@@ -191,16 +226,10 @@ export function buildProjectGroups(
     // makes the project visible again. Archived is session-only and never
     // applies the Current-tab dismissal.
     if (sessions.length === 0 && (view === "archived" || filtering)) continue;
-    if (
-      sessions.length === 0 &&
-      view === "current" &&
-      host.sessionInventoryTruncated !== true &&
-      dismissedEmptyProjectIds[project.id] === true
-    ) {
-      continue;
-    }
+    if (view === "current" && hiddenProjectIds[project.id] === true) continue;
     groups.push({
       project,
+      displayName,
       host,
       expanded: projectExpandedById[project.id] ?? true,
       sessions: sortSessionRows(
@@ -234,7 +263,7 @@ export function buildProjectGroups(
       0,
       ...right.sessions.map((row) => Date.parse(row.session.updatedAt)),
     );
-    return rightUpdated - leftUpdated || left.project.name.localeCompare(right.project.name);
+    return rightUpdated - leftUpdated || left.displayName.localeCompare(right.displayName);
   });
 }
 

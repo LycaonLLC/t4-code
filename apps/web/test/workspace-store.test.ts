@@ -147,6 +147,19 @@ describe("visited and unread", () => {
     expect(store.getState().lastVisitedAtBySessionId["A"]).toBe("2026-07-11T10:00:00Z");
   });
 
+  it("marks a whole project read in one monotonic update", () => {
+    const { store } = makeStore();
+    store.getState().markSessionsVisited({
+      A: "2026-07-11T10:00:00Z",
+      B: "2026-07-11T10:01:00Z",
+    });
+    store.getState().markSessionsVisited({ A: "2026-07-11T09:00:00Z" });
+    expect(store.getState().lastVisitedAtBySessionId).toEqual({
+      A: "2026-07-11T10:00:00Z",
+      B: "2026-07-11T10:01:00Z",
+    });
+  });
+
   it("tracks the latest seen attention outcome per session", () => {
     const { store } = makeStore();
     expect(
@@ -173,6 +186,8 @@ describe("persistence", () => {
     first.getState().setRailSort("manual");
     first.getState().setProjectPinned("project-a", true);
     first.getState().setSessionPinned("A", true);
+    first.getState().setProjectAlias("project-a", "Launchpad");
+    first.getState().setProjectHidden("project-hidden", true);
     first.getState().setProjectManualOrder(["project-b", "project-a"]);
     first.getState().setSessionManualOrder("project-a", ["B", "A"]);
     first.getState().setRailQuery("hidden on restart");
@@ -204,6 +219,11 @@ describe("persistence", () => {
     expect(state.railSort).toBe("manual");
     expect(state.pinnedProjectIds).toEqual({ "project-a": true });
     expect(state.pinnedSessionIds).toEqual({ A: true });
+    expect(state.projectAliasById).toEqual({ "project-a": "Launchpad" });
+    expect(state.hiddenProjectIds).toEqual({
+      "host/project": true,
+      "project-hidden": true,
+    });
     expect(state.projectManualOrder).toEqual(["project-b", "project-a"]);
     expect(state.sessionManualOrderByProjectId).toEqual({ "project-a": ["B", "A"] });
     expect(state.railQuery).toBe("");
@@ -251,6 +271,8 @@ describe("persistence", () => {
       railSort: "priority",
       pinnedProjectIds: {},
       pinnedSessionIds: {},
+      projectAliasById: {},
+      hiddenProjectIds: {},
       projectManualOrder: [],
       sessionManualOrderByProjectId: {},
     });
@@ -306,6 +328,8 @@ describe("persistence", () => {
       railSort: "random",
       pinnedProjectIds: { good: true, bad: false },
       pinnedSessionIds: { session: true, bad: "yes" },
+      projectAliasById: { good: "  Launch   Pad  ", empty: "   ", control: "bad\u0000name" },
+      hiddenProjectIds: { hidden: true, visible: false },
       projectManualOrder: ["project", "project", 42],
       sessionManualOrderByProjectId: { project: ["session", "session", null] },
       lastVisitedAtBySessionId: { good: "2026-07-11T10:00:00Z", bad: "not a date" },
@@ -337,6 +361,8 @@ describe("persistence", () => {
     expect(parsed?.railSort).toBe("priority");
     expect(parsed?.pinnedProjectIds).toEqual({ good: true });
     expect(parsed?.pinnedSessionIds).toEqual({ session: true });
+    expect(parsed?.projectAliasById).toEqual({ good: "Launch Pad" });
+    expect(parsed?.hiddenProjectIds).toEqual({ hidden: true });
     expect(parsed?.projectManualOrder).toEqual(["project"]);
     expect(parsed?.sessionManualOrderByProjectId).toEqual({ project: ["session"] });
     expect(parsed?.lastVisitedAtBySessionId).toEqual({ good: "2026-07-11T10:00:00Z" });
@@ -375,6 +401,22 @@ describe("persistence", () => {
     expect(store.getState().dismissedEmptyProjectIds).toEqual({
       "same-name/project-b": true,
     });
+    expect(store.getState().hiddenProjectIds).toEqual({
+      "same-name/project-b": true,
+    });
+  });
+
+  it("renames and hides projects without changing runtime-backed ids", () => {
+    const { store } = makeStore();
+    store.getState().setProjectAlias("host/project", "  My   Project  ");
+    store.getState().setProjectHidden("host/project", true);
+    expect(store.getState().projectAliasById).toEqual({ "host/project": "My Project" });
+    expect(store.getState().hiddenProjectIds).toEqual({ "host/project": true });
+
+    store.getState().setProjectAlias("host/project", null);
+    store.getState().setProjectHidden("host/project", false);
+    expect(store.getState().projectAliasById).toEqual({});
+    expect(store.getState().hiddenProjectIds).toEqual({});
   });
 
   it("pins and unpins shortcuts without touching runtime session state", () => {

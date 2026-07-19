@@ -12,7 +12,7 @@ import type { RailFilter, RailOrganization, RailSort } from "../lib/session-tree
 import type { SessionListView } from "../lib/workspace-data.ts";
 import type { WorkspacePersistence } from "./persistence.ts";
 
-export const WORKSPACE_STATE_VERSION = 3;
+export const WORKSPACE_STATE_VERSION = 4;
 export const WORKSPACE_STORAGE_KEY = "omp:workspace:v1";
 
 export const RAIL_WIDTH = { minWidth: 208, maxWidth: 400, defaultWidth: 256 } as const;
@@ -74,6 +74,8 @@ interface PersistedWorkspaceState {
   readonly railSort?: RailSort;
   readonly pinnedProjectIds?: Record<string, true>;
   readonly pinnedSessionIds?: Record<string, true>;
+  readonly projectAliasById?: Record<string, string>;
+  readonly hiddenProjectIds?: Record<string, true>;
   readonly projectManualOrder?: readonly string[];
   readonly sessionManualOrderByProjectId?: Readonly<Record<string, readonly string[]>>;
   readonly activeSessionId: string | null;
@@ -98,6 +100,10 @@ export interface WorkspaceState {
   readonly railFilter: RailFilter;
   readonly pinnedProjectIds: Record<string, true>;
   readonly pinnedSessionIds: Record<string, true>;
+  /** Client-only display names. The folder on disk is never renamed. */
+  readonly projectAliasById: Record<string, string>;
+  /** Client-only hidden projects. The folder and host sessions are unchanged. */
+  readonly hiddenProjectIds: Record<string, true>;
   readonly projectManualOrder: readonly string[];
   readonly sessionManualOrderByProjectId: Readonly<Record<string, readonly string[]>>;
   /** Narrow-width overlay rail; ephemeral, never persisted. */
@@ -127,6 +133,8 @@ export interface WorkspaceActions {
   setRailFilter(filter: RailFilter): void;
   setProjectPinned(projectId: string, pinned: boolean): void;
   setSessionPinned(sessionId: string, pinned: boolean): void;
+  setProjectAlias(projectId: string, alias: string | null): void;
+  setProjectHidden(projectId: string, hidden: boolean): void;
   setProjectManualOrder(projectIds: readonly string[]): void;
   setSessionManualOrder(projectId: string, sessionIds: readonly string[]): void;
   setRailOverlayOpen(open: boolean): void;
@@ -136,6 +144,7 @@ export interface WorkspaceActions {
   activateSession(sessionId: string, visitedAt: string): void;
   /** Stamp a visit; timestamps only move forward. */
   markSessionVisited(sessionId: string, visitedAt: string): void;
+  markSessionsVisited(visits: Readonly<Record<string, string>>): void;
   /** Mark one host-authored terminal outcome as seen on this client. */
   markAttentionOutcomeSeen(sessionKey: string, outcomeId: string): void;
   setProjectExpanded(projectId: string, expanded: boolean): void;
@@ -165,6 +174,8 @@ const INITIAL_STATE: WorkspaceState = {
   railFilter: "all",
   pinnedProjectIds: {},
   pinnedSessionIds: {},
+  projectAliasById: {},
+  hiddenProjectIds: {},
   projectManualOrder: [],
   sessionManualOrderByProjectId: {},
   railOverlayOpen: false,
@@ -192,6 +203,17 @@ function sanitizeTrueRecord(value: unknown): Record<string, true> {
   const result: Record<string, true> = {};
   for (const [key, entry] of Object.entries(value)) {
     if (entry === true) result[key] = true;
+  }
+  return result;
+}
+
+function sanitizeProjectAliases(value: unknown): Record<string, string> {
+  if (typeof value !== "object" || value === null) return {};
+  const result: Record<string, string> = {};
+  for (const [projectId, alias] of Object.entries(value).slice(0, 1_000)) {
+    if (projectId.length === 0 || projectId.length > 1_024 || typeof alias !== "string") continue;
+    const clean = alias.trim().replace(/\s+/gu, " ").slice(0, 120);
+    if (clean.length > 0 && !/\p{Cc}/u.test(clean)) result[projectId] = clean;
   }
   return result;
 }
@@ -289,7 +311,12 @@ function sanitizeSessionView(value: unknown): SessionViewState | null {
 export function parsePersistedWorkspace(raw: unknown): WorkspaceState | null {
   if (typeof raw !== "object" || raw === null) return null;
   const parsed = raw as Partial<PersistedWorkspaceState>;
-  if (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== WORKSPACE_STATE_VERSION)
+  if (
+    parsed.version !== 1 &&
+    parsed.version !== 2 &&
+    parsed.version !== 3 &&
+    parsed.version !== WORKSPACE_STATE_VERSION
+  )
     return null;
 
   const sessionViewById: Record<string, SessionViewState> = {};
@@ -317,6 +344,10 @@ export function parsePersistedWorkspace(raw: unknown): WorkspaceState | null {
       parsed.railSort === "updated" || parsed.railSort === "manual" ? parsed.railSort : "priority",
     pinnedProjectIds: sanitizeTrueRecord(parsed.pinnedProjectIds),
     pinnedSessionIds: sanitizeTrueRecord(parsed.pinnedSessionIds),
+    projectAliasById: sanitizeProjectAliases(parsed.projectAliasById),
+    hiddenProjectIds: sanitizeTrueRecord(
+      parsed.hiddenProjectIds ?? parsed.dismissedEmptyProjectIds,
+    ),
     projectManualOrder: sanitizeIdList(parsed.projectManualOrder),
     sessionManualOrderByProjectId: sanitizeNestedIdLists(parsed.sessionManualOrderByProjectId),
     activeSessionId: typeof parsed.activeSessionId === "string" ? parsed.activeSessionId : null,
@@ -341,6 +372,8 @@ export function toPersistedWorkspace(state: WorkspaceState): PersistedWorkspaceS
     railSort: state.railSort,
     pinnedProjectIds: state.pinnedProjectIds,
     pinnedSessionIds: state.pinnedSessionIds,
+    projectAliasById: state.projectAliasById,
+    hiddenProjectIds: state.hiddenProjectIds,
     projectManualOrder: state.projectManualOrder,
     sessionManualOrderByProjectId: state.sessionManualOrderByProjectId,
     activeSessionId: state.activeSessionId,
@@ -445,6 +478,21 @@ export function createWorkspaceStore(options: CreateWorkspaceStoreOptions): Work
         else delete pinnedSessionIds[sessionId];
         return { pinnedSessionIds };
       }),
+    setProjectAlias: (projectId, alias) =>
+      set((state) => {
+        const projectAliasById = { ...state.projectAliasById };
+        const clean = alias?.trim().replace(/\s+/gu, " ").slice(0, 120) ?? "";
+        if (clean.length > 0 && !/\p{Cc}/u.test(clean)) projectAliasById[projectId] = clean;
+        else delete projectAliasById[projectId];
+        return { projectAliasById };
+      }),
+    setProjectHidden: (projectId, hidden) =>
+      set((state) => {
+        const hiddenProjectIds = { ...state.hiddenProjectIds };
+        if (hidden) hiddenProjectIds[projectId] = true;
+        else delete hiddenProjectIds[projectId];
+        return { hiddenProjectIds };
+      }),
     setProjectManualOrder: (projectManualOrder) =>
       set({ projectManualOrder: sanitizeIdList(projectManualOrder) }),
     setSessionManualOrder: (projectId, sessionIds) =>
@@ -467,6 +515,14 @@ export function createWorkspaceStore(options: CreateWorkspaceStoreOptions): Work
       set((state) => ({
         lastVisitedAtBySessionId: markVisited(state.lastVisitedAtBySessionId, sessionId, visitedAt),
       })),
+    markSessionsVisited: (visits) =>
+      set((state) => {
+        let lastVisitedAtBySessionId = state.lastVisitedAtBySessionId;
+        for (const [sessionId, visitedAt] of Object.entries(visits)) {
+          lastVisitedAtBySessionId = markVisited(lastVisitedAtBySessionId, sessionId, visitedAt);
+        }
+        return { lastVisitedAtBySessionId };
+      }),
     markAttentionOutcomeSeen: (sessionKey, outcomeId) =>
       set((state) => {
         if (
@@ -494,12 +550,15 @@ export function createWorkspaceStore(options: CreateWorkspaceStoreOptions): Work
         if (dismissed) {
           return {
             dismissedEmptyProjectIds: { ...state.dismissedEmptyProjectIds, [projectId]: true },
+            hiddenProjectIds: { ...state.hiddenProjectIds, [projectId]: true },
           };
         }
         if (state.dismissedEmptyProjectIds[projectId] !== true) return state;
         const dismissedEmptyProjectIds = { ...state.dismissedEmptyProjectIds };
         delete dismissedEmptyProjectIds[projectId];
-        return { dismissedEmptyProjectIds };
+        const hiddenProjectIds = { ...state.hiddenProjectIds };
+        delete hiddenProjectIds[projectId];
+        return { dismissedEmptyProjectIds, hiddenProjectIds };
       }),
     setSessionDraft: (sessionId, draft) =>
       set((state) => updateSessionView(state, sessionId, { draft })),

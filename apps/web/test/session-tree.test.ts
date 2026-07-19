@@ -7,6 +7,7 @@ import {
   formatRelativeTime,
   listVisibleSessionIds,
   moveIdInManualOrder,
+  moveIdToManualIndex,
   sessionPriority,
 } from "../src/lib/session-tree.ts";
 
@@ -143,6 +144,12 @@ describe("buildProjectGroups", () => {
       "hidden",
     ]);
     expect(moveIdInManualOrder(["a", "b"], ["a", "b"], "a", -1)).toEqual(["a", "b"]);
+    expect(moveIdToManualIndex(["hidden", "a", "b"], ["a", "b", "c"], "c", "a")).toEqual([
+      "c",
+      "a",
+      "b",
+      "hidden",
+    ]);
   });
 
   it("dismisses an empty Current header without hiding its archived sessions", () => {
@@ -180,10 +187,10 @@ describe("buildProjectGroups", () => {
       "current",
       { [project.id]: true },
     );
-    expect(truncated).toHaveLength(1);
+    expect(truncated).toEqual([]);
   });
 
-  it("shows a dismissed project again as soon as it has a current session", () => {
+  it("keeps a hidden project out of Current until the client restores it", () => {
     const project = SHELL_FIXTURE.projects[0];
     const session = SHELL_FIXTURE.sessions.find((entry) => entry.projectId === project?.id);
     expect(project).toBeDefined();
@@ -197,8 +204,15 @@ describe("buildProjectGroups", () => {
       "current",
       { [project.id]: true },
     );
-    expect(groups).toHaveLength(1);
-    expect(groups[0]?.sessions.map((row) => row.session.id)).toEqual([session.id]);
+    expect(groups).toEqual([]);
+    const restored = buildProjectGroups(
+      { ...SHELL_FIXTURE, projects: [project], sessions: [session] },
+      {},
+      {},
+      "current",
+      {},
+    );
+    expect(restored[0]?.sessions.map((row) => row.session.id)).toEqual([session.id]);
     expect(
       buildProjectGroups(
         {
@@ -212,6 +226,25 @@ describe("buildProjectGroups", () => {
         { [project.id]: true },
       ),
     ).toEqual([]);
+  });
+
+  it("uses a client alias for display, search, and tie breaking without changing the host name", () => {
+    const groups = buildProjectGroups(
+      SHELL_FIXTURE,
+      {},
+      {},
+      "current",
+      {},
+      {
+        query: "launchpad",
+        projectAliasById: { "proj-t4": "Launchpad" },
+      },
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.displayName).toBe("Launchpad");
+    expect(groups[0]?.project.name).toBe(
+      SHELL_FIXTURE.projects.find((project) => project.id === "proj-t4")?.name,
+    );
   });
 
   it("dismisses duplicate display names by stable project id", () => {

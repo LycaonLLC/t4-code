@@ -41,7 +41,8 @@ export function AppShell() {
     (state) => state.sessionManualOrderByProjectId,
   );
   const projectExpandedById = useWorkspace((state) => state.projectExpandedById);
-  const dismissedEmptyProjectIds = useWorkspace((state) => state.dismissedEmptyProjectIds);
+  const hiddenProjectIds = useWorkspace((state) => state.hiddenProjectIds);
+  const projectAliasById = useWorkspace((state) => state.projectAliasById);
   const lastVisitedAtBySessionId = useWorkspace((state) => state.lastVisitedAtBySessionId);
   const lastSeenAttentionOutcomeBySessionKey = useWorkspace(
     (state) => state.lastSeenAttentionOutcomeBySessionKey,
@@ -58,20 +59,22 @@ export function AppShell() {
         projectExpandedById,
         lastVisitedAtBySessionId,
         "current",
-        dismissedEmptyProjectIds,
+        hiddenProjectIds,
         {
           filter: railFilter,
           query: railQuery,
           sort: railSort,
           projectManualOrder,
           sessionManualOrderByProjectId,
+          projectAliasById,
         },
       ),
     [
       shellData,
       projectExpandedById,
       lastVisitedAtBySessionId,
-      dismissedEmptyProjectIds,
+      hiddenProjectIds,
+      projectAliasById,
       railFilter,
       railQuery,
       railSort,
@@ -93,6 +96,7 @@ export function AppShell() {
           sort: railSort,
           projectManualOrder,
           sessionManualOrderByProjectId,
+          projectAliasById,
         },
       ),
     [
@@ -104,6 +108,7 @@ export function AppShell() {
       railSort,
       projectManualOrder,
       sessionManualOrderByProjectId,
+      projectAliasById,
     ],
   );
   const allCurrentGroups = useMemo(
@@ -113,14 +118,14 @@ export function AppShell() {
         projectExpandedById,
         lastVisitedAtBySessionId,
         "current",
-        dismissedEmptyProjectIds,
-        { sort: railSort, projectManualOrder, sessionManualOrderByProjectId },
+        {},
+        { sort: railSort, projectManualOrder, sessionManualOrderByProjectId, projectAliasById },
       ),
     [
       shellData,
       projectExpandedById,
       lastVisitedAtBySessionId,
-      dismissedEmptyProjectIds,
+      projectAliasById,
       railSort,
       projectManualOrder,
       sessionManualOrderByProjectId,
@@ -134,7 +139,7 @@ export function AppShell() {
         lastVisitedAtBySessionId,
         "archived",
         {},
-        { sort: railSort, projectManualOrder, sessionManualOrderByProjectId },
+        { sort: railSort, projectManualOrder, sessionManualOrderByProjectId, projectAliasById },
       ),
     [
       shellData,
@@ -143,6 +148,7 @@ export function AppShell() {
       railSort,
       projectManualOrder,
       sessionManualOrderByProjectId,
+      projectAliasById,
     ],
   );
   const allSessionGroups = useMemo(
@@ -163,24 +169,10 @@ export function AppShell() {
           }).urgentCount,
     [lastSeenAttentionOutcomeBySessionKey, runtimeSnapshot],
   );
-  const hiddenEmptyProjectIds = useMemo(() => {
-    const currentProjectIds = new Set(
-      shellData.sessions
-        .filter((session) => session.archivedAt === undefined)
-        .map((session) => session.projectId),
-    );
-    const hostById = new Map(shellData.hosts.map((host) => [host.id, host]));
-    return new Set(
-      shellData.projects
-        .filter(
-          (project) =>
-            dismissedEmptyProjectIds[project.id] === true &&
-            !currentProjectIds.has(project.id) &&
-            hostById.get(project.hostId)?.sessionInventoryTruncated !== true,
-        )
-        .map((project) => project.id),
-    );
-  }, [dismissedEmptyProjectIds, shellData]);
+  const hiddenProjectIdSet = useMemo(
+    () => new Set(Object.keys(hiddenProjectIds).filter((id) => hiddenProjectIds[id] === true)),
+    [hiddenProjectIds],
+  );
 
   // Desktop mode: start the runtime once. StrictMode's doubled effect and
   // HMR remounts are safe — start is idempotent on a global singleton.
@@ -250,13 +242,14 @@ export function AppShell() {
             state.projectExpandedById,
             state.lastVisitedAtBySessionId,
             state.sessionListView,
-            state.dismissedEmptyProjectIds,
+            state.hiddenProjectIds,
             {
               filter: state.railFilter,
               query: state.railQuery,
               sort: state.railSort,
               projectManualOrder: state.projectManualOrder,
               sessionManualOrderByProjectId: state.sessionManualOrderByProjectId,
+              projectAliasById: state.projectAliasById,
             },
           ),
         );
@@ -319,7 +312,9 @@ export function AppShell() {
                 <div className="h-full" style={{ width: RAIL_COLLAPSED_WIDTH }}>
                   <CollapsedRail
                     attentionCount={attentionCount}
-                    groups={allCurrentGroups}
+                    groups={allCurrentGroups.filter(
+                      (group) => !hiddenProjectIdSet.has(group.project.id),
+                    )}
                     onExpand={(projectId) => {
                       const state = workspaceStore.getState();
                       state.setRailCollapsed(false);
@@ -335,7 +330,7 @@ export function AppShell() {
                     archivedCount={archivedCount}
                     currentCount={currentCount}
                     groups={groups}
-                    hiddenEmptyProjectIds={hiddenEmptyProjectIds}
+                    hiddenProjectIds={hiddenProjectIdSet}
                     nowMs={nowMs}
                     pinnedSessionGroups={allSessionGroups}
                     view={sessionListView}
@@ -391,7 +386,7 @@ export function AppShell() {
                 archivedCount={archivedCount}
                 currentCount={currentCount}
                 groups={groups}
-                hiddenEmptyProjectIds={hiddenEmptyProjectIds}
+                hiddenProjectIds={hiddenProjectIdSet}
                 nowMs={nowMs}
                 pinnedSessionGroups={allSessionGroups}
                 view={sessionListView}

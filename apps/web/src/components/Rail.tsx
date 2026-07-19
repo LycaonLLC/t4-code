@@ -28,6 +28,9 @@ import {
   ChevronDown,
   ChevronRight,
   CircleStop,
+  CheckCheck,
+  EyeOff,
+  FolderSearch,
   Folder,
   Inbox,
   LayoutList,
@@ -59,6 +62,7 @@ import {
   flattenProjectGroups,
   formatRelativeTime,
   moveIdInManualOrder,
+  moveIdToManualIndex,
   type ProjectGroup,
   type RailFilter,
   type RailOrganization,
@@ -71,6 +75,8 @@ import {
   archiveLiveSession,
   deleteLiveSession,
   managementCommandSupport,
+  projectRevealSupport,
+  revealLiveProject,
   renameLiveSession,
   restoreLiveSession,
   sessionCreateSupport,
@@ -112,6 +118,7 @@ function SessionRowItem({
   canMoveUp,
   canMoveDown,
   onMove,
+  onDrop,
 }: {
   row: SessionRow;
   active: boolean;
@@ -123,6 +130,7 @@ function SessionRowItem({
   canMoveUp?: boolean;
   canMoveDown?: boolean;
   onMove?: (direction: -1 | 1) => void;
+  onDrop?: (sourceId: string) => void;
 }) {
   const navigate = useNavigate();
   const snapshot = useDesktopRuntimeSnapshot();
@@ -266,10 +274,34 @@ function SessionRowItem({
   );
 
   return (
-    <div className="flex min-w-0 flex-col" data-session-item={session.id}>
+    <div
+      aria-roledescription={manual ? "sortable session" : undefined}
+      className={cn("flex min-w-0 flex-col", manual && "cursor-grab active:cursor-grabbing")}
+      data-session-item={session.id}
+      draggable={manual}
+      onDragOver={(event) => {
+        if (!manual) return;
+        event.stopPropagation();
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+      }}
+      onDragStart={(event) => {
+        if (!manual) return;
+        event.stopPropagation();
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", `session:${session.id}`);
+      }}
+      onDrop={(event) => {
+        if (!manual || onDrop === undefined) return;
+        event.stopPropagation();
+        event.preventDefault();
+        const value = event.dataTransfer.getData("text/plain");
+        if (value.startsWith("session:")) onDrop(value.slice("session:".length));
+      }}
+    >
       <div
         className={cn(
-          "group/session flex min-w-0 items-stretch rounded-md transition-colors duration-(--motion-duration-fast)",
+          "group/session relative flex min-w-0 items-stretch rounded-md transition-colors duration-(--motion-duration-fast)",
           active ? "bg-secondary shadow-[inset_2px_0_0_0_var(--color-brand)]" : "hover:bg-accent",
           session.freshness === "offline" && "opacity-72",
         )}
@@ -339,6 +371,69 @@ function SessionRowItem({
             </span>
           </TooltipPopup>
         </Tooltip>
+        <div className="flex shrink-0 items-stretch sm:pointer-events-none sm:absolute sm:inset-y-0 sm:right-8 sm:z-10 sm:bg-linear-to-l sm:from-(--sidebar-background) sm:from-70% sm:to-transparent sm:pl-5 sm:opacity-0 sm:transition-opacity sm:group-hover/session:pointer-events-auto sm:group-hover/session:opacity-100 sm:focus-within:pointer-events-auto sm:focus-within:opacity-100">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  aria-label={`${pinned ? "Unpin" : "Pin"} chat ${session.title}`}
+                  className="flex min-h-11 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:min-h-0 sm:w-7"
+                  disabled={pending !== null}
+                  onClick={() => {
+                    workspaceStore.getState().setSessionPinned(session.id, !pinned);
+                    onAnnounce(`${session.title} ${pinned ? "unpinned" : "pinned"}.`);
+                  }}
+                  type="button"
+                >
+                  {pinned ? (
+                    <PinOff aria-hidden="true" className="size-3.5" />
+                  ) : (
+                    <Pin aria-hidden="true" className="size-3.5" />
+                  )}
+                </button>
+              }
+            />
+            <TooltipPopup side="right">{pinned ? "Unpin chat" : "Pin chat"}</TooltipPopup>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  aria-disabled={
+                    pending !== null ||
+                    (archived ? !restoreSupport.supported : !archiveSupport.supported)
+                  }
+                  aria-label={`${archived ? "Restore" : "Archive"} chat ${session.title}`}
+                  className={cn(
+                    "flex min-h-11 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-0 sm:w-7",
+                    pending === null &&
+                      (archived ? restoreSupport.supported : archiveSupport.supported)
+                      ? "cursor-pointer hover:text-foreground"
+                      : "cursor-not-allowed opacity-48",
+                  )}
+                  onClick={() => {
+                    const available = archived
+                      ? restoreSupport.supported
+                      : archiveSupport.supported;
+                    if (!available || pending !== null) return;
+                    void runAction(archived ? "restore" : "archive");
+                  }}
+                  title={(archived ? restoreSupport.reason : archiveSupport.reason) ?? undefined}
+                  type="button"
+                >
+                  {pending === (archived ? "restore" : "archive") ? (
+                    <Spinner className="size-3.5" />
+                  ) : archived ? (
+                    <RotateCcw aria-hidden="true" className="size-3.5" />
+                  ) : (
+                    <Archive aria-hidden="true" className="size-3.5" />
+                  )}
+                </button>
+              }
+            />
+            <TooltipPopup side="right">{archived ? "Restore chat" : "Archive chat"}</TooltipPopup>
+          </Tooltip>
+        </div>
         <Popover.Root onOpenChange={setMenuOpen} open={menuOpen}>
           <Popover.Trigger
             aria-label={`Actions for ${session.title}`}
@@ -650,7 +745,9 @@ function ProjectHeaderRow({
   canMoveUp,
   canMoveDown,
   onMove,
+  onDrop,
   onPin,
+  onAnnounce,
   view,
 }: {
   group: ProjectGroup;
@@ -663,13 +760,17 @@ function ProjectHeaderRow({
   canMoveUp: boolean;
   canMoveDown: boolean;
   onMove: (direction: -1 | 1) => void;
+  onDrop: (sourceId: string) => void;
   onPin: () => void;
+  onAnnounce: (message: string) => void;
   view: SessionListView;
 }) {
   const navigate = useNavigate();
   const snapshot = useDesktopRuntimeSnapshot();
   const controller = desktopRuntime();
   const [pending, setPending] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState(group.displayName);
   const [menuOpen, setMenuOpen] = useState(false);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -692,6 +793,10 @@ function ProjectHeaderRow({
     snapshot !== null &&
     address !== null &&
     snapshot.targets.get(address.targetId)?.kind === "local";
+  const revealSupport =
+    snapshot !== null && address !== null
+      ? projectRevealSupport(snapshot, address)
+      : { supported: false, reason: "Connect to this host to reveal the project" };
   const configuredLocalProfiles =
     projectIsLocal && snapshot !== null
       ? [...snapshot.targets.values()].filter((target) => target.kind === "local")
@@ -743,6 +848,63 @@ function ProjectHeaderRow({
   const inventoryTruncated = group.host.sessionInventoryTruncated === true;
   const showShortcutAction = emptyCurrentProject || (view === "archived" && shortcutHidden);
 
+  const markAllRead = () => {
+    const visits = Object.fromEntries(
+      group.sessions.map(({ session }) => [
+        session.id,
+        session.latestTurnCompletedAt ?? session.updatedAt,
+      ]),
+    );
+    workspaceStore.getState().markSessionsVisited(visits);
+    onAnnounce(`Marked all sessions in ${group.displayName} as read.`);
+    setMenuOpen(false);
+  };
+
+  const archiveAll = async () => {
+    if (controller === null || snapshot === null || pending) return;
+    const candidates = group.sessions.flatMap(({ session }) => {
+      const sessionAddress = resolveLiveSession(snapshot, session.id);
+      if (sessionAddress === null) return [];
+      const support = managementCommandSupport(snapshot, sessionAddress, "session.archive");
+      return support.supported ? [{ session, address: sessionAddress }] : [];
+    });
+    if (candidates.length === 0) {
+      setError("No sessions in this project can be archived right now.");
+      return;
+    }
+    setPending(true);
+    setError(null);
+    let completed = 0;
+    try {
+      for (const candidate of candidates) {
+        await archiveLiveSession(controller, candidate.address);
+        completed += 1;
+      }
+      onAnnounce(`Archived ${completed} sessions in ${group.displayName}.`);
+      setMenuOpen(false);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Project archive failed.";
+      setError(`${completed} archived before the operation stopped. ${message}`);
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const revealProject = async () => {
+    if (controller === null || address === null || pending || !revealSupport.supported) return;
+    setPending(true);
+    setError(null);
+    try {
+      await revealLiveProject(controller, address);
+      onAnnounce(`Revealed ${group.displayName} in Finder.`);
+      setMenuOpen(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Project reveal failed.");
+    } finally {
+      setPending(false);
+    }
+  };
+
   const handleCreate = useCallback(
     async (targetAddress: NonNullable<typeof address>) => {
       if (!canCreate || controller === null) return;
@@ -763,14 +925,35 @@ function ProjectHeaderRow({
   );
 
   return (
-    <div className="flex flex-col">
+    <div
+      aria-roledescription={manual ? "sortable project" : undefined}
+      className={cn("flex flex-col", manual && "cursor-grab active:cursor-grabbing")}
+      data-project-drag-handle={group.project.id}
+      draggable={manual}
+      onDragOver={(event) => {
+        if (!manual) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+      }}
+      onDragStart={(event) => {
+        if (!manual) return;
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", `project:${group.project.id}`);
+      }}
+      onDrop={(event) => {
+        if (!manual) return;
+        event.preventDefault();
+        const value = event.dataTransfer.getData("text/plain");
+        if (value.startsWith("project:")) onDrop(value.slice("project:".length));
+      }}
+    >
       <div className="flex items-center gap-0.5">
         <Tooltip>
           <TooltipTrigger
             render={
               <button
                 aria-expanded={group.expanded}
-                aria-label={`${group.project.name}, ${group.sessions.length} ${group.sessions.length === 1 ? "session" : "sessions"}${group.unreadCount > 0 ? `, ${group.unreadCount} unread` : ""}`}
+                aria-label={`${group.displayName}, ${group.sessions.length} ${group.sessions.length === 1 ? "session" : "sessions"}${group.unreadCount > 0 ? `, ${group.unreadCount} unread` : ""}`}
                 className="flex min-h-11 min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 py-1 text-left outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background sm:min-h-0"
                 data-project-disclosure={group.project.id}
                 onClick={() =>
@@ -787,7 +970,7 @@ function ProjectHeaderRow({
                   )}
                 />
                 <span className="min-w-0 flex-1 line-clamp-2 break-words font-medium text-foreground text-xs leading-4">
-                  {group.project.name}
+                  {group.displayName}
                 </span>
                 {group.host.kind === "remote" && (
                   <Cable aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" />
@@ -814,7 +997,7 @@ function ProjectHeaderRow({
           />
           <TooltipPopup className="max-w-72" collisionPadding={8} side="right">
             <span className="flex min-w-0 flex-col gap-0.5">
-              <span className="font-medium">{group.project.name}</span>
+              <span className="font-medium">{group.displayName}</span>
               <span className="break-words text-muted-foreground">
                 {group.host.kind === "remote" ? "Remote host" : "Host profile"}: {group.host.name}
               </span>
@@ -827,7 +1010,7 @@ function ProjectHeaderRow({
               <TooltipTrigger
                 render={
                   <Popover.Trigger
-                    aria-label={`New session in ${group.project.name} — choose the OMP profile that will own it`}
+                    aria-label={`New session in ${group.displayName} — choose the OMP profile that will own it`}
                     className="flex h-11 shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 font-medium text-muted-foreground text-xs outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:h-6 sm:px-1.5"
                     disabled={!createMenuAvailable}
                   >
@@ -847,7 +1030,7 @@ function ProjectHeaderRow({
               <Popover.Positioner align="end" className="z-50" side="bottom" sideOffset={4}>
                 <Popover.Popup className="w-[min(15rem,calc(100vw-1rem))] rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-(--overlay-shadow) outline-none">
                   <Popover.Title className="truncate px-2 pt-1 font-medium text-xs">
-                    New session in {group.project.name}
+                    New session in {group.displayName}
                   </Popover.Title>
                   <Popover.Description className="px-2 pb-1.5 text-muted-foreground text-xs leading-snug">
                     The OMP profile you choose will own this session.
@@ -927,7 +1110,7 @@ function ProjectHeaderRow({
               render={
                 <button
                   aria-disabled={!canCreate}
-                  aria-label={`New session in ${group.project.name}`}
+                  aria-label={`New session in ${group.displayName}`}
                   className={cn(
                     "flex h-11 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-muted-foreground text-xs outline-none transition-colors duration-(--motion-duration-fast) focus-visible:ring-2 focus-visible:ring-ring sm:h-6 sm:px-1.5",
                     canCreate
@@ -953,13 +1136,13 @@ function ProjectHeaderRow({
               }
             />
             <TooltipPopup side="right">
-              {createSupport.reason ?? `New session in ${group.project.name}`}
+              {createSupport.reason ?? `New session in ${group.displayName}`}
             </TooltipPopup>
           </Tooltip>
         ) : null}
         <Popover.Root onOpenChange={setMenuOpen} open={menuOpen}>
           <Popover.Trigger
-            aria-label={`Actions for ${group.project.name}`}
+            aria-label={`Actions for ${group.displayName}`}
             className="flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:size-6"
           >
             <MoreHorizontal aria-hidden="true" className="size-4" />
@@ -968,7 +1151,7 @@ function ProjectHeaderRow({
             <Popover.Positioner align="end" className="z-50" side="bottom" sideOffset={4}>
               <Popover.Popup className="max-h-[min(22rem,calc(100dvh-1rem))] w-[min(17rem,calc(100vw-1rem))] overflow-y-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-(--overlay-shadow) outline-none">
                 <Popover.Title className="truncate px-2 pt-1 pb-1.5 font-medium text-muted-foreground text-xs">
-                  {group.project.name}
+                  {group.displayName}
                 </Popover.Title>
                 <button
                   className="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8"
@@ -983,8 +1166,61 @@ function ProjectHeaderRow({
                   ) : (
                     <Pin aria-hidden="true" className="size-4" />
                   )}
-                  {pinned ? "Unpin working folder" : "Pin working folder"}
+                  {pinned ? "Unpin project" : "Pin project"}
                 </button>
+                <button
+                  className="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8"
+                  onClick={() => {
+                    setRenameValue(group.displayName);
+                    setRenameOpen(true);
+                    setMenuOpen(false);
+                  }}
+                  type="button"
+                >
+                  <Pencil aria-hidden="true" className="size-4" />
+                  Rename project
+                </button>
+                <button
+                  aria-disabled={!revealSupport.supported || pending}
+                  className={cn(
+                    "flex min-h-11 w-full items-center gap-2 rounded-md px-2 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8",
+                    revealSupport.supported && !pending
+                      ? "cursor-pointer hover:bg-accent"
+                      : "cursor-not-allowed text-muted-foreground opacity-64",
+                  )}
+                  onClick={() => void revealProject()}
+                  title={revealSupport.reason ?? "Reveal this project in Finder"}
+                  type="button"
+                >
+                  <FolderSearch aria-hidden="true" className="size-4 shrink-0" />
+                  Reveal in Finder
+                </button>
+                <button
+                  className="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8"
+                  onClick={markAllRead}
+                  type="button"
+                >
+                  <CheckCheck aria-hidden="true" className="size-4" />
+                  Mark all as read
+                </button>
+                {view === "current" && group.sessions.length > 0 && (
+                  <button
+                    aria-disabled={pending}
+                    className={cn(
+                      "flex min-h-11 w-full items-center gap-2 rounded-md px-2 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8",
+                      pending ? "cursor-not-allowed opacity-64" : "cursor-pointer hover:bg-accent",
+                    )}
+                    onClick={() => void archiveAll()}
+                    type="button"
+                  >
+                    {pending ? (
+                      <Spinner className="size-4" />
+                    ) : (
+                      <Archive aria-hidden="true" className="size-4" />
+                    )}
+                    Archive chats
+                  </button>
+                )}
                 {manual && (
                   <>
                     <button
@@ -1073,6 +1309,24 @@ function ProjectHeaderRow({
                       </span>
                     </button>
                   ))}
+                {view === "current" && !emptyCurrentProject && (
+                  <button
+                    className="flex min-h-11 w-full cursor-pointer items-start gap-2 rounded-md px-2 py-2 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onDismiss();
+                    }}
+                    type="button"
+                  >
+                    <EyeOff aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+                    <span>
+                      <span className="block text-sm">Remove</span>
+                      <span className="block text-muted-foreground text-xs leading-snug">
+                        Hides this project in T4. Files and sessions stay unchanged.
+                      </span>
+                    </span>
+                  </button>
+                )}
               </Popover.Popup>
             </Popover.Positioner>
           </Popover.Portal>
@@ -1083,6 +1337,58 @@ function ProjectHeaderRow({
           {error}
         </p>
       )}
+      <Dialog onOpenChange={setRenameOpen} open={renameOpen}>
+        <DialogPopup
+          aria-label={`Rename ${group.displayName}`}
+          className="max-w-sm"
+          showCloseButton={false}
+        >
+          <form
+            onSubmit={(event: FormEvent) => {
+              event.preventDefault();
+              const next = renameValue.trim();
+              if (next.length === 0) return;
+              workspaceStore
+                .getState()
+                .setProjectAlias(group.project.id, next === group.project.name ? null : next);
+              setRenameOpen(false);
+              onAnnounce(`Renamed project to ${next} in this T4 client.`);
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle className="text-base">Rename project</DialogTitle>
+              <DialogDescription>
+                This changes only the name shown in T4. The folder on disk keeps its current name.
+              </DialogDescription>
+              <label className="flex flex-col gap-1 pt-2">
+                <span className="font-medium text-muted-foreground text-xs">Project name</span>
+                <input
+                  autoFocus
+                  className="h-11 rounded-lg border border-input bg-input/32 px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring sm:h-10"
+                  maxLength={120}
+                  onChange={(event) => setRenameValue(event.target.value)}
+                  value={renameValue}
+                />
+              </label>
+            </DialogHeader>
+            <DialogFooter>
+              <DialogClose
+                render={<Button className="min-h-11 sm:min-h-8" size="sm" variant="ghost" />}
+              >
+                Cancel
+              </DialogClose>
+              <Button
+                className="min-h-11 sm:min-h-8"
+                disabled={renameValue.trim().length === 0}
+                size="sm"
+                type="submit"
+              >
+                Rename
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogPopup>
+      </Dialog>
     </div>
   );
 }
@@ -1112,9 +1418,11 @@ const RAIL_FILTERS: ReadonlyArray<{ readonly value: RailFilter; readonly label: 
 ];
 
 function RailOptionsMenu({
+  hiddenGroups,
   organization,
   sort,
 }: {
+  hiddenGroups: readonly ProjectGroup[];
   organization: RailOrganization;
   sort: RailSort;
 }) {
@@ -1154,7 +1462,7 @@ function RailOptionsMenu({
             <Popover.Title className="px-2 pt-1 pb-1 font-medium text-muted-foreground text-xs">
               Organize sidebar
             </Popover.Title>
-            {option(organization === "by-project", "By working folder", () =>
+            {option(organization === "by-project", "By project", () =>
               workspaceStore.getState().setRailOrganization("by-project"),
             )}
             {option(organization === "flat", "In one list", () =>
@@ -1171,6 +1479,28 @@ function RailOptionsMenu({
             {option(sort === "manual", "Manual order", () =>
               workspaceStore.getState().setRailSort("manual"),
             )}
+            {hiddenGroups.length > 0 && (
+              <>
+                <div className="my-1 border-border border-t" />
+                <p className="px-2 pt-1 pb-1 font-medium text-muted-foreground text-xs">
+                  Hidden projects
+                </p>
+                {hiddenGroups.map((group) => (
+                  <button
+                    className="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8"
+                    key={group.project.id}
+                    onClick={() => {
+                      workspaceStore.getState().setProjectHidden(group.project.id, false);
+                      setOpen(false);
+                    }}
+                    type="button"
+                  >
+                    <RotateCcw aria-hidden="true" className="size-4" />
+                    <span className="min-w-0 flex-1 truncate">Show {group.displayName}</span>
+                  </button>
+                ))}
+              </>
+            )}
           </Popover.Popup>
         </Popover.Positioner>
       </Popover.Portal>
@@ -1181,7 +1511,7 @@ function RailOptionsMenu({
 export function Rail({
   allGroups,
   groups,
-  hiddenEmptyProjectIds,
+  hiddenProjectIds,
   nowMs,
   pinnedSessionGroups,
   view,
@@ -1191,7 +1521,7 @@ export function Rail({
 }: {
   allGroups: readonly ProjectGroup[];
   groups: readonly ProjectGroup[];
-  hiddenEmptyProjectIds: ReadonlySet<string>;
+  hiddenProjectIds: ReadonlySet<string>;
   nowMs: number;
   pinnedSessionGroups: readonly ProjectGroup[];
   view: SessionListView;
@@ -1232,8 +1562,12 @@ export function Rail({
     });
   }, [pinnedSessionIds, pinnedSourceEntries]);
   const pinnedGroups = useMemo(
-    () => allGroups.filter((group) => pinnedProjectIds[group.project.id] === true),
-    [allGroups, pinnedProjectIds],
+    () =>
+      allGroups.filter(
+        (group) =>
+          pinnedProjectIds[group.project.id] === true && !hiddenProjectIds.has(group.project.id),
+      ),
+    [allGroups, hiddenProjectIds, pinnedProjectIds],
   );
   const matchCount = flatEntries.length;
 
@@ -1265,6 +1599,34 @@ export function Rail({
       );
   };
 
+  const dropProject = (sourceId: string, targetId: string) => {
+    const visibleIds = groups.map((group) => group.project.id);
+    workspaceStore
+      .getState()
+      .setProjectManualOrder(
+        moveIdToManualIndex(projectManualOrder, visibleIds, sourceId, targetId),
+      );
+  };
+
+  const dropSession = (
+    projectId: string,
+    visibleIds: readonly string[],
+    sourceId: string,
+    targetId: string,
+  ) => {
+    workspaceStore
+      .getState()
+      .setSessionManualOrder(
+        projectId,
+        moveIdToManualIndex(
+          sessionManualOrderByProjectId[projectId] ?? [],
+          visibleIds,
+          sourceId,
+          targetId,
+        ),
+      );
+  };
+
   const dismissProject = (group: ProjectGroup) => {
     const disclosures = [
       ...(navRef.current?.querySelectorAll<HTMLElement>("[data-project-disclosure]") ?? []),
@@ -1274,9 +1636,9 @@ export function Rail({
     );
     const focusTarget =
       disclosures[currentIndex + 1] ?? disclosures[currentIndex - 1] ?? navRef.current;
-    workspaceStore.getState().setEmptyProjectDismissed(group.project.id, true);
+    workspaceStore.getState().setProjectHidden(group.project.id, true);
     setAnnouncement(
-      `Removed ${group.project.name} from Working folders. The folder and OMP sessions are unchanged.`,
+      `Removed ${group.displayName} from Projects. The folder and OMP sessions are unchanged.`,
     );
     requestAnimationFrame(() => {
       const target = focusTarget?.isConnected ? focusTarget : navRef.current;
@@ -1297,7 +1659,11 @@ export function Rail({
         <div className="flex h-8 items-center gap-1">
           <h2 className="font-medium text-foreground text-xs">Sessions</h2>
           <span className="ml-auto text-[10px] text-muted-foreground">{matchCount} matches</span>
-          <RailOptionsMenu organization={organization} sort={sort} />
+          <RailOptionsMenu
+            hiddenGroups={allGroups.filter((group) => hiddenProjectIds.has(group.project.id))}
+            organization={organization}
+            sort={sort}
+          />
         </div>
         <label className="mb-1.5 flex h-8 items-center gap-2 rounded-md border border-border/80 bg-background/45 px-2 focus-within:ring-2 focus-within:ring-ring">
           <Search aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
@@ -1409,14 +1775,14 @@ export function Rail({
                 type="button"
               >
                 <Folder aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1 truncate">{group.project.name}</span>
+                <span className="min-w-0 flex-1 truncate">{group.displayName}</span>
                 <span className="text-muted-foreground text-xs">{group.sessions.length}</span>
               </button>
             ))}
             {pinnedEntries.slice(0, 8).map(({ group, row }) => (
               <SessionRowItem
                 active={row.session.id === activeSessionId}
-                contextLabel={group.project.name}
+                contextLabel={group.displayName}
                 index={rowIndex++}
                 key={`pinned:${row.session.id}`}
                 nowMs={nowMs}
@@ -1439,7 +1805,7 @@ export function Rail({
                 active={row.session.id === activeSessionId}
                 canMoveDown={index < flatEntries.length - 1}
                 canMoveUp={index > 0}
-                contextLabel={group.project.name}
+                contextLabel={group.displayName}
                 index={rowIndex++}
                 key={row.session.id}
                 manual={sort === "manual"}
@@ -1451,6 +1817,14 @@ export function Rail({
                     flatEntries.map((entry) => entry.row.session.id),
                     row.session.id,
                     direction,
+                  )
+                }
+                onDrop={(sourceId) =>
+                  dropSession(
+                    "*",
+                    flatEntries.map((entry) => entry.row.session.id),
+                    sourceId,
+                    row.session.id,
                   )
                 }
                 row={row}
@@ -1469,12 +1843,12 @@ export function Rail({
         </section>
       ) : (
         groups.map((group, groupIndex) => {
-          const limit = projectLimits[group.project.id] ?? 6;
+          const limit = projectLimits[group.project.id] ?? 5;
           const visibleRows = group.sessions.slice(0, limit);
           const sessionIds = group.sessions.map((row) => row.session.id);
           return (
             <section
-              aria-label={group.project.name}
+              aria-label={group.displayName}
               className="mb-1"
               data-project-id={group.project.id}
               key={group.project.id}
@@ -1487,19 +1861,21 @@ export function Rail({
                 manual={sort === "manual"}
                 onDismiss={() => dismissProject(group)}
                 onMove={(direction) => moveProject(group.project.id, direction)}
+                onDrop={(sourceId) => dropProject(sourceId, group.project.id)}
+                onAnnounce={setAnnouncement}
                 onPin={() => {
                   const pinned = pinnedProjectIds[group.project.id] === true;
                   workspaceStore.getState().setProjectPinned(group.project.id, !pinned);
-                  setAnnouncement(`${group.project.name} ${pinned ? "unpinned" : "pinned"}.`);
+                  setAnnouncement(`${group.displayName} ${pinned ? "unpinned" : "pinned"}.`);
                 }}
                 onRestore={() => {
                   workspaceStore.getState().setEmptyProjectDismissed(group.project.id, false);
                   setAnnouncement(
-                    `Restored ${group.project.name} to Working folders on this T4 Code client.`,
+                    `Restored ${group.displayName} to Projects on this T4 Code client.`,
                   );
                 }}
                 pinned={pinnedProjectIds[group.project.id] === true}
-                shortcutHidden={hiddenEmptyProjectIds.has(group.project.id)}
+                shortcutHidden={hiddenProjectIds.has(group.project.id)}
                 view={view}
               />
               {group.expanded && (
@@ -1516,6 +1892,9 @@ export function Rail({
                       onAnnounce={setAnnouncement}
                       onMove={(direction) =>
                         moveSession(group.project.id, sessionIds, row.session.id, direction)
+                      }
+                      onDrop={(sourceId) =>
+                        dropSession(group.project.id, sessionIds, sourceId, row.session.id)
                       }
                       row={row}
                     />

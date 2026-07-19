@@ -1,6 +1,7 @@
 import type { DesktopRuntimeController, DesktopRuntimeSnapshot } from "@t4-code/client";
 import {
   hostId,
+  projectId,
   revision,
   sessionId,
   type ConfirmationChallenge,
@@ -25,6 +26,60 @@ export type SessionManagementCommand =
 export interface SessionManagementSupport {
   readonly supported: boolean;
   readonly reason: string | null;
+}
+
+/** Finder reveal is a host-native action and is never offered for remote targets. */
+export function projectRevealSupport(
+  snapshot: DesktopRuntimeSnapshot,
+  address: LiveProjectAddress,
+): SessionManagementSupport {
+  if (snapshot.targets.get(address.targetId)?.kind !== "local") {
+    return { supported: false, reason: "Reveal in Finder is available only on this Mac" };
+  }
+  if (snapshot.connections.get(address.targetId) !== "connected") {
+    return { supported: false, reason: "Connect to this host to reveal the project" };
+  }
+  if (snapshot.targetHosts.get(address.targetId) !== address.hostId) {
+    return { supported: false, reason: "Project host binding is no longer available." };
+  }
+  const granted = snapshot.hosts.get(address.hostId)?.grantedCapabilities ?? [];
+  if (!granted.includes("sessions.manage")) {
+    return { supported: false, reason: "Project actions are not granted on this host" };
+  }
+  const catalog = commandSupport(snapshot.catalogs.get(address.hostId), granted, "project.reveal");
+  return catalog.supported
+    ? { supported: true, reason: null }
+    : {
+        supported: false,
+        reason:
+          catalog.reason === "This host can't change this from here yet — use the terminal"
+            ? "Update the local OMP runtime to reveal projects in Finder"
+            : catalog.reason,
+      };
+}
+
+export async function revealLiveProject(
+  controller: DesktopRuntimeController,
+  address: LiveProjectAddress,
+): Promise<void> {
+  const support = projectRevealSupport(controller.getSnapshot(), address);
+  if (!support.supported) throw new Error(support.reason ?? "Project reveal is unavailable.");
+  const response = await controller.command(address.targetId, {
+    hostId: hostId(address.hostId),
+    command: "project.reveal",
+    args: { projectId: projectId(address.projectId) },
+  });
+  if (!response.accepted) {
+    throw new Error(sessionActionRejectionReason(response.error, "manage"));
+  }
+  const result = response.result;
+  if (
+    result === null ||
+    typeof result !== "object" ||
+    (result as Record<string, unknown>).revealed !== true
+  ) {
+    throw new Error("The host returned an invalid project reveal result.");
+  }
 }
 
 const CONVERGENCE_TIMEOUT_MS = 10_000;
