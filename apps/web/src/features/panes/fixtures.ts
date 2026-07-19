@@ -793,6 +793,11 @@ function agentsForSession(sessionId: string): readonly AgentNode[] {
   );
 }
 
+/** Shared deterministic agent corpus for fixture-only surfaces such as Agent View. */
+export function fixtureAgentsForSession(sessionId: string): readonly AgentNode[] {
+  return agentsForSession(sessionId);
+}
+
 function fixtureController(api: InspectorStoreApi, clock: () => number): InspectorController {
   const editedFiles = new Map<string, string>();
   return {

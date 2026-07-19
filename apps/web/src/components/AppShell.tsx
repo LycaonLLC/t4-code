@@ -17,7 +17,7 @@ import { getShellData, useShellData } from "../state/shell-data.ts";
 import { RAIL_OVERLAY_QUERY, useMediaQuery } from "../hooks/useMediaQuery.ts";
 import { isEditableTarget, resolveShortcut } from "../keyboard/shortcuts.ts";
 import { buildProjectGroups, listVisibleSessionIds } from "../lib/session-tree.ts";
-import { useWorkspace, workspaceStore } from "../state/store-instance.ts";
+import { rendererPlatform, useWorkspace, workspaceStore } from "../state/store-instance.ts";
 import { RAIL_COLLAPSED_WIDTH, RAIL_WIDTH, selectSessionView } from "../state/workspace-store.ts";
 import { CommandPalette } from "./CommandPalette.tsx";
 import { CollapsedRail, Rail } from "./Rail.tsx";
@@ -195,6 +195,20 @@ export function AppShell() {
         }}
         railToggle={railToggle}
       />
+      {rendererPlatform.mode === "browser" && (
+        <div
+          aria-label="Sample data notice"
+          className="flex min-h-7 shrink-0 items-center justify-center gap-1.5 border-border/60 border-b bg-primary/8 px-2 text-center text-xs"
+        >
+          <span className="font-semibold text-primary">Sample data</span>
+          <span aria-hidden="true" className="text-muted-foreground">
+            ·
+          </span>
+          <span className="truncate text-muted-foreground">
+            Explore freely. No live hosts, accounts, or files are connected.
+          </span>
+        </div>
+      )}
       <div className="flex min-h-0 flex-1">
         {!railOverlaid && !focusMode && (
           <>

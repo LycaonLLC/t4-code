@@ -276,11 +276,13 @@ export function SessionScreen({
   const previewAddress =
     runtimeSnapshot === null ? null : resolveLiveSession(runtimeSnapshot, session.id);
   const previewCount =
-    previewAddress === null
-      ? 0
-      : (runtimeSnapshot?.projection.sessions
-          .get(`${previewAddress.hostId}\u0000${previewAddress.sessionId}`)
-          ?.previews.size ?? 0);
+    runtimeSnapshot === null
+      ? 1
+      : previewAddress === null
+        ? 0
+        : (runtimeSnapshot.projection.sessions.get(
+            `${previewAddress.hostId}\u0000${previewAddress.sessionId}`,
+          )?.previews.size ?? 0);
   const [panePreviewWidth, setPanePreviewWidth] = useState<number | null>(null);
 
   // Transcript scroll ownership lives in TranscriptTimeline (virtualized

@@ -6,8 +6,11 @@ on:
     branches: [main, master]
     paths:
       - "apps/site/**"
+      - "apps/web/**"
+      - "packages/**"
       - "scripts/check-release-publication.mjs"
       - "scripts/deploy-site.mjs"
+      - "scripts/deploy-demo.mjs"
       - "scripts/dispatch-site-deployment.mjs"
       - "scripts/generate-release-manifest.mjs"
       - "scripts/inspect-linux-update.mjs"
@@ -153,9 +156,18 @@ jobs:
           ref: ${{ steps.immutable_source.outputs.source_sha }}
           persist-credentials: false
 
+      - name: Check out trusted demo source
+        if: ${{ steps.published_release.outcome == 'success' || steps.existing_release.outcome == 'success' }}
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ steps.source.outputs.trusted_sha }}
+          path: .trusted-demo-source
+          persist-credentials: false
       - name: Install dependencies
         if: ${{ steps.published_release.outcome == 'success' || steps.existing_release.outcome == 'success' }}
-        run: pnpm install --frozen-lockfile
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir .trusted-demo-source install --frozen-lockfile
 
       - name: Authenticate to AWS with GitHub OIDC
         if: ${{ steps.published_release.outcome == 'success' || steps.existing_release.outcome == 'success' }}
@@ -170,4 +182,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           T4_SITE_BUCKET: ${{ vars.T4_SITE_BUCKET }}
           T4_CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.T4_CLOUDFRONT_DISTRIBUTION_ID }}
-        run: pnpm deploy:site
+        run: |
+          pnpm deploy:site
+          pnpm --dir .trusted-demo-source deploy:demo

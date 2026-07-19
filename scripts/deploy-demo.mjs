@@ -1,22 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const BUCKET_PATTERN = /^(?!\d+\.\d+\.\d+\.\d+$)[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
-const DISTRIBUTION_PATTERN = /^E[A-Z0-9]{8,20}$/;
-
-export function resolveDeployConfig(environment = process.env) {
-  const bucket = environment.T4_SITE_BUCKET?.trim() ?? "";
-  const distributionId = environment.T4_CLOUDFRONT_DISTRIBUTION_ID?.trim() ?? "";
-  if (!BUCKET_PATTERN.test(bucket)) {
-    throw new Error("T4_SITE_BUCKET must be a valid S3 bucket name");
-  }
-  if (!DISTRIBUTION_PATTERN.test(distributionId)) {
-    throw new Error("T4_CLOUDFRONT_DISTRIBUTION_ID must be a CloudFront distribution ID");
-  }
-  return { bucket, distributionId };
-}
+import { resolveDeployConfig } from "./deploy-site.mjs";
 
 function run(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, env: process.env, stdio: "inherit" });
@@ -26,32 +12,19 @@ function run(command, args, cwd) {
   }
 }
 
-export function deploySite(
+export function deployDemo(
   config,
   repoRoot = resolve(import.meta.dirname, ".."),
   runCommand = run,
-  releaseVersion = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8")).version,
 ) {
-  const destination = `s3://${config.bucket}`;
-  runCommand("pnpm", ["--filter", "@t4-code/site", "build"], repoRoot);
-  runCommand(
-    "node",
-    [
-      "scripts/generate-release-manifest.mjs",
-      "--version",
-      releaseVersion,
-      "--output",
-      "apps/site/dist/releases/latest.json",
-    ],
-    repoRoot,
-  );
-  // Publish new content hashes first and retain old hashes for already-cached entry documents.
+  const destination = `s3://${config.bucket}/demo`;
+  runCommand("pnpm", ["build:demo"], repoRoot);
   runCommand(
     "aws",
     [
       "s3",
       "sync",
-      "apps/site/dist/assets",
+      "apps/site/dist/demo/assets",
       `${destination}/assets`,
       "--cache-control",
       "public,max-age=31536000,immutable",
@@ -64,13 +37,11 @@ export function deploySite(
     [
       "s3",
       "sync",
-      "apps/site/dist",
+      "apps/site/dist/demo",
       destination,
       "--delete",
       "--exclude",
       "assets/*",
-      "--exclude",
-      "demo/*",
       "--cache-control",
       "public,max-age=0,must-revalidate",
       "--only-show-errors",
@@ -85,7 +56,8 @@ export function deploySite(
       "--distribution-id",
       config.distributionId,
       "--paths",
-      "/*",
+      "/demo",
+      "/demo/*",
     ],
     repoRoot,
   );
@@ -95,7 +67,7 @@ const isMain =
   process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (isMain) {
   try {
-    deploySite(resolveDeployConfig());
+    deployDemo(resolveDeployConfig());
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
