@@ -55,11 +55,11 @@ describe("preview workspace policy", () => {
     expect(derivePreviewWorkspaceStatus({ preview: preview(), connected: true, supported: false })).toBe("unsupported");
   });
 
-  it("does not auto-select an authenticated profile or launch authority", () => {
+  it("returns a sole authenticated preview for explicit selection", () => {
     const authenticated = preview({ previewId: "authenticated", authority: { id: "auth", label: "Personal", kind: "authenticated-profile", requiresExplicitOptIn: true } });
     const isolated = preview({ previewId: "isolated", authority: { id: "omp-session", label: "Session", kind: "isolated-session", requiresExplicitOptIn: false } });
     expect(choosePreview([authenticated, isolated], null)?.previewId).toBe("isolated");
-    expect(choosePreview([authenticated], null)).toBeUndefined();
+    expect(choosePreview([authenticated], null)?.previewId).toBe("authenticated");
     expect(choosePreview([authenticated, isolated], "authenticated")?.previewId).toBe("authenticated");
     expect(defaultLaunchAuthority()).toBe("omp-session");
   });
@@ -67,13 +67,17 @@ describe("preview workspace policy", () => {
   it("reports host-advertised action reasons and scales snapshot clicks to native coordinates", () => {
     const current = preview({ availableActions: ["navigate"] });
     const { availableActions: _availableActions, ...withoutActions } = preview();
-    expect(previewActionSupport(current, "click", "ready", true)).toEqual({
+    expect(previewActionSupport(current, "click", "ready", true, true)).toEqual({
       supported: false,
       reason: "This host does not advertise click for this preview.",
     });
-    expect(previewActionSupport(withoutActions, "navigate", "ready", true)).toEqual({
+    expect(previewActionSupport(withoutActions, "navigate", "ready", true, true)).toEqual({
       supported: false,
       reason: "This host does not advertise navigate for this preview.",
+    });
+    expect(previewActionSupport(current, "press", "ready", false, true)).toEqual({
+      supported: false,
+      reason: "This host does not permit browser preview control.",
     });
     expect(
       displayedToNativeCoordinate({ x: 50, y: 25 }, { width: 100, height: 50 }, { width: 1000, height: 500 }),
@@ -87,9 +91,10 @@ describe("preview workspace policy", () => {
     expect(isProjectRelativeUploadPath("../image.png")).toBe(false);
   });
 
-  it("requires preview control, read, and input grants", () => {
+  it("separates preview reads from control and input grants", () => {
     expect(previewHostSupport(undefined)).toEqual({
       supported: false,
+      controlSupported: false,
       inputSupported: false,
       reason: "This host does not advertise browser preview control.",
     });
@@ -98,13 +103,13 @@ describe("preview workspace policy", () => {
         grantedFeatures: ["preview.control"],
         grantedCapabilities: ["preview.read"],
       }),
-    ).toEqual({ supported: true, inputSupported: false });
+    ).toEqual({ supported: true, controlSupported: false, inputSupported: false });
     expect(
       previewHostSupport({
         grantedFeatures: ["preview.control"],
-        grantedCapabilities: ["preview.read", "preview.input"],
+        grantedCapabilities: ["preview.read", "preview.control", "preview.input"],
       }),
-    ).toEqual({ supported: true, inputSupported: true });
+    ).toEqual({ supported: true, controlSupported: true, inputSupported: true });
   });
 
   it("keeps policy checks to allowed and safe reason fields", () => {

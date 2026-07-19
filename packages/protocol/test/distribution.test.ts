@@ -140,7 +140,7 @@ describe("vendored app-wire distribution", () => {
       appProtocol: "omp-app/1",
       goldenCorpusSha256: "7ebd5fa6cbc37ae0f28cf1d957d9cab841b875581cb42ffbe81cea66f1dc2ef1",
     });
-    expect(manifest.createdAt).toBe("2026-07-18T18:06:38-07:00");
+    expect(manifest.createdAt).toBe("2026-07-19T01:06:38Z");
     expect(sha256(tarballPath)).toBe(manifest.tarballSha256);
     expect(goldenCorpusSha256(join(installedRoot, "fixtures", "v1"))).toBe(
       manifest.goldenCorpusSha256,

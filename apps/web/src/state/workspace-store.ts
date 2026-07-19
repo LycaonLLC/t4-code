@@ -191,7 +191,7 @@ function sanitizeSessionView(value: unknown): SessionViewState | null {
       typeof view.previewId === "string" &&
       view.previewId.length > 0 &&
       view.previewId.length <= 256 &&
-      !/[\u0000-\u001f\u007f]/u.test(view.previewId)
+      !/\p{Cc}/u.test(view.previewId)
         ? view.previewId
         : null,
     previewScale: view.previewScale === "actual" ? "actual" : "fit",

@@ -75,6 +75,8 @@ export function PreviewWorkspace({
     [sessionProjection],
   );
   const preview = choosePreview(previews, selectedPreviewId);
+  const authenticatedPreviewNeedsOptIn =
+    selectedPreviewId === null && preview?.authority?.kind === "authenticated-profile";
   const connected =
     snapshot !== null && address !== null && snapshot.connections.get(address.targetId) === "connected";
   const hostSupport =
@@ -100,10 +102,14 @@ export function PreviewWorkspace({
   const [scrollY, setScrollY] = useState("400");
 
   useEffect(() => {
-    if (preview !== undefined && preview.previewId !== selectedPreviewId) {
+    if (
+      preview !== undefined &&
+      preview.previewId !== selectedPreviewId &&
+      !authenticatedPreviewNeedsOptIn
+    ) {
       workspaceStore.getState().setSessionPreview(session.id, preview.previewId);
     }
-  }, [preview, selectedPreviewId, session.id]);
+  }, [authenticatedPreviewNeedsOptIn, preview, selectedPreviewId, session.id]);
 
   useEffect(() => {
     setUrl(preview?.url ?? "");
@@ -135,7 +141,18 @@ export function PreviewWorkspace({
   }, [adapter, identity?.previewId, preview?.capture?.captureId, preview?.capture?.sha256]);
 
   const support = (action: PreviewAction) =>
-    previewActionSupport(preview, action, status, hostSupport.inputSupported);
+    authenticatedPreviewNeedsOptIn
+      ? {
+          supported: false,
+          reason: "Select the authenticated preview before controlling it.",
+        }
+      : previewActionSupport(
+          preview,
+          action,
+          status,
+          hostSupport.controlSupported,
+          hostSupport.inputSupported,
+        );
   const runAction = (
     action: PreviewAction,
     _label: string,
@@ -145,10 +162,10 @@ export function PreviewWorkspace({
     const actionSupport =
       requiresPreview
         ? support(action)
-        : adapter === null || !hostSupport.supported
+        : adapter === null || !hostSupport.supported || !hostSupport.controlSupported
           ? {
               supported: false,
-              reason: hostSupport.reason ?? "This host does not advertise browser preview support.",
+              reason: hostSupport.reason ?? "This host does not permit browser preview control.",
             }
           : { supported: true };
     if (!actionSupport.supported || adapter === null) {
@@ -224,6 +241,7 @@ export function PreviewWorkspace({
                 disabled={
                   url.trim().length === 0 ||
                   !hostSupport.supported ||
+                  !hostSupport.controlSupported ||
                   (preview !== undefined && !support("navigate").supported)
                 }
                 onClick={() => {
@@ -244,15 +262,20 @@ export function PreviewWorkspace({
               </Button>
             </div>
             <p className="mt-2 text-muted-foreground text-xs">Launch authority: OMP session-only authority. Authenticated profiles are never selected automatically.</p>
-            {previews.length > 1 && (
+            {(previews.length > 1 || authenticatedPreviewNeedsOptIn) && (
               <label className="mt-3 block text-muted-foreground text-xs" htmlFor="preview-selection">
                 Preview
                 <select
                   className="mt-1 min-h-11 w-full rounded-md border border-input bg-background px-3 text-sm sm:min-h-8"
                   id="preview-selection"
                   onChange={(event) => workspaceStore.getState().setSessionPreview(session.id, event.target.value)}
-                  value={preview?.previewId ?? ""}
+                  value={selectedPreviewId ?? ""}
                 >
+                  {authenticatedPreviewNeedsOptIn && (
+                    <option disabled value="">
+                      Select authenticated preview
+                    </option>
+                  )}
                   {previews.map((entry) => (
                     <option key={entry.previewId} value={entry.previewId}>
                       {entry.title ?? entry.url ?? entry.previewId}

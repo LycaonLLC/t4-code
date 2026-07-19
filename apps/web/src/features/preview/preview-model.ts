@@ -39,6 +39,7 @@ export interface PreviewPolicyDecision {
 
 export interface PreviewHostSupport {
   readonly supported: boolean;
+  readonly controlSupported: boolean;
   readonly inputSupported: boolean;
   readonly reason?: string;
 }
@@ -48,14 +49,21 @@ export function previewHostSupport(host: {
   readonly grantedFeatures: readonly string[];
 } | undefined): PreviewHostSupport {
   if (host === undefined || !host.grantedFeatures.includes("preview.control")) {
-    return { supported: false, inputSupported: false, reason: "This host does not advertise browser preview control." };
+    return {
+      supported: false,
+      controlSupported: false,
+      inputSupported: false,
+      reason: "This host does not advertise browser preview control.",
+    };
   }
-  if (!host.grantedCapabilities.includes("preview.read")) {
-    return { supported: false, inputSupported: false, reason: "This host does not permit browser preview reads." };
-  }
+  const controlSupported = host.grantedCapabilities.includes("preview.control");
   return {
-    supported: true,
-    inputSupported: host.grantedCapabilities.includes("preview.input"),
+    supported: host.grantedCapabilities.includes("preview.read"),
+    controlSupported,
+    inputSupported: controlSupported && host.grantedCapabilities.includes("preview.input"),
+    ...(!host.grantedCapabilities.includes("preview.read")
+      ? { reason: "This host does not permit browser preview reads." }
+      : {}),
   };
 }
 
@@ -77,6 +85,7 @@ export function previewActionSupport(
   preview: PreviewProjection | undefined,
   action: PreviewAction,
   status: PreviewWorkspaceStatus,
+  controlSupported: boolean,
   inputSupported: boolean,
 ): PreviewActionSupport {
   if (status === "unsupported") {
@@ -87,6 +96,9 @@ export function previewActionSupport(
   }
   if (status === "cached") {
     return { supported: false, reason: "Preview actions are unavailable until the cached session reconnects." };
+  }
+  if (!controlSupported) {
+    return { supported: false, reason: "This host does not permit browser preview control." };
   }
   if (status === "empty" || preview === undefined) {
     return { supported: false, reason: "Launch a preview before using this action." };
@@ -110,7 +122,10 @@ export function choosePreview(
     const selected = previews.find((preview) => preview.previewId === selectedPreviewId);
     if (selected !== undefined) return selected;
   }
-  return previews.find((preview) => preview.authority?.kind !== "authenticated-profile");
+  const nonAuthenticated = previews.find(
+    (preview) => preview.authority?.kind !== "authenticated-profile",
+  );
+  return nonAuthenticated ?? (previews.length === 1 ? previews[0] : undefined);
 }
 
 export function previewTrustLabel(preview: PreviewProjection | undefined): string {

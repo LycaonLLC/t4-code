@@ -509,6 +509,7 @@ export function SessionMain({ onOpenHostHealth, session }: SessionMainProps) {
             </Badge>
           </button>
         </div>
+      )}
       {snapshot.providerTransport !== null && (
         <ProviderTransportDiagnostics
           onOpenHostHealth={onOpenHostHealth}

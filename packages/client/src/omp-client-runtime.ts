@@ -661,7 +661,7 @@ export class OmpClient {
     return this.previewTargetCommand(
       "preview.lease.acquire",
       identity,
-      { ...(ttlMs === undefined ? {} : { ttlMs }) },
+      ttlMs === undefined ? {} : { ttlMs },
       options,
     );
   }

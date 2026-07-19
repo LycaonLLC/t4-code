@@ -77,13 +77,20 @@ export class PreviewDesktopAdapter {
     });
     this.leases = new PreviewLeaseManager({
       previewLeaseAcquire: async (identity, ttlMs) =>
-        this.leaseResponse(await this.command("preview.lease.acquire", identity, { ...(ttlMs === undefined ? {} : { ttlMs }) })),
+        this.leaseResponse(
+          await this.command(
+            "preview.lease.acquire",
+            identity,
+            ttlMs === undefined ? {} : { ttlMs },
+          ),
+        ),
       previewLeaseRenew: async (identity, ttlMs) =>
         this.leaseResponse(
-          await this.command("preview.lease.renew", identity, {
-            leaseId: identity.leaseId,
-            ...(ttlMs === undefined ? {} : { ttlMs }),
-          }),
+          await this.command(
+            "preview.lease.renew",
+            identity,
+            ttlMs === undefined ? { leaseId: identity.leaseId } : { leaseId: identity.leaseId, ttlMs },
+          ),
         ),
       previewLeaseRelease: async (identity) =>
         this.leaseResponse(await this.command("preview.lease.release", identity, { leaseId: identity.leaseId })),
