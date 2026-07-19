@@ -88,8 +88,9 @@ and keep the same loopback URL. The fixture process binds only to local loopback
 through Funnel or a public firewall rule.
 
 `T4_DEVELOPMENT_ENDPOINT` is only for deterministic fixture work. Without it, the app starts from
-its persisted host directory and accepts an exact Tailnet HTTPS address, then performs normal
-OMP device pairing and stores the resulting credential in platform secure storage.
+its persisted host directory and accepts an exact Tailnet HTTPS address, then performs normal OMP
+device pairing. Unsigned macOS `Debug` builds keep the credential in memory only and identify that
+behavior in the window; signed Apple configurations and Android use platform secure storage.
 
 
 Use `pnpm check:flutter` for analysis and `pnpm test:flutter` for the Dart protocol and real-fixture

@@ -71,6 +71,29 @@ final class PersistentHostDirectoryStore implements HostDirectoryStore {
   }
 }
 
+/// Process-local credentials for unsigned macOS development builds.
+///
+/// Values are intentionally lost when the app exits and never cross into a
+/// platform channel or persistent store.
+final class VolatileHostCredentialStore implements HostCredentialStore {
+  final Map<String, DeviceCredentials> _credentials =
+      <String, DeviceCredentials>{};
+
+  @override
+  Future<DeviceCredentials?> read(HostProfile profile) async =>
+      _credentials[profile.endpointKey];
+
+  @override
+  Future<void> write(HostProfile profile, DeviceCredentials credentials) async {
+    _credentials[profile.endpointKey] = credentials;
+  }
+
+  @override
+  Future<void> delete(HostProfile profile) async {
+    _credentials.remove(profile.endpointKey);
+  }
+}
+
 final class SecureHostCredentialStore implements HostCredentialStore {
   SecureHostCredentialStore({
     HostCredentialStorage? storage,

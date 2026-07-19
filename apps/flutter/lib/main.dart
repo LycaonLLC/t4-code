@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/widgets.dart';
+import 'package:flutter/foundation.dart';
 
 import 'src/client/t4_client_controller.dart';
 import 'src/host/persistent_host_stores.dart';
@@ -32,13 +33,18 @@ final class T4Bootstrap extends StatefulWidget {
 
 final class _T4BootstrapState extends State<T4Bootstrap> {
   late final T4ClientController _controller;
+  late final bool _credentialsAreVolatile;
 
   @override
   void initState() {
     super.initState();
+    _credentialsAreVolatile =
+        kDebugMode && defaultTargetPlatform == TargetPlatform.macOS;
     _controller = T4ClientController(
       hostDirectoryStore: PersistentHostDirectoryStore(),
-      hostCredentialStore: SecureHostCredentialStore(),
+      hostCredentialStore: _credentialsAreVolatile
+          ? VolatileHostCredentialStore()
+          : SecureHostCredentialStore(),
       developmentEndpoint: widget.developmentEndpoint,
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -50,8 +56,11 @@ final class _T4BootstrapState extends State<T4Bootstrap> {
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: _controller,
-      builder: (context, _) =>
-          T4App(state: _controller.state, actions: _controller),
+      builder: (context, _) => T4App(
+        state: _controller.state,
+        actions: _controller,
+        credentialsAreVolatile: _credentialsAreVolatile,
+      ),
     );
   }
 

@@ -7,6 +7,14 @@ Create and activate an OMP goal for the complete objective below. Keep that goal
 
 Work in the T4 repository root on the local branch `feat/flutter-rewrite`; the OMP fork is the sibling `../oh-my-pi` checkout. Keep `main` untouched. Do not push, create a PR, comment on GitHub, publish artifacts, or change either remote unless the user explicitly asks. Local commits are allowed only at verified milestones and must use the repository-local configured contributor identity. Never expose credentials, private repository content, or Codex screenshots outside this workstation.
 
+MIGRATION REFERENCE
+
+- The frozen pre-Flutter behavior reference is T4 Code 0.1.24 at commit `0309cc069980b2f82e604c9b25fb674b6b560dbb`.
+- Flutter Stage 1 begins at commit `a606d5399802f6353509eb6eb9a8a6e59c6c80af`.
+- The legacy product remains active on `origin/main`; never mistake the frozen baseline for the current product.
+- Before each Stage 3 slice, fetch `origin/main`, record the last audited legacy commit, and compare every intervening change that affects the slice's observable behavior.
+- Last audited legacy main on 2026-07-19: T4 Code 0.1.28 at commit `f773b4fcf1b32d9b1be0c434a67a8b58b3d86429`.
+
 OBJECTIVE
 
 Replace T4's installed product applications with one Flutter/Dart implementation targeting macOS, Windows, Linux, iOS, Android, and Flutter Web. Flutter Web replaces the authenticated Tailnet browser/PWA client; the public marketing/documentation site remains in its current stack. OMP remains the agent runtime and appserver. Preserve the existing omp-app/1 WebSocket boundary and port T4's client behavior to Dart rather than embedding the old TypeScript client or a hidden JavaScript runtime.

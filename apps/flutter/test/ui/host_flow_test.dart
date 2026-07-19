@@ -16,11 +16,18 @@ void main() {
     required T4ViewState state,
     required _FakeActions actions,
     required Size size,
+    bool credentialsAreVolatile = false,
   }) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = size;
     addTearDown(tester.view.reset);
-    await tester.pumpWidget(T4App(state: state, actions: actions));
+    await tester.pumpWidget(
+      T4App(
+        state: state,
+        actions: actions,
+        credentialsAreVolatile: credentialsAreVolatile,
+      ),
+    );
     await tester.pump();
   }
 
@@ -196,6 +203,23 @@ void main() {
     expect(find.byType(Drawer), findsOneWidget);
   });
 
+  testWidgets('unsigned macOS development mode is visibly identified', (
+    tester,
+  ) async {
+    await pumpApp(
+      tester,
+      state: const T4ViewState.disconnected(),
+      actions: _FakeActions(),
+      size: compactPhone,
+      credentialsAreVolatile: true,
+    );
+
+    expect(
+      find.text('Unsigned development · credentials reset on quit'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('responsive split changes from drawer to rail at 980 pixels', (
     tester,
   ) async {
@@ -213,7 +237,9 @@ void main() {
     expect(find.byTooltip('Open navigation'), findsOneWidget);
 
     tester.view.physicalSize = wideDesktop;
-    await tester.pumpWidget(T4App(state: state, actions: actions));
+    await tester.pumpWidget(
+      T4App(state: state, actions: actions, credentialsAreVolatile: false),
+    );
     await tester.pumpAndSettle();
 
     expect(find.byTooltip('Open navigation'), findsNothing);

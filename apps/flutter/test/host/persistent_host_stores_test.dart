@@ -58,6 +58,23 @@ void main() {
     });
   });
 
+  group('VolatileHostCredentialStore', () {
+    test(
+      'keeps credentials only in the owning process-local instance',
+      () async {
+        final profile = _profile();
+        final store = VolatileHostCredentialStore();
+        await store.write(profile, _credentials('volatile-device'));
+
+        expect((await store.read(profile))!.deviceId, 'volatile-device');
+        expect(await VolatileHostCredentialStore().read(profile), isNull);
+
+        await store.delete(profile);
+        expect(await store.read(profile), isNull);
+      },
+    );
+  });
+
   group('SecureHostCredentialStore', () {
     test('round trips credentials and isolates profiles by endpoint', () async {
       final storage = _MemoryCredentialStorage();
