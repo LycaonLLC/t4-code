@@ -8,6 +8,7 @@ import { test } from "node:test";
 import {
   DEFAULT_GATEWAY_PORT,
   SERVICE_LABEL,
+  isTransientLaunchctlBootstrap,
   parseCli,
   parseProfileRoutesOption,
   renderLaunchAgent,
@@ -256,6 +257,29 @@ test("supervisor command plans never use a shell and include durable enablement"
     assert.notEqual(command.argv[0], "sh");
     assert.notEqual(command.argv[0], "bash");
   }
+});
+
+test("only launchctl bootstrap's asynchronous-removal error is retryable", () => {
+  const bootstrap = { argv: ["launchctl", "bootstrap", "gui/501", "/tmp/service.plist"] };
+  assert.equal(
+    isTransientLaunchctlBootstrap(bootstrap, {
+      code: 37,
+      stdout: "",
+      stderr: "Bootstrap failed: 37: Operation already in progress",
+    }),
+    true,
+  );
+  assert.equal(
+    isTransientLaunchctlBootstrap(bootstrap, { code: 5, stdout: "", stderr: "Input/output error" }),
+    false,
+  );
+  assert.equal(
+    isTransientLaunchctlBootstrap(
+      { argv: ["launchctl", "kickstart", "gui/501/example"] },
+      { code: 37, stdout: "", stderr: "Operation already in progress" },
+    ),
+    false,
+  );
 });
 
 test("CLI parser rejects ambiguous values and accepts the documented install shape", () => {

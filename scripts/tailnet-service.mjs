@@ -397,7 +397,12 @@ function sanitizedOutput(value) {
     .slice(0, 2_048);
 }
 
-async function runCommand(command) {
+export function isTransientLaunchctlBootstrap(command, result) {
+  if (command.argv[0] !== "launchctl" || command.argv[1] !== "bootstrap") return false;
+  return result.code === 37 || /operation already in progress|bootstrap failed:\s*37\b/iu.test(`${result.stdout}\n${result.stderr}`);
+}
+
+async function runCommandOnce(command) {
   return await new Promise((resolvePromise, reject) => {
     const [executable, ...args] = command.argv;
     const child = spawn(executable, args, { shell: false, stdio: ["ignore", "pipe", "pipe"] });
@@ -423,6 +428,25 @@ async function runCommand(command) {
       }
     });
   });
+}
+
+async function runCommand(command) {
+  // macOS service removal is asynchronous even after `launchctl bootout` exits.
+  // Retry only launchd's explicit EINPROGRESS response during replacement.
+  const retryDeadline = Date.now() + 3_000;
+  while (true) {
+    const result = await runCommandOnce({ ...command, allowFailure: true });
+    if (result.code === 0) return result;
+    if (isTransientLaunchctlBootstrap(command, result) && Date.now() < retryDeadline) {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+      continue;
+    }
+    if (command.allowFailure !== true) {
+      const executable = command.argv[0];
+      throw new Error(`${executable} exited ${result.code}: ${result.stderr || result.stdout || "no diagnostics"}`);
+    }
+    return result;
+  }
 }
 
 async function runCommands(commands) {

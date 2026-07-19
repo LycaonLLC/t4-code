@@ -346,6 +346,26 @@ describe("service-manager lifecycle", () => {
     await manager.restart();
     expect(runner.calls[1]).toEqual(["launchctl", "bootstrap", "gui/501", manager.definitionPath]);
   });
+  it("waits for launchd to finish removing an upgraded Mac agent before bootstrap", async () => {
+    const fs = new MemoryFs();
+    const runner = new MemoryRunner();
+    const manager = new MacLaunchAgentManager(spec, { ...options(fs, runner), uid: 501 });
+    fs.files.set(manager.definitionPath, "old definition");
+    runner.results = [
+      { exitCode: 0, stdout: "state = running\n", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 37, stdout: "", stderr: "Bootstrap failed: 37: Operation already in progress" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+    ];
+
+    await manager.install();
+
+    expect(
+      runner.calls.filter((call) => call[0] === "launchctl" && call[1] === "bootstrap"),
+    ).toHaveLength(2);
+    expect(fs.files.get(manager.definitionPath)).toBe(renderMacLaunchAgentDefinition(spec));
+  });
   it("rejects unsupported executable argv and never emits a canary", () => {
     const canary = "API_TOKEN_CANARY";
     expect(
