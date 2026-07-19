@@ -5,6 +5,7 @@ import {
   type TranscriptSearchSnapshot as ClientTranscriptSearchSnapshot,
 } from "@t4-code/client";
 import type { DesktopRuntimeController } from "@t4-code/client";
+import { entryId, projectId } from "@t4-code/protocol";
 
 import type { WorkspaceData } from "../../lib/workspace-data.ts";
 import { sessionViewId } from "../../platform/live-workspace.ts";
@@ -103,7 +104,7 @@ export function clientTranscriptSearchSource(
           ...(roles === undefined ? {} : { roles }),
           ...(request.filters.projectId === null
             ? {}
-            : { projectId: request.filters.projectId as never }),
+            : { projectId: projectId(request.filters.projectId) }),
         },
         { signal },
       );
@@ -118,7 +119,7 @@ export function clientTranscriptSearchSource(
         result.hostId,
         result.sessionId,
         {
-          anchorId: result.entryId as never,
+          anchorId: entryId(result.entryId),
           before: 12,
           after: 12,
         },
