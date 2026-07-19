@@ -337,7 +337,7 @@ test("rejects published app-wire provenance drift until release surfaces agree",
 test("rejects drift between the compatibility matrix and vendored app-wire manifest", () => {
   const drifted = changed("vendor/app-wire/manifest.json", (text) =>
     text.replace(
-      '"sourceTreeHash": "ea8608496731f29addc95d43ea68e44c5c42cb22"',
+      '"sourceTreeHash": "2b8a5f697273f5044789b8ae638b6c264f9f8499"',
       '"sourceTreeHash": "0000000000000000000000000000000000000000"',
     ),
   );
@@ -350,7 +350,7 @@ test("rejects drift between the compatibility matrix and vendored app-wire manif
 
 test("rejects a stale app-wire third-party notice", () => {
   const drifted = changed("THIRD_PARTY_NOTICES.md", (text) =>
-    text.replace("@oh-my-pi/app-wire@0.5.10", "@oh-my-pi/app-wire@0.5.8"),
+    text.replace("@oh-my-pi/app-wire@0.6.0", "@oh-my-pi/app-wire@0.5.8"),
   );
   assert.ok(
     collectReleaseConsistencyErrors(drifted).some((error) =>
