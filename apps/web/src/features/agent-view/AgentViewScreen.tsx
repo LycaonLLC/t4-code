@@ -148,6 +148,23 @@ function AgentCard({
   );
 }
 
+type AgentViewFixtureProps =
+  | {
+      readonly fixtureGroups?: never;
+      readonly fixtureNowMs?: never;
+    }
+  | {
+      readonly fixtureGroups: readonly AgentViewGroup[];
+      readonly fixtureNowMs: number;
+    };
+
+interface AgentViewScreenProps {
+  readonly controller: AgentViewRuntime | null;
+  readonly snapshot: DesktopRuntimeSnapshot | null;
+  readonly onBack: () => void;
+  readonly onOpenSession: (sessionId: string) => void;
+}
+
 export function AgentViewScreen({
   controller,
   fixtureGroups,
@@ -155,14 +172,7 @@ export function AgentViewScreen({
   snapshot,
   onBack,
   onOpenSession,
-}: {
-  readonly controller: AgentViewRuntime | null;
-  readonly fixtureGroups?: readonly AgentViewGroup[];
-  readonly fixtureNowMs?: number;
-  readonly snapshot: DesktopRuntimeSnapshot | null;
-  readonly onBack: () => void;
-  readonly onOpenSession: (sessionId: string) => void;
-}) {
+}: AgentViewScreenProps & AgentViewFixtureProps) {
   const groups = useMemo(
     () => (snapshot === null ? (fixtureGroups ?? []) : deriveAgentViewGroups(snapshot)),
     [fixtureGroups, snapshot],

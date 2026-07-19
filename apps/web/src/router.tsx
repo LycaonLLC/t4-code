@@ -266,11 +266,10 @@ function SessionRoute() {
 
 function PreviewRoute() {
   const { sessionId } = useParams({ from: "/sessions/$sessionId/preview" });
-  const snapshot = useDesktopRuntimeSnapshot();
   return (
     <SessionRouteGate previewRoute sessionId={sessionId}>
       {(session, project) =>
-        snapshot === null ? (
+        rendererPlatform.demo ? (
           <FixturePreviewWorkspace project={project} session={session} />
         ) : (
           <PreviewWorkspace project={project} session={session} />
@@ -299,7 +298,7 @@ function AgentViewRoute() {
   return (
     <AgentViewScreen
       controller={desktopRuntime()}
-      {...(snapshot === null
+      {...(rendererPlatform.demo
         ? {
             fixtureGroups: AGENT_VIEW_FIXTURE_GROUPS,
             fixtureNowMs: AGENT_VIEW_FIXTURE_NOW_MS,

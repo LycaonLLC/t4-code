@@ -11,9 +11,15 @@ import { WORKSPACE_STORAGE_KEY } from "../state/workspace-store.ts";
 
 export type ShellPlatform = "linux" | "darwin";
 
+export interface RendererPlatformOptions {
+  readonly forceFixture?: boolean;
+}
+
 export interface RendererPlatform {
   /** "desktop" when the Electron preload injected the shell port. */
   readonly mode: "desktop" | "browser";
+  /** True only for the explicit, read-only public demo build. */
+  readonly demo: boolean;
   readonly platform: ShellPlatform;
   /** Workspace view-state persistence; always renderer-local. */
   readonly persistence: WorkspacePersistence;
@@ -33,23 +39,27 @@ function injectedShell(): DesktopShellPort | null {
   return shell !== undefined && shell.kind === "desktop" ? shell : null;
 }
 
-export function resolveRendererPlatform(platformOverride?: ShellPlatform): RendererPlatform {
-  const shell = injectedShell();
+export function resolveRendererPlatform(
+  platformOverride?: ShellPlatform,
+  options: RendererPlatformOptions = {},
+): RendererPlatform {
+  const forceFixture = options.forceFixture === true;
+  const shell = forceFixture ? null : injectedShell();
   const platform =
     shell?.platform ??
     platformOverride ??
     (typeof navigator !== "undefined" && /mac/i.test(navigator.platform) ? "darwin" : "linux");
 
-  // Browser mode: try to create a browser-direct shell port that connects
-  // to the OMP appserver over WebSocket. If no backend config is detected,
-  // fall through to the original browser mode (fixture/demo data).
+  // The public demo must stay on deterministic fixtures even if a URL or
+  // injected global tries to supply a live backend.
   let resolvedShell: DesktopShellPort | null = shell;
-  if (resolvedShell === null) {
+  if (resolvedShell === null && !forceFixture) {
     resolvedShell = createBrowserShellPort();
   }
 
   return {
     mode: resolvedShell === null ? "browser" : "desktop",
+    demo: forceFixture,
     platform,
     persistence: createLocalStoragePersistence(WORKSPACE_STORAGE_KEY),
     shell: resolvedShell,

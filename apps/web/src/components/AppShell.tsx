@@ -195,7 +195,7 @@ export function AppShell() {
         }}
         railToggle={railToggle}
       />
-      {rendererPlatform.mode === "browser" && (
+      {rendererPlatform.demo && (
         <div
           aria-label="Sample data notice"
           className="flex min-h-7 shrink-0 items-center justify-center gap-1.5 border-border/60 border-b bg-primary/8 px-2 text-center text-xs"

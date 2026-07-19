@@ -11,6 +11,7 @@ on:
       - "scripts/check-release-publication.mjs"
       - "scripts/deploy-site.mjs"
       - "scripts/deploy-demo.mjs"
+      - "scripts/deploy-site-bundle.mjs"
       - "scripts/dispatch-site-deployment.mjs"
       - "scripts/generate-release-manifest.mjs"
       - "scripts/inspect-linux-update.mjs"
@@ -181,7 +182,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           T4_SITE_BUCKET: ${{ vars.T4_SITE_BUCKET }}
+          T4_IMMUTABLE_SITE_SOURCE: ${{ github.workspace }}
           T4_CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.T4_CLOUDFRONT_DISTRIBUTION_ID }}
-        run: |
-          pnpm deploy:site
-          pnpm --dir .trusted-demo-source deploy:demo
+        run: pnpm --dir .trusted-demo-source deploy:site-bundle

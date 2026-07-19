@@ -83,6 +83,24 @@ describe("browser platform boundary", () => {
     Object.defineProperty(globalThis, "window", { configurable: true, value: undefined });
     const platform = resolveRendererPlatform("linux");
     expect(platform.mode).toBe("browser");
+    expect(platform.demo).toBe(false);
+    expect(platform.shell).toBeNull();
+  });
+
+  it("forces the public demo onto fixtures despite live backend inputs", () => {
+    Object.defineProperty(globalThis, "document", { configurable: true, value: undefined });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        location: { search: "?backend=wss%3A%2F%2Fomp.example%2Fv1%2Fws" },
+        ompShell: { kind: "desktop", platform: "darwin" },
+      },
+    });
+
+    const platform = resolveRendererPlatform("linux", { forceFixture: true });
+    expect(platform.mode).toBe("browser");
+    expect(platform.platform).toBe("linux");
+    expect(platform.demo).toBe(true);
     expect(platform.shell).toBeNull();
   });
 

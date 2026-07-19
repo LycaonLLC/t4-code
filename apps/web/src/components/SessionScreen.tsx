@@ -38,7 +38,7 @@ import { PaneContent } from "../features/panes/PaneContent.tsx";
 import { TerminalDrawer } from "../features/terminal/TerminalDrawer.tsx";
 import { FreshnessBadge, SessionMain, SessionOwnershipBadge } from "../features/transcript/SessionMain.tsx";
 import { RIGHT_PANE_DOCK_QUERY, useMediaQuery } from "../hooks/useMediaQuery.ts";
-import { useWorkspace, workspaceStore } from "../state/store-instance.ts";
+import { rendererPlatform, useWorkspace, workspaceStore } from "../state/store-instance.ts";
 import { useDesktopRuntimeSnapshot } from "../platform/desktop-runtime.ts";
 import { resolveLiveSession } from "../platform/live-workspace.ts";
 import { useShellData } from "../state/shell-data.ts";
@@ -275,14 +275,13 @@ export function SessionScreen({
   const runtimeSnapshot = useDesktopRuntimeSnapshot();
   const previewAddress =
     runtimeSnapshot === null ? null : resolveLiveSession(runtimeSnapshot, session.id);
-  const previewCount =
-    runtimeSnapshot === null
-      ? 1
-      : previewAddress === null
-        ? 0
-        : (runtimeSnapshot.projection.sessions.get(
-            `${previewAddress.hostId}\u0000${previewAddress.sessionId}`,
-          )?.previews.size ?? 0);
+  const previewCount = rendererPlatform.demo
+    ? 1
+    : previewAddress === null
+      ? 0
+      : (runtimeSnapshot?.projection.sessions.get(
+          `${previewAddress.hostId}\u0000${previewAddress.sessionId}`,
+        )?.previews.size ?? 0);
   const [panePreviewWidth, setPanePreviewWidth] = useState<number | null>(null);
 
   // Transcript scroll ownership lives in TranscriptTimeline (virtualized
