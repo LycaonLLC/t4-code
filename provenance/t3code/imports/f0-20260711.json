@@ -24,7 +24,7 @@
       "sourceBlobSha": "442c394ec220c204ab82aff6b76b3a2e4701e8a8",
       "targetPath": "packages/ui/src/primitives/tooltip.tsx",
       "classification": "adapted",
-      "checksum": "sha256:a1b46b18a02855a3fdf1953086c6e39823c44b41292bafd40f4fb14386615c9e"
+      "checksum": "sha256:53c76a9d6fc7a7ebedac1e32be5962eb782ea30a464a6a1cb2c52802dade419d"
     },
     {
       "sourcePath": "apps/web/src/components/ui/dialog.tsx",
