@@ -13,6 +13,11 @@ const phaseSamples = {
   mountDuration: [],
   navigationDomContentLoaded: [],
   connectedAfterDomContentLoaded: [],
+  sessionClickCommandToDomClick: [],
+  sessionDomClickToTranscriptVisible: [],
+  sessionDomClickToTailAligned: [],
+  sessionDomClickToRealListVisible: [],
+  sessionDomClickToTailPainted: [],
   sessionClickToTranscriptVisible: [],
   sessionClickToTailAligned: [],
   tailAlignedToRealListVisible: [],
@@ -120,6 +125,31 @@ writeReport(
       ...summarize(phaseSamples.connectedAfterDomContentLoaded),
     },
     {
+      name: "browser.playwright-session-click-command-to-dom-click",
+      direction: "lower",
+      ...summarize(phaseSamples.sessionClickCommandToDomClick),
+    },
+    {
+      name: "browser.session-dom-click-to-transcript-visible",
+      direction: "lower",
+      ...summarize(phaseSamples.sessionDomClickToTranscriptVisible),
+    },
+    {
+      name: "browser.session-dom-click-to-tail-aligned",
+      direction: "lower",
+      ...summarize(phaseSamples.sessionDomClickToTailAligned),
+    },
+    {
+      name: "browser.session-dom-click-to-real-list-visible",
+      direction: "lower",
+      ...summarize(phaseSamples.sessionDomClickToRealListVisible),
+    },
+    {
+      name: "browser.session-dom-click-to-tail-painted",
+      direction: "lower",
+      ...summarize(phaseSamples.sessionDomClickToTailPainted),
+    },
+    {
       name: "browser.session-click-to-transcript-visible",
       direction: "lower",
       ...summarize(phaseSamples.sessionClickToTranscriptVisible),
@@ -150,7 +180,7 @@ writeReport(
       fixture: "history-10k-v1",
       viewport: { width: 390, height: 844 },
       repetitions,
-      note: "Browser phases use the renderer performance clock. Tail painted is sampled after the real list is visible and two animation frames have elapsed.",
+      note: "Browser phases use the renderer performance clock. session-dom-click metrics start at the real DOM click; session-click metrics include Playwright action delivery. Tail painted is sampled after the real list is visible and two animation frames have elapsed.",
     },
   },
 );

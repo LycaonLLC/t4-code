@@ -658,6 +658,15 @@ function touch(
   options: Required<ProjectionOptions>,
 ): ProjectionSnapshot {
   const existing = snapshot.sessions.get(sessionKey);
+  if (
+    existing !== undefined &&
+    snapshot.lru.at(-1) === sessionKey &&
+    snapshot.lru.length <= options.maxWarmSessions &&
+    snapshot.activeSessionKey !== undefined &&
+    snapshot.lru.includes(snapshot.activeSessionKey)
+  ) {
+    return snapshot;
+  }
   const lru = [...snapshot.lru.filter((item) => item !== sessionKey), sessionKey];
   let sessions = snapshot.sessions;
   if (existing === undefined)
@@ -686,15 +695,19 @@ function withSession(
   sessionKey: string,
   update: (session: SessionProjection) => SessionProjection,
   options: Required<ProjectionOptions>,
+  arrivalOrdinal?: number,
 ): ProjectionSnapshot {
   const warmed = touch(snapshot, sessionKey, options);
   const current = warmed.sessions.get(sessionKey)!;
   const updated = update(current);
-  if (updated === current) return warmed;
-  return Object.freeze({
-    ...warmed,
-    sessions: mapWith(warmed.sessions, sessionKey, Object.freeze(updated)),
-  });
+  if (updated === current) {
+    if (arrivalOrdinal === undefined || warmed.arrivalOrdinal === arrivalOrdinal) return warmed;
+    return Object.freeze({ ...warmed, arrivalOrdinal });
+  }
+  const sessions = mapWith(warmed.sessions, sessionKey, Object.freeze(updated));
+  return arrivalOrdinal === undefined
+    ? Object.freeze({ ...warmed, sessions })
+    : Object.freeze({ ...warmed, sessions, arrivalOrdinal });
 }
 function updateRoot(
   snapshot: ProjectionSnapshot,
@@ -1342,10 +1355,9 @@ function applyProjectionInput(
           });
         },
         config,
+        frame.type === "event" ? eventArrivalOrdinal : undefined,
       );
-      return frame.type === "event"
-        ? Object.freeze({ ...next, arrivalOrdinal: eventArrivalOrdinal })
-        : next;
+      return next;
     }
     case "gap": {
       const sessionKey = key(String(frame.hostId), String(frame.sessionId));
