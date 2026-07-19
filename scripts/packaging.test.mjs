@@ -8,6 +8,7 @@ import { validateMacosIdentityContract } from "./inspect-macos-release.mjs";
 import {
   createT4MacOptionsForFile,
   isBundledOmpRuntime,
+  macSigner,
   normalizeMacSignOptions,
 } from "./sign-macos.mjs";
 import { createPackage } from "@electron/asar";
@@ -149,6 +150,12 @@ test("macOS signing accepts current and legacy electron-builder callback shapes"
     { app: "/tmp/legacy.app", identity: "certificate" },
   );
   assert.throws(() => normalizeMacSignOptions({}), /did not provide an application path/u);
+});
+
+test("macOS signing uses the Promise API that electron-builder can await", async () => {
+  const pending = macSigner({});
+  assert.equal(typeof pending?.then, "function");
+  await assert.rejects(pending, /Path to application must be specified/u);
 });
 
 test("Android release identity is public, pinned, and wired into the release workflow", () => {

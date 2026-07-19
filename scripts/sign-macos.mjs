@@ -1,6 +1,9 @@
-import { sign } from "@electron/osx-sign";
+// `sign` is the deprecated callback API and returns before signing finishes.
+// electron-builder needs this Promise API so notarization cannot race signing.
+import { signAsync } from "@electron/osx-sign";
 
 export const OMP_RUNTIME_ENTITLEMENTS = "apps/desktop/build/entitlements.omp-runtime.plist";
+export const macSigner = signAsync;
 
 export function isBundledOmpRuntime(filePath) {
   return /[/\\]Contents[/\\]Resources[/\\]runtime[/\\]omp$/u.test(filePath);
@@ -24,7 +27,7 @@ export function normalizeMacSignOptions(input) {
 
 export default async function signT4MacApp(input) {
   const options = normalizeMacSignOptions(input);
-  await sign({
+  await macSigner({
     ...options,
     optionsForFile: createT4MacOptionsForFile(options.optionsForFile),
   });

@@ -1,6 +1,8 @@
 ## Signed Mac backend startup
 
-T4 Code v0.1.26 lets the signed, bundled OMP backend load OMP's native module on macOS. The permission is applied only to the OMP executable inside the app. The top-level T4 Code app and its Electron helpers keep normal library validation enabled.
+T4 Code v0.1.27 completes the signed Mac backend fix. Packaging now waits for the Promise-based signer to finish before notarization begins. The signed, bundled OMP backend can load OMP's native module, with that permission applied only to the OMP executable inside the app. The top-level T4 Code app and its Electron helpers keep normal library validation enabled.
+
+The v0.1.26 tag did not publish release files: its Mac job stopped when notarization detected that the legacy callback signer had returned before signing finished. No partial v0.1.26 GitHub Release was published.
 
 The protected release job verifies this boundary in both the DMG and ZIP before publication. It also checks the original OMP download's pinned size and SHA-256 hash, the project's exact Developer ID certificate and Team ID, hardened runtime, secure timestamp, stapled notarization ticket, and Gatekeeper result. Signing secrets are never bundled into the app.
 
@@ -26,7 +28,7 @@ Session-linked browser previews now open in a dedicated workspace. The client pr
 
 ## Runtime provenance
 
-T4 Code v0.1.26 vendors app-wire 0.6.1 from integration commit [e3e15c03](https://github.com/lyc-aon/oh-my-pi/commit/e3e15c03ae95ebbda5f26495cd21213cc53518b1), source tree `e0f32b279eb4b8cbc403e47d765a226bee99c99f`. The client contract remains `omp-app/1`.
+T4 Code v0.1.27 vendors app-wire 0.6.1 from integration commit [e3e15c03](https://github.com/lyc-aon/oh-my-pi/commit/e3e15c03ae95ebbda5f26495cd21213cc53518b1), source tree `e0f32b279eb4b8cbc403e47d765a226bee99c99f`. The client contract remains `omp-app/1`.
 
 The verified OMP 17.0.5 runtime is built from commit [772e5e41](https://github.com/lyc-aon/oh-my-pi/commit/772e5e41eb1537177349247add96a851721c5bfa) and tagged [t4code-17.0.5-appserver-5](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-5). It provides the appserver used by the desktop and remote workflows, including faster startup, cross-session attention and transcript search, and the complete negotiated browser-preview command surface. Unsupported optional capabilities remain hidden when the host does not advertise them.
 

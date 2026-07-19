@@ -1,4 +1,4 @@
-// Release contract guard: exact v0.1.26 asset names and URLs, and the
+// Release contract guard: exact v0.1.27 asset names and URLs, and the
 // platform-detection rule the hero download button relies on.
 import { describe, expect, it } from "vite-plus/test";
 import {
@@ -20,13 +20,13 @@ import {
 } from "../src/release.ts";
 
 describe("release assets", () => {
-  it("carries the five contracted v0.1.26 filenames", () => {
+  it("carries the five contracted v0.1.27 filenames", () => {
     expect(RELEASE_ASSETS.map((a) => a.filename)).toEqual([
-      "T4-Code-0.1.26-android.apk",
-      "T4-Code-0.1.26-linux-amd64.deb",
-      "T4-Code-0.1.26-linux-x86_64.AppImage",
-      "T4-Code-0.1.26-mac-arm64.dmg",
-      "T4-Code-0.1.26-mac-arm64.zip",
+      "T4-Code-0.1.27-android.apk",
+      "T4-Code-0.1.27-linux-amd64.deb",
+      "T4-Code-0.1.27-linux-x86_64.AppImage",
+      "T4-Code-0.1.27-mac-arm64.dmg",
+      "T4-Code-0.1.27-mac-arm64.zip",
     ]);
   });
 
@@ -38,8 +38,8 @@ describe("release assets", () => {
 
   it("targets the public LycaonLLC repo", () => {
     expect(REPO_URL).toBe("https://github.com/LycaonLLC/t4-code");
-    expect(RELEASE_TAG).toBe("v0.1.26");
-    expect(RELEASE_VERSION).toBe("0.1.26");
+    expect(RELEASE_TAG).toBe("v0.1.27");
+    expect(RELEASE_VERSION).toBe("0.1.27");
     expect(RELEASE_MANIFEST_URL).toBe("https://t4code.net/releases/latest.json");
   });
 
