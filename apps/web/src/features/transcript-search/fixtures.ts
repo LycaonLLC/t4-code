@@ -78,10 +78,10 @@ const FIXTURE_RESULTS: readonly TranscriptSearchResult[] = [
 function matchesQuery(result: TranscriptSearchResult, query: string): boolean {
   const words = query
     .trim()
-    .toLocaleLowerCase()
+    .toLowerCase()
     .split(/\s+/u)
     .filter(Boolean);
-  const haystack = `${result.snippet} ${result.sessionTitle} ${result.projectLabel}`.toLocaleLowerCase();
+  const haystack = `${result.snippet} ${result.sessionTitle} ${result.projectLabel}`.toLowerCase();
   return words.every((word) => haystack.includes(word));
 }
 

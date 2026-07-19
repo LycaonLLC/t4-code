@@ -189,7 +189,7 @@ export function buildProjectGroups(
   options: RailViewOptions = {},
 ): ProjectGroup[] {
   const filter = options.filter ?? "all";
-  const query = options.query?.trim().toLocaleLowerCase() ?? "";
+  const query = options.query?.trim().toLowerCase() ?? "";
   const sort = options.sort ?? "updated";
   const filtering = filter !== "all" || query !== "";
   const groups: ProjectGroup[] = [];
@@ -216,7 +216,7 @@ export function buildProjectGroups(
         if (!matchesFilter(row, filter)) return false;
         if (query === "") return true;
         return `${row.session.title} ${row.session.model} ${displayName} ${project.name} ${host.name}`
-          .toLocaleLowerCase()
+          .toLowerCase()
           .includes(query);
       });
     // Current is also the project-management view. Keep known projects

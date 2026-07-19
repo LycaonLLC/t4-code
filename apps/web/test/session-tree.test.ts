@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { SHELL_FIXTURE } from "../src/fixture/data.ts";
 import {
@@ -10,6 +10,12 @@ import {
   moveIdToManualIndex,
   sessionPriority,
 } from "../src/lib/session-tree.ts";
+
+const realToLocaleLowerCase = String.prototype.toLocaleLowerCase;
+
+afterEach(() => {
+  String.prototype.toLocaleLowerCase = realToLocaleLowerCase;
+});
 
 describe("fixture invariants", () => {
   it("has unique session ids and resolvable projects/hosts", () => {
@@ -82,6 +88,25 @@ describe("buildProjectGroups", () => {
     expect(errors.flatMap((group) => group.sessions.map((row) => row.session.id))).toEqual([
       "sess-resize",
     ]);
+  });
+
+  it("matches uppercase ASCII queries under a Turkish locale", () => {
+    // Simulate a Turkish/Azeri locale, where ASCII "I" lowercases to dotless "ı".
+    String.prototype.toLocaleLowerCase = function (this: string) {
+      return this.replace(/I/g, "ı").toLowerCase();
+    };
+    expect("PAGINATION".toLocaleLowerCase()).toBe("pagınatıon");
+
+    const byText = buildProjectGroups(
+      SHELL_FIXTURE,
+      {},
+      SHELL_FIXTURE.seedLastVisitedAt,
+      "current",
+      {},
+      { query: "PAGINATION" },
+    );
+    expect(byText.map((group) => group.project.id)).toEqual(["proj-notes"]);
+    expect(byText[0]?.sessions.map((row) => row.session.id)).toEqual(["sess-pagination"]);
   });
 
   it("sorts priority by the user-facing attention order", () => {

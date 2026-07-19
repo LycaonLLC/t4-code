@@ -101,11 +101,11 @@ export interface PlainTextSegment {
 
 /** Split untrusted plain text into safe React-ready highlight segments. */
 export function plainTextHighlightSegments(text: string, query: string): readonly PlainTextSegment[] {
-  const terms = [...new Set(query.trim().split(/\s+/u).map((term) => term.toLocaleLowerCase()))]
+  const terms = [...new Set(query.trim().split(/\s+/u).map((term) => term.toLowerCase()))]
     .filter((term) => term.length >= 2)
     .sort((left, right) => right.length - left.length);
   if (terms.length === 0) return [{ text, highlighted: false }];
-  const lower = text.toLocaleLowerCase();
+  const lower = text.toLowerCase();
   const ranges: Array<{ start: number; end: number }> = [];
   for (const term of terms) {
     let from = 0;

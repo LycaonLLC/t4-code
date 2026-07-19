@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it } from "vite-plus/test";
 import type { DesktopRuntimeController } from "@t4-code/client";
 
 import {
@@ -26,6 +26,12 @@ import {
   type TranscriptSearchSource,
 } from "../src/features/transcript-search/index.ts";
 import { SHELL_FIXTURE } from "../src/fixture/data.ts";
+
+const realToLocaleLowerCase = String.prototype.toLocaleLowerCase;
+
+afterEach(() => {
+  String.prototype.toLocaleLowerCase = realToLocaleLowerCase;
+});
 
 const result: TranscriptSearchResult = {
   key: "host-a\u0000session-a\u0000entry-a",
@@ -73,6 +79,19 @@ describe("transcript search model", () => {
     expect(transcriptSearchCanRun("a")).toBe(false);
     expect(transcriptSearchCanRun("cursor")).toBe(true);
     expect(transcriptSearchIsPartial(response)).toBe(true);
+  });
+
+  it("matches uppercase ASCII queries under a Turkish locale", () => {
+    // Simulate a Turkish/Azeri locale, where ASCII "I" lowercases to dotless "ı".
+    String.prototype.toLocaleLowerCase = function (this: string) {
+      return this.replace(/I/g, "ı").toLowerCase();
+    };
+    expect("IMAGE".toLocaleLowerCase()).toBe("ımage");
+    expect(plainTextHighlightSegments("The image pipeline stays put.", "IMAGE")).toEqual([
+      { text: "The ", highlighted: false },
+      { text: "image", highlighted: true },
+      { text: " pipeline stays put.", highlighted: false },
+    ]);
   });
 
   it("hands palette queries to the route in memory without putting them in route state", () => {

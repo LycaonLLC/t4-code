@@ -422,7 +422,7 @@ export function SettingsWorkspace({
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   const searching = query.trim().length > 0;
-  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const normalizedQuery = query.trim().toLowerCase();
   const updateMatches =
     searching &&
     "updates version release download install restart".includes(normalizedQuery);
