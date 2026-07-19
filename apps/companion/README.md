@@ -38,7 +38,25 @@ mise exec node@24.17.0 -- pnpm --filter @t4-code/companion doctor:android
 This checkout path must not contain spaces when building the native iOS app.
 Expo SDK 57 otherwise generates a broken native file path.
 
-Run the iOS development build:
+For a physical iPhone, one command now discovers the connected phone, Apple
+development team, and stable Tailnet address. It builds a signed Release app,
+installs it, opens it, and passes the address into the app:
+
+```bash
+mise exec node@24.17.0 -- pnpm --filter @t4-code/companion ios:device
+```
+
+The iPhone must be unlocked for the final automatic launch. If it locks during
+the build, unlock it and reuse the finished build instead of rebuilding:
+
+```bash
+mise exec node@24.17.0 -- pnpm --filter @t4-code/companion ios:device --reuse-build
+```
+
+Use `ios:device --help` for explicit device, Apple team, Tailnet URL, and
+install-without-launch options.
+
+For a simulator, run the iOS development build:
 
 ```bash
 cd apps/companion

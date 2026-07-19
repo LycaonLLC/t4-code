@@ -32,6 +32,12 @@ function androidSdkRoot(environment = process.env, userHome = homedir()) {
   return candidates.find((candidate) => typeof candidate === "string" && existsSync(candidate));
 }
 
+export function hasPairedIphone(deviceOutput) {
+  return deviceOutput
+    .split("\n")
+    .some((line) => /available \(paired\)/u.test(line) && /\(iPhone\d+,\d+\)/u.test(line));
+}
+
 export function evaluateDoctor(snapshot, platform = "all") {
   const checks = [];
   const includeIos = platform === "all" || platform === "ios";
@@ -111,7 +117,7 @@ export function collectSnapshot() {
     tailnetName,
     xcodeAvailable: xcode.ok,
     xcodeVersion: xcode.output.split("\n")[0] ?? "Xcode",
-    iphoneAvailable: devices.ok && /available \(paired\).*iPhone/u.test(devices.output),
+    iphoneAvailable: devices.ok && hasPairedIphone(devices.output),
     appleDevelopmentIdentity:
       identities.ok && /"(?:Apple Development|iPhone Developer):/u.test(identities.output),
     androidSdkAvailable: sdkRoot !== undefined,
