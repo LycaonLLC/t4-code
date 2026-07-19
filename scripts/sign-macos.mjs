@@ -14,8 +14,17 @@ export function createT4MacOptionsForFile(baseOptionsForFile) {
   };
 }
 
-export default async function signT4MacApp(options) {
+export function normalizeMacSignOptions(input) {
+  if (typeof input?.app === "string") return input;
+  if (typeof input?.path === "string" && input.options && typeof input.options === "object") {
+    return { ...input.options, app: input.path };
+  }
+  throw new Error("macOS signing callback did not provide an application path");
+}
+
+export default async function signT4MacApp(input) {
   const sign = osxSign.sign ?? osxSign;
+  const options = normalizeMacSignOptions(input);
   await sign({
     ...options,
     optionsForFile: createT4MacOptionsForFile(options.optionsForFile),

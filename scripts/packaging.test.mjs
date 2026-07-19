@@ -8,6 +8,7 @@ import { validateMacosIdentityContract } from "./inspect-macos-release.mjs";
 import {
   createT4MacOptionsForFile,
   isBundledOmpRuntime,
+  normalizeMacSignOptions,
 } from "./sign-macos.mjs";
 import { createPackage } from "@electron/asar";
 import { runPreflight, validatePreloadArtifact, validateWebIndex } from "./package-preflight.mjs";
@@ -138,6 +139,16 @@ test("signed macOS packaging relaxes library validation only for the bundled OMP
     ...inherited(),
     entitlements: "apps/desktop/build/entitlements.omp-runtime.plist",
   });
+});
+
+test("macOS signing accepts current and legacy electron-builder callback shapes", () => {
+  const current = { app: "/tmp/current.app", identity: "certificate" };
+  assert.equal(normalizeMacSignOptions(current), current);
+  assert.deepEqual(
+    normalizeMacSignOptions({ path: "/tmp/legacy.app", options: { identity: "certificate" } }),
+    { app: "/tmp/legacy.app", identity: "certificate" },
+  );
+  assert.throws(() => normalizeMacSignOptions({}), /did not provide an application path/u);
 });
 
 test("Android release identity is public, pinned, and wired into the release workflow", () => {
