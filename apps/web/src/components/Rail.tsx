@@ -736,6 +736,7 @@ function SessionRowItem({
 
 function ProjectHeaderRow({
   group,
+  actionSessions,
   allowCreate,
   shortcutHidden,
   onDismiss,
@@ -751,6 +752,7 @@ function ProjectHeaderRow({
   view,
 }: {
   group: ProjectGroup;
+  actionSessions: readonly SessionRow[];
   allowCreate: boolean;
   shortcutHidden: boolean;
   onDismiss: () => void;
@@ -850,7 +852,7 @@ function ProjectHeaderRow({
 
   const markAllRead = () => {
     const visits = Object.fromEntries(
-      group.sessions.map(({ session }) => [
+      actionSessions.map(({ session }) => [
         session.id,
         session.latestTurnCompletedAt ?? session.updatedAt,
       ]),
@@ -862,7 +864,7 @@ function ProjectHeaderRow({
 
   const archiveAll = async () => {
     if (controller === null || snapshot === null || pending) return;
-    const candidates = group.sessions.flatMap(({ session }) => {
+    const candidates = actionSessions.flatMap(({ session }) => {
       const sessionAddress = resolveLiveSession(snapshot, session.id);
       if (sessionAddress === null) return [];
       const support = managementCommandSupport(snapshot, sessionAddress, "session.archive");
@@ -1569,6 +1571,10 @@ export function Rail({
       ),
     [allGroups, hiddenProjectIds, pinnedProjectIds],
   );
+  const actionSessionsByProjectId = useMemo(
+    () => new Map(allGroups.map((group) => [group.project.id, group.sessions] as const)),
+    [allGroups],
+  );
   const matchCount = flatEntries.length;
 
   const moveProject = (projectId: string, direction: -1 | 1) => {
@@ -1854,6 +1860,7 @@ export function Rail({
               key={group.project.id}
             >
               <ProjectHeaderRow
+                actionSessions={actionSessionsByProjectId.get(group.project.id) ?? group.sessions}
                 allowCreate={view === "current"}
                 canMoveDown={groupIndex < groups.length - 1}
                 canMoveUp={groupIndex > 0}

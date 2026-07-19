@@ -80,6 +80,14 @@ test("matches the Codex rail organization, project actions, and manual drag beha
     }),
   ).toBeVisible();
 
+  await rail.getByRole("button", { name: "Errors", exact: true }).click();
+  await rail.getByRole("button", { name: "Actions for t4-code", exact: true }).click();
+  await page.getByRole("button", { name: "Mark all as read", exact: true }).click();
+  await rail.getByRole("button", { name: "All", exact: true }).click();
+  await expect(
+    rail.getByRole("button", { name: "t4-code, 4 sessions", exact: true }),
+  ).toBeVisible();
+
   await rail.getByRole("button", { name: "Actions for oh-my-pi", exact: true }).click();
   await expect(page.getByRole("button", { name: "Pin project", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Rename project", exact: true })).toBeVisible();
