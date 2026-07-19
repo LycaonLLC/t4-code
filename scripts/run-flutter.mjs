@@ -5,12 +5,14 @@ import { fileURLToPath } from "node:url";
 const args = process.argv.slice(2);
 if (args[0] === "--") args.shift();
 
-const fixtureUrl = process.env.T4_FIXTURE_URL?.trim();
+const developmentEndpoint = process.env.T4_DEVELOPMENT_ENDPOINT?.trim();
 if (
-  fixtureUrl &&
-  !args.some((argument) => argument.startsWith("--dart-define=T4_FIXTURE_URL="))
+  developmentEndpoint &&
+  !args.some((argument) =>
+    argument.startsWith("--dart-define=T4_DEVELOPMENT_ENDPOINT="),
+  )
 ) {
-  args.push(`--dart-define=T4_FIXTURE_URL=${fixtureUrl}`);
+  args.push(`--dart-define=T4_DEVELOPMENT_ENDPOINT=${developmentEndpoint}`);
 }
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");

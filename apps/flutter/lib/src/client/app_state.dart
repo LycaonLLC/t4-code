@@ -1,3 +1,5 @@
+import '../host/host_profile.dart';
+
 enum ConnectionPhase {
   disconnected,
   connecting,
@@ -6,6 +8,8 @@ enum ConnectionPhase {
   retrying,
   failed,
 }
+
+enum AuthenticationPhase { unknown, local, pairingRequired, pairing, paired }
 
 enum MessageRole { user, assistant, system, tool }
 
@@ -39,17 +43,20 @@ final class TranscriptMessage {
   final bool streaming;
 }
 
-final class ProofViewState {
-  const ProofViewState({
+final class T4ViewState {
+  const T4ViewState({
     required this.connectionPhase,
     this.sessions = const <SessionSummary>[],
     this.selectedSessionId,
     this.messages = const <TranscriptMessage>[],
     this.errorMessage,
+    this.hostDirectory = const HostDirectory.empty(),
+    this.authenticationPhase = AuthenticationPhase.unknown,
+    this.hostOperationPending = false,
     this.submitting = false,
   });
 
-  const ProofViewState.disconnected()
+  const T4ViewState.disconnected()
     : this(connectionPhase: ConnectionPhase.disconnected);
 
   final ConnectionPhase connectionPhase;
@@ -57,6 +64,9 @@ final class ProofViewState {
   final String? selectedSessionId;
   final List<TranscriptMessage> messages;
   final String? errorMessage;
+  final HostDirectory hostDirectory;
+  final AuthenticationPhase authenticationPhase;
+  final bool hostOperationPending;
   final bool submitting;
 
   SessionSummary? get selectedSession {
@@ -67,8 +77,19 @@ final class ProofViewState {
   }
 }
 
-abstract interface class ProofActions {
+abstract interface class T4Actions {
   Future<void> connect();
+
+  Future<void> addHost(
+    String address, {
+    String profileId = defaultHostProfileId,
+  });
+
+  Future<void> activateHost(String endpointKey);
+
+  Future<void> removeHost(String endpointKey);
+
+  Future<void> pairHost(String code);
 
   Future<void> selectSession(String sessionId);
 

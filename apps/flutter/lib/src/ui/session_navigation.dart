@@ -1,4 +1,4 @@
-part of 't4_proof_app.dart';
+part of 't4_app.dart';
 
 enum _SessionNavigationMode { rail, drawer }
 
@@ -42,24 +42,29 @@ final class _SessionNavigation extends StatelessWidget {
     required this.mode,
     required this.connecting,
     required this.selectingSessionId,
+    required this.showingHostManager,
     required this.onConnect,
+    required this.onManageHosts,
     required this.onSelectSession,
     this.onClose,
   });
 
-  final ProofViewState state;
+  final T4ViewState state;
   final _SessionNavigationMode mode;
   final bool connecting;
   final String? selectingSessionId;
+  final bool showingHostManager;
   final Future<void> Function() onConnect;
+  final VoidCallback onManageHosts;
   final Future<void> Function(String sessionId) onSelectSession;
   final VoidCallback? onClose;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final activeProfile = state.hostDirectory.activeProfile;
 
-    return ColoredBox(
+    return Material(
       color: mode == _SessionNavigationMode.rail
           ? scheme.surfaceContainerLowest
           : scheme.surface,
@@ -69,42 +74,80 @@ final class _SessionNavigation extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(
-                _ProofSpace.md,
-                _ProofSpace.sm,
-                _ProofSpace.xs,
-                _ProofSpace.xs,
+                _T4Space.md,
+                _T4Space.sm,
+                _T4Space.xs,
+                _T4Space.xs,
               ),
               child: Row(
                 children: [
                   Expanded(
                     child: Text(
-                      mode == _SessionNavigationMode.rail ? 'T4' : 'Sessions',
+                      mode == _SessionNavigationMode.rail ? 'T4' : 'Navigation',
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                   ),
                   if (onClose case final close?)
                     IconButton(
                       onPressed: close,
-                      tooltip: 'Close sessions',
+                      tooltip: 'Close navigation',
                       icon: const Icon(Icons.close),
                     ),
                 ],
               ),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: _ProofSpace.md),
+              padding: const EdgeInsets.symmetric(horizontal: _T4Space.md),
               child: _ConnectionStatus(
                 phase: state.connectionPhase,
                 actionPending: connecting,
                 onAction: onConnect,
               ),
             ),
+            if (activeProfile != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  _T4Space.md,
+                  _T4Space.xs,
+                  _T4Space.md,
+                  _T4Space.sm,
+                ),
+                child: Text(
+                  activeProfile.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
             Padding(
               padding: const EdgeInsets.fromLTRB(
-                _ProofSpace.md,
-                _ProofSpace.lg,
-                _ProofSpace.md,
-                _ProofSpace.xs,
+                _T4Space.xs,
+                _T4Space.sm,
+                _T4Space.xs,
+                0,
+              ),
+              child: Semantics(
+                button: true,
+                selected: showingHostManager,
+                label: 'Manage hosts',
+                child: ListTile(
+                  selected: showingHostManager,
+                  selectedTileColor: scheme.secondaryContainer,
+                  leading: const Icon(Icons.dns_outlined),
+                  title: const Text('Manage hosts'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: onManageHosts,
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                _T4Space.md,
+                _T4Space.lg,
+                _T4Space.md,
+                _T4Space.xs,
               ),
               child: Text(
                 'SESSIONS',
@@ -121,17 +164,17 @@ final class _SessionNavigation extends StatelessWidget {
                     ? _EmptySessions(phase: state.connectionPhase)
                     : ListView.builder(
                         padding: const EdgeInsets.fromLTRB(
-                          _ProofSpace.xs,
+                          _T4Space.xs,
                           0,
-                          _ProofSpace.xs,
-                          _ProofSpace.md,
+                          _T4Space.xs,
+                          _T4Space.md,
                         ),
                         itemCount: state.sessions.length,
                         itemBuilder: (context, index) {
                           final session = state.sessions[index];
                           return Padding(
                             padding: const EdgeInsets.only(
-                              bottom: _ProofSpace.xxs,
+                              bottom: _T4Space.xxs,
                             ),
                             child: _SessionTile(
                               session: session,
@@ -175,22 +218,22 @@ final class _ConnectionStatus extends StatelessWidget {
       child: Row(
         children: [
           SizedBox.square(
-            dimension: _ProofSize.indicator,
+            dimension: _T4Size.indicator,
             child: active
                 ? CircularProgressIndicator(
-                    strokeWidth: _ProofSize.thinStroke,
+                    strokeWidth: _T4Size.thinStroke,
                     color: scheme.primary,
                     semanticsLabel: phase.label,
                   )
                 : Icon(
                     Icons.circle,
-                    size: _ProofSpace.xs,
+                    size: _T4Space.xs,
                     color: phase == ConnectionPhase.ready
                         ? scheme.primary
                         : scheme.outline,
                   ),
           ),
-          const SizedBox(width: _ProofSpace.xs),
+          const SizedBox(width: _T4Space.xs),
           Expanded(
             child: Text(
               phase.label,
@@ -220,7 +263,7 @@ final class _EmptySessions extends StatelessWidget {
     final ready = phase == ConnectionPhase.ready;
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(_ProofSpace.lg),
+        padding: const EdgeInsets.all(_T4Space.lg),
         child: Text(
           ready
               ? 'No sessions are available.'
@@ -272,9 +315,9 @@ final class _SessionTile extends StatelessWidget {
               ),
         trailing: pending
             ? const SizedBox.square(
-                dimension: _ProofSize.indicator,
+                dimension: _T4Size.indicator,
                 child: CircularProgressIndicator(
-                  strokeWidth: _ProofSize.thinStroke,
+                  strokeWidth: _T4Size.thinStroke,
                   semanticsLabel: 'Selecting session',
                 ),
               )

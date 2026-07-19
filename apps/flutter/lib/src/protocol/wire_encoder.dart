@@ -5,7 +5,7 @@ import 'models.dart';
 const int _maxSafeInteger = 9007199254740991;
 const int _maxSavedCursors = 128;
 
-/// Explicit builders for the outbound Stage 1 omp-app/1 frames.
+/// Explicit builders for every outbound omp-app/1 top-level frame family.
 abstract final class WireEncoder {
   static String hello({
     required ClientIdentity client,
@@ -18,7 +18,7 @@ abstract final class WireEncoder {
     final cursors = savedCursors.toList(growable: false);
     final requestedCapabilities = capabilities.toList(growable: false);
     _boundedStrings(features, 'requestedFeatures', 128);
-    _boundedStrings(requestedCapabilities, 'capabilities', 128);
+    _capabilityStrings(requestedCapabilities, 'capabilities');
     if (cursors.length > _maxSavedCursors) {
       throw ArgumentError.value(
         cursors.length,
@@ -64,6 +64,37 @@ abstract final class WireEncoder {
     return jsonEncode(frame);
   }
 
+  static String sessionList({
+    required String requestId,
+    required String commandId,
+    required String hostId,
+  }) {
+    return command(
+      requestId: requestId,
+      commandId: commandId,
+      hostId: hostId,
+      command: 'session.list',
+      args: const <String, Object?>{},
+    );
+  }
+
+  static String hostWatch({
+    required String requestId,
+    required String commandId,
+    required String hostId,
+    required SessionIndexCursor cursor,
+  }) {
+    return command(
+      requestId: requestId,
+      commandId: commandId,
+      hostId: hostId,
+      command: 'host.watch',
+      args: <String, Object?>{
+        'cursor': _sessionIndexCursorJson(cursor, 'cursor'),
+      },
+    );
+  }
+
   static String sessionAttach({
     required String requestId,
     required String commandId,
@@ -71,7 +102,7 @@ abstract final class WireEncoder {
     required String sessionId,
     TranscriptCursor? cursor,
   }) {
-    return _command(
+    return command(
       requestId: requestId,
       commandId: commandId,
       hostId: hostId,
@@ -91,7 +122,7 @@ abstract final class WireEncoder {
     required String expectedRevision,
     required String text,
   }) {
-    return _command(
+    return command(
       requestId: requestId,
       commandId: commandId,
       hostId: hostId,
@@ -102,43 +133,400 @@ abstract final class WireEncoder {
     );
   }
 
-  static String pong({required String nonce, String? timestamp}) {
-    return jsonEncode(<String, Object?>{
-      'v': ompAppProtocolVersion,
-      'type': 'pong',
-      'nonce': _controlString(nonce, 'nonce', 128),
-      'timestamp': _controlString(
-        timestamp ?? DateTime.now().toUtc().toIso8601String(),
-        'timestamp',
-        128,
-      ),
-    });
-  }
-
-  static String _command({
+  /// Encodes the package-level command envelope for every pinned command.
+  ///
+  /// The command descriptor's host/session scope, revision policy, and
+  /// confirmation policy are enforced here. Command-specific argument
+  /// convenience methods may add narrower validation.
+  static String command({
     required String requestId,
     required String commandId,
     required String hostId,
-    required String sessionId,
     required String command,
     required Map<String, Object?> args,
+    String? sessionId,
     String? expectedRevision,
+    String? confirmationId,
   }) {
+    if (!_knownCommands.contains(command)) {
+      throw ArgumentError.value(command, 'command', 'is not a pinned command');
+    }
+    final hostScoped = _hostCommands.contains(command);
+    if (hostScoped && sessionId != null) {
+      throw ArgumentError.value(
+        sessionId,
+        'sessionId',
+        'is forbidden for a host command',
+      );
+    }
+    if (!hostScoped && sessionId == null) {
+      throw ArgumentError.notNull('sessionId');
+    }
+    if (_noRevisionCommands.contains(command) && expectedRevision != null) {
+      throw ArgumentError.value(
+        expectedRevision,
+        'expectedRevision',
+        'is forbidden for this command',
+      );
+    }
+    if (_requiredRevisionCommands.contains(command) &&
+        expectedRevision == null) {
+      throw ArgumentError.notNull('expectedRevision');
+    }
+    if (!_confirmationCommands.contains(command) && confirmationId != null) {
+      throw ArgumentError.value(
+        confirmationId,
+        'confirmationId',
+        'is forbidden for this command',
+      );
+    }
     return jsonEncode(<String, Object?>{
       'v': ompAppProtocolVersion,
       'type': 'command',
       'requestId': _id(requestId, 'requestId'),
       'commandId': _id(commandId, 'commandId'),
       'hostId': _id(hostId, 'hostId'),
-      'sessionId': _id(sessionId, 'sessionId'),
+      if (sessionId != null) 'sessionId': _id(sessionId, 'sessionId'),
       'command': command,
-      'expectedRevision': ?expectedRevision,
+      if (expectedRevision != null)
+        'expectedRevision': _id(expectedRevision, 'expectedRevision'),
+      if (confirmationId != null)
+        'confirmationId': _id(confirmationId, 'confirmationId'),
       'args': args,
+    });
+  }
+
+  static String confirm({
+    required String requestId,
+    required String confirmationId,
+    required String commandId,
+    required String hostId,
+    required String decision,
+    String? sessionId,
+  }) {
+    if (decision != 'approve' && decision != 'deny') {
+      throw ArgumentError.value(
+        decision,
+        'decision',
+        'must be approve or deny',
+      );
+    }
+    return jsonEncode(<String, Object?>{
+      'v': ompAppProtocolVersion,
+      'type': 'confirm',
+      'requestId': _id(requestId, 'requestId'),
+      'confirmationId': _id(confirmationId, 'confirmationId'),
+      'commandId': _id(commandId, 'commandId'),
+      'hostId': _id(hostId, 'hostId'),
+      if (sessionId != null) 'sessionId': _id(sessionId, 'sessionId'),
+      'decision': decision,
+    });
+  }
+
+  static String pairStart({
+    required String requestId,
+    required String code,
+    required String deviceId,
+    required String deviceName,
+    required String platform,
+    Iterable<String> requestedCapabilities = const <String>[],
+  }) {
+    if (!RegExp(r'^\d{6}$').hasMatch(code)) {
+      throw ArgumentError.value(code, 'code', 'must be exactly six digits');
+    }
+    final capabilities = requestedCapabilities.toList(growable: false);
+    _capabilityStrings(capabilities, 'requestedCapabilities');
+    return jsonEncode(<String, Object?>{
+      'v': ompAppProtocolVersion,
+      'type': 'pair.start',
+      'requestId': _id(requestId, 'requestId'),
+      'code': code,
+      'deviceId': _id(deviceId, 'deviceId'),
+      'deviceName': _controlString(deviceName, 'deviceName', 256),
+      'platform': _controlString(platform, 'platform', 128),
+      'requestedCapabilities': capabilities,
+    });
+  }
+
+  static String terminalInput({
+    required String hostId,
+    required String sessionId,
+    required String terminalId,
+    required String data,
+    String? encoding,
+  }) {
+    if (encoding != null && encoding != 'utf8' && encoding != 'base64') {
+      throw ArgumentError.value(encoding, 'encoding', 'must be utf8 or base64');
+    }
+    final payload = encoding == 'base64'
+        ? _base64(data, 'data', 256000)
+        : _boundedText(data, 'data', 256000);
+    return jsonEncode(<String, Object?>{
+      'v': ompAppProtocolVersion,
+      'type': 'terminal.input',
+      'hostId': _id(hostId, 'hostId'),
+      'sessionId': _id(sessionId, 'sessionId'),
+      'terminalId': _id(terminalId, 'terminalId'),
+      'data': payload,
+      'encoding': ?encoding,
+    });
+  }
+
+  static String terminalResize({
+    required String hostId,
+    required String sessionId,
+    required String terminalId,
+    required int cols,
+    required int rows,
+  }) {
+    if (cols < 1 || cols > 1000) {
+      throw ArgumentError.value(cols, 'cols', 'must be between 1 and 1000');
+    }
+    if (rows < 1 || rows > 500) {
+      throw ArgumentError.value(rows, 'rows', 'must be between 1 and 500');
+    }
+    return jsonEncode(<String, Object?>{
+      'v': ompAppProtocolVersion,
+      'type': 'terminal.resize',
+      'hostId': _id(hostId, 'hostId'),
+      'sessionId': _id(sessionId, 'sessionId'),
+      'terminalId': _id(terminalId, 'terminalId'),
+      'cols': cols,
+      'rows': rows,
+    });
+  }
+
+  static String terminalClose({
+    required String hostId,
+    required String sessionId,
+    required String terminalId,
+    String? reason,
+  }) {
+    return jsonEncode(<String, Object?>{
+      'v': ompAppProtocolVersion,
+      'type': 'terminal.close',
+      'hostId': _id(hostId, 'hostId'),
+      'sessionId': _id(sessionId, 'sessionId'),
+      'terminalId': _id(terminalId, 'terminalId'),
+      if (reason != null) 'reason': _controlString(reason, 'reason', 256),
+    });
+  }
+
+  static String ping({required String nonce, required String timestamp}) {
+    return jsonEncode(<String, Object?>{
+      'v': ompAppProtocolVersion,
+      'type': 'ping',
+      'nonce': _controlString(nonce, 'nonce', 128),
+      'timestamp': _controlString(timestamp, 'timestamp', 128),
     });
   }
 }
 
+const Set<String> _knownCommands = {
+  'host.list',
+  'session.list',
+  'transcript.search',
+  'transcript.context',
+  'session.create',
+  'session.attach',
+  'session.prompt',
+  'session.image.begin',
+  'session.image.chunk',
+  'session.image.discard',
+  'session.image.read',
+  'session.state.get',
+  'session.steer',
+  'session.followUp',
+  'session.rename',
+  'session.retry',
+  'session.compact',
+  'session.pause',
+  'session.resume',
+  'session.archive',
+  'session.restore',
+  'session.delete',
+  'session.model.set',
+  'session.thinking.set',
+  'session.fast.set',
+  'session.ui.respond',
+  'session.cancel',
+  'session.close',
+  'files.read',
+  'files.write',
+  'files.patch',
+  'files.list',
+  'files.diff',
+  'review.read',
+  'review.apply',
+  'agent.cancel',
+  'bash.run',
+  'term.open',
+  'audit.read',
+  'audit.tail',
+  'config.write',
+  'settings.read',
+  'settings.write',
+  'catalog.get',
+  'broker.status',
+  'usage.read',
+  'host.watch',
+  'session.watch',
+  'controller.lease.acquire',
+  'controller.lease.renew',
+  'controller.lease.release',
+  'prompt.lease.acquire',
+  'prompt.lease.renew',
+  'prompt.lease.release',
+  'preview.launch',
+  'preview.state',
+  'preview.activate',
+  'preview.navigate',
+  'preview.back',
+  'preview.forward',
+  'preview.reload',
+  'preview.close',
+  'preview.capture',
+  'preview.capture.read',
+  'preview.click',
+  'preview.fill',
+  'preview.scroll',
+  'preview.type',
+  'preview.select',
+  'preview.press',
+  'preview.upload',
+  'preview.policy.check',
+  'preview.lease.acquire',
+  'preview.lease.renew',
+  'preview.lease.release',
+  'preview.handoff',
+};
+
+const Set<String> _hostCommands = {
+  'host.list',
+  'session.list',
+  'transcript.search',
+  'session.create',
+  'audit.read',
+  'audit.tail',
+  'settings.read',
+  'catalog.get',
+  'broker.status',
+  'usage.read',
+  'host.watch',
+  'config.write',
+  'settings.write',
+};
+
+const Set<String> _noRevisionCommands = {
+  'host.list',
+  'session.list',
+  'transcript.search',
+  'session.create',
+  'audit.read',
+  'audit.tail',
+  'settings.read',
+  'catalog.get',
+  'broker.status',
+  'usage.read',
+  'host.watch',
+  'transcript.context',
+  'session.attach',
+  'session.image.begin',
+  'session.image.chunk',
+  'session.image.discard',
+  'session.image.read',
+  'session.state.get',
+  'session.watch',
+  'preview.capture.read',
+  'preview.policy.check',
+};
+
+const Set<String> _requiredRevisionCommands = {
+  'session.rename',
+  'session.retry',
+  'session.compact',
+  'session.pause',
+  'session.resume',
+  'session.archive',
+  'session.restore',
+  'session.model.set',
+  'session.thinking.set',
+  'session.fast.set',
+  'controller.lease.acquire',
+  'controller.lease.renew',
+  'controller.lease.release',
+  'prompt.lease.acquire',
+  'prompt.lease.renew',
+  'prompt.lease.release',
+  'session.delete',
+  'session.close',
+  'files.write',
+  'files.patch',
+  'review.apply',
+  'config.write',
+  'settings.write',
+};
+
+const Set<String> _confirmationCommands = {
+  'session.delete',
+  'session.close',
+  'files.write',
+  'files.patch',
+  'review.apply',
+  'session.cancel',
+  'agent.cancel',
+  'bash.run',
+  'term.open',
+  'preview.launch',
+  'preview.navigate',
+  'preview.upload',
+  'config.write',
+  'settings.write',
+};
+
+const Set<String> _deviceCapabilities = {
+  'sessions.read',
+  'sessions.prompt',
+  'sessions.control',
+  'sessions.manage',
+  'bash.run',
+  'term.open',
+  'term.input',
+  'term.resize',
+  'files.read',
+  'files.write',
+  'files.list',
+  'files.diff',
+  'agents.control',
+  'audit.read',
+  'config.read',
+  'catalog.read',
+  'config.write',
+  'broker.read',
+  'usage.read',
+  'preview.read',
+  'preview.control',
+  'preview.input',
+};
+
 Map<String, Object?> _cursorJson(TranscriptCursor cursor, String path) {
+  if (cursor.seq < 0 || cursor.seq > _maxSafeInteger) {
+    throw ArgumentError.value(
+      cursor.seq,
+      '$path.seq',
+      'must be a safe nonnegative integer',
+    );
+  }
+  return <String, Object?>{
+    'epoch': _controlString(cursor.epoch, '$path.epoch', 128),
+    'seq': cursor.seq,
+  };
+}
+
+Map<String, Object?> _sessionIndexCursorJson(
+  SessionIndexCursor cursor,
+  String path,
+) {
   if (cursor.seq < 0 || cursor.seq > _maxSafeInteger) {
     throw ArgumentError.value(
       cursor.seq,
@@ -163,6 +551,39 @@ void _boundedStrings(List<String> values, String path, int maxItems) {
   for (var index = 0; index < values.length; index++) {
     _controlString(values[index], '$path[$index]', 256);
   }
+}
+
+void _capabilityStrings(List<String> values, String path) {
+  _boundedStrings(values, path, 128);
+  for (var index = 0; index < values.length; index++) {
+    if (!_deviceCapabilities.contains(values[index])) {
+      throw ArgumentError.value(
+        values[index],
+        '$path[$index]',
+        'is not a pinned device capability',
+      );
+    }
+  }
+}
+
+String _base64(String value, String path, int maxDecodedBytes) {
+  _boundedText(value, path, ((maxDecodedBytes * 4) / 3).ceil() + 4);
+  final valid = RegExp(
+    r'^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$',
+  );
+  if (value.length % 4 != 0 || !valid.hasMatch(value)) {
+    throw ArgumentError.value(value, path, 'must be canonical base64');
+  }
+  late final List<int> decoded;
+  try {
+    decoded = base64.decode(value);
+  } on FormatException {
+    throw ArgumentError.value(value, path, 'must be canonical base64');
+  }
+  if (decoded.length > maxDecodedBytes) {
+    throw ArgumentError.value(value, path, 'decoded payload exceeds limit');
+  }
+  return value;
 }
 
 String _id(String value, String path) => _controlString(value, path, 256);

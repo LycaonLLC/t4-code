@@ -1,10 +1,10 @@
-part of 't4_proof_app.dart';
+part of 't4_app.dart';
 
-abstract final class _ProofBreakpoints {
+abstract final class _T4Breakpoints {
   static const double wide = 980;
 }
 
-abstract final class _ProofLayout {
+abstract final class _T4Layout {
   static const double sessionRailWidth = 300;
   static const double contentMaxWidth = 760;
   static const double compactToolbarHeight = 72;
@@ -12,7 +12,7 @@ abstract final class _ProofLayout {
   static const double followScrollThreshold = 96;
 }
 
-abstract final class _ProofSpace {
+abstract final class _T4Space {
   static const double xxs = 4;
   static const double xs = 8;
   static const double sm = 12;
@@ -21,45 +21,45 @@ abstract final class _ProofSpace {
   static const double xl = 32;
 }
 
-abstract final class _ProofRadius {
+abstract final class _T4Radius {
   static const double sm = 8;
   static const double md = 12;
 }
 
-abstract final class _ProofSize {
+abstract final class _T4Size {
   static const double indicator = 16;
   static const double emptyIcon = 32;
   static const double thinStroke = 2;
   static const double divider = 1;
 }
 
-abstract final class _ProofType {
+abstract final class _T4Type {
   static const double bodyLineHeight = 1.5;
 }
 
-abstract final class _ProofMotion {
+abstract final class _T4Motion {
   static const Duration short = Duration(milliseconds: 180);
   static const Curve standard = Curves.easeOutCubic;
 }
 
-abstract final class _ProofPalette {
+abstract final class _T4Palette {
   static const Color lightSeed = Color(0xff566052);
   static const Color lightSurface = Color(0xfff7f7f2);
   static const Color darkSeed = Color(0xffaeb9a8);
   static const Color darkSurface = Color(0xff191b19);
 }
 
-abstract final class _ProofTheme {
+abstract final class _T4Theme {
   static ThemeData light() => _build(
     brightness: Brightness.light,
-    seed: _ProofPalette.lightSeed,
-    surface: _ProofPalette.lightSurface,
+    seed: _T4Palette.lightSeed,
+    surface: _T4Palette.lightSurface,
   );
 
   static ThemeData dark() => _build(
     brightness: Brightness.dark,
-    seed: _ProofPalette.darkSeed,
-    surface: _ProofPalette.darkSurface,
+    seed: _T4Palette.darkSeed,
+    surface: _T4Palette.darkSurface,
   );
 
   static ThemeData _build({
@@ -91,7 +91,10 @@ abstract final class _ProofTheme {
       ),
     );
     final minimumSize = WidgetStatePropertyAll<Size>(
-      Size.square(_ProofLayout.minimumTouchTarget),
+      Size.square(_T4Layout.minimumTouchTarget),
+    );
+    final buttonShape = WidgetStatePropertyAll<OutlinedBorder>(
+      RoundedRectangleBorder(borderRadius: BorderRadius.circular(_T4Radius.sm)),
     );
 
     return base.copyWith(
@@ -107,41 +110,37 @@ abstract final class _ProofTheme {
       ),
       dividerTheme: DividerThemeData(
         color: scheme.outlineVariant,
-        space: _ProofSize.divider,
-        thickness: _ProofSize.divider,
+        space: _T4Size.divider,
+        thickness: _T4Size.divider,
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: scheme.surfaceContainerLow,
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: _ProofSpace.md,
-          vertical: _ProofSpace.sm,
+          horizontal: _T4Space.md,
+          vertical: _T4Space.sm,
         ),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(_ProofRadius.md),
+          borderRadius: BorderRadius.circular(_T4Radius.md),
           borderSide: BorderSide(color: scheme.outlineVariant),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(_ProofRadius.md),
+          borderRadius: BorderRadius.circular(_T4Radius.md),
           borderSide: BorderSide(color: scheme.outlineVariant),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(_ProofRadius.md),
+          borderRadius: BorderRadius.circular(_T4Radius.md),
           borderSide: BorderSide(
             color: scheme.primary,
-            width: _ProofSize.thinStroke,
+            width: _T4Size.thinStroke,
           ),
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
-        style: ButtonStyle(
-          minimumSize: minimumSize,
-          shape: WidgetStatePropertyAll<OutlinedBorder>(
-            RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(_ProofRadius.sm),
-            ),
-          ),
-        ),
+        style: ButtonStyle(minimumSize: minimumSize, shape: buttonShape),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: ButtonStyle(minimumSize: minimumSize, shape: buttonShape),
       ),
       textButtonTheme: TextButtonThemeData(
         style: ButtonStyle(minimumSize: minimumSize),
@@ -150,9 +149,9 @@ abstract final class _ProofTheme {
         style: ButtonStyle(minimumSize: minimumSize),
       ),
       listTileTheme: ListTileThemeData(
-        minTileHeight: _ProofLayout.minimumTouchTarget,
+        minTileHeight: _T4Layout.minimumTouchTarget,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(_ProofRadius.sm),
+          borderRadius: BorderRadius.circular(_T4Radius.sm),
         ),
       ),
       drawerTheme: DrawerThemeData(
@@ -167,14 +166,14 @@ abstract final class _ProofTheme {
           color: scheme.onInverseSurface,
         ),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(_ProofRadius.sm),
+          borderRadius: BorderRadius.circular(_T4Radius.sm),
         ),
       ),
       tooltipTheme: TooltipThemeData(
-        waitDuration: _ProofMotion.short,
+        waitDuration: _T4Motion.short,
         decoration: BoxDecoration(
           color: scheme.inverseSurface,
-          borderRadius: BorderRadius.circular(_ProofRadius.sm),
+          borderRadius: BorderRadius.circular(_T4Radius.sm),
         ),
         textStyle: textTheme.bodySmall?.copyWith(
           color: scheme.onInverseSurface,

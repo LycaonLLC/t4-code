@@ -2,15 +2,16 @@ import 'dart:async';
 
 import 'package:flutter/widgets.dart';
 
-import 'src/client/proof_controller.dart';
-import 'src/ui/t4_proof_app.dart';
+import 'src/client/t4_client_controller.dart';
+import 'src/host/persistent_host_stores.dart';
+import 'src/ui/t4_app.dart';
 
 void main() {
-  runApp(ProofBootstrap(endpoint: _fixtureEndpoint()));
+  runApp(T4Bootstrap(developmentEndpoint: _developmentEndpoint()));
 }
 
-Uri? _fixtureEndpoint() {
-  const configured = String.fromEnvironment('T4_FIXTURE_URL');
+Uri? _developmentEndpoint() {
+  const configured = String.fromEnvironment('T4_DEVELOPMENT_ENDPOINT');
   if (configured.isEmpty) return null;
   final endpoint = Uri.tryParse(configured);
   if (endpoint == null ||
@@ -20,24 +21,28 @@ Uri? _fixtureEndpoint() {
   return endpoint;
 }
 
-final class ProofBootstrap extends StatefulWidget {
-  const ProofBootstrap({required this.endpoint, super.key});
+final class T4Bootstrap extends StatefulWidget {
+  const T4Bootstrap({this.developmentEndpoint, super.key});
 
-  final Uri? endpoint;
+  final Uri? developmentEndpoint;
 
   @override
-  State<ProofBootstrap> createState() => _ProofBootstrapState();
+  State<T4Bootstrap> createState() => _T4BootstrapState();
 }
 
-final class _ProofBootstrapState extends State<ProofBootstrap> {
-  late final ProofController _controller;
+final class _T4BootstrapState extends State<T4Bootstrap> {
+  late final T4ClientController _controller;
 
   @override
   void initState() {
     super.initState();
-    _controller = ProofController(endpoint: widget.endpoint);
+    _controller = T4ClientController(
+      hostDirectoryStore: PersistentHostDirectoryStore(),
+      hostCredentialStore: SecureHostCredentialStore(),
+      developmentEndpoint: widget.developmentEndpoint,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(_controller.connect());
+      if (mounted) unawaited(_controller.initialize());
     });
   }
 
@@ -46,7 +51,7 @@ final class _ProofBootstrapState extends State<ProofBootstrap> {
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, _) =>
-          T4ProofApp(state: _controller.state, actions: _controller),
+          T4App(state: _controller.state, actions: _controller),
     );
   }
 

@@ -1,4 +1,4 @@
-/// The only protocol version accepted by the Stage 1 client.
+/// The only protocol version accepted by the pinned app-wire 0.6.1 client.
 const String ompAppProtocolVersion = 'omp-app/1';
 
 /// A decoding failure at the application wire boundary.
@@ -140,7 +140,7 @@ final class DurableEntry {
   final Map<String, Object?> raw;
 }
 
-/// Base type for all accepted inbound omp-app/1 frames.
+/// Base type for the modeled omp-app/1 application-frame union.
 sealed class WireFrame {
   const WireFrame({required this.raw});
 
@@ -187,6 +187,23 @@ final class SessionsFrame extends WireFrame {
   final List<SessionRef> sessions;
   final int totalCount;
   final bool truncated;
+}
+
+/// Typed result payload of host.list and session.list command responses.
+final class SessionListResult {
+  const SessionListResult({
+    required this.cursor,
+    required this.sessions,
+    required this.totalCount,
+    required this.truncated,
+    required this.raw,
+  });
+
+  final SessionIndexCursor cursor;
+  final List<SessionRef> sessions;
+  final int totalCount;
+  final bool truncated;
+  final Map<String, Object?> raw;
 }
 
 final class SnapshotFrame extends WireFrame {
@@ -276,6 +293,10 @@ final class ResponseFrame extends WireFrame {
   final bool ok;
   final Object? result;
   final WireResponseError? error;
+
+  /// Typed only for the package's host.list/session.list command products.
+  SessionListResult? get sessionListResult =>
+      result is SessionListResult ? result as SessionListResult : null;
 }
 
 final class ErrorFrame extends WireFrame {
@@ -330,4 +351,563 @@ final class PongFrame extends WireFrame {
 
   final String nonce;
   final String timestamp;
+}
+
+/// A server request for an explicit command authorization decision.
+final class ConfirmationFrame extends WireFrame {
+  const ConfirmationFrame({
+    required this.confirmationId,
+    required this.commandId,
+    required this.hostId,
+    required this.sessionId,
+    required this.commandHash,
+    required this.revision,
+    required this.expiresAt,
+    required this.summary,
+    required this.preview,
+    required super.raw,
+  });
+
+  final String confirmationId;
+  final String commandId;
+  final String hostId;
+  final String? sessionId;
+  final String commandHash;
+  final String revision;
+  final String expiresAt;
+  final String summary;
+  final String? preview;
+}
+
+/// Legacy aggregate agent frame retained by the pinned package union.
+final class AgentFrame extends WireFrame {
+  const AgentFrame({
+    required this.hostId,
+    required this.sessionId,
+    required this.agentId,
+    required this.state,
+    required this.progress,
+    required this.detail,
+    required super.raw,
+  });
+
+  final String hostId;
+  final String sessionId;
+  final String agentId;
+  final String state;
+  final double? progress;
+  final Map<String, Object?>? detail;
+}
+
+/// Legacy aggregate terminal frame retained by the pinned package union.
+final class TerminalFrame extends WireFrame {
+  const TerminalFrame({
+    required this.hostId,
+    required this.sessionId,
+    required this.terminalId,
+    required this.stream,
+    required this.data,
+    required this.exitCode,
+    required super.raw,
+  });
+
+  final String hostId;
+  final String sessionId;
+  final String terminalId;
+  final String stream;
+  final String? data;
+  final int? exitCode;
+}
+
+/// Legacy aggregate file frame retained by the pinned package union.
+final class FilesFrame extends WireFrame {
+  const FilesFrame({
+    required this.hostId,
+    required this.sessionId,
+    required this.path,
+    required this.content,
+    required this.truncated,
+    required super.raw,
+  });
+
+  final String hostId;
+  final String sessionId;
+  final String path;
+  final String? content;
+  final bool? truncated;
+}
+
+final class ReviewFrame extends WireFrame {
+  const ReviewFrame({
+    required this.hostId,
+    required this.sessionId,
+    required this.reviewId,
+    required this.status,
+    required this.path,
+    required this.findings,
+    required super.raw,
+  });
+
+  final String hostId;
+  final String sessionId;
+  final String reviewId;
+  final String status;
+  final String? path;
+  final List<Map<String, Object?>> findings;
+}
+
+final class AuditFrame extends WireFrame {
+  const AuditFrame({
+    required this.hostId,
+    required this.sessionId,
+    required this.action,
+    required this.actor,
+    required this.timestamp,
+    required this.detail,
+    required super.raw,
+  });
+
+  final String hostId;
+  final String? sessionId;
+  final String action;
+  final String actor;
+  final String timestamp;
+  final Map<String, Object?>? detail;
+}
+
+/// A successful pairing response. Pairing IDs are never confirmation IDs.
+final class PairOkFrame extends WireFrame {
+  const PairOkFrame({
+    required this.requestId,
+    required this.pairingId,
+    required this.deviceId,
+    required this.deviceName,
+    required this.platform,
+    required this.requestedCapabilities,
+    required this.grantedCapabilities,
+    required this.deviceToken,
+    required this.expiresAt,
+    required super.raw,
+  });
+
+  final String requestId;
+  final String pairingId;
+  final String deviceId;
+  final String deviceName;
+  final String platform;
+  final List<String> requestedCapabilities;
+  final List<String> grantedCapabilities;
+  final String deviceToken;
+  final String expiresAt;
+}
+
+final class PairErrorFrame extends WireFrame {
+  const PairErrorFrame({
+    required this.code,
+    required this.message,
+    required this.requestId,
+    required super.raw,
+  });
+
+  final String code;
+  final String message;
+  final String? requestId;
+}
+
+final class ByeFrame extends WireFrame {
+  const ByeFrame({
+    required this.code,
+    required this.reason,
+    required this.retryable,
+    required super.raw,
+  });
+
+  final String code;
+  final String reason;
+  final bool retryable;
+}
+
+sealed class WatchFrame extends WireFrame {
+  const WatchFrame({
+    required this.frameType,
+    required this.hostId,
+    required this.revision,
+    required super.raw,
+  });
+
+  final String frameType;
+  final String hostId;
+  final String revision;
+}
+
+final class HostWatchFrame extends WatchFrame {
+  const HostWatchFrame({
+    required this.watchId,
+    required this.cursor,
+    required this.state,
+    required super.hostId,
+    required super.revision,
+    required super.raw,
+  }) : super(frameType: 'host.watch');
+
+  final String watchId;
+  final SessionIndexCursor cursor;
+  final String state;
+}
+
+final class SessionWatchFrame extends WatchFrame {
+  const SessionWatchFrame({
+    required this.watchId,
+    required this.sessionId,
+    required this.cursor,
+    required this.state,
+    required super.hostId,
+    required super.revision,
+    required super.raw,
+  }) : super(frameType: 'session.watch');
+
+  final String watchId;
+  final String sessionId;
+  final TranscriptCursor cursor;
+  final String state;
+}
+
+final class SessionStateFrame extends WatchFrame {
+  const SessionStateFrame({
+    required this.sessionId,
+    required this.cursor,
+    required this.state,
+    required super.hostId,
+    required super.revision,
+    required super.raw,
+  }) : super(frameType: 'session.state');
+
+  final String sessionId;
+  final TranscriptCursor cursor;
+  final String state;
+}
+
+final class SessionDeltaFrame extends WatchFrame {
+  const SessionDeltaFrame({
+    required this.sessionId,
+    required this.cursor,
+    required this.upsert,
+    required this.remove,
+    required super.hostId,
+    required super.revision,
+    required super.raw,
+  }) : super(frameType: 'session.delta');
+
+  final String sessionId;
+  final TranscriptCursor cursor;
+  final SessionRef? upsert;
+  final String? remove;
+}
+
+/// One of the controller or prompt lease server frames.
+final class LeaseFrame extends WireFrame {
+  const LeaseFrame({
+    required this.frameType,
+    required this.hostId,
+    required this.sessionId,
+    required this.leaseId,
+    required this.cursor,
+    required this.kind,
+    required this.state,
+    required this.owner,
+    required this.expiresAt,
+    required this.revision,
+    required super.raw,
+  });
+
+  final String frameType;
+  final String hostId;
+  final String sessionId;
+  final String leaseId;
+  final TranscriptCursor cursor;
+  final String kind;
+  final String state;
+  final String owner;
+  final String expiresAt;
+  final String? revision;
+}
+
+/// One of the five negotiated agent.* server frames.
+final class AgentAdditiveFrame extends WireFrame {
+  const AgentAdditiveFrame({
+    required this.frameType,
+    required this.hostId,
+    required this.sessionId,
+    required this.agentId,
+    required this.cursor,
+    required this.revision,
+    required this.state,
+    required this.lifecycle,
+    required this.progress,
+    required this.event,
+    required this.detail,
+    required this.data,
+    required this.entries,
+    required super.raw,
+  });
+
+  final String frameType;
+  final String hostId;
+  final String sessionId;
+  final String agentId;
+  final TranscriptCursor cursor;
+  final String revision;
+  final String? state;
+  final String? lifecycle;
+  final double? progress;
+  final String? event;
+  final Map<String, Object?>? detail;
+  final Map<String, Object?>? data;
+  final List<DurableEntry>? entries;
+}
+
+final class TerminalOutputFrame extends WireFrame {
+  const TerminalOutputFrame({
+    required this.hostId,
+    required this.sessionId,
+    required this.terminalId,
+    required this.cursor,
+    required this.stream,
+    required this.data,
+    required this.encoding,
+    required super.raw,
+  });
+
+  final String hostId;
+  final String sessionId;
+  final String terminalId;
+  final TranscriptCursor cursor;
+  final String stream;
+  final String data;
+  final String? encoding;
+}
+
+final class TerminalExitFrame extends WireFrame {
+  const TerminalExitFrame({
+    required this.hostId,
+    required this.sessionId,
+    required this.terminalId,
+    required this.cursor,
+    required this.exitCode,
+    required this.signal,
+    required super.raw,
+  });
+
+  final String hostId;
+  final String sessionId;
+  final String terminalId;
+  final TranscriptCursor cursor;
+  final int exitCode;
+  final String? signal;
+}
+
+final class FileListEntry {
+  const FileListEntry({
+    required this.path,
+    required this.kind,
+    required this.size,
+    required this.revision,
+    required this.raw,
+  });
+
+  final String path;
+  final String kind;
+  final int? size;
+  final String? revision;
+  final Map<String, Object?> raw;
+}
+
+/// One of files.list, files.read, files.write, files.patch, or files.diff.
+final class FilesAdditiveFrame extends WireFrame {
+  const FilesAdditiveFrame({
+    required this.frameType,
+    required this.hostId,
+    required this.sessionId,
+    required this.path,
+    required this.entries,
+    required this.content,
+    required this.encoding,
+    required this.patch,
+    required this.diff,
+    required this.cursor,
+    required this.revision,
+    required this.fromRevision,
+    required this.toRevision,
+    required super.raw,
+  });
+
+  final String frameType;
+  final String hostId;
+  final String sessionId;
+  final String path;
+  final List<FileListEntry>? entries;
+  final String? content;
+  final String? encoding;
+  final String? patch;
+  final String? diff;
+  final TranscriptCursor? cursor;
+  final String? revision;
+  final String? fromRevision;
+  final String? toRevision;
+}
+
+final class AuditEvent {
+  const AuditEvent({
+    required this.eventId,
+    required this.hostId,
+    required this.sessionId,
+    required this.action,
+    required this.actor,
+    required this.timestamp,
+    required this.detail,
+    required this.raw,
+  });
+
+  final String eventId;
+  final String hostId;
+  final String? sessionId;
+  final String action;
+  final String actor;
+  final String timestamp;
+  final Map<String, Object?>? detail;
+  final Map<String, Object?> raw;
+}
+
+final class AuditTailFrame extends WireFrame {
+  const AuditTailFrame({
+    required this.hostId,
+    required this.cursor,
+    required this.events,
+    required super.raw,
+  });
+
+  final String hostId;
+  final TranscriptCursor cursor;
+  final List<AuditEvent> events;
+}
+
+final class AuditEventFrame extends WireFrame {
+  const AuditEventFrame({
+    required this.hostId,
+    required this.cursor,
+    required this.event,
+    required super.raw,
+  });
+
+  final String hostId;
+  final TranscriptCursor cursor;
+  final AuditEvent event;
+}
+
+final class CatalogItem {
+  const CatalogItem({
+    required this.id,
+    required this.kind,
+    required this.name,
+    required this.description,
+    required this.capabilities,
+    required this.supported,
+    required this.reason,
+    required this.metadata,
+    required this.raw,
+  });
+
+  final String id;
+  final String kind;
+  final String name;
+  final String? description;
+  final List<String>? capabilities;
+  final bool? supported;
+  final String? reason;
+  final Map<String, Object?>? metadata;
+  final Map<String, Object?> raw;
+}
+
+final class CatalogFrame extends WireFrame {
+  const CatalogFrame({
+    required this.hostId,
+    required this.revision,
+    required this.items,
+    required super.raw,
+  });
+
+  final String hostId;
+  final String revision;
+  final List<CatalogItem> items;
+}
+
+final class SettingsFrame extends WireFrame {
+  const SettingsFrame({
+    required this.hostId,
+    required this.revision,
+    required this.settings,
+    required super.raw,
+  });
+
+  final String hostId;
+  final String revision;
+  final Map<String, Object?> settings;
+}
+
+final class PreviewSnapshot {
+  const PreviewSnapshot({
+    required this.previewId,
+    required this.state,
+    required this.url,
+    required this.revision,
+    required this.cursor,
+    required this.title,
+    required this.canGoBack,
+    required this.canGoForward,
+    required this.viewport,
+    required this.capture,
+    required this.authority,
+    required this.availableActions,
+  });
+
+  final String previewId;
+  final String state;
+  final String url;
+  final String revision;
+  final TranscriptCursor cursor;
+  final String? title;
+  final bool? canGoBack;
+  final bool? canGoForward;
+  final Map<String, Object?>? viewport;
+  final Map<String, Object?>? capture;
+  final Map<String, Object?>? authority;
+  final List<String>? availableActions;
+}
+
+/// One of the five preview.* frames in AdditiveServerFrame.
+final class PreviewFrame extends WireFrame {
+  const PreviewFrame({
+    required this.frameType,
+    required this.hostId,
+    required this.sessionId,
+    required this.snapshot,
+    required this.previewId,
+    required this.cursor,
+    required this.revision,
+    required this.code,
+    required this.message,
+    required this.error,
+    required super.raw,
+  });
+
+  final String frameType;
+  final String hostId;
+  final String sessionId;
+  final PreviewSnapshot? snapshot;
+  final String previewId;
+  final TranscriptCursor cursor;
+  final String revision;
+  final String? code;
+  final String? message;
+  final String? error;
 }

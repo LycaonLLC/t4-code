@@ -56,6 +56,12 @@ Stage 2 - Permanent foundations
 - Finalize protocol types and validation, connection lifecycle, immutable state projections, secure host storage, design tokens, adaptive navigation, diagnostics, and fixture-conformance infrastructure.
 - Define observable screen states and commands before delegating feature work.
 
+Status: complete on the local migration branch. The permanent client now owns the complete pinned
+wire corpus, lifecycle and resume projection, secure host directory and credentials, pairing and
+host switching, adaptive host management, shared screen-state/action contracts, and deterministic
+real-fixture coverage. Release authority remains with the existing clients until Stages 3 and 4 pass.
+
+
 Stage 3 - Vertical feature slices
 Implement and verify one complete user-visible slice at a time across compact and wide layouts:
 1. Host connection, authentication, saved hosts, pairing, connection status, and reconnect.

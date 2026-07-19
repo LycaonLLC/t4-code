@@ -1,14 +1,23 @@
-## Flutter migration proof (development)
+## Flutter permanent foundations (development)
 
-The local migration branch now contains a single Flutter/Dart Stage 1 client for macOS, iOS,
-Android, and Web, with generated Windows and Linux targets. It decodes the pinned `omp-app/1`
-boundary, connects to the unchanged deterministic fixture server, projects session and transcript
-state, streams prompts, resumes from saved cursors after an unclean disconnect, and adapts between
-compact phone and persistent-rail desktop layouts.
+The local migration branch now contains the Flutter/Dart Stage 2 foundations for macOS, iOS,
+Android, and Web, with generated Windows and Linux targets. The client strictly decodes and
+encodes the pinned `omp-app/1` corpus, correlates commands, restores typed transcript and
+session-index cursors, negotiates host watching, and handles reconnect, resume, and continuity
+gaps without moving protocol logic into widgets.
 
-This is a technical proof, not a release cutover. The existing Electron, React, browser, and
-Capacitor clients remain the released implementation until the complete feature matrix, security,
-packaging, update, migration, and release gates pass.
+Saved Tailnet hosts, active-host selection, device pairing, host switching, and credential removal
+now use shared Dart contracts. Host metadata is stored separately from device credentials; Android
+uses encrypted storage and migrates the released app's keyed credentials without exposing them to
+Dart, while Apple targets use Keychain-backed storage. Compact and wide layouts share the same
+immutable state and command surface, including onboarding, pairing, and host management.
+
+This is still a development migration, not a release cutover. The deterministic fixture suite,
+exact 390x844 and 1440x900 browser checks, iOS and Android target smokes, and an authenticated
+disposable OMP appserver connection pass locally. The existing Electron, React, browser, and
+Capacitor clients remain the released implementation until the complete feature matrix, packaging,
+update, migration, security, and release gates pass.
+
 
 ## Signed and notarized on macOS
 

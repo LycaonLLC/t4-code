@@ -1,10 +1,10 @@
-part of 't4_proof_app.dart';
+part of 't4_app.dart';
 
 final class _AdaptiveSessionShell extends StatefulWidget {
   const _AdaptiveSessionShell({required this.state, required this.actions});
 
-  final ProofViewState state;
-  final ProofActions actions;
+  final T4ViewState state;
+  final T4Actions actions;
 
   @override
   State<_AdaptiveSessionShell> createState() => _AdaptiveSessionShellState();
@@ -14,6 +14,7 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   String? _selectingSessionId;
   bool _connecting = false;
+  bool _showHostManager = false;
 
   Future<void> _connect() async {
     if (_connecting) return;
@@ -34,11 +35,15 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
   }) async {
     if (_selectingSessionId != null) return;
     if (sessionId == widget.state.selectedSessionId) {
+      setState(() => _showHostManager = false);
       if (closeDrawer) _scaffoldKey.currentState?.closeDrawer();
       return;
     }
 
-    setState(() => _selectingSessionId = sessionId);
+    setState(() {
+      _showHostManager = false;
+      _selectingSessionId = sessionId;
+    });
     try {
       await widget.actions.selectSession(sessionId);
       if (!mounted) return;
@@ -58,13 +63,51 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
-  void _openSessions() => _scaffoldKey.currentState?.openDrawer();
+  void _openNavigation() => _scaffoldKey.currentState?.openDrawer();
+
+  void _openHostManager({required bool closeDrawer}) {
+    setState(() => _showHostManager = true);
+    if (closeDrawer) _scaffoldKey.currentState?.closeDrawer();
+  }
+
+  void _closeHostManager() => setState(() => _showHostManager = false);
+
+  Widget _primaryContent({required bool showHeader}) {
+    if (_showHostManager) {
+      return _HostManagerPane(
+        state: widget.state,
+        actions: widget.actions,
+        onDone: _closeHostManager,
+      );
+    }
+
+    if (widget.state.authenticationPhase ==
+            AuthenticationPhase.pairingRequired ||
+        widget.state.authenticationPhase == AuthenticationPhase.pairing) {
+      return _PairingPane(state: widget.state, actions: widget.actions);
+    }
+
+    return _ConversationPane(
+      state: widget.state,
+      actions: widget.actions,
+      showHeader: showHeader,
+      onConnect: _connect,
+      onOpenSessions: showHeader ? null : _openNavigation,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final needsOnboarding =
+        widget.state.hostDirectory.profiles.isEmpty &&
+        widget.state.connectionPhase == ConnectionPhase.disconnected;
+    if (needsOnboarding) {
+      return _HostOnboardingPage(state: widget.state, actions: widget.actions);
+    }
+
     return LayoutBuilder(
       builder: (context, constraints) {
-        if (constraints.maxWidth >= _ProofBreakpoints.wide) {
+        if (constraints.maxWidth >= _T4Breakpoints.wide) {
           return _buildWide(context);
         }
         return _buildCompact(context);
@@ -78,26 +121,21 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
         child: Row(
           children: [
             SizedBox(
-              width: _ProofLayout.sessionRailWidth,
+              width: _T4Layout.sessionRailWidth,
               child: _SessionNavigation(
                 state: widget.state,
                 mode: _SessionNavigationMode.rail,
                 connecting: _connecting,
                 selectingSessionId: _selectingSessionId,
+                showingHostManager: _showHostManager,
                 onConnect: _connect,
+                onManageHosts: () => _openHostManager(closeDrawer: false),
                 onSelectSession: (sessionId) =>
                     _selectSession(sessionId, closeDrawer: false),
               ),
             ),
-            const VerticalDivider(width: _ProofSize.divider),
-            Expanded(
-              child: _ConversationPane(
-                state: widget.state,
-                actions: widget.actions,
-                showHeader: true,
-                onConnect: _connect,
-              ),
-            ),
+            const VerticalDivider(width: _T4Size.divider),
+            Expanded(child: _primaryContent(showHeader: true)),
           ],
         ),
       ),
@@ -111,29 +149,34 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
     return Scaffold(
       key: _scaffoldKey,
       appBar: AppBar(
-        toolbarHeight: _ProofLayout.compactToolbarHeight,
+        toolbarHeight: _T4Layout.compactToolbarHeight,
         leading: IconButton(
-          onPressed: _openSessions,
-          tooltip: 'Open sessions',
+          onPressed: _openNavigation,
+          tooltip: 'Open navigation',
           icon: const Icon(Icons.menu),
         ),
         titleSpacing: 0,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              _displaySessionTitle(widget.state.selectedSession),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: _ProofSpace.xxs),
-            _CompactConnectionLabel(phase: phase, actionPending: _connecting),
-          ],
-        ),
+        title: _showHostManager
+            ? Text('Hosts', style: Theme.of(context).textTheme.titleMedium)
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    _displaySessionTitle(widget.state.selectedSession),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: _T4Space.xxs),
+                  _CompactConnectionLabel(
+                    phase: phase,
+                    actionPending: _connecting,
+                  ),
+                ],
+              ),
         actions: [
-          if (actionLabel != null)
+          if (!_showHostManager && actionLabel != null)
             IconButton(
               onPressed: _connecting ? null : () => unawaited(_connect()),
               tooltip: actionLabel,
@@ -143,7 +186,7 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
                     : Icons.power_settings_new,
               ),
             ),
-          const SizedBox(width: _ProofSpace.xxs),
+          const SizedBox(width: _T4Space.xxs),
         ],
       ),
       drawer: Drawer(
@@ -152,19 +195,15 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
           mode: _SessionNavigationMode.drawer,
           connecting: _connecting,
           selectingSessionId: _selectingSessionId,
+          showingHostManager: _showHostManager,
           onConnect: _connect,
+          onManageHosts: () => _openHostManager(closeDrawer: true),
           onSelectSession: (sessionId) =>
               _selectSession(sessionId, closeDrawer: true),
           onClose: () => _scaffoldKey.currentState?.closeDrawer(),
         ),
       ),
-      body: _ConversationPane(
-        state: widget.state,
-        actions: widget.actions,
-        showHeader: false,
-        onConnect: _connect,
-        onOpenSessions: _openSessions,
-      ),
+      body: _primaryContent(showHeader: false),
     );
   }
 }
@@ -189,22 +228,22 @@ final class _CompactConnectionLabel extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           SizedBox.square(
-            dimension: _ProofSpace.sm,
+            dimension: _T4Space.sm,
             child: active
                 ? CircularProgressIndicator(
-                    strokeWidth: _ProofSize.thinStroke,
+                    strokeWidth: _T4Size.thinStroke,
                     color: scheme.primary,
                     semanticsLabel: phase.label,
                   )
                 : Icon(
                     Icons.circle,
-                    size: _ProofSpace.xs,
+                    size: _T4Space.xs,
                     color: phase == ConnectionPhase.ready
                         ? scheme.primary
                         : scheme.outline,
                   ),
           ),
-          const SizedBox(width: _ProofSpace.xs),
+          const SizedBox(width: _T4Space.xs),
           Text(
             phase.label,
             style: Theme.of(

@@ -1,4 +1,4 @@
-part of 't4_proof_app.dart';
+part of 't4_app.dart';
 
 final class _ConversationPane extends StatelessWidget {
   const _ConversationPane({
@@ -9,8 +9,8 @@ final class _ConversationPane extends StatelessWidget {
     this.onOpenSessions,
   });
 
-  final ProofViewState state;
-  final ProofActions actions;
+  final T4ViewState state;
+  final T4Actions actions;
   final bool showHeader;
   final Future<void> Function() onConnect;
   final VoidCallback? onOpenSessions;
@@ -45,7 +45,7 @@ final class _ConversationPane extends StatelessWidget {
 final class _ConversationHeader extends StatelessWidget {
   const _ConversationHeader({required this.state});
 
-  final ProofViewState state;
+  final T4ViewState state;
 
   @override
   Widget build(BuildContext context) {
@@ -60,8 +60,8 @@ final class _ConversationHeader extends StatelessWidget {
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(
-          horizontal: _ProofSpace.lg,
-          vertical: _ProofSpace.md,
+          horizontal: _T4Space.lg,
+          vertical: _T4Space.md,
         ),
         child: Row(
           children: [
@@ -76,7 +76,7 @@ final class _ConversationHeader extends StatelessWidget {
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                   if (session != null && session.status.trim().isNotEmpty) ...[
-                    const SizedBox(height: _ProofSpace.xxs),
+                    const SizedBox(height: _T4Space.xxs),
                     Text(
                       session.status,
                       maxLines: 1,
@@ -110,13 +110,13 @@ final class _StreamingLabel extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           SizedBox.square(
-            dimension: _ProofSize.indicator,
+            dimension: _T4Size.indicator,
             child: CircularProgressIndicator(
-              strokeWidth: _ProofSize.thinStroke,
+              strokeWidth: _T4Size.thinStroke,
               color: scheme.primary,
             ),
           ),
-          const SizedBox(width: _ProofSpace.xs),
+          const SizedBox(width: _T4Space.xs),
           Text(
             'Streaming',
             style: Theme.of(
@@ -151,13 +151,13 @@ final class _ConnectionErrorBanner extends StatelessWidget {
         color: scheme.errorContainer,
         child: Padding(
           padding: const EdgeInsets.symmetric(
-            horizontal: _ProofSpace.md,
-            vertical: _ProofSpace.xs,
+            horizontal: _T4Space.md,
+            vertical: _T4Space.xs,
           ),
           child: Row(
             children: [
               Icon(Icons.error_outline, color: scheme.onErrorContainer),
-              const SizedBox(width: _ProofSpace.sm),
+              const SizedBox(width: _T4Space.sm),
               Expanded(
                 child: Text(
                   message,
@@ -167,7 +167,7 @@ final class _ConnectionErrorBanner extends StatelessWidget {
                 ),
               ),
               if (canRetry) ...[
-                const SizedBox(width: _ProofSpace.xs),
+                const SizedBox(width: _T4Space.xs),
                 TextButton(
                   onPressed: () => unawaited(onRetry()),
                   style: TextButton.styleFrom(
@@ -187,7 +187,7 @@ final class _ConnectionErrorBanner extends StatelessWidget {
 final class _TranscriptView extends StatefulWidget {
   const _TranscriptView({required this.state, this.onOpenSessions});
 
-  final ProofViewState state;
+  final T4ViewState state;
   final VoidCallback? onOpenSessions;
 
   @override
@@ -222,7 +222,7 @@ final class _TranscriptViewState extends State<_TranscriptView> {
     if (!_scrollController.hasClients) return true;
     final position = _scrollController.position;
     return position.maxScrollExtent - position.pixels <=
-        _ProofLayout.followScrollThreshold;
+        _T4Layout.followScrollThreshold;
   }
 
   bool _visibleMessagesChanged(
@@ -246,8 +246,8 @@ final class _TranscriptViewState extends State<_TranscriptView> {
         unawaited(
           _scrollController.animateTo(
             end,
-            duration: _ProofMotion.short,
-            curve: _ProofMotion.standard,
+            duration: _T4Motion.short,
+            curve: _T4Motion.standard,
           ),
         );
       } else {
@@ -292,14 +292,14 @@ final class _TranscriptViewState extends State<_TranscriptView> {
         controller: _scrollController,
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.fromLTRB(
-          _ProofSpace.md,
-          _ProofSpace.lg,
-          _ProofSpace.md,
-          _ProofSpace.xl,
+          _T4Space.md,
+          _T4Space.lg,
+          _T4Space.md,
+          _T4Space.xl,
         ),
         itemCount: widget.state.messages.length,
         separatorBuilder: (context, index) =>
-            const SizedBox(height: _ProofSpace.lg),
+            const SizedBox(height: _T4Space.lg),
         itemBuilder: (context, index) =>
             _TranscriptMessageView(message: widget.state.messages[index]),
       ),
@@ -325,26 +325,24 @@ final class _TranscriptEmptyState extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return Center(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          maxWidth: _ProofLayout.contentMaxWidth,
-        ),
+        constraints: const BoxConstraints(maxWidth: _T4Layout.contentMaxWidth),
         child: Padding(
-          padding: const EdgeInsets.all(_ProofSpace.xl),
+          padding: const EdgeInsets.all(_T4Space.xl),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
                 Icons.chat_bubble_outline,
-                size: _ProofSize.emptyIcon,
+                size: _T4Size.emptyIcon,
                 color: scheme.outline,
               ),
-              const SizedBox(height: _ProofSpace.md),
+              const SizedBox(height: _T4Space.md),
               Text(
                 title,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.titleMedium,
               ),
-              const SizedBox(height: _ProofSpace.xs),
+              const SizedBox(height: _T4Space.xs),
               Text(
                 message,
                 textAlign: TextAlign.center,
@@ -353,7 +351,7 @@ final class _TranscriptEmptyState extends StatelessWidget {
                 ),
               ),
               if (actionLabel case final label?) ...[
-                const SizedBox(height: _ProofSpace.lg),
+                const SizedBox(height: _T4Space.lg),
                 TextButton(onPressed: onAction, child: Text(label)),
               ],
             ],
@@ -393,9 +391,7 @@ final class _TranscriptMessageView extends StatelessWidget {
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          maxWidth: _ProofLayout.contentMaxWidth,
-        ),
+        constraints: const BoxConstraints(maxWidth: _T4Layout.contentMaxWidth),
         child: Semantics(
           container: true,
           label:
@@ -403,15 +399,15 @@ final class _TranscriptMessageView extends StatelessWidget {
           child: DecoratedBox(
             decoration: BoxDecoration(
               color: background,
-              borderRadius: BorderRadius.circular(_ProofRadius.md),
+              borderRadius: BorderRadius.circular(_T4Radius.md),
               border: isAuxiliary
                   ? Border.all(color: scheme.outlineVariant)
                   : null,
             ),
             child: Padding(
               padding: isUser || isAuxiliary
-                  ? const EdgeInsets.all(_ProofSpace.md)
-                  : const EdgeInsets.symmetric(vertical: _ProofSpace.xs),
+                  ? const EdgeInsets.all(_T4Space.md)
+                  : const EdgeInsets.symmetric(vertical: _T4Space.xs),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -422,18 +418,18 @@ final class _TranscriptMessageView extends StatelessWidget {
                     ),
                   ),
                   if (message.text.isNotEmpty) ...[
-                    const SizedBox(height: _ProofSpace.xs),
+                    const SizedBox(height: _T4Space.xs),
                     SelectionArea(
                       child: Text(
                         message.text,
                         style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          height: _ProofType.bodyLineHeight,
+                          height: _T4Type.bodyLineHeight,
                         ),
                       ),
                     ),
                   ],
                   if (message.streaming) ...[
-                    const SizedBox(height: _ProofSpace.sm),
+                    const SizedBox(height: _T4Space.sm),
                     const _StreamingLabel(),
                   ],
                 ],
@@ -449,8 +445,8 @@ final class _TranscriptMessageView extends StatelessWidget {
 final class _PromptComposer extends StatefulWidget {
   const _PromptComposer({required this.state, required this.actions});
 
-  final ProofViewState state;
-  final ProofActions actions;
+  final T4ViewState state;
+  final T4Actions actions;
 
   @override
   State<_PromptComposer> createState() => _PromptComposerState();
@@ -527,15 +523,15 @@ final class _PromptComposerState extends State<_PromptComposer> {
       child: SafeArea(
         top: false,
         minimum: const EdgeInsets.fromLTRB(
-          _ProofSpace.md,
-          _ProofSpace.sm,
-          _ProofSpace.md,
-          _ProofSpace.sm,
+          _T4Space.md,
+          _T4Space.sm,
+          _T4Space.md,
+          _T4Space.sm,
         ),
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(
-              maxWidth: _ProofLayout.contentMaxWidth,
+              maxWidth: _T4Layout.contentMaxWidth,
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
@@ -567,7 +563,7 @@ final class _PromptComposerState extends State<_PromptComposer> {
                     ),
                   ),
                 ),
-                const SizedBox(width: _ProofSpace.xs),
+                const SizedBox(width: _T4Space.xs),
                 Semantics(
                   button: true,
                   label: submitting ? 'Sending prompt' : 'Send prompt',
@@ -575,9 +571,9 @@ final class _PromptComposerState extends State<_PromptComposer> {
                     onPressed: _canSubmit ? () => unawaited(_submit()) : null,
                     child: submitting
                         ? const SizedBox.square(
-                            dimension: _ProofSize.indicator,
+                            dimension: _T4Size.indicator,
                             child: CircularProgressIndicator(
-                              strokeWidth: _ProofSize.thinStroke,
+                              strokeWidth: _T4Size.thinStroke,
                               semanticsLabel: 'Sending',
                             ),
                           )

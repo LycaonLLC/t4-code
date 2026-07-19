@@ -3,8 +3,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:t4code/src/client/proof_controller.dart';
-import 'package:t4code/src/client/proof_state.dart';
+import 'package:t4code/src/client/t4_client_controller.dart';
+import 'package:t4code/src/client/app_state.dart';
+import 'package:t4code/src/host/host_profile.dart';
 
 const _startupTimeout = Duration(seconds: 10);
 const _operationTimeout = Duration(seconds: 5);
@@ -14,13 +15,17 @@ void main() {
     'streams, settles, and resumes against the real stream-v1 fixture',
     () async {
       final fixture = await _FixtureProcess.start();
-      final controller = ProofController(endpoint: fixture.wsUrl);
+      final controller = T4ClientController(
+        hostDirectoryStore: _MemoryDirectoryStore(),
+        hostCredentialStore: _MemoryCredentialStore(),
+        developmentEndpoint: fixture.wsUrl,
+      );
       addTearDown(() async {
         controller.dispose();
         await fixture.stop();
       });
 
-      await controller.connect().timeout(_operationTimeout);
+      await controller.initialize().timeout(_operationTimeout);
       final initiallyReady = await _waitForState(
         controller,
         (state) => state.connectionPhase == ConnectionPhase.ready,
@@ -168,12 +173,12 @@ void main() {
   );
 }
 
-Future<ProofViewState> _waitForState(
-  ProofController controller,
-  bool Function(ProofViewState state) predicate, {
+Future<T4ViewState> _waitForState(
+  T4ClientController controller,
+  bool Function(T4ViewState state) predicate, {
   required String description,
 }) {
-  final completer = Completer<ProofViewState>();
+  final completer = Completer<T4ViewState>();
   late void Function() listener;
 
   listener = () {
@@ -199,6 +204,32 @@ Future<ProofViewState> _waitForState(
       );
     },
   );
+}
+
+final class _MemoryDirectoryStore implements HostDirectoryStore {
+  HostDirectory directory = const HostDirectory.empty();
+
+  @override
+  Future<HostDirectory> load() async => directory;
+
+  @override
+  Future<void> save(HostDirectory directory) async {
+    this.directory = directory;
+  }
+}
+
+final class _MemoryCredentialStore implements HostCredentialStore {
+  @override
+  Future<void> delete(HostProfile profile) async {}
+
+  @override
+  Future<DeviceCredentials?> read(HostProfile profile) async => null;
+
+  @override
+  Future<void> write(
+    HostProfile profile,
+    DeviceCredentials credentials,
+  ) async {}
 }
 
 final class _FixtureProcess {

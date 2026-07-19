@@ -7,7 +7,7 @@ Build one real Flutter client in `apps/flutter` that connects directly to the un
 ## Boundaries
 
 - Keep `packages/fixture-server`, `packages/protocol`, and OMP unchanged.
-- Inject the fixture WebSocket URL with `--dart-define=T4_FIXTURE_URL=...`; never hard-code a developer port.
+- Inject the fixture WebSocket URL with `--dart-define=T4_DEVELOPMENT_ENDPOINT=...`; never hard-code a developer port.
 - Decode every inbound frame before it reaches state. Reject unknown top-level frame families and malformed required fields while preserving additive fields.
 - Keep transcript cursors (`snapshot`, `entry`, `event`) separate from host session-index cursors (`session.delta`). Deduplicate durable transcript entries by entry ID.
 - UI consumes typed immutable state and sends typed commands; it does not parse JSON or own reconnect policy.
