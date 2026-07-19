@@ -202,13 +202,16 @@ export function SessionScreen({
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="surface-subheader gap-1.5 px-1.5 sm:gap-2 sm:px-3">
-        <span className="min-w-0 truncate font-medium text-sm">{session.title}</span>
-        <span className="hidden shrink-0 text-muted-foreground text-xs sm:inline">
-          {project.name}
-        </span>
-        <span className="hidden shrink-0 font-mono text-muted-foreground text-xs md:inline">
-          {session.model}
-        </span>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="min-w-0 truncate font-medium text-sm">{session.title}</span>
+          <span aria-hidden="true" className="hidden shrink-0 text-border sm:inline">/</span>
+          <span className="hidden shrink-0 text-muted-foreground text-xs sm:inline">
+            {project.name}
+          </span>
+          <span className="hidden shrink-0 rounded-md bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground md:inline">
+            {session.model}
+          </span>
+        </div>
         {archived && <Badge variant="outline">Archived · read-only</Badge>}
         {session.status !== null && (
           <>
@@ -299,7 +302,7 @@ export function SessionScreen({
             />
             <aside
               aria-label={activeMeta.label}
-              className="flex min-h-0 shrink-0 flex-col bg-background"
+              className="flex min-h-0 shrink-0 flex-col bg-(--sidebar-background)"
               style={{ width: `min(${paneWidth}px, 42vw)` }}
             >
               <div className="surface-subheader gap-2 px-3">

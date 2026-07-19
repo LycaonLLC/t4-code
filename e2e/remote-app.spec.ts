@@ -1190,10 +1190,8 @@ test("manages a session from a phone and converges another live client", async (
     await page.getByRole("button", { name: "Show session list", exact: true }).click();
     const rail = page.getByRole("dialog", { name: "Working folders and sessions" });
     await expect(rail).toBeVisible();
-    await expect(rail.getByRole("heading", { name: "Working folders", exact: true })).toBeVisible();
-    await expect(
-      rail.getByText("OMP groups sessions by the folder they were started in.", { exact: true }),
-    ).toBeVisible();
+    await expect(rail.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
+    await expect(rail.getByRole("button", { name: /Attention/ })).toBeVisible();
     await expect(rail.getByRole("button", { name: "Current · 1", exact: true })).toBeVisible();
     await expect(rail.getByRole("button", { name: "Archived · 0", exact: true })).toBeVisible();
 

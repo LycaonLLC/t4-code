@@ -966,18 +966,18 @@ export function Rail({
   return (
     <nav
       aria-label="Working folders and sessions"
-      className="flex h-full min-h-0 flex-col overflow-y-auto px-1.5 py-2 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      className="flex h-full min-h-0 flex-col overflow-y-auto px-1.5 py-1.5 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       onKeyDown={handleRailKeyDown}
       ref={navRef}
       tabIndex={-1}
     >
-      <div className="px-1.5 pb-2">
-        <h2 className="font-medium text-foreground text-sm">Working folders</h2>
-        <p className="mt-0.5 text-muted-foreground text-xs leading-snug">
-          OMP groups sessions by the folder they were started in.
-        </p>
+      <div className="px-1.5 pb-1.5">
+        <div className="flex h-7 items-center">
+          <h2 className="font-medium text-foreground text-xs">Sessions</h2>
+          <span className="ml-auto font-mono text-[10px] text-muted-foreground">⌘K</span>
+        </div>
         <button
-          className="mt-2 flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md border border-border bg-card px-2.5 text-left outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-9"
+          className="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8"
           onClick={() => {
             workspaceStore.getState().setRailOverlayOpen(false);
             void navigate({ to: "/inbox" });
@@ -985,7 +985,7 @@ export function Rail({
           type="button"
         >
           <Inbox aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1 truncate font-medium text-sm">Inbox</span>
+          <span className="min-w-0 flex-1 truncate text-sm">Attention</span>
           {attentionCount > 0 && (
             <Badge aria-label={`${attentionCount} items need attention`} variant="secondary">
               {attentionCount}

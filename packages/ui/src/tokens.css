@@ -25,7 +25,7 @@
 
   /* Window control / titlebar geometry (T3 workspace vars, kept 1:1). */
   --app-scrollbar-width: 6px;
-  --workspace-topbar-height: 52px;
+  --workspace-topbar-height: 44px;
   --workspace-controls-top: 0px;
   --workspace-controls-left: calc(var(--app-safe-area-left) + 0.75rem);
   --workspace-controls-right: calc(var(--app-safe-area-right) + 0.75rem);
@@ -48,7 +48,7 @@
 }
 
 .wco {
-  --workspace-topbar-height: env(titlebar-area-height, 52px);
+  --workspace-topbar-height: env(titlebar-area-height, 44px);
   --workspace-controls-top: env(titlebar-area-y, 0px);
   --workspace-controls-left: calc(env(titlebar-area-x, 0px) + 0.75rem);
   --workspace-controls-right: calc(
@@ -61,7 +61,7 @@
 
 :root {
   color-scheme: light;
-  --radius: 0.625rem;
+  --radius: 0.75rem;
 
   /* Neutral surfaces (pure neutral, zero chroma) */
   --background: #ffffff;
@@ -129,13 +129,14 @@
   /* Panels / transcript / composer / overlay */
   --panel-background: var(--card);
   --panel-border: var(--border);
+  --sidebar-background: color-mix(in srgb, var(--background) 97%, var(--foreground));
   --panel-tab-height: 36px;
-  --transcript-measure: 48rem;
+  --transcript-measure: 46rem;
   --transcript-background: var(--background);
   --composer-background: color-mix(in srgb, var(--popover) 92%, transparent);
   --composer-border: var(--border);
   --composer-blur: 12px;
-  --composer-shadow: 0 8px 24px rgb(0 0 0 / 8%);
+  --composer-shadow: 0 6px 20px rgb(0 0 0 / 10%);
   --overlay-backdrop: color-mix(in srgb, var(--background) 60%, transparent);
   --overlay-shadow: 0 16px 40px rgb(0 0 0 / 10%);
 
@@ -187,19 +188,19 @@
 .dark {
   color-scheme: dark;
 
-  --background: color-mix(in srgb, oklch(0.145 0 0) 95%, #ffffff);
+  --background: #0f0f11;
   --app-chrome-background: var(--background);
-  --foreground: oklch(0.97 0 0);
-  --card: color-mix(in srgb, var(--background) 98%, #ffffff);
-  --card-foreground: oklch(0.97 0 0);
-  --popover: color-mix(in srgb, var(--background) 98%, #ffffff);
-  --popover-foreground: oklch(0.97 0 0);
+  --foreground: #e3e4e6;
+  --card: color-mix(in srgb, var(--background) 96%, #ffffff);
+  --card-foreground: var(--foreground);
+  --popover: color-mix(in srgb, var(--background) 93%, #ffffff);
+  --popover-foreground: var(--foreground);
   --secondary: rgb(255 255 255 / 4%);
-  --secondary-foreground: oklch(0.97 0 0);
+  --secondary-foreground: var(--foreground);
   --muted: rgb(255 255 255 / 4%);
   --muted-foreground: oklch(0.708 0 0);
   --accent: rgb(255 255 255 / 4%);
-  --accent-foreground: oklch(0.97 0 0);
+  --accent-foreground: var(--foreground);
   --border: rgb(255 255 255 / 6%);
   --input: rgb(255 255 255 / 8%);
 

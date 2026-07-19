@@ -93,7 +93,7 @@ export function Titlebar({
   const navigate = useNavigate();
   return (
     <header
-      className="drag-region workspace-topbar titlebar-traffic-light-inset titlebar-window-controls-reserve shrink-0 gap-1 border-border border-b bg-background px-1 sm:gap-2 sm:px-3"
+      className="drag-region workspace-topbar titlebar-traffic-light-inset titlebar-window-controls-reserve shrink-0 gap-1 border-border/60 border-b bg-(--sidebar-background) px-1 sm:gap-1.5 sm:px-2.5"
       data-window-chrome={
         rendererPlatform.mode === "desktop" ? rendererPlatform.platform : undefined
       }

@@ -170,7 +170,7 @@ export function AppShell() {
         {!railOverlaid && (
           <>
             <div
-              className="rail-dock flex h-full shrink-0 flex-col overflow-hidden bg-background"
+              className="rail-dock flex h-full shrink-0 flex-col overflow-hidden border-border/60 border-r bg-(--sidebar-background)"
               style={{ width: railCollapsed ? RAIL_COLLAPSED_WIDTH : effectiveRailWidth }}
             >
               {railCollapsed ? (
@@ -229,7 +229,7 @@ export function AppShell() {
           >
             <div className="flex h-14 shrink-0 items-center border-border border-b px-3">
               <SheetTitle className="text-sm">
-                <span aria-hidden="true">Sessions</span>
+                <span aria-hidden="true">T4 Code</span>
                 <span className="sr-only">Working folders and sessions</span>
               </SheetTitle>
               <SheetClose
