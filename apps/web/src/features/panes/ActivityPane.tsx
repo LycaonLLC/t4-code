@@ -206,7 +206,14 @@ export function ActivityPane({ api, trailing }: { readonly api: InspectorStoreAp
   const expandedEntry =
     expandedSeq === null ? undefined : entries.find((entry) => entry.seq === expandedSeq);
 
-  if (entries.length === 0) return <FamilyEmpty family="activity" />;
+  if (entries.length === 0) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <PaneHeading family="activity" summary="0 recorded" trailing={trailing} />
+        <FamilyEmpty className="min-h-0 flex-1" family="activity" />
+      </div>
+    );
+  }
 
   const exportText = () => exportActivity(visible);
   const copyAll = () => {

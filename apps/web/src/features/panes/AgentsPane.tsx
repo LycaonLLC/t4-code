@@ -459,7 +459,14 @@ export function AgentsPane({
     [api, rows],
   );
 
-  if (rows.length === 0) return <FamilyEmpty family="agents" />;
+  if (rows.length === 0) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <PaneHeading family="agents" summary={summary} trailing={trailing} />
+        <FamilyEmpty className="min-h-0 flex-1" family="agents" />
+      </div>
+    );
+  }
 
   const moveFocus = (nextIndex: number) => {
     const clamped = Math.min(Math.max(nextIndex, 0), rows.length - 1);

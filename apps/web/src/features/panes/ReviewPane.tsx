@@ -396,7 +396,14 @@ export function ReviewPane({ api, trailing }: { readonly api: InspectorStoreApi;
     null,
   );
 
-  if (files.length === 0) return <FamilyEmpty family="review" />;
+  if (files.length === 0) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <PaneHeading family="review" summary="0 files" trailing={trailing} />
+        <FamilyEmpty className="min-h-0 flex-1" family="review" />
+      </div>
+    );
+  }
 
   const selected = files.find((file) => file.path === selectedPath);
   const additions = files.reduce((sum, file) => sum + file.additions, 0);

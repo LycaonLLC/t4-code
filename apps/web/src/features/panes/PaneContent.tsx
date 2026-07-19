@@ -3,6 +3,7 @@
 // owns everything inside it.
 import type * as React from "react";
 import { FamilyEmpty } from "./FamilyEmpty.tsx";
+import { PaneHeading } from "./PaneHeading.tsx";
 import { desktopRuntime } from "../../platform/desktop-runtime.ts";
 import { rendererPlatform, useWorkspace } from "../../state/store-instance.ts";
 import type { PaneFamily } from "../../state/workspace-store.ts";
@@ -79,7 +80,14 @@ export interface PaneContentProps {
 export function PaneContent({ family, trailing }: PaneContentProps) {
   const sessionId = useWorkspace((state) => state.activeSessionId);
   const store = sessionId === null ? null : getInspectorStore(sessionId);
-  if (sessionId === null || store === null) return <FamilyEmpty family={family} />;
+  if (sessionId === null || store === null) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <PaneHeading family={family} trailing={trailing} />
+        <FamilyEmpty className="min-h-0 flex-1" family={family} />
+      </div>
+    );
+  }
   switch (family) {
     case "agents": {
       const controller = rendererPlatform.mode === "browser" ? null : desktopRuntime();
