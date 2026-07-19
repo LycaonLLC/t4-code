@@ -6,7 +6,7 @@ T3 Code is selectively referenced for future ports from https://github.com/pingd
 
 ## Oh My Pi
 
-Future adaptations of OMP source use the OMP repository under its repository license. OMP remains runtime authority; adapted files retain OMP attribution and the applicable source license. The vendored `@oh-my-pi/app-wire@0.6.0` package is packed from the public `lyc-aon/oh-my-pi` integration commit `ae4b53b416f32b200865a32ed9baabd5a4666fa4`, source tree `2b8a5f697273f5044789b8ae638b6c264f9f8499`; tarball SHA-256 `92256497bb8086ab9cefa30e4890293060a52b9d0c5349743ee94ae3224ca32c`; golden corpus SHA-256 `7ebd5fa6cbc37ae0f28cf1d957d9cab841b875581cb42ffbe81cea66f1dc2ef1`. Target integration commit is recorded in the Desktop commit history and compatibility matrix.
+Future adaptations of OMP source use the OMP repository under its repository license. OMP remains runtime authority; adapted files retain OMP attribution and the applicable source license. The vendored `@oh-my-pi/app-wire@0.6.1` package is packed from the public `lyc-aon/oh-my-pi` integration commit `e3e15c03ae95ebbda5f26495cd21213cc53518b1`, source tree `e0f32b279eb4b8cbc403e47d765a226bee99c99f`; tarball SHA-256 `78ec6223e7ad0f4f9e14526a822eaa45b363c856065c08196b2817a2f42740b9`; golden corpus SHA-256 `d5e674095de3d9b3b56a5668bc91cbbf1904b409ea9ea6456c2eabdf272e7870`. Target integration commit is recorded in the Desktop commit history and compatibility matrix.
 
 ## Oh My Pi icon
 

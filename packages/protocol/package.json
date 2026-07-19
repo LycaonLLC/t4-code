@@ -15,7 +15,7 @@
     "test": "vp test run --passWithNoTests"
   },
   "dependencies": {
-    "@oh-my-pi/app-wire": "file:../../vendor/app-wire/oh-my-pi-app-wire-0.6.0.tgz"
+    "@oh-my-pi/app-wire": "file:../../vendor/app-wire/oh-my-pi-app-wire-0.6.1.tgz"
   },
   "devDependencies": {
     "@types/node": "catalog:",

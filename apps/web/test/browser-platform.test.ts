@@ -313,8 +313,10 @@ describe("browser platform boundary", () => {
     expect(connectCalls).toBe(1);
     expect(capturedOptions?.requestedFeatures).toContain("prompt.images");
     expect(capturedOptions?.requestedFeatures).toContain("transcript.images");
+    expect(capturedOptions?.requestedFeatures).toContain("transcript.search");
     expect(capturedOptions?.compatibilityRequestedFeatures).not.toContain("prompt.images");
     expect(capturedOptions?.compatibilityRequestedFeatures).not.toContain("transcript.images");
+    expect(capturedOptions?.compatibilityRequestedFeatures).toContain("transcript.search");
     const pair = await shell.pair({ targetId: "remote", code: "123456" });
     expect(pair.paired).toBe(true);
     expect(capturedOptions?.authentication?.()).toEqual({

@@ -27,6 +27,17 @@ function changedRuntime(name, mutate) {
   });
 }
 
+function replaceRequired(text, search, replacement) {
+  assert.ok(text.includes(search), `fixture is missing expected value ${search}`);
+  return text.replace(search, replacement);
+}
+
+function nextPatchVersion(version) {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)$/u);
+  assert.ok(match, `expected a stable semantic version, received ${version}`);
+  return `${match[1]}.${match[2]}.${Number(match[3]) + 1}`;
+}
+
 function requiredWorkflowJob(workflow, name) {
   const parsed = parseYaml(workflow);
   assert.ok(parsed && typeof parsed === "object" && !Array.isArray(parsed));
@@ -335,12 +346,11 @@ test("rejects published app-wire provenance drift until release surfaces agree",
 });
 
 test("rejects drift between the compatibility matrix and vendored app-wire manifest", () => {
-  const drifted = changed("vendor/app-wire/manifest.json", (text) =>
-    text.replace(
-      '"sourceTreeHash": "2b8a5f697273f5044789b8ae638b6c264f9f8499"',
-      '"sourceTreeHash": "0000000000000000000000000000000000000000"',
-    ),
-  );
+  const drifted = changed("vendor/app-wire/manifest.json", (text) => {
+    const manifest = JSON.parse(text);
+    manifest.sourceTreeHash = "0".repeat(40);
+    return JSON.stringify(manifest);
+  });
   assert.ok(
     collectReleaseConsistencyErrors(drifted).some((error) =>
       error.includes("vendor/app-wire/manifest.json sourceTreeHash must match"),
@@ -349,8 +359,11 @@ test("rejects drift between the compatibility matrix and vendored app-wire manif
 });
 
 test("rejects a stale app-wire third-party notice", () => {
+  const { package: packageName, version } = JSON.parse(
+    files.get("vendor/app-wire/manifest.json"),
+  );
   const drifted = changed("THIRD_PARTY_NOTICES.md", (text) =>
-    text.replace("@oh-my-pi/app-wire@0.6.0", "@oh-my-pi/app-wire@0.5.8"),
+    replaceRequired(text, `${packageName}@${version}`, `${packageName}@0.0.0`),
   );
   assert.ok(
     collectReleaseConsistencyErrors(drifted).some((error) =>
@@ -402,52 +415,37 @@ test("rejects drift in published OMP runtime provenance", () => {
 
 test("accepts a current app-wire update without rewriting published release surfaces", () => {
   const coordinated = new Map(files);
-  for (const path of ["compat/omp-app-matrix.json", "vendor/app-wire/manifest.json"]) {
-    coordinated.set(
-      path,
-      coordinated
-        .get(path)
-        .replace('"version": "0.5.10"', '"version": "0.6.0"')
-        .replace(
-          '"sourceCommit": "93f48ab62e2002b48a0dc2734de33d5328ea76d6"',
-          '"sourceCommit": "1111111111111111111111111111111111111111"',
-        )
-        .replace(
-          '"sourceTreeHash": "ea8608496731f29addc95d43ea68e44c5c42cb22"',
-          '"sourceTreeHash": "2222222222222222222222222222222222222222"',
-        )
-        .replace("oh-my-pi-app-wire-0.5.10.tgz", "oh-my-pi-app-wire-0.6.0.tgz")
-        .replace(
-          '"tarballSha256": "d30da820ff2bb8a7efa024fc829b654a2dfaf2600688fa369abc64b053ae8ede"',
-          '"tarballSha256": "3333333333333333333333333333333333333333333333333333333333333333"',
-        )
-        .replace(
-          '"goldenCorpusSha256": "63480a2359c1b2b4ec2f5cc8890683f0eefc13e92597d1464e442b563bc7375e"',
-          '"goldenCorpusSha256": "4444444444444444444444444444444444444444444444444444444444444444"',
-        ),
-    );
-  }
+  const matrix = JSON.parse(coordinated.get("compat/omp-app-matrix.json"));
+  const manifest = JSON.parse(coordinated.get("vendor/app-wire/manifest.json"));
+  const current = { ...matrix.appWire };
+  const proposed = {
+    version: nextPatchVersion(current.version),
+    sourceCommit: "1".repeat(40),
+    sourceTreeHash: "2".repeat(40),
+    tarballSha256: "3".repeat(64),
+    goldenCorpusSha256: "4".repeat(64),
+  };
+
+  Object.assign(matrix.appWire, proposed, {
+    tarball: `vendor/app-wire/oh-my-pi-app-wire-${proposed.version}.tgz`,
+  });
+  Object.assign(manifest, proposed, {
+    tarball: `oh-my-pi-app-wire-${proposed.version}.tgz`,
+  });
+  coordinated.set("compat/omp-app-matrix.json", JSON.stringify(matrix));
+  coordinated.set("vendor/app-wire/manifest.json", JSON.stringify(manifest));
   coordinated.set(
     "THIRD_PARTY_NOTICES.md",
-    coordinated
-      .get("THIRD_PARTY_NOTICES.md")
-      .replace("@oh-my-pi/app-wire@0.5.10", "@oh-my-pi/app-wire@0.6.0")
-      .replace(
-        "93f48ab62e2002b48a0dc2734de33d5328ea76d6",
-        "1111111111111111111111111111111111111111",
-      )
-      .replace(
-        "ea8608496731f29addc95d43ea68e44c5c42cb22",
-        "2222222222222222222222222222222222222222",
-      )
-      .replace(
-        "d30da820ff2bb8a7efa024fc829b654a2dfaf2600688fa369abc64b053ae8ede",
-        "3333333333333333333333333333333333333333333333333333333333333333",
-      )
-      .replace(
-        "63480a2359c1b2b4ec2f5cc8890683f0eefc13e92597d1464e442b563bc7375e",
-        "4444444444444444444444444444444444444444444444444444444444444444",
-      ),
+    [
+      [`${current.package}@${current.version}`, `${current.package}@${proposed.version}`],
+      [current.sourceCommit, proposed.sourceCommit],
+      [current.sourceTreeHash, proposed.sourceTreeHash],
+      [current.tarballSha256, proposed.tarballSha256],
+      [current.goldenCorpusSha256, proposed.goldenCorpusSha256],
+    ].reduce(
+      (notice, [from, to]) => replaceRequired(notice, from, to),
+      coordinated.get("THIRD_PARTY_NOTICES.md"),
+    ),
   );
 
   assert.deepEqual(collectReleaseConsistencyErrors(coordinated), []);

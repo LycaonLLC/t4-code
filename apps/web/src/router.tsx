@@ -27,6 +27,8 @@ import { SessionScreen } from "./components/SessionScreen.tsx";
 import { AgentViewScreen } from "./features/agent-view/AgentViewScreen.tsx";
 import { PreviewWorkspace } from "./features/preview/PreviewWorkspace.tsx";
 import { LiveAttentionInbox } from "./features/attention/index.ts";
+import { LiveTranscriptSearch } from "./features/transcript-search/index.ts";
+import { TRANSCRIPT_SEARCH_ROUTE } from "./features/transcript-search/route.ts";
 import { SettingsWorkspace } from "./features/settings/index.ts";
 import { LiveSettingsScreen } from "./features/settings/LiveSettingsScreen.tsx";
 import { TargetsScreen } from "./features/targets/TargetsScreen.tsx";
@@ -89,6 +91,12 @@ const inboxRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/inbox",
   component: LiveAttentionInbox,
+});
+
+const searchRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: TRANSCRIPT_SEARCH_ROUTE,
+  component: LiveTranscriptSearch,
 });
 
 interface SessionRouteGateProps {
@@ -445,6 +453,7 @@ const usageRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   inboxRoute,
+  searchRoute,
   sessionRoute,
   previewRoute,
   agentViewRoute,

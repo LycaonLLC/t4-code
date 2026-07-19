@@ -464,8 +464,10 @@ describe("desktop target manager boundaries", () => {
     };
     expect(firstHello.requestedFeatures).toContain("prompt.images");
     expect(firstHello.requestedFeatures).toContain("transcript.images");
+    expect(firstHello.requestedFeatures).toContain("transcript.search");
     expect(fallbackHello.requestedFeatures).not.toContain("prompt.images");
     expect(fallbackHello.requestedFeatures).not.toContain("transcript.images");
+    expect(fallbackHello.requestedFeatures).toContain("transcript.search");
     await runtime.close();
   });
 

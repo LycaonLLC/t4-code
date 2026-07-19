@@ -13,9 +13,7 @@ export type {
   PreviewPolicyCheckIntent,
   PreviewHandoffIntent,
 } from "./omp-client-runtime.ts";
-export {
-  ompAppV1ProtocolProvider,
-} from "./omp-app-v1-protocol-provider.ts";
+export { ompAppV1ProtocolProvider } from "./omp-app-v1-protocol-provider.ts";
 export {
   defaultOmpProtocolProviderRegistry,
   OmpProtocolProviderRegistry,
@@ -214,3 +212,30 @@ export type {
   DesktopControllerLeaseOperationResult,
   DesktopControllerLeaseOptions,
 } from "./desktop-runtime.ts";
+export {
+  createTranscriptSearchCoordinator,
+  decodeTranscriptContextResult,
+  decodeTranscriptSearchResult,
+  TranscriptSearchCoordinator,
+  TranscriptSearchError,
+} from "./transcript-search.ts";
+export type {
+  HostedTranscriptSearchItem,
+  TranscriptContextArguments,
+  TranscriptContextResult,
+  TranscriptContextRow,
+  TranscriptSearchArchivedFilter,
+  TranscriptSearchArguments,
+  TranscriptSearchHighlight,
+  TranscriptSearchHostState,
+  TranscriptSearchHostStatus,
+  TranscriptSearchIndexState,
+  TranscriptSearchIndexStatus,
+  TranscriptSearchItem,
+  TranscriptSearchListener,
+  TranscriptSearchOptions,
+  TranscriptSearchResult,
+  TranscriptSearchRole,
+  TranscriptSearchRuntime,
+  TranscriptSearchSnapshot,
+} from "./transcript-search.ts";
