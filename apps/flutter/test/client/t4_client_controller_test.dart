@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:t4code/src/client/app_state.dart';
@@ -414,6 +415,257 @@ void main() {
       );
     },
   );
+  test('uploads prompt images and reads transcript image chunks', () async {
+    final profile = _profile('alpha');
+    final directory = _MemoryDirectoryStore(
+      directory: const HostDirectory.empty().upsert(profile),
+    );
+    final connector = _FakeConnector();
+    final controller = _controller(
+      directory,
+      _MemoryCredentialStore(),
+      connector,
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    final channel = connector.channels.single;
+
+    channel.emit(
+      _welcome(
+        'host-alpha',
+        capabilities: const <String>[
+          'sessions.read',
+          'sessions.prompt',
+          'sessions.control',
+          'sessions.manage',
+        ],
+      ),
+    );
+    await _flush();
+    final list = channel.sentJson.last;
+    channel.emit(
+      _response(
+        list,
+        command: 'session.list',
+        result: _sessionListResultFor('host-alpha', const <String>[
+          'session-alpha',
+        ]),
+      ),
+    );
+    await _flush();
+    channel.emit(
+      _snapshot(
+        'host-alpha',
+        'session-alpha',
+        revision: 'revision-session-alpha-2',
+      ),
+    );
+    await _flush();
+    expect(controller.state.connectionPhase, ConnectionPhase.ready);
+
+    final sending = controller.submitPrompt(
+      'Inspect this image',
+      images: <PromptImageAttachment>[
+        PromptImageAttachment(
+          id: 'local-image',
+          name: 'fixture.png',
+          mimeType: 'image/png',
+          bytes: Uint8List.fromList(<int>[1, 2, 3]),
+        ),
+      ],
+    );
+    await _flush();
+    final begin = channel.sentJson.last;
+    expect(begin['command'], 'session.image.begin');
+    expect(begin['args'], <String, Object?>{
+      'mimeType': 'image/png',
+      'size': 3,
+      'sha256': isA<String>(),
+    });
+    channel.emit(
+      _response(
+        begin,
+        command: 'session.image.begin',
+        result: <String, Object?>{
+          'imageId': 'uploaded-image',
+          'chunkBytes': 2,
+          'expiresAt': '2030-01-01T00:00:00.000Z',
+        },
+      ),
+    );
+    await _flush();
+
+    final firstChunk = channel.sentJson.last;
+    expect(firstChunk['command'], 'session.image.chunk');
+    expect(firstChunk['args'], <String, Object?>{
+      'imageId': 'uploaded-image',
+      'offset': 0,
+      'content': 'AQI=',
+    });
+    channel.emit(
+      _response(
+        firstChunk,
+        command: 'session.image.chunk',
+        result: <String, Object?>{
+          'imageId': 'uploaded-image',
+          'received': 2,
+          'complete': false,
+        },
+      ),
+    );
+    await _flush();
+
+    final finalChunk = channel.sentJson.last;
+    expect(finalChunk['command'], 'session.image.chunk');
+    expect(finalChunk['args'], <String, Object?>{
+      'imageId': 'uploaded-image',
+      'offset': 2,
+      'content': 'Aw==',
+    });
+    channel.emit(
+      _response(
+        finalChunk,
+        command: 'session.image.chunk',
+        result: <String, Object?>{
+          'imageId': 'uploaded-image',
+          'received': 3,
+          'complete': true,
+        },
+      ),
+    );
+    await _flush();
+
+    final prompt = channel.sentJson.last;
+    expect(prompt['command'], 'session.prompt');
+    expect(prompt['expectedRevision'], 'revision-session-alpha-2');
+    expect(prompt['args'], <String, Object?>{
+      'message': 'Inspect this image',
+      'images': <Object?>[
+        <String, Object?>{'imageId': 'uploaded-image'},
+      ],
+    });
+    channel.emit(
+      _response(
+        prompt,
+        command: 'session.prompt',
+        result: <String, Object?>{'accepted': true},
+      ),
+    );
+    expect(await sending, isTrue);
+
+    const contentSha256 =
+        '039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81';
+    final reading = controller.readTranscriptImage(
+      'entry-image',
+      TranscriptImageMetadata(sha256: contentSha256, mimeType: 'image/png'),
+    );
+    await _flush();
+    final firstRead = channel.sentJson.last;
+    expect(firstRead['command'], 'session.image.read');
+    expect(firstRead['args'], <String, Object?>{
+      'entryId': 'entry-image',
+      'sha256': contentSha256,
+      'offset': 0,
+    });
+    channel.emit(
+      _response(
+        firstRead,
+        command: 'session.image.read',
+        result: <String, Object?>{
+          'sha256': contentSha256,
+          'mimeType': 'image/png',
+          'size': 3,
+          'offset': 0,
+          'nextOffset': 2,
+          'complete': false,
+          'content': 'AQI=',
+        },
+      ),
+    );
+    await _flush();
+    final finalRead = channel.sentJson.last;
+    expect(finalRead['args'], <String, Object?>{
+      'entryId': 'entry-image',
+      'sha256': contentSha256,
+      'offset': 2,
+    });
+    channel.emit(
+      _response(
+        finalRead,
+        command: 'session.image.read',
+        result: <String, Object?>{
+          'sha256': contentSha256,
+          'mimeType': 'image/png',
+          'size': 3,
+          'offset': 2,
+          'nextOffset': 3,
+          'complete': true,
+          'content': 'Aw==',
+        },
+      ),
+    );
+    expect(await reading, <int>[1, 2, 3]);
+
+    final queueing = controller.queuePrompt('Follow up later');
+    await _flush();
+    final followUp = channel.sentJson.last;
+    expect(followUp['command'], 'session.followUp');
+    expect(followUp['args'], <String, Object?>{'message': 'Follow up later'});
+    channel.emit(
+      _response(
+        followUp,
+        command: 'session.followUp',
+        result: <String, Object?>{'accepted': true},
+      ),
+    );
+    expect(await queueing, isTrue);
+
+    final settingModel = controller.setSessionModel('fixture/model-pro');
+    await _flush();
+    final model = channel.sentJson.last;
+    expect(model['command'], 'session.model.set');
+    expect(model['args'], <String, Object?>{
+      'selector': 'fixture/model-pro',
+      'persistence': 'session',
+    });
+    channel.emit(
+      _response(
+        model,
+        command: 'session.model.set',
+        result: <String, Object?>{'updated': true},
+      ),
+    );
+    await settingModel;
+
+    final settingThinking = controller.setSessionThinking('high');
+    await _flush();
+    final thinking = channel.sentJson.last;
+    expect(thinking['command'], 'session.thinking.set');
+    expect(thinking['args'], <String, Object?>{'level': 'high'});
+    channel.emit(
+      _response(
+        thinking,
+        command: 'session.thinking.set',
+        result: <String, Object?>{'updated': true},
+      ),
+    );
+    await settingThinking;
+
+    final settingFast = controller.setSessionFast(true);
+    await _flush();
+    final fast = channel.sentJson.last;
+    expect(fast['command'], 'session.fast.set');
+    expect(fast['args'], <String, Object?>{'enabled': true});
+    channel.emit(
+      _response(
+        fast,
+        command: 'session.fast.set',
+        result: <String, Object?>{'updated': true},
+      ),
+    );
+    await settingFast;
+  });
+
   test(
     'creates and manages sessions through index deltas and confirmations',
     () async {

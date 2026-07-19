@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -424,6 +425,99 @@ void main() {
       expect(actions.restoredSessionIds, <String>['session-archived']);
     },
   );
+  testWidgets(
+    'composer preserves per-session drafts and exposes turn controls',
+    (tester) async {
+      final profile = HostProfile.parseTailnetAddress(
+        'https://alpha.tailnet-name.ts.net',
+      );
+      final actions = _FakeActions();
+      T4ViewState stateFor(
+        String selectedSessionId, {
+        bool turnActive = false,
+      }) => T4ViewState(
+        connectionPhase: ConnectionPhase.ready,
+        hostDirectory: HostDirectory.empty().upsert(profile),
+        authenticationPhase: AuthenticationPhase.paired,
+        grantedCapabilities: t4RequestedCapabilities.toSet(),
+        selectedSessionId: selectedSessionId,
+        sessions: const <SessionSummary>[
+          SessionSummary(
+            hostId: 'host-alpha',
+            sessionId: 'session-alpha',
+            projectId: 'project-alpha',
+            projectName: 'Project Alpha',
+            title: 'First investigation',
+            revision: 'revision-alpha',
+            status: 'idle',
+          ),
+          SessionSummary(
+            hostId: 'host-alpha',
+            sessionId: 'session-beta',
+            projectId: 'project-alpha',
+            projectName: 'Project Alpha',
+            title: 'Second investigation',
+            revision: 'revision-beta',
+            status: 'idle',
+          ),
+        ],
+        composer: SessionComposerState(
+          modelLabel: 'Fixture model',
+          modelSelector: 'fixture/model',
+          modelChoices: const <ComposerModelChoice>[
+            ComposerModelChoice(
+              label: 'Fixture model',
+              selector: 'fixture/model',
+            ),
+          ],
+          thinking: 'medium',
+          thinkingLevels: const <String>['off', 'medium', 'high'],
+          fastAvailable: true,
+          turnActive: turnActive,
+          queuedFollowUpCount: turnActive ? 2 : 0,
+        ),
+      );
+
+      await pumpApp(
+        tester,
+        state: stateFor('session-alpha'),
+        actions: actions,
+        size: compactPhone,
+      );
+      await tester.enterText(find.byType(TextField).last, 'Alpha draft');
+
+      await tester.pumpWidget(
+        T4App(
+          state: stateFor('session-beta'),
+          actions: actions,
+          credentialsAreVolatile: false,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(TextField, 'Alpha draft'), findsNothing);
+      await tester.enterText(find.byType(TextField).last, 'Beta draft');
+
+      await tester.pumpWidget(
+        T4App(
+          state: stateFor('session-alpha', turnActive: true),
+          actions: actions,
+          credentialsAreVolatile: false,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.widgetWithText(TextField, 'Alpha draft'), findsOneWidget);
+      expect(find.text('Fixture model'), findsOneWidget);
+      expect(find.text('medium'), findsOneWidget);
+      expect(find.text('Fast'), findsOneWidget);
+      expect(find.text('Stop'), findsOneWidget);
+      expect(find.text('Queue (2)'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Steer'));
+      await tester.pumpAndSettle();
+      expect(actions.submittedPrompts, <String>['Alpha draft']);
+    },
+  );
 }
 
 final class _FakeActions implements T4Actions {
@@ -446,6 +540,12 @@ final class _FakeActions implements T4Actions {
   final List<String> terminatedSessionIds = <String>[];
   final List<String> archivedSessionIds = <String>[];
   final List<String> restoredSessionIds = <String>[];
+  final List<String> submittedPrompts = <String>[];
+  final List<String> queuedPrompts = <String>[];
+  int cancelTurnCalls = 0;
+  final List<String> selectedModels = <String>[];
+  final List<String> selectedThinkingLevels = <String>[];
+  final List<bool> selectedFastModes = <bool>[];
   final List<String> deletedSessionIds = <String>[];
 
   @override
@@ -524,5 +624,43 @@ final class _FakeActions implements T4Actions {
   Future<void> selectSession(String sessionId) async {}
 
   @override
-  Future<void> submitPrompt(String message) async {}
+  Future<bool> submitPrompt(
+    String message, {
+    List<PromptImageAttachment> images = const <PromptImageAttachment>[],
+  }) async {
+    submittedPrompts.add(message);
+    return true;
+  }
+
+  @override
+  Future<bool> queuePrompt(String message) async {
+    queuedPrompts.add(message);
+    return true;
+  }
+
+  @override
+  Future<void> cancelTurn() async {
+    cancelTurnCalls += 1;
+  }
+
+  @override
+  Future<void> setSessionModel(String selector) async {
+    selectedModels.add(selector);
+  }
+
+  @override
+  Future<void> setSessionThinking(String level) async {
+    selectedThinkingLevels.add(level);
+  }
+
+  @override
+  Future<void> setSessionFast(bool enabled) async {
+    selectedFastModes.add(enabled);
+  }
+
+  @override
+  Future<Uint8List> readTranscriptImage(
+    String entryId,
+    TranscriptImageMetadata image,
+  ) async => Uint8List(0);
 }

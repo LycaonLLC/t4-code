@@ -33,10 +33,6 @@ abstract final class _T4Size {
   static const double divider = 1;
 }
 
-abstract final class _T4Type {
-  static const double bodyLineHeight = 1.5;
-}
-
 abstract final class _T4Motion {
   static const Duration short = Duration(milliseconds: 180);
   static const Curve standard = Curves.easeOutCubic;

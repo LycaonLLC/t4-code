@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -46,6 +48,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   _PendingPair? _pendingPair;
   Set<String> _grantedCapabilities = const <String>{};
   Set<String> _grantedFeatures = const <String>{};
+  List<CatalogItem> _catalogItems = const <CatalogItem>[];
   Future<void>? _initialization;
   bool _initialized = false;
   bool _hostOperationPending = false;
@@ -59,6 +62,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   bool _reconnectEnabled = true;
   int _bootstrapGeneration = -1;
   int _commandOrdinal = 0;
+  int _localPromptOrdinal = 0;
   String? _sessionIndexEpoch;
   int? _sessionIndexSeq;
   int _reconnectAttempt = 0;
@@ -77,7 +81,83 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     hostOperationPending: _hostOperationPending,
     submitting: _submitting,
     sessionOperationPending: _sessionOperationPending,
+    composer: _composerState,
   );
+
+  SessionComposerState get _composerState {
+    final session = _sessions
+        .where((candidate) => candidate.sessionId == _selectedSessionId)
+        .firstOrNull;
+    if (session == null) return const SessionComposerState();
+    final choices = <ComposerModelChoice>[];
+    final seen = <String>{};
+    final slashCommands = <ComposerSlashCommand>[];
+    for (final item in _catalogItems) {
+      if (item.kind == 'model') {
+        final selector = _modelSelector(item);
+        if (selector == null || !seen.add(selector)) continue;
+        choices.add(
+          ComposerModelChoice(
+            label: item.name,
+            selector: selector,
+            supported: item.supported != false,
+            reason: item.reason,
+          ),
+        );
+        continue;
+      }
+      if (item.kind != 'command') continue;
+      final bareName = item.name.replaceFirst(RegExp(r'^/+'), '');
+      final missingCapability = item.capabilities
+          ?.where((capability) => !_grantedCapabilities.contains(capability))
+          .firstOrNull;
+      final disabledReason = item.supported == false
+          ? item.reason ?? 'Not available on this host'
+          : missingCapability == null
+          ? null
+          : 'Not granted on this host';
+      slashCommands.add(
+        ComposerSlashCommand(
+          name: '/$bareName',
+          description: item.description ?? '',
+          insert: '/$bareName ',
+          disabledReason: disabledReason,
+        ),
+      );
+    }
+    final levels = <String>[
+      'off',
+      'auto',
+      ...session.thinkingLevels.where(
+        (level) => level != 'off' && level != 'auto',
+      ),
+    ];
+    return SessionComposerState(
+      modelLabel: session.modelDisplayName ?? session.modelSelector,
+      modelSelector: session.modelSelector,
+      modelChoices: List<ComposerModelChoice>.unmodifiable(choices),
+      slashCommands: List<ComposerSlashCommand>.unmodifiable(slashCommands),
+      thinking: session.thinking,
+      thinkingLevels: List<String>.unmodifiable(levels),
+      fastEnabled: session.fast,
+      fastAvailable: session.fastAvailable,
+      turnActive: session.turnActive || _submitting,
+      queuedFollowUpCount: session.queuedFollowUpCount,
+    );
+  }
+
+  String? _modelSelector(CatalogItem item) {
+    final metadata = item.metadata;
+    final provider = metadata?['provider'];
+    final modelId = metadata?['modelId'];
+    if (provider is String &&
+        provider.isNotEmpty &&
+        modelId is String &&
+        modelId.isNotEmpty) {
+      return '$provider/$modelId';
+    }
+    return item.name.contains('/') ? item.name : null;
+  }
 
   Future<void> initialize() => _initialization ??= _initialize();
 
@@ -127,6 +207,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _hostId = null;
     _grantedCapabilities = const <String>{};
     _grantedFeatures = const <String>{};
+    _catalogItems = const <CatalogItem>[];
     _bootstrapGeneration = -1;
     _reconnectAttempt = 0;
     _phase = ConnectionPhase.disconnected;
@@ -179,6 +260,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _authenticationPhase = AuthenticationPhase.unknown;
     _grantedCapabilities = const <String>{};
     _grantedFeatures = const <String>{};
+    _catalogItems = const <CatalogItem>[];
     _errorMessage = null;
     _publish();
 
@@ -608,40 +690,334 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   }
 
   @override
-  Future<void> submitPrompt(String message) async {
+  Future<bool> submitPrompt(
+    String message, {
+    List<PromptImageAttachment> images = const <PromptImageAttachment>[],
+  }) async {
     final text = message.trim();
     final session = state.selectedSession;
-    if (text.isEmpty ||
-        session == null ||
-        _phase != ConnectionPhase.ready ||
-        _submitting) {
-      return;
+    if (session == null || _phase != ConnectionPhase.ready) return false;
+    if (text.isEmpty && images.isEmpty) return false;
+    if (state.composer.turnActive) {
+      if (images.isNotEmpty) {
+        throw StateError('Images cannot be added while a turn is active.');
+      }
+      return _sendPromptText('session.steer', text);
+    }
+    if (images.length > 8) {
+      throw ArgumentError.value(images.length, 'images', 'maximum is 8');
     }
 
-    final ids = _nextCommandIds('prompt');
-    _pendingCommands[ids.requestId] = _PendingCommand(
-      commandId: ids.commandId,
-      command: 'session.prompt',
-      sessionId: session.sessionId,
-    );
-    _messages['local-${ids.commandId}'] = TranscriptMessage(
-      id: 'local-${ids.commandId}',
+    final optimisticId =
+        'local-prompt:${session.sessionId}:${_localPromptOrdinal++}';
+    _messages[optimisticId] = TranscriptMessage(
+      id: optimisticId,
       role: MessageRole.user,
       text: text,
     );
     _submitting = true;
+    _publish();
+    final uploaded = <String>[];
+    try {
+      for (final image in images) {
+        uploaded.add(await _uploadImage(session, image));
+      }
+      final frame = await _runComposerCommand(
+        prefix: 'prompt',
+        command: 'session.prompt',
+        session: session,
+        expectedRevision: session.revision,
+        args: <String, Object?>{
+          'message': text,
+          if (uploaded.isNotEmpty)
+            'images': <Map<String, String>>[
+              for (final imageId in uploaded)
+                <String, String>{'imageId': imageId},
+            ],
+        },
+      );
+      final result = frame.result;
+      return result is Map<String, Object?> && result['accepted'] == true;
+    } on Object {
+      await _discardUploadedImages(session, uploaded);
+      _messages.remove(optimisticId);
+      _submitting = false;
+      _publish();
+      rethrow;
+    }
+  }
+
+  @override
+  Future<bool> queuePrompt(String message) =>
+      _sendPromptText('session.followUp', message.trim());
+
+  Future<bool> _sendPromptText(String command, String text) async {
+    final session = state.selectedSession;
+    if (text.isEmpty || session == null || _phase != ConnectionPhase.ready) {
+      return false;
+    }
+    final frame = await _runComposerCommand(
+      prefix: command.replaceAll('.', '-'),
+      command: command,
+      session: session,
+      expectedRevision: session.revision,
+      args: <String, Object?>{'message': text},
+    );
+    final result = frame.result;
+    return result is Map<String, Object?> && result['accepted'] == true;
+  }
+
+  @override
+  Future<void> cancelTurn() async {
+    final session = state.selectedSession;
+    if (session == null || !state.composer.turnActive) return;
+    await _runSessionOperation(
+      prefix: 'session-cancel',
+      command: 'session.cancel',
+      capability: 'sessions.control',
+      session: session,
+      confirmationExpected: true,
+    );
+  }
+
+  @override
+  Future<void> setSessionModel(String selector) async {
+    final session = state.selectedSession;
+    if (session == null) return;
+    await _runSessionOperation(
+      prefix: 'session-model',
+      command: 'session.model.set',
+      capability: 'sessions.manage',
+      session: session,
+      args: <String, Object?>{'selector': selector, 'persistence': 'session'},
+    );
+  }
+
+  @override
+  Future<void> setSessionThinking(String level) async {
+    final session = state.selectedSession;
+    if (session == null) return;
+    await _runSessionOperation(
+      prefix: 'session-thinking',
+      command: 'session.thinking.set',
+      capability: 'sessions.manage',
+      session: session,
+      args: <String, Object?>{'level': level},
+    );
+  }
+
+  @override
+  Future<void> setSessionFast(bool enabled) async {
+    final session = state.selectedSession;
+    if (session == null) return;
+    await _runSessionOperation(
+      prefix: 'session-fast',
+      command: 'session.fast.set',
+      capability: 'sessions.manage',
+      session: session,
+      args: <String, Object?>{'enabled': enabled},
+    );
+  }
+
+  @override
+  Future<Uint8List> readTranscriptImage(
+    String entryId,
+    TranscriptImageMetadata image,
+  ) async {
+    final session = state.selectedSession;
+    if (session == null) {
+      throw StateError('choose a session before loading transcript images');
+    }
+    final bytes = BytesBuilder(copy: false);
+    var offset = 0;
+    int? expectedSize;
+    while (true) {
+      final frame = await _runComposerCommand(
+        prefix: 'image-read',
+        command: 'session.image.read',
+        session: session,
+        capability: 'sessions.read',
+        args: <String, Object?>{
+          'entryId': entryId,
+          'sha256': image.sha256,
+          'offset': offset,
+        },
+      );
+      final result = frame.result;
+      if (result is! Map<String, Object?> ||
+          result['sha256'] != image.sha256 ||
+          result['mimeType'] != image.mimeType ||
+          result['size'] is! int ||
+          result['offset'] != offset ||
+          result['nextOffset'] is! int ||
+          result['complete'] is! bool ||
+          result['content'] is! String) {
+        throw const FormatException('session.image.read result is invalid');
+      }
+      final size = result['size']! as int;
+      expectedSize ??= size;
+      if (size != expectedSize || size <= 0 || size > 20 * 1024 * 1024) {
+        throw const FormatException('transcript image size changed');
+      }
+      final nextOffset = result['nextOffset']! as int;
+      final chunk = base64Decode(result['content']! as String);
+      if (nextOffset <= offset || nextOffset - offset != chunk.length) {
+        throw const FormatException('transcript image offsets are invalid');
+      }
+      bytes.add(chunk);
+      offset = nextOffset;
+      final complete = result['complete']! as bool;
+      if (complete != (offset == size)) {
+        throw const FormatException('transcript image completion is invalid');
+      }
+      if (complete) break;
+    }
+    final value = bytes.takeBytes();
+    if (value.length != expectedSize ||
+        sha256.convert(value).toString() != image.sha256) {
+      throw const FormatException('transcript image integrity check failed');
+    }
+    return value;
+  }
+
+  Future<String> _uploadImage(
+    SessionSummary session,
+    PromptImageAttachment attachment,
+  ) async {
+    if (!const <String>{
+      'image/png',
+      'image/jpeg',
+      'image/gif',
+      'image/webp',
+    }.contains(attachment.mimeType)) {
+      throw ArgumentError.value(
+        attachment.mimeType,
+        'mimeType',
+        'is not supported',
+      );
+    }
+    if (attachment.bytes.isEmpty ||
+        attachment.bytes.length > 20 * 1024 * 1024) {
+      throw ArgumentError.value(
+        attachment.bytes.length,
+        'bytes',
+        'image must be between 1 byte and 20 MiB',
+      );
+    }
+    final begin = await _runComposerCommand(
+      prefix: 'image-begin',
+      command: 'session.image.begin',
+      session: session,
+      args: <String, Object?>{
+        'mimeType': attachment.mimeType,
+        'size': attachment.bytes.length,
+        'sha256': sha256.convert(attachment.bytes).toString(),
+      },
+    );
+    final beginResult = begin.result;
+    if (beginResult is! Map<String, Object?> ||
+        beginResult['imageId'] is! String ||
+        beginResult['chunkBytes'] is! int) {
+      throw const FormatException('session.image.begin result is invalid');
+    }
+    final imageId = beginResult['imageId']! as String;
+    final chunkBytes = beginResult['chunkBytes']! as int;
+    if (chunkBytes <= 0) {
+      throw const FormatException('session.image.begin chunk size is invalid');
+    }
+    for (
+      var offset = 0;
+      offset < attachment.bytes.length;
+      offset += chunkBytes
+    ) {
+      final end = min(offset + chunkBytes, attachment.bytes.length);
+      final chunk = Uint8List.sublistView(attachment.bytes, offset, end);
+      final response = await _runComposerCommand(
+        prefix: 'image-chunk',
+        command: 'session.image.chunk',
+        session: session,
+        args: <String, Object?>{
+          'imageId': imageId,
+          'offset': offset,
+          'content': base64Encode(chunk),
+        },
+      );
+      final result = response.result;
+      if (result is! Map<String, Object?> ||
+          result['imageId'] != imageId ||
+          result['received'] != end ||
+          result['complete'] != (end == attachment.bytes.length)) {
+        throw const FormatException('session.image.chunk result is invalid');
+      }
+    }
+    return imageId;
+  }
+
+  Future<void> _discardUploadedImages(
+    SessionSummary session,
+    List<String> imageIds,
+  ) async {
+    for (final imageId in imageIds) {
+      try {
+        await _runComposerCommand(
+          prefix: 'image-discard',
+          command: 'session.image.discard',
+          session: session,
+          args: <String, Object?>{'imageId': imageId},
+        );
+      } on Object {
+        // The original upload failure remains the actionable error.
+      }
+    }
+  }
+
+  Future<ResponseFrame> _runComposerCommand({
+    required String prefix,
+    required String command,
+    required SessionSummary session,
+    required Map<String, Object?> args,
+    String? expectedRevision,
+    String capability = 'sessions.prompt',
+  }) async {
+    if (_phase != ConnectionPhase.ready || _hostId == null) {
+      throw StateError('connect before sending a prompt');
+    }
+    if (!_grantedCapabilities.contains(capability)) {
+      throw StateError('this device was not granted $capability');
+    }
+    final ids = _nextCommandIds(prefix);
+    final completer = Completer<ResponseFrame>();
+    _pendingCommands[ids.requestId] = _PendingCommand(
+      commandId: ids.commandId,
+      command: command,
+      sessionId: session.sessionId,
+      completer: completer,
+    );
     _errorMessage = null;
     _publish();
-    _send(
-      WireEncoder.sessionPrompt(
-        requestId: ids.requestId,
-        commandId: ids.commandId,
-        hostId: session.hostId,
-        sessionId: session.sessionId,
-        expectedRevision: session.revision,
-        text: text,
-      ),
-    );
+    try {
+      _send(
+        WireEncoder.command(
+          requestId: ids.requestId,
+          commandId: ids.commandId,
+          hostId: session.hostId,
+          sessionId: session.sessionId,
+          command: command,
+          expectedRevision: expectedRevision,
+          args: args,
+        ),
+      );
+      final frame = await completer.future.timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => throw TimeoutException('$command timed out'),
+      );
+      if (!frame.ok) {
+        throw StateError(frame.error?.message ?? '$command failed');
+      }
+      return frame;
+    } finally {
+      _pendingCommands.remove(ids.requestId);
+    }
   }
 
   Future<void> _handlePayload(int generation, Object? payload) async {
@@ -708,7 +1084,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         }
       case EventFrame():
         if (_acceptTranscriptCursor(frame.sessionId, frame.cursor)) {
-          _applyEvent(frame.event);
+          _applyEvent(frame.event, frame.cursor);
           _publish();
         }
       case ResponseFrame():
@@ -719,6 +1095,11 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         _applyConfirmation(frame);
       case PairErrorFrame():
         _applyPairError(frame);
+      case CatalogFrame():
+        if (frame.hostId == _hostId) {
+          _catalogItems = List<CatalogItem>.unmodifiable(frame.items);
+          _publish();
+        }
       case ErrorFrame():
         _errorMessage = frame.message;
         _submitting = false;
@@ -823,6 +1204,49 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     final archivedAt = session.raw['archivedAt'];
     final pendingApproval = session.raw['pendingApproval'];
     final pendingUserInput = session.raw['pendingUserInput'];
+    final rawLiveState = session.raw['liveState'];
+    final liveState = rawLiveState is Map<String, Object?>
+        ? rawLiveState
+        : const <String, Object?>{};
+    final rawModel = liveState['model'];
+    String? modelSelector;
+    String? modelDisplayName;
+    if (rawModel is String && rawModel.isNotEmpty) {
+      modelSelector = rawModel;
+    } else if (rawModel is Map<String, Object?>) {
+      final selector = rawModel['selector'];
+      final provider = rawModel['provider'];
+      final id = rawModel['id'];
+      if (selector is String && selector.isNotEmpty) {
+        modelSelector = selector;
+      } else if (provider is String &&
+          provider.isNotEmpty &&
+          id is String &&
+          id.isNotEmpty) {
+        modelSelector = '$provider/$id';
+      }
+      final displayName = rawModel['displayName'];
+      if (displayName is String && displayName.isNotEmpty) {
+        modelDisplayName = displayName;
+      }
+    }
+    final refModel = session.raw['model'];
+    if (modelSelector == null && refModel is String && refModel.isNotEmpty) {
+      modelSelector = refModel;
+    }
+    final rawThinking = liveState['thinking'] ?? session.raw['thinking'];
+    final thinking = rawThinking is String ? rawThinking : null;
+    final thinkingLevels = switch (liveState['thinkingLevels']) {
+      final List<Object?> values => values.whereType<String>().toList(
+        growable: false,
+      ),
+      _ => const <String>[],
+    };
+    final queuedCount = switch (liveState['queuedMessageCount']) {
+      final int count when count >= 0 => count,
+      _ => _queuedMessageCount(liveState['queuedMessages']),
+    };
+    final streaming = liveState['isStreaming'] == true;
     return SessionSummary(
       hostId: session.hostId,
       sessionId: session.sessionId,
@@ -838,8 +1262,27 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       working:
           session.status == 'active' ||
           pendingApproval == true ||
-          pendingUserInput == true,
+          pendingUserInput == true ||
+          streaming,
+      modelSelector: modelSelector,
+      modelDisplayName: modelDisplayName,
+      thinking: thinking,
+      thinkingLevels: thinkingLevels,
+      fast: liveState['fast'] == true,
+      fastAvailable: liveState['fastAvailable'] == true,
+      turnActive:
+          streaming || pendingApproval == true || pendingUserInput == true,
+      queuedFollowUpCount: queuedCount,
     );
+  }
+
+  int _queuedMessageCount(Object? value) {
+    if (value is! Map<String, Object?>) return 0;
+    var count = 0;
+    for (final messages in value.values) {
+      if (messages is List<Object?>) count += messages.length;
+    }
+    return count;
   }
 
   int _compareSessions(SessionSummary left, SessionSummary right) {
@@ -962,6 +1405,14 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
                   updatedAt: session.updatedAt,
                   archivedAt: session.archivedAt,
                   working: session.working,
+                  modelSelector: session.modelSelector,
+                  modelDisplayName: session.modelDisplayName,
+                  thinking: session.thinking,
+                  thinkingLevels: session.thinkingLevels,
+                  fast: session.fast,
+                  fastAvailable: session.fastAvailable,
+                  turnActive: session.turnActive,
+                  queuedFollowUpCount: session.queuedFollowUpCount,
                 )
               : session,
         )
@@ -990,39 +1441,193 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
 
   void _upsertEntry(DurableEntry entry) {
     final data = entry.data;
-    final text = data['text'];
-    if (entry.kind != 'message' || text is! String) return;
-    _messages[entry.id] = TranscriptMessage(
-      id: entry.id,
-      role: _messageRole(data['role']),
-      text: text,
-    );
+    if (entry.kind == 'message') {
+      final text = data['text'];
+      if (text is! String) return;
+      _messages[entry.id] = TranscriptMessage(
+        id: entry.id,
+        role: _messageRole(data['role']),
+        text: text,
+        reasoning: data['reasoning'] is String
+            ? data['reasoning']! as String
+            : '',
+        images: _entryImages(data['images']),
+      );
+      return;
+    }
+    if (entry.kind == 'tool-use') {
+      final result = data['result'];
+      final resultMap = result is Map<String, Object?> ? result : null;
+      final output = resultMap?['output'];
+      final isError = resultMap?['isError'];
+      _messages[entry.id] = TranscriptMessage(
+        id: entry.id,
+        role: MessageRole.tool,
+        kind: TranscriptKind.tool,
+        text: '',
+        toolName: data['tool'] is String ? data['tool']! as String : 'tool',
+        toolTitle: data['title'] is String ? data['title']! as String : null,
+        toolArguments: _jsonDisplay(data['args']),
+        toolOutput: output is String ? output : _jsonDisplay(result),
+        toolSucceeded: isError is bool ? !isError : data['ok'] as bool?,
+        images: _entryImages(data['images']),
+      );
+      return;
+    }
+    if (entry.kind == 'compaction') {
+      final summary = data['summary'];
+      if (summary is! String) return;
+      _messages[entry.id] = TranscriptMessage(
+        id: entry.id,
+        role: MessageRole.system,
+        kind: TranscriptKind.compaction,
+        text: summary,
+      );
+    }
   }
 
-  void _applyEvent(Map<String, Object?> event) {
+  List<TranscriptImageMetadata> _entryImages(Object? value) {
+    if (value is! List<Object?>) return const <TranscriptImageMetadata>[];
+    final images = <TranscriptImageMetadata>[];
+    for (final item in value) {
+      if (item is! Map<String, Object?>) continue;
+      final sha256 = item['sha256'];
+      final mimeType = item['mimeType'];
+      if (sha256 is String && mimeType is String) {
+        images.add(TranscriptImageMetadata(sha256: sha256, mimeType: mimeType));
+      }
+    }
+    return List<TranscriptImageMetadata>.unmodifiable(images);
+  }
+
+  String? _jsonDisplay(Object? value) {
+    if (value == null) return null;
+    if (value is String) return value;
+    try {
+      return const JsonEncoder.withIndent('  ').convert(value);
+    } on Object {
+      return value.toString();
+    }
+  }
+
+  String _eventItemId(TranscriptCursor cursor, String suffix) =>
+      'event-${cursor.epoch}-${cursor.seq}-$suffix';
+
+  void _applyEvent(Map<String, Object?> event, TranscriptCursor cursor) {
     switch (event['type']) {
       case 'message.update':
         final entryId = event['entryId'];
         final text = event['text'];
         if (entryId is String && text is String) {
+          if (event['role'] == 'user') {
+            _messages.removeWhere(
+              (id, message) => id.startsWith('local-prompt:'),
+            );
+          }
           _messages[entryId] = TranscriptMessage(
             id: entryId,
             role: _messageRole(event['role']),
             text: text,
+            reasoning: event['reasoning'] is String
+                ? event['reasoning']! as String
+                : '',
             streaming: true,
           );
         }
       case 'message.settled':
         final transientEntryId = event['transientEntryId'];
         if (transientEntryId is String) _messages.remove(transientEntryId);
+      case 'message.discarded':
+        final transientEntryId = event['transientEntryId'];
+        if (transientEntryId is String) _messages.remove(transientEntryId);
+      case 'tool.start':
+        final callId = event['callId'];
+        if (callId is String) {
+          _messages['tool:$callId'] = TranscriptMessage(
+            id: 'tool:$callId',
+            role: MessageRole.tool,
+            kind: TranscriptKind.tool,
+            text: '',
+            toolName: event['tool'] is String
+                ? event['tool']! as String
+                : 'tool',
+            toolTitle: event['title'] is String
+                ? event['title']! as String
+                : null,
+            toolArguments: _jsonDisplay(event['args']),
+            toolRunning: true,
+          );
+        }
+      case 'tool.progress':
+        final callId = event['callId'];
+        final current = callId is String ? _messages['tool:$callId'] : null;
+        if (callId is String && current != null) {
+          final note = event['note'];
+          final chunk = event['chunk'];
+          final appended = <String>[
+            if (current.toolOutput case final output? when output.isNotEmpty)
+              output,
+            if (chunk is String && chunk.isNotEmpty) chunk,
+          ].join();
+          _messages['tool:$callId'] = TranscriptMessage(
+            id: current.id,
+            role: current.role,
+            kind: current.kind,
+            text: note is String && note.isNotEmpty ? note : current.text,
+            toolName: current.toolName,
+            toolTitle: current.toolTitle,
+            toolArguments: current.toolArguments,
+            toolOutput: appended.isEmpty ? null : appended,
+            toolRunning: true,
+            toolProgress: switch (event['progress']) {
+              final num progress => progress.toDouble().clamp(0, 1),
+              _ => current.toolProgress,
+            },
+          );
+        }
+      case 'tool.result':
+        final callId = event['callId'];
+        final current = callId is String ? _messages['tool:$callId'] : null;
+        if (callId is String) {
+          _messages['tool:$callId'] = TranscriptMessage(
+            id: 'tool:$callId',
+            role: MessageRole.tool,
+            kind: TranscriptKind.tool,
+            text: current?.text ?? '',
+            toolName: current?.toolName ?? 'tool',
+            toolTitle: current?.toolTitle,
+            toolArguments: current?.toolArguments,
+            toolOutput: _jsonDisplay(event['result']),
+            toolSucceeded: event['ok'] is bool ? event['ok']! as bool : null,
+          );
+        }
+      case 'turn.start':
       case 'agent.start':
         _submitting = true;
+      case 'turn.end':
       case 'agent.end':
         _submitting = false;
       case 'turn.error':
         _submitting = false;
         final message = event['message'];
-        _errorMessage = message is String ? message : 'The agent turn failed.';
+        final text = message is String ? message : 'The agent turn failed.';
+        _errorMessage = text;
+        _messages[_eventItemId(cursor, 'error')] = TranscriptMessage(
+          id: _eventItemId(cursor, 'error'),
+          role: MessageRole.system,
+          kind: TranscriptKind.notice,
+          text: text,
+        );
+      case 'notice':
+        final message = event['message'];
+        if (message is String) {
+          _messages[_eventItemId(cursor, 'notice')] = TranscriptMessage(
+            id: _eventItemId(cursor, 'notice'),
+            role: MessageRole.system,
+            kind: TranscriptKind.notice,
+            text: message,
+          );
+        }
     }
   }
 
@@ -1043,6 +1648,11 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         pending.command != frame.command ||
         (pending.sessionId != null && pending.sessionId != frame.sessionId)) {
       throw const FormatException('response correlation mismatch');
+    }
+    final completer = pending.completer;
+    if (completer != null) {
+      completer.complete(frame);
+      return;
     }
     if (pending.command == 'session.attach' &&
         pending.sessionId != _selectedSessionId) {
@@ -1179,6 +1789,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _sessionIndexEpoch = null;
     _sessionIndexSeq = null;
     _grantedFeatures = const <String>{};
+    _catalogItems = const <CatalogItem>[];
     _bootstrapGeneration = -1;
     _reconnectAttempt = 0;
     _phase = ConnectionPhase.disconnected;
@@ -1228,6 +1839,12 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
 
   void _cancelPendingCommands(Object error) {
     for (final pending in _pendingSessionOperations.values) {
+      final completer = pending.completer;
+      if (completer != null && !completer.isCompleted) {
+        completer.completeError(error);
+      }
+    }
+    for (final pending in _pendingCommands.values) {
       final completer = pending.completer;
       if (completer != null && !completer.isCompleted) {
         completer.completeError(error);

@@ -34,7 +34,11 @@ final class _ConversationPane extends StatelessWidget {
             onRetry: onConnect,
           ),
         Expanded(
-          child: _TranscriptView(state: state, onOpenSessions: onOpenSessions),
+          child: _TranscriptView(
+            state: state,
+            actions: actions,
+            onOpenSessions: onOpenSessions,
+          ),
         ),
         _PromptComposer(state: state, actions: actions),
       ],
@@ -51,7 +55,7 @@ final class _ConversationHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final session = state.selectedSession;
-    final streaming = state.messages.any((message) => message.streaming);
+    final streaming = state.composer.turnActive;
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -185,9 +189,14 @@ final class _ConnectionErrorBanner extends StatelessWidget {
 }
 
 final class _TranscriptView extends StatefulWidget {
-  const _TranscriptView({required this.state, this.onOpenSessions});
+  const _TranscriptView({
+    required this.state,
+    required this.actions,
+    this.onOpenSessions,
+  });
 
   final T4ViewState state;
+  final T4Actions actions;
   final VoidCallback? onOpenSessions;
 
   @override
@@ -300,8 +309,10 @@ final class _TranscriptViewState extends State<_TranscriptView> {
         itemCount: widget.state.messages.length,
         separatorBuilder: (context, index) =>
             const SizedBox(height: _T4Space.lg),
-        itemBuilder: (context, index) =>
-            _TranscriptMessageView(message: widget.state.messages[index]),
+        itemBuilder: (context, index) => _TranscriptMessageView(
+          message: widget.state.messages[index],
+          actions: widget.actions,
+        ),
       ),
     );
   }
@@ -372,16 +383,19 @@ extension on MessageRole {
 }
 
 final class _TranscriptMessageView extends StatelessWidget {
-  const _TranscriptMessageView({required this.message});
+  const _TranscriptMessageView({required this.message, required this.actions});
 
   final TranscriptMessage message;
+  final T4Actions actions;
 
   @override
   Widget build(BuildContext context) {
+    if (message.kind == TranscriptKind.tool) {
+      return _ToolTranscriptCard(message: message);
+    }
     final scheme = Theme.of(context).colorScheme;
     final isUser = message.role == MessageRole.user;
-    final isAuxiliary =
-        message.role == MessageRole.system || message.role == MessageRole.tool;
+    final isAuxiliary = message.role == MessageRole.system;
     final background = isUser
         ? scheme.surfaceContainerHigh
         : isAuxiliary
@@ -417,15 +431,30 @@ final class _TranscriptMessageView extends StatelessWidget {
                       color: scheme.onSurfaceVariant,
                     ),
                   ),
+                  if (message.reasoning.isNotEmpty) ...[
+                    const SizedBox(height: _T4Space.xs),
+                    _ReasoningDisclosure(
+                      reasoning: message.reasoning,
+                      streaming: message.streaming,
+                    ),
+                  ],
                   if (message.text.isNotEmpty) ...[
                     const SizedBox(height: _T4Space.xs),
-                    SelectionArea(
-                      child: Text(
-                        message.text,
-                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          height: _T4Type.bodyLineHeight,
-                        ),
-                      ),
+                    MarkdownBody(data: message.text, selectable: true),
+                  ],
+                  if (message.images.isNotEmpty) ...[
+                    const SizedBox(height: _T4Space.sm),
+                    Wrap(
+                      spacing: _T4Space.sm,
+                      runSpacing: _T4Space.sm,
+                      children: [
+                        for (final image in message.images)
+                          _TranscriptImage(
+                            entryId: message.id,
+                            image: image,
+                            actions: actions,
+                          ),
+                      ],
                     ),
                   ],
                   if (message.streaming) ...[
@@ -442,6 +471,226 @@ final class _TranscriptMessageView extends StatelessWidget {
   }
 }
 
+final class _ReasoningDisclosure extends StatelessWidget {
+  const _ReasoningDisclosure({
+    required this.reasoning,
+    required this.streaming,
+  });
+
+  final String reasoning;
+  final bool streaming;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(_T4Radius.sm),
+      ),
+      child: ExpansionTile(
+        dense: true,
+        shape: const Border(),
+        collapsedShape: const Border(),
+        leading: Icon(
+          streaming ? Icons.psychology_alt_outlined : Icons.psychology_outlined,
+          size: 20,
+        ),
+        title: Text(streaming ? 'Reasoning · streaming' : 'Reasoning'),
+        childrenPadding: const EdgeInsets.fromLTRB(
+          _T4Space.md,
+          0,
+          _T4Space.md,
+          _T4Space.md,
+        ),
+        children: [MarkdownBody(data: reasoning, selectable: true)],
+      ),
+    );
+  }
+}
+
+final class _ToolTranscriptCard extends StatelessWidget {
+  const _ToolTranscriptCard({required this.message});
+
+  final TranscriptMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final statusIcon = message.toolRunning
+        ? Icons.sync
+        : message.toolSucceeded == false
+        ? Icons.error_outline
+        : Icons.check_circle_outline;
+    final statusColor = message.toolRunning
+        ? scheme.primary
+        : message.toolSucceeded == false
+        ? scheme.error
+        : scheme.onSurfaceVariant;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: _T4Layout.contentMaxWidth),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerLow,
+            border: Border.all(color: scheme.outlineVariant),
+            borderRadius: BorderRadius.circular(_T4Radius.md),
+          ),
+          child: ExpansionTile(
+            shape: const Border(),
+            collapsedShape: const Border(),
+            leading: Icon(statusIcon, color: statusColor),
+            title: Text(message.toolTitle ?? message.toolName ?? 'Tool'),
+            subtitle: message.text.isEmpty ? null : Text(message.text),
+            trailing: message.toolRunning
+                ? SizedBox.square(
+                    dimension: _T4Size.indicator,
+                    child: CircularProgressIndicator(
+                      value: message.toolProgress,
+                      strokeWidth: _T4Size.thinStroke,
+                    ),
+                  )
+                : null,
+            childrenPadding: const EdgeInsets.fromLTRB(
+              _T4Space.md,
+              0,
+              _T4Space.md,
+              _T4Space.md,
+            ),
+            children: [
+              if (message.toolArguments case final arguments?)
+                _ToolPayload(label: 'Arguments', value: arguments),
+              if (message.toolOutput case final output?)
+                _ToolPayload(label: 'Result', value: output),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+final class _ToolPayload extends StatelessWidget {
+  const _ToolPayload({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: _T4Space.sm),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            label.toUpperCase(),
+            style: Theme.of(context).textTheme.labelSmall,
+          ),
+          const SizedBox(height: _T4Space.xs),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(_T4Radius.sm),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(_T4Space.sm),
+              child: SelectionArea(
+                child: Text(
+                  value,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+final class _TranscriptImage extends StatefulWidget {
+  const _TranscriptImage({
+    required this.entryId,
+    required this.image,
+    required this.actions,
+  });
+
+  final String entryId;
+  final TranscriptImageMetadata image;
+  final T4Actions actions;
+
+  @override
+  State<_TranscriptImage> createState() => _TranscriptImageState();
+}
+
+final class _TranscriptImageState extends State<_TranscriptImage> {
+  late Future<Uint8List> _image;
+
+  @override
+  void initState() {
+    super.initState();
+    _image = widget.actions.readTranscriptImage(widget.entryId, widget.image);
+  }
+
+  @override
+  void didUpdateWidget(covariant _TranscriptImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.entryId != widget.entryId ||
+        oldWidget.image.sha256 != widget.image.sha256) {
+      _image = widget.actions.readTranscriptImage(widget.entryId, widget.image);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return FutureBuilder<Uint8List>(
+      future: _image,
+      builder: (context, snapshot) {
+        if (snapshot.hasData) {
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(_T4Radius.sm),
+            child: Image.memory(
+              snapshot.data!,
+              width: 160,
+              height: 120,
+              fit: BoxFit.cover,
+              semanticLabel: 'Transcript image',
+            ),
+          );
+        }
+        return Container(
+          width: 160,
+          height: 120,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerLow,
+            border: Border.all(color: scheme.outlineVariant),
+            borderRadius: BorderRadius.circular(_T4Radius.sm),
+          ),
+          child: snapshot.hasError
+              ? IconButton(
+                  tooltip: 'Retry image',
+                  onPressed: () => setState(() {
+                    _image = widget.actions.readTranscriptImage(
+                      widget.entryId,
+                      widget.image,
+                    );
+                  }),
+                  icon: const Icon(Icons.refresh),
+                )
+              : const CircularProgressIndicator(),
+        );
+      },
+    );
+  }
+}
+
 final class _PromptComposer extends StatefulWidget {
   const _PromptComposer({required this.state, required this.actions});
 
@@ -453,51 +702,190 @@ final class _PromptComposer extends StatefulWidget {
 }
 
 final class _PromptComposerState extends State<_PromptComposer> {
+  static const int _maximumImages = 8;
+  static const int _maximumImageBytes = 20 * 1024 * 1024;
+
   final TextEditingController _textController = TextEditingController();
   final FocusNode _focusNode = FocusNode(debugLabel: 'Prompt composer');
+  final Map<String, String> _drafts = <String, String>{};
+  final Map<String, List<PromptImageAttachment>> _attachments =
+      <String, List<PromptImageAttachment>>{};
+  String? _sessionId;
   bool _hasText = false;
-  bool _submitting = false;
+  bool _sending = false;
 
-  bool get _canSubmit =>
+  List<PromptImageAttachment> get _currentAttachments => _sessionId == null
+      ? const <PromptImageAttachment>[]
+      : _attachments[_sessionId] ?? const <PromptImageAttachment>[];
+
+  bool get _ready =>
       widget.state.connectionPhase == ConnectionPhase.ready &&
       widget.state.selectedSession != null &&
-      !widget.state.submitting &&
-      !_submitting &&
-      _hasText;
+      !_sending;
+
+  bool get _canSubmit =>
+      _ready &&
+      (_hasText || _currentAttachments.isNotEmpty) &&
+      (!widget.state.composer.turnActive || _currentAttachments.isEmpty);
+
+  bool get _canQueue => _ready && widget.state.composer.turnActive && _hasText;
 
   @override
   void initState() {
     super.initState();
+    _sessionId = widget.state.selectedSessionId;
     _textController.addListener(_handleTextChanged);
   }
 
+  @override
+  void didUpdateWidget(covariant _PromptComposer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final nextSessionId = widget.state.selectedSessionId;
+    if (nextSessionId == _sessionId) return;
+    final previousSessionId = _sessionId;
+    if (previousSessionId != null) {
+      _drafts[previousSessionId] = _textController.text;
+    }
+    _sessionId = nextSessionId;
+    _textController.text = nextSessionId == null
+        ? ''
+        : _drafts[nextSessionId] ?? '';
+    _textController.selection = TextSelection.collapsed(
+      offset: _textController.text.length,
+    );
+  }
+
   void _handleTextChanged() {
+    final sessionId = _sessionId;
+    if (sessionId != null) _drafts[sessionId] = _textController.text;
     final hasText = _textController.text.trim().isNotEmpty;
-    if (hasText == _hasText) return;
-    setState(() => _hasText = hasText);
+    if (hasText != _hasText && mounted) {
+      setState(() => _hasText = hasText);
+    } else if (mounted && _textController.text.startsWith('/')) {
+      setState(() {});
+    }
+  }
+
+  void _showError(String message) {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _submit() async {
     if (!_canSubmit) return;
     final message = _textController.text.trim();
-    setState(() => _submitting = true);
+    final attachments = List<PromptImageAttachment>.of(_currentAttachments);
+    final draftAtSubmission = _textController.text;
+    setState(() => _sending = true);
     try {
-      await widget.actions.submitPrompt(message);
-      if (!mounted) return;
+      final accepted = await widget.actions.submitPrompt(
+        message,
+        images: attachments,
+      );
+      if (!mounted || !accepted) return;
+      if (_textController.text == draftAtSubmission) _textController.clear();
+      final sessionId = _sessionId;
+      if (sessionId != null) _attachments.remove(sessionId);
+      _focusNode.requestFocus();
+    } on Object {
+      if (mounted) _showError('Could not send the prompt. Try again.');
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  Future<void> _queue() async {
+    if (!_canQueue) return;
+    final message = _textController.text.trim();
+    try {
+      final accepted = await widget.actions.queuePrompt(message);
+      if (!mounted || !accepted) return;
       _textController.clear();
       _focusNode.requestFocus();
     } on Object {
-      if (!mounted) return;
-      final messenger = ScaffoldMessenger.of(context);
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Could not send the prompt. Try again.'),
+      if (mounted) _showError('Could not queue the follow-up.');
+    }
+  }
+
+  Future<void> _pickImages() async {
+    final available = _maximumImages - _currentAttachments.length;
+    if (!_ready || available <= 0) return;
+    try {
+      final files = await openFiles(
+        acceptedTypeGroups: const <XTypeGroup>[
+          XTypeGroup(
+            label: 'Images',
+            extensions: <String>['png', 'jpg', 'jpeg', 'gif', 'webp'],
+          ),
+        ],
+      );
+      if (!mounted || files.isEmpty) return;
+      final selected = <PromptImageAttachment>[];
+      for (final file in files.take(available)) {
+        final size = await file.length();
+        if (size <= 0) continue;
+        if (size > _maximumImageBytes) {
+          _showError('${file.name} is larger than 20 MB.');
+          continue;
+        }
+        final extension = file.name.split('.').last.toLowerCase();
+        final mimeType = switch (extension) {
+          'png' => 'image/png',
+          'jpg' || 'jpeg' => 'image/jpeg',
+          'gif' => 'image/gif',
+          'webp' => 'image/webp',
+          _ => null,
+        };
+        if (mimeType == null) continue;
+        final bytes = await file.readAsBytes();
+        selected.add(
+          PromptImageAttachment(
+            id: '${DateTime.now().microsecondsSinceEpoch}-${file.name}',
+            name: file.name,
+            mimeType: mimeType,
+            bytes: bytes,
           ),
         );
-    } finally {
-      if (mounted) setState(() => _submitting = false);
+      }
+      final sessionId = _sessionId;
+      if (sessionId != null && selected.isNotEmpty) {
+        setState(() {
+          _attachments[sessionId] = <PromptImageAttachment>[
+            ..._currentAttachments,
+            ...selected,
+          ];
+        });
+      }
+    } on Object {
+      if (mounted) _showError('Could not open the selected image.');
+    }
+  }
+
+  void _removeAttachment(String id) {
+    final sessionId = _sessionId;
+    if (sessionId == null) return;
+    setState(() {
+      _attachments[sessionId] = _currentAttachments
+          .where((attachment) => attachment.id != id)
+          .toList(growable: false);
+    });
+  }
+
+  void _selectSlashCommand(ComposerSlashCommand command) {
+    if (command.disabledReason != null) return;
+    _textController
+      ..text = command.insert
+      ..selection = TextSelection.collapsed(offset: command.insert.length);
+    _focusNode.requestFocus();
+  }
+
+  Future<void> _runControl(Future<void> Function() operation) async {
+    try {
+      await operation();
+    } on Object {
+      if (mounted) _showError('Could not update the session control.');
     }
   }
 
@@ -513,7 +901,18 @@ final class _PromptComposerState extends State<_PromptComposer> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final submitting = widget.state.submitting || _submitting;
+    final composer = widget.state.composer;
+    final slashQuery = _textController.text.startsWith('/')
+        ? _textController.text.split(RegExp(r'\s')).first.toLowerCase()
+        : '';
+    final slashCommands = slashQuery.isEmpty
+        ? const <ComposerSlashCommand>[]
+        : composer.slashCommands
+              .where(
+                (command) => command.name.toLowerCase().contains(slashQuery),
+              )
+              .take(5)
+              .toList(growable: false);
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -533,52 +932,197 @@ final class _PromptComposerState extends State<_PromptComposer> {
             constraints: const BoxConstraints(
               maxWidth: _T4Layout.contentMaxWidth,
             ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(
-                  child: CallbackShortcuts(
-                    bindings: <ShortcutActivator, VoidCallback>{
-                      const SingleActivator(LogicalKeyboardKey.enter): () =>
-                          unawaited(_submit()),
-                    },
-                    child: Semantics(
-                      textField: true,
-                      label: 'Prompt message',
-                      child: TextField(
-                        controller: _textController,
-                        focusNode: _focusNode,
-                        readOnly: submitting,
-                        minLines: 1,
-                        maxLines: 6,
-                        keyboardType: TextInputType.multiline,
-                        textInputAction: TextInputAction.send,
-                        onSubmitted: (_) => unawaited(_submit()),
-                        decoration: InputDecoration(
-                          hintText: widget.state.selectedSession == null
-                              ? 'Choose a session to begin'
-                              : 'Message T4',
+                if (slashCommands.isNotEmpty)
+                  Card(
+                    margin: const EdgeInsets.only(bottom: _T4Space.xs),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (final command in slashCommands)
+                          ListTile(
+                            dense: true,
+                            enabled: command.disabledReason == null,
+                            title: Text(command.name),
+                            subtitle: Text(
+                              command.disabledReason ?? command.description,
+                            ),
+                            onTap: command.disabledReason == null
+                                ? () => _selectSlashCommand(command)
+                                : null,
+                          ),
+                      ],
+                    ),
+                  ),
+                if (_currentAttachments.isNotEmpty)
+                  SizedBox(
+                    height: 72,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _currentAttachments.length,
+                      separatorBuilder: (context, index) =>
+                          const SizedBox(width: _T4Space.xs),
+                      itemBuilder: (context, index) {
+                        final attachment = _currentAttachments[index];
+                        return InputChip(
+                          avatar: ClipRRect(
+                            borderRadius: BorderRadius.circular(_T4Radius.sm),
+                            child: Image.memory(
+                              attachment.bytes,
+                              width: 40,
+                              height: 40,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                          label: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 120),
+                            child: Text(
+                              attachment.name,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          onDeleted: _sending
+                              ? null
+                              : () => _removeAttachment(attachment.id),
+                        );
+                      },
+                    ),
+                  ),
+                Wrap(
+                  spacing: _T4Space.xs,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    PopupMenuButton<String>(
+                      tooltip: 'Choose model',
+                      enabled: composer.modelChoices.isNotEmpty,
+                      onSelected: (selector) => unawaited(
+                        _runControl(
+                          () => widget.actions.setSessionModel(selector),
+                        ),
+                      ),
+                      itemBuilder: (context) => [
+                        for (final choice in composer.modelChoices)
+                          PopupMenuItem<String>(
+                            value: choice.selector,
+                            enabled: choice.supported,
+                            child: Text(
+                              choice.supported
+                                  ? choice.label
+                                  : '${choice.label} · ${choice.reason ?? 'Unavailable'}',
+                            ),
+                          ),
+                      ],
+                      child: Chip(
+                        avatar: const Icon(Icons.memory, size: 20),
+                        label: Text(composer.modelLabel ?? 'Model'),
+                      ),
+                    ),
+                    PopupMenuButton<String>(
+                      tooltip: 'Choose thinking level',
+                      enabled: composer.thinkingLevels.isNotEmpty,
+                      onSelected: (level) => unawaited(
+                        _runControl(
+                          () => widget.actions.setSessionThinking(level),
+                        ),
+                      ),
+                      itemBuilder: (context) => [
+                        for (final level in composer.thinkingLevels)
+                          PopupMenuItem<String>(
+                            value: level,
+                            child: Text(level),
+                          ),
+                      ],
+                      child: Chip(
+                        avatar: const Icon(Icons.psychology_outlined, size: 20),
+                        label: Text(composer.thinking ?? 'Thinking'),
+                      ),
+                    ),
+                    if (composer.fastAvailable)
+                      FilterChip(
+                        label: const Text('Fast'),
+                        selected: composer.fastEnabled,
+                        onSelected: (enabled) => unawaited(
+                          _runControl(
+                            () => widget.actions.setSessionFast(enabled),
+                          ),
+                        ),
+                      ),
+                    if (composer.turnActive) ...[
+                      ActionChip(
+                        avatar: const Icon(Icons.stop, size: 20),
+                        label: const Text('Stop'),
+                        onPressed: () =>
+                            unawaited(_runControl(widget.actions.cancelTurn)),
+                      ),
+                      ActionChip(
+                        avatar: const Icon(Icons.playlist_add, size: 20),
+                        label: Text(
+                          composer.queuedFollowUpCount == 0
+                              ? 'Queue'
+                              : 'Queue (${composer.queuedFollowUpCount})',
+                        ),
+                        onPressed: _canQueue ? () => unawaited(_queue()) : null,
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: _T4Space.xs),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    IconButton(
+                      tooltip: 'Attach image',
+                      onPressed:
+                          _ready && _currentAttachments.length < _maximumImages
+                          ? () => unawaited(_pickImages())
+                          : null,
+                      icon: const Icon(Icons.attach_file),
+                    ),
+                    Expanded(
+                      child: CallbackShortcuts(
+                        bindings: <ShortcutActivator, VoidCallback>{
+                          const SingleActivator(LogicalKeyboardKey.enter): () =>
+                              unawaited(_submit()),
+                        },
+                        child: Semantics(
+                          textField: true,
+                          label: 'Prompt message',
+                          child: TextField(
+                            controller: _textController,
+                            focusNode: _focusNode,
+                            readOnly: _sending,
+                            minLines: 1,
+                            maxLines: 6,
+                            keyboardType: TextInputType.multiline,
+                            textInputAction: TextInputAction.newline,
+                            decoration: InputDecoration(
+                              hintText: widget.state.selectedSession == null
+                                  ? 'Choose a session to begin'
+                                  : composer.turnActive
+                                  ? 'Steer the active turn'
+                                  : 'Message T4',
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ),
-                const SizedBox(width: _T4Space.xs),
-                Semantics(
-                  button: true,
-                  label: submitting ? 'Sending prompt' : 'Send prompt',
-                  child: FilledButton(
-                    onPressed: _canSubmit ? () => unawaited(_submit()) : null,
-                    child: submitting
-                        ? const SizedBox.square(
-                            dimension: _T4Size.indicator,
-                            child: CircularProgressIndicator(
-                              strokeWidth: _T4Size.thinStroke,
-                              semanticsLabel: 'Sending',
-                            ),
-                          )
-                        : const Text('Send'),
-                  ),
+                    const SizedBox(width: _T4Space.xs),
+                    FilledButton(
+                      onPressed: _canSubmit ? () => unawaited(_submit()) : null,
+                      child: _sending
+                          ? const SizedBox.square(
+                              dimension: _T4Size.indicator,
+                              child: CircularProgressIndicator(
+                                strokeWidth: _T4Size.thinStroke,
+                                semanticsLabel: 'Sending',
+                              ),
+                            )
+                          : Text(composer.turnActive ? 'Steer' : 'Send'),
+                    ),
+                  ],
                 ),
               ],
             ),

@@ -121,7 +121,18 @@ abstract final class WireEncoder {
     required String sessionId,
     required String expectedRevision,
     required String text,
+    List<String> imageIds = const <String>[],
   }) {
+    if (imageIds.length > 8) {
+      throw ArgumentError.value(imageIds.length, 'imageIds', 'maximum is 8');
+    }
+    if (text.isEmpty && imageIds.isEmpty) {
+      throw ArgumentError.value(
+        text,
+        'text',
+        'must not be empty without images',
+      );
+    }
     return command(
       requestId: requestId,
       commandId: commandId,
@@ -129,7 +140,14 @@ abstract final class WireEncoder {
       sessionId: sessionId,
       command: 'session.prompt',
       expectedRevision: _id(expectedRevision, 'expectedRevision'),
-      args: <String, Object?>{'message': _boundedText(text, 'text', 65536)},
+      args: <String, Object?>{
+        'message': _boundedText(text, 'text', 65536),
+        if (imageIds.isNotEmpty)
+          'images': <Map<String, String>>[
+            for (final imageId in imageIds)
+              <String, String>{'imageId': _id(imageId, 'imageId')},
+          ],
+      },
     );
   }
 

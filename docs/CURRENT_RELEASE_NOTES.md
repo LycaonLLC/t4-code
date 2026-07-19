@@ -29,6 +29,14 @@ sessions, and exposes rename, runtime termination, archive, restore, and confirm
 deletion through revisioned app-wire commands. Compact drawers and wide rails share the same state
 and actions.
 
+Stage 3 transcript and composer parity is complete locally. Durable and live transcript events now
+render Markdown, reasoning, tool progress/results, streaming state, and integrity-checked images.
+The composer preserves a separate draft and attachment set per session, uploads bounded images
+through the chunked app-wire protocol, exposes catalog-backed slash and model choices, applies
+thinking and fast-mode controls, and supports steering, queued follow-ups, and confirmed turn
+cancellation. Focused protocol, controller, and compact/wide widget coverage passes alongside the
+Web release build and fixture-connected macOS, iOS Simulator, and Android emulator smokes.
+
 
 ## Signed and notarized on macOS
 

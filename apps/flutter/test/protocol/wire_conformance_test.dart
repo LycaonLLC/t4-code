@@ -107,6 +107,32 @@ void main() {
       );
     });
 
+    test('transcript image metadata survives durable entry decoding', () {
+      final fixture = _namedCase(corpus, 'inbound', 'transcript-snapshot');
+      final wire = _cloneMap(fixture['wire']);
+      final entries = (wire['entries']! as List<Object?>)
+          .map(_cloneMap)
+          .toList(growable: false);
+      wire['entries'] = entries;
+      final data = _asMap(entries.first['data']);
+      data['images'] = <Object?>[
+        <String, Object?>{
+          'sha256': ''.padRight(64, 'a'),
+          'mimeType': 'image/png',
+        },
+      ];
+      entries.first['data'] = data;
+
+      final frame = WireDecoder.decode(jsonEncode(wire)) as SnapshotFrame;
+
+      expect(frame.entries.first.data['images'], <Object?>[
+        <String, Object?>{
+          'sha256': ''.padRight(64, 'a'),
+          'mimeType': 'image/png',
+        },
+      ]);
+    });
+
     test('wrong protocol version fails at the version boundary', () {
       final fixture = _namedCase(corpus, 'inbound', 'welcome');
       final wire = _cloneMap(fixture['wire'])..['v'] = 'omp-app/2';
@@ -305,6 +331,27 @@ void main() {
         reason: fixture['name']! as String,
       );
       expect(jsonEncode(message), before);
+    });
+
+    test('session prompt includes uploaded image references', () {
+      final encoded = WireEncoder.sessionPrompt(
+        requestId: 'request-image',
+        commandId: 'command-image',
+        hostId: 'host-image',
+        sessionId: 'session-image',
+        expectedRevision: 'revision-image',
+        text: 'Inspect these',
+        imageIds: const <String>['image-one', 'image-two'],
+      );
+
+      final frame = jsonDecode(encoded) as Map<String, Object?>;
+      expect(frame['args'], <String, Object?>{
+        'message': 'Inspect these',
+        'images': <Object?>[
+          <String, Object?>{'imageId': 'image-one'},
+          <String, Object?>{'imageId': 'image-two'},
+        ],
+      });
     });
 
     test(

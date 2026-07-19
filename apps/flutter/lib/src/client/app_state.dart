@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import '../host/host_profile.dart';
 
 enum ConnectionPhase {
@@ -25,6 +27,15 @@ final String t4PairCommand = <String>[
 
 enum MessageRole { user, assistant, system, tool }
 
+enum TranscriptKind { message, tool, compaction, notice }
+
+final class TranscriptImageMetadata {
+  const TranscriptImageMetadata({required this.sha256, required this.mimeType});
+
+  final String sha256;
+  final String mimeType;
+}
+
 final class SessionSummary {
   const SessionSummary({
     required this.hostId,
@@ -37,6 +48,14 @@ final class SessionSummary {
     this.updatedAt = '',
     this.archivedAt,
     this.working = false,
+    this.modelSelector,
+    this.modelDisplayName,
+    this.thinking,
+    this.thinkingLevels = const <String>[],
+    this.fast = false,
+    this.fastAvailable = false,
+    this.turnActive = false,
+    this.queuedFollowUpCount = 0,
   });
 
   final String hostId;
@@ -49,6 +68,14 @@ final class SessionSummary {
   final String updatedAt;
   final String? archivedAt;
   final bool working;
+  final String? modelSelector;
+  final String? modelDisplayName;
+  final String? thinking;
+  final List<String> thinkingLevels;
+  final bool fast;
+  final bool fastAvailable;
+  final bool turnActive;
+  final int queuedFollowUpCount;
 
   bool get archived => archivedAt != null;
 }
@@ -58,13 +85,101 @@ final class TranscriptMessage {
     required this.id,
     required this.role,
     required this.text,
+    this.kind = TranscriptKind.message,
+    this.reasoning = '',
     this.streaming = false,
+    this.toolName,
+    this.toolTitle,
+    this.toolArguments,
+    this.toolOutput,
+    this.toolSucceeded,
+    this.toolRunning = false,
+    this.toolProgress,
+    this.images = const <TranscriptImageMetadata>[],
   });
 
   final String id;
   final MessageRole role;
   final String text;
+  final TranscriptKind kind;
+  final String reasoning;
   final bool streaming;
+  final String? toolName;
+  final String? toolTitle;
+  final String? toolArguments;
+  final String? toolOutput;
+  final bool? toolSucceeded;
+  final bool toolRunning;
+  final double? toolProgress;
+  final List<TranscriptImageMetadata> images;
+}
+
+final class ComposerModelChoice {
+  const ComposerModelChoice({
+    required this.label,
+    required this.selector,
+    this.supported = true,
+    this.reason,
+  });
+
+  final String label;
+  final String selector;
+  final bool supported;
+  final String? reason;
+}
+
+final class ComposerSlashCommand {
+  const ComposerSlashCommand({
+    required this.name,
+    required this.description,
+    required this.insert,
+    this.disabledReason,
+  });
+
+  final String name;
+  final String description;
+  final String insert;
+  final String? disabledReason;
+}
+
+final class SessionComposerState {
+  const SessionComposerState({
+    this.modelLabel,
+    this.modelSelector,
+    this.modelChoices = const <ComposerModelChoice>[],
+    this.slashCommands = const <ComposerSlashCommand>[],
+    this.thinking,
+    this.thinkingLevels = const <String>[],
+    this.fastEnabled = false,
+    this.fastAvailable = false,
+    this.turnActive = false,
+    this.queuedFollowUpCount = 0,
+  });
+
+  final String? modelLabel;
+  final String? modelSelector;
+  final List<ComposerModelChoice> modelChoices;
+  final List<ComposerSlashCommand> slashCommands;
+  final String? thinking;
+  final List<String> thinkingLevels;
+  final bool fastEnabled;
+  final bool fastAvailable;
+  final bool turnActive;
+  final int queuedFollowUpCount;
+}
+
+final class PromptImageAttachment {
+  const PromptImageAttachment({
+    required this.id,
+    required this.name,
+    required this.mimeType,
+    required this.bytes,
+  });
+
+  final String id;
+  final String name;
+  final String mimeType;
+  final Uint8List bytes;
 }
 
 final class T4ViewState {
@@ -82,6 +197,7 @@ final class T4ViewState {
     this.hostOperationPending = false,
     this.submitting = false,
     this.sessionOperationPending = false,
+    this.composer = const SessionComposerState(),
   });
 
   const T4ViewState.disconnected()
@@ -100,6 +216,7 @@ final class T4ViewState {
   final bool hostOperationPending;
   final bool submitting;
   final bool sessionOperationPending;
+  final SessionComposerState composer;
 
   SessionSummary? get selectedSession {
     for (final session in sessions) {
@@ -139,5 +256,23 @@ abstract interface class T4Actions {
 
   Future<void> deleteSession(String sessionId);
 
-  Future<void> submitPrompt(String message);
+  Future<bool> submitPrompt(
+    String message, {
+    List<PromptImageAttachment> images = const <PromptImageAttachment>[],
+  });
+
+  Future<bool> queuePrompt(String message);
+
+  Future<void> cancelTurn();
+
+  Future<void> setSessionModel(String selector);
+
+  Future<void> setSessionThinking(String level);
+
+  Future<void> setSessionFast(bool enabled);
+
+  Future<Uint8List> readTranscriptImage(
+    String entryId,
+    TranscriptImageMetadata image,
+  );
 }
