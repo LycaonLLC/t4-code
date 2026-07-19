@@ -14,6 +14,7 @@ import {
   plainTextHighlightSegments,
   selectTranscriptSearchSource,
   setTranscriptSearchQuery,
+  shouldRefreshTranscriptSearchForFilters,
   TRANSCRIPT_SEARCH_ROUTE,
   TranscriptSearchHandoffTracker,
   TranscriptSearchScreen,
@@ -139,6 +140,53 @@ describe("transcript search model", () => {
 
     expect(completed).toEqual(["query B"]);
     setTranscriptSearchQuery("");
+  });
+
+  it("supersedes an initial search when filters change and keeps an untouched page idle", async () => {
+    expect(shouldRefreshTranscriptSearchForFilters("idle", null)).toBe(false);
+    expect(shouldRefreshTranscriptSearchForFilters("searching", null)).toBe(true);
+
+    const resolvers = new Map<string, (response: TranscriptSearchResponse) => void>();
+    const source: TranscriptSearchSource = {
+      search: (request) =>
+        new Promise((resolve) => {
+          resolvers.set(request.filters.role, resolve);
+        }),
+      context: () => Promise.reject(new Error("not used")),
+    };
+    const executor = new LatestTranscriptSearchExecutor();
+    const completed: string[] = [];
+    const callbacks = {
+      onStart: () => {},
+      onSuccess: (next: TranscriptSearchResponse) => {
+        completed.push(next.results[0]?.snippet ?? "empty");
+      },
+      onError: () => {},
+    };
+    const responseFor = (snippet: string): TranscriptSearchResponse => ({
+      results: [{ ...result, key: snippet, snippet }],
+      hosts: [],
+    });
+
+    const initial = executor.run(
+      source,
+      { query: "decision", filters: DEFAULT_TRANSCRIPT_SEARCH_FILTERS },
+      callbacks,
+    );
+    const filtered = executor.run(
+      source,
+      {
+        query: "decision",
+        filters: { ...DEFAULT_TRANSCRIPT_SEARCH_FILTERS, role: "user" },
+      },
+      callbacks,
+    );
+    resolvers.get("user")?.(responseFor("filtered user result"));
+    await filtered;
+    resolvers.get("all")?.(responseFor("stale unfiltered result"));
+    await initial;
+
+    expect(completed).toEqual(["filtered user result"]);
   });
 
   it("uses the client coordinator whenever a controller exists, including browser-direct", () => {

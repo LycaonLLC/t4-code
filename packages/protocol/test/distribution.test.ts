@@ -141,13 +141,13 @@ describe("vendored app-wire distribution", () => {
       package: "@oh-my-pi/app-wire",
       version: "0.6.1",
       sourceRepository: "https://github.com/lyc-aon/oh-my-pi",
-      sourceCommit: "f57d5c96b46adc1c43b76710bb019ba4a3e17a75",
-      sourceTreeHash: "41ef665e518cc914392bb1fea2e7922fca9664f5",
+      sourceCommit: "50b233fdb7803a09949574614ffa3e0ea780bf5e",
+      sourceTreeHash: "47ac86a9f4cb64e27700644e0930b48591eed41a",
       tarball: "oh-my-pi-app-wire-0.6.1.tgz",
       appProtocol: "omp-app/1",
       goldenCorpusSha256: "f407bb389a3a77e9db7ec046b9cd1cb19b4edb986694ecc4509ac21c7524c66d",
     });
-    expect(manifest.createdAt).toBe("2026-07-19T03:45:01Z");
+    expect(manifest.createdAt).toBe("2026-07-19T04:11:07Z");
     expect(sha256(tarballPath)).toBe(manifest.tarballSha256);
     expect(goldenCorpusSha256(join(installedRoot, "fixtures", "v1"))).toBe(
       manifest.goldenCorpusSha256,

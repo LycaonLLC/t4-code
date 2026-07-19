@@ -1,4 +1,8 @@
-export { LiveTranscriptSearch, selectTranscriptSearchSource } from "./LiveTranscriptSearch.tsx";
+export {
+  LiveTranscriptSearch,
+  selectTranscriptSearchSource,
+  shouldRefreshTranscriptSearchForFilters,
+} from "./LiveTranscriptSearch.tsx";
 export {
   TranscriptSearchScreen,
   type HistoricContextState,

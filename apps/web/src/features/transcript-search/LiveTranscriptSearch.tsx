@@ -38,6 +38,14 @@ function errorMessage(error: unknown): string {
   return "The host did not return a usable response.";
 }
 
+/** Keep a untouched search page idle, but supersede any active or completed search. */
+export function shouldRefreshTranscriptSearchForFilters(
+  phase: TranscriptSearchPhase,
+  response: TranscriptSearchResponse | null,
+): boolean {
+  return phase === "searching" || response !== null;
+}
+
 /** Live route adapter: ephemeral UI state in, client-owned host fan-out out. */
 export function LiveTranscriptSearch() {
   const navigate = useNavigate();
@@ -136,7 +144,12 @@ export function LiveTranscriptSearch() {
 
   const changeFilters = (next: TranscriptSearchFilters) => {
     setFilters(next);
-    if (response !== null && transcriptSearchCanRun(query)) void runSearch(next);
+    if (
+      shouldRefreshTranscriptSearchForFilters(phase, response) &&
+      transcriptSearchCanRun(query)
+    ) {
+      void runSearch(next);
+    }
   };
 
   const openResult = async (result: TranscriptSearchResult) => {
