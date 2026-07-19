@@ -20,6 +20,8 @@ function TooltipPopup({
 	sideOffset = 4,
 	side = "top",
 	anchor,
+	collisionPadding,
+	collisionAvoidance,
 	children,
 	...props
 }: TooltipPrimitive.Popup.Props & {
@@ -27,6 +29,8 @@ function TooltipPopup({
 	side?: TooltipPrimitive.Positioner.Props["side"];
 	sideOffset?: TooltipPrimitive.Positioner.Props["sideOffset"];
 	anchor?: TooltipPrimitive.Positioner.Props["anchor"];
+	collisionPadding?: TooltipPrimitive.Positioner.Props["collisionPadding"];
+	collisionAvoidance?: TooltipPrimitive.Positioner.Props["collisionAvoidance"];
 }) {
 	return (
 		<TooltipPrimitive.Portal>
@@ -34,6 +38,8 @@ function TooltipPopup({
 				align={align}
 				anchor={anchor}
 				className="pointer-events-none z-50 h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-[top,left,right,bottom,transform] duration-(--motion-duration-base) ease-(--motion-ease-out) data-instant:transition-none"
+				collisionAvoidance={collisionAvoidance}
+				collisionPadding={collisionPadding}
 				data-slot="tooltip-positioner"
 				side={side}
 				sideOffset={sideOffset}

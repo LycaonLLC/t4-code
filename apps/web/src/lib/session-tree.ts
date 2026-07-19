@@ -105,3 +105,16 @@ export function formatRelativeTime(iso: string, nowMs: number): string {
   if (days === 1) return "yesterday";
   return `${days}d ago`;
 }
+
+/**
+ * Compact 3-character model monogram for the rail's metadata line. Derives a
+ * scannable family glyph (`claude-opus-4-6` → "CLA", `gpt-5.6-codex` → "GPT")
+ * so the model differentiator stays visible on touch surfaces where the
+ * tooltip that carries the full identifier never fires.
+ */
+export function modelMonogram(model: string): string {
+  const tail = model.slice(model.lastIndexOf("/") + 1).trim();
+  const head = (tail.split("-")[0] ?? "").trim();
+  const code = head.toUpperCase().slice(0, 3);
+  return code.length > 0 ? code : "?";
+}

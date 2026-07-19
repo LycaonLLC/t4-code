@@ -45,7 +45,7 @@ import {
 } from "react";
 
 import type { SessionListView, WorkspaceSession } from "../lib/workspace-data.ts";
-import { formatRelativeTime, type ProjectGroup, type SessionRow } from "../lib/session-tree.ts";
+import { formatRelativeTime, modelMonogram, type ProjectGroup, type SessionRow } from "../lib/session-tree.ts";
 import { composerStore } from "../features/composer/composer-store.ts";
 import { createLiveSession } from "../features/session-runtime/live-create.ts";
 import {
@@ -240,7 +240,7 @@ function SessionRowItem({
       <div
         className={cn(
           "group/session flex min-w-0 items-stretch rounded-md transition-colors duration-(--motion-duration-fast)",
-          active ? "bg-secondary" : "hover:bg-accent",
+          active ? "bg-secondary shadow-[inset_2px_0_0_0_var(--color-brand)]" : "hover:bg-accent",
           session.freshness === "offline" && "opacity-72",
         )}
       >
@@ -250,7 +250,7 @@ function SessionRowItem({
               <button
                 aria-current={active ? "true" : undefined}
                 aria-label={`${session.title}, ${session.model}, ${archived ? "archived, " : ""}${ariaState}${row.unread ? ", unread" : ""}`}
-                className="flex min-w-0 flex-1 flex-col gap-0 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                className="flex min-w-0 flex-1 flex-col gap-0.5 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                 data-session-row={session.id}
                 onClick={() => {
                   workspaceStore.getState().setRailOverlayOpen(false);
@@ -263,7 +263,7 @@ function SessionRowItem({
                 type="button"
               >
                 <span className="flex w-full items-center gap-1.5">
-                  <span className="min-w-0 flex-1 truncate font-medium text-foreground text-sm leading-5">
+                  <span className={cn("min-w-0 flex-1 line-clamp-2 break-words text-foreground text-sm leading-5", active ? "font-semibold" : "font-medium")}>
                     {session.title}
                   </span>
                   {session.pendingApprovals > 0 && (
@@ -279,11 +279,13 @@ function SessionRowItem({
                     <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-brand" />
                   )}
                 </span>
-                <span className="flex w-full items-center gap-1 text-[10px] text-muted-foreground leading-4">
+                <span className="flex w-full items-center gap-1 text-xs text-muted-foreground leading-4">
+                  <span aria-hidden="true" className="shrink-0 font-mono font-semibold tracking-wide">{modelMonogram(session.model)}</span>
+                  <span aria-hidden="true">·</span>
                   <span className="shrink-0">{formatRelativeTime(session.updatedAt, nowMs)}</span>
                   <span className="min-w-0 flex-1" />
                   {session.status !== null ? (
-                    <StatusPill className="shrink-0 gap-1 text-[10px]" status={session.status} />
+                    <StatusPill className="shrink-0 gap-1" status={session.status} />
                   ) : (
                     stateLabel !== "" && <span className="shrink-0">{stateLabel}</span>
                   )}
@@ -291,10 +293,10 @@ function SessionRowItem({
               </button>
             }
           />
-          <TooltipPopup className="max-w-72" side="right">
+          <TooltipPopup className="max-w-72" collisionPadding={8} side="right">
             <span className="flex min-w-0 flex-col gap-0.5">
               <span className="font-medium">{session.title}</span>
-              <span className="break-all font-mono text-muted-foreground">{session.model}</span>
+              <span className="break-words font-mono text-muted-foreground">{session.model}</span>
             </span>
           </TooltipPopup>
         </Tooltip>
@@ -657,14 +659,14 @@ function ProjectHeaderRow({
 
   return (
     <div className="flex flex-col">
-      <div className="flex items-start gap-0.5">
+      <div className="flex items-center gap-0.5">
         <Tooltip>
           <TooltipTrigger
             render={
               <button
                 aria-expanded={group.expanded}
                 aria-label={`${group.project.name}, ${group.sessions.length} ${group.sessions.length === 1 ? "session" : "sessions"}${group.unreadCount > 0 ? `, ${group.unreadCount} unread` : ""}`}
-                className="flex min-h-11 min-w-0 flex-1 items-start gap-1 rounded-md px-1.5 py-1 text-left outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background sm:min-h-0"
+                className="flex min-h-11 min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 py-1 text-left outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background sm:min-h-0"
                 data-project-disclosure={group.project.id}
                 onClick={() =>
                   workspaceStore.getState().setProjectExpanded(group.project.id, !group.expanded)
@@ -675,32 +677,40 @@ function ProjectHeaderRow({
                 <ChevronRight
                   aria-hidden="true"
                   className={cn(
-                    "mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-transform duration-(--motion-duration-fast)",
+                    "size-3.5 shrink-0 text-muted-foreground transition-transform duration-(--motion-duration-fast)",
                     group.expanded && "rotate-90",
                   )}
                 />
-                <span className="min-w-0 flex-1 break-words font-medium text-foreground text-xs leading-4">
+                <span className="min-w-0 flex-1 line-clamp-2 break-words font-medium text-foreground text-xs leading-4">
                   {group.project.name}
                 </span>
+                {group.host.kind === "remote" && (
+                  <Cable aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" />
+                )}
+                {group.host.kind === "local" &&
+                  group.host.profileId !== undefined &&
+                  group.host.profileId !== "default" && (
+                    <UsersRound aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" />
+                  )}
                 {!group.expanded && group.unreadCount > 0 && (
                   <span
                     aria-hidden="true"
-                    className="mt-1 size-1.5 shrink-0 rounded-full bg-brand"
+                    className="size-1.5 shrink-0 rounded-full bg-brand"
                   />
                 )}
                 {!group.expanded && group.groupStatus !== null && (
-                  <StatusPill className="mt-1" labelHidden status={group.groupStatus} />
+                <StatusPill className="shrink-0" labelHidden status={group.groupStatus} />
                 )}
-                <span className="mt-px shrink-0 text-[10px] text-muted-foreground leading-4">
+                <span className="shrink-0 text-xs text-muted-foreground leading-4">
                   {group.sessions.length}
                 </span>
               </button>
             }
           />
-          <TooltipPopup className="max-w-72" side="right">
+          <TooltipPopup className="max-w-72" collisionPadding={8} side="right">
             <span className="flex min-w-0 flex-col gap-0.5">
               <span className="font-medium">{group.project.name}</span>
-              <span className="break-all text-muted-foreground">
+              <span className="break-words text-muted-foreground">
                 {group.host.kind === "remote" ? "Remote host" : "Host profile"}: {group.host.name}
               </span>
             </span>

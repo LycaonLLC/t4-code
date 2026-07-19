@@ -159,14 +159,21 @@ describe("phone touch targets", () => {
     expect(session).toContain("⌘J");
     expect(session).toContain("Enter focus mode");
     expect(session).toContain("⌘⇧F");
-    expect(rail).toContain("flex min-h-11 min-w-0 flex-1 items-start");
-    // Folder names and session titles are the rail's visible hierarchy. Host
-    // and model identifiers stay available in hover tooltips instead of
-    // competing for the narrow row width.
-    expect(rail).toContain("min-w-0 flex-1 break-words font-medium text-foreground text-xs");
+    expect(rail).toContain("flex min-h-11 min-w-0 flex-1 items-center");
+    // Folder names and session titles are the rail's visible hierarchy and
+    // wrap up to two lines. Host and model identifiers stay available in hover
+    // tooltips instead of competing for the narrow row width, but a compact
+    // model monogram and a non-default host icon stay inline so touch surfaces
+    // (where tooltips never fire) keep the differentiator.
+    expect(rail).toContain("min-w-0 flex-1 line-clamp-2 break-words font-medium text-foreground text-xs");
+    expect(rail).toContain("line-clamp-2 break-words text-foreground text-sm leading-5");
+    expect(rail).toContain("modelMonogram(session.model)");
+    expect(rail).toContain('group.host.kind === "remote" && (');
+    expect(rail).toContain('Cable aria-hidden="true" className="size-3 shrink-0 text-muted-foreground"');
+    expect(rail).toContain("collisionPadding={8}");
     expect(rail).toContain('aria-label={`${group.project.name}, ${group.sessions.length}');
     expect(rail).toContain('Remote host" : "Host profile"');
-    expect(rail).toContain("break-all font-mono text-muted-foreground");
+    expect(rail).toContain("break-words font-mono text-muted-foreground");
     expect(rail).not.toContain('truncate font-mono text-[11px]">{session.model}');
     // Project-row create actions are labeled `New`, stay 44px on touch, and
     // announce that the chosen OMP profile owns the session.
