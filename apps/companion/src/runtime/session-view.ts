@@ -80,3 +80,11 @@ export function entryRole(data: Readonly<Record<string, unknown>>): "You" | "Age
   if (data.role === "assistant") return "Agent";
   return "Update";
 }
+
+export function transcriptDisplayState(
+  finishedOpening: boolean,
+  visibleEntryCount: number,
+): "loading" | "empty" | "ready" {
+  if (visibleEntryCount > 0) return "ready";
+  return finishedOpening ? "empty" : "loading";
+}

@@ -21,6 +21,7 @@ import {
   entryText,
   projectName,
   sessionsFrom,
+  transcriptDisplayState,
   warmSession,
 } from "@/runtime/session-view";
 import { colors, radius, spacing } from "@/theme";
@@ -109,6 +110,7 @@ export default function SessionScreen() {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [openedSessionId, setOpenedSessionId] = useState<string | null>(null);
   const openSession = runtime.openSession;
   const session = useMemo(
     () => sessionsFrom(runtime.projection).find((item) => String(item.sessionId) === id),
@@ -120,10 +122,22 @@ export default function SessionScreen() {
     [warm?.entries],
   );
   const confirmations = [...(warm?.confirmations.values() ?? [])] as readonly Record<string, unknown>[];
+  const transcriptState = transcriptDisplayState(openedSessionId === id, entries.length);
 
   useEffect(() => {
-    if (session !== undefined) void openSession(session).catch((caught: unknown) => setMessage(caught instanceof Error ? caught.message : "T4 could not open this session."));
-  }, [openSession, session]);
+    if (session === undefined) return;
+    let cancelled = false;
+    void openSession(session)
+      .catch((caught: unknown) => {
+        if (!cancelled) setMessage(caught instanceof Error ? caught.message : "T4 could not open this session.");
+      })
+      .finally(() => {
+        if (!cancelled) setOpenedSessionId(id);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, openSession, session]);
 
   if (session === undefined) {
     return (
@@ -169,8 +183,13 @@ export default function SessionScreen() {
           style={styles.transcript}
           contentContainerStyle={styles.transcriptContent}
         >
-          {entries.length === 0 ? (
+          {transcriptState === "loading" ? (
             <View style={styles.loadingTranscript}><ActivityIndicator color={colors.blue} /><Text style={styles.loadingText}>Loading recent context…</Text></View>
+          ) : transcriptState === "empty" ? (
+            <View style={styles.loadingTranscript}>
+              <Text style={styles.emptyTranscriptTitle}>No recent text was returned.</Text>
+              <Text style={styles.loadingText}>Refresh the session list, then try opening it again.</Text>
+            </View>
           ) : entries.map(({ entry, text }) => {
             const role = entryRole(entry.data);
             return (
@@ -238,6 +257,7 @@ const styles = StyleSheet.create({
   transcript: { flex: 1 },
   transcriptContent: { paddingBottom: spacing.lg },
   loadingTranscript: { padding: spacing.xxl, alignItems: "center", gap: spacing.sm },
+  emptyTranscriptTitle: { color: colors.text, fontSize: 15, fontWeight: "700" },
   loadingText: { color: colors.textMuted, fontSize: 13 },
   messageRow: { flexDirection: "row", gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   avatar: { width: 30, height: 30, borderRadius: 15, backgroundColor: colors.blue, alignItems: "center", justifyContent: "center" },

@@ -46,7 +46,6 @@ export default function SessionsScreen() {
           <SessionRow
             session={item}
             onPress={() => {
-              void runtime.openSession(item).catch(() => undefined);
               router.push({ pathname: "/session/[id]", params: { id: String(item.sessionId) } });
             }}
           />

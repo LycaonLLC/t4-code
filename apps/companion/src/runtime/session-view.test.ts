@@ -4,7 +4,7 @@ import type { SessionRef } from "@t4-code/protocol";
 import { hostId, projectId, revision, sessionId } from "@t4-code/protocol";
 import { describe, expect, it } from "vite-plus/test";
 
-import { attentionFrom, canWriteSession, relativeTime } from "./session-view";
+import { attentionFrom, canWriteSession, relativeTime, transcriptDisplayState } from "./session-view";
 
 function ref(overrides: Partial<SessionRef> = {}): SessionRef {
   return {
@@ -61,5 +61,12 @@ describe("companion session view", () => {
     expect(relativeTime("2026-07-19T12:59:45.000Z", now)).toBe("now");
     expect(relativeTime("2026-07-19T12:42:00.000Z", now)).toBe("18m");
     expect(relativeTime("2026-07-17T13:00:00.000Z", now)).toBe("2d");
+  });
+
+  it("stops calling an empty completed transcript a loading transcript", () => {
+    expect(transcriptDisplayState(false, 0)).toBe("loading");
+    expect(transcriptDisplayState(true, 0)).toBe("empty");
+    expect(transcriptDisplayState(false, 1)).toBe("ready");
+    expect(transcriptDisplayState(true, 1)).toBe("ready");
   });
 });
