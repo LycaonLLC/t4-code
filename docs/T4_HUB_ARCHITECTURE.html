@@ -305,21 +305,58 @@
           <a href="#delivery-strategy" id="toc-delivery-strategy">Delivery strategy</a>
           <ul>
             <li>
-              <a href="#foundation-contract" id="toc-foundation-contract">Foundation contract</a>
-            </li>
-            <li>
-              <a
-                href="#first-production-shaped-vertical-slice"
-                id="toc-first-production-shaped-vertical-slice"
-                >First production-shaped vertical slice</a
+              <a href="#backend-and-gui-order" id="toc-backend-and-gui-order"
+                >Backend and GUI order</a
               >
             </li>
             <li>
-              <a href="#cephfs-qualification" id="toc-cephfs-qualification">CephFS qualification</a>
+              <a href="#gate-0-stock-omp-seam" id="toc-gate-0-stock-omp-seam"
+                >Gate 0: stock OMP seam</a
+              >
             </li>
-            <li><a href="#ha-expansion" id="toc-ha-expansion">HA expansion</a></li>
-            <li><a href="#cicd-integration" id="toc-cicd-integration">CI/CD integration</a></li>
-            <li><a href="#guided-installer" id="toc-guided-installer">Guided installer</a></li>
+            <li>
+              <a href="#gate-1-contract-freeze" id="toc-gate-1-contract-freeze"
+                >Gate 1: contract freeze</a
+              >
+            </li>
+            <li>
+              <a href="#deliberate-parallel-work" id="toc-deliberate-parallel-work"
+                >Deliberate parallel work</a
+              >
+            </li>
+            <li>
+              <a href="#gate-2-single-node-substrate" id="toc-gate-2-single-node-substrate"
+                >Gate 2: single-node substrate</a
+              >
+            </li>
+            <li>
+              <a href="#gate-3-physical-client-slice" id="toc-gate-3-physical-client-slice"
+                >Gate 3: physical-client slice</a
+              >
+            </li>
+            <li>
+              <a href="#gate-4-recovery-and-restore" id="toc-gate-4-recovery-and-restore"
+                >Gate 4: recovery and restore</a
+              >
+            </li>
+            <li>
+              <a href="#gate-5-guided-installer" id="toc-gate-5-guided-installer"
+                >Gate 5: guided installer</a
+              >
+            </li>
+            <li>
+              <a href="#gate-6-ha-expansion" id="toc-gate-6-ha-expansion">Gate 6: HA expansion</a>
+            </li>
+            <li>
+              <a href="#product-breadth-and-cicd" id="toc-product-breadth-and-cicd"
+                >Product breadth and CI/CD</a
+              >
+            </li>
+            <li>
+              <a href="#first-linux-test-node" id="toc-first-linux-test-node"
+                >First Linux test node</a
+              >
+            </li>
           </ul>
         </li>
         <li>
@@ -342,7 +379,7 @@
             </li>
           </ul>
         </li>
-        <li><a href="#initial-non-goals" id="toc-initial-non-goals">Initial non-goals</a></li>
+        <li><a href="#out-of-scope" id="toc-out-of-scope">Out of scope</a></li>
         <li>
           <a href="#open-decisions-requiring-proof" id="toc-open-decisions-requiring-proof"
             >Open decisions requiring proof</a
@@ -486,46 +523,15 @@ Repositories, worktrees, and project services</code></pre>
       </li>
     </ol>
     <h2 id="system-topology">System topology</h2>
-    <pre class="mermaid"><code>flowchart TB
-    MOBILE[T4 Code mobile]
-    DESKTOP[T4 Code desktop]
-    TAILSCALE[Tailscale]
-
-    subgraph HUB[T4 Hub]
-        API[T4 API replicas]
-        DB[(PostgreSQL)]
-        OP[T4 Operator]
-        CICD[CI/CD integration]
-        EVENTS[Durable command and event service]
-    end
-
-    subgraph CLUSTER[k3s execution cluster]
-        R1[T4 Session Runtime A]
-        R2[T4 Session Runtime B]
-        R3[T4 Session Runtime C]
-        FS[(Shared project filesystem)]
-        OBJECTS[(MinIO)]
-        GRAFANA[Grafana LGTM stack]
-    end
-
-    MOBILE --&gt; TAILSCALE
-    DESKTOP --&gt; TAILSCALE
-    TAILSCALE --&gt; API
-    API --&gt; DB
-    API --&gt; EVENTS
-    API --&gt; OP
-    API --&gt; CICD
-    OP --&gt; R1
-    OP --&gt; R2
-    OP --&gt; R3
-    R1 --&gt; FS
-    R2 --&gt; FS
-    R3 --&gt; FS
-    EVENTS --&gt; R1
-    EVENTS --&gt; R2
-    EVENTS --&gt; R3
-    EVENTS --&gt; OBJECTS
-    GRAFANA --&gt; OBJECTS</code></pre>
+    <figure>
+      <img
+        src="assets/t4-hub-system-topology.svg"
+        alt="T4 Code mobile and desktop clients connect over Tailscale to the T4 Hub control plane, which uses PostgreSQL, durable events, CI/CD integration, and the T4 Operator to coordinate OMP runtime pods sharing CephFS in a k3s cluster. MinIO stores durable objects and Grafana provides observability."
+      />
+      <figcaption>
+        T4 Hub is the durable authority; k3s runtimes are replaceable workers sharing CephFS.
+      </figcaption>
+    </figure>
     <h3 id="t4-hub-placement">T4 Hub placement</h3>
     <p>
       In a single-node installation, the one Linux machine is both T4 Hub and T4 Node. In an HA
@@ -974,52 +980,229 @@ session.recovered</code></pre>
       baseline. <code>feat/flutter-rewrite</code> remains the stable client branch. The new branch
       must not turn the current host service into a disguised cluster control plane.
     </p>
-    <h3 id="foundation-contract">Foundation contract</h3>
+    <h3 id="backend-and-gui-order">Backend and GUI order</h3>
     <p>
-      Define Hub Wire, Runtime Wire, the session state machine, PostgreSQL ownership, owner-epoch
-      fencing, stable filesystem paths, runtime compatibility, and the versioned deployment profile
-      format.
+      T4 does not build the complete backend in isolation and connect the GUI at the end. It first
+      proves the stock OMP seam with a deterministic harness, freezes the Hub and Runtime contracts,
+      then builds the durable backend and one deliberately thin Flutter path in parallel. They
+      converge at the first physical-client vertical slice. Every capability after that is delivered
+      as backend, recovery behavior, and GUI state together.
     </p>
-    <h3 id="first-production-shaped-vertical-slice">First production-shaped vertical slice</h3>
-    <p>Prove one complete path using real components:</p>
-    <ol type="1">
-      <li>T4 Code connects to a compact single-node k3s deployment.</li>
-      <li>T4 Hub persists a project, session, and prompt in PostgreSQL.</li>
-      <li>T4 Operator starts a real T4 Session Runtime.</li>
-      <li>The runtime launches pinned stock OMP.</li>
-      <li>OMP changes a file in its shared-filesystem worktree.</li>
-      <li>T4 Code renders durable progress.</li>
-      <li>Deleting the runtime pod triggers bounded recovery against the same worktree.</li>
-      <li>Reconnection does not duplicate the prompt or lose transcript continuity.</li>
-    </ol>
     <p>
-      Development, CI, single-node, and HA profiles use one versioned release chart. A developer
-      profile may use a managed Linux VM running real k3s; Docker, Docker Desktop, k3d, and a
+      The existing Flutter <code>T4ViewState</code> and <code>T4Actions</code> boundary, adaptive
+      shell, transcript rendering, composer, attention surfaces, and lifecycle UX are retained where
+      their product meaning survives. Local host discovery, local OMP process control, and current
+      Host Wire transport semantics are replaced rather than pushed deeper into the GUI.
+    </p>
+    <h3 id="gate-0-stock-omp-seam">Gate 0: stock OMP seam</h3>
+    <p>
+      Prove the highest-risk dependency before building the control plane. A small T4-owned harness
+      launches an unmodified official OMP release through
+      <code>omp --mode rpc --session &lt;path&gt;</code>, waits for its ready watermark, executes a
+      prompt, steering or follow-up, approval response, cancellation, and a second prompt, then
+      kills and respawns OMP against the same JSONL session on Linux. Transcript order and
+      continuation must be reconstructed from durable session entries and the ready watermark.
+    </p>
+    <p>
+      This gate also resolves the dispatch crash window. Current stock OMP RPC identifiers correlate
+      responses but do not durably deduplicate commands. T4 must either obtain a narrow upstream OMP
+      capability that persists an opaque command key with the accepted session entry, or fail closed
+      by marking a dispatched-but-unreconciled command <code>indeterminate</code>. It must never
+      automatically replay an ambiguous prompt. Gate 0 does not pass by assuming host-side
+      idempotency provides exactly-once OMP execution.
+    </p>
+    <h3 id="gate-1-contract-freeze">Gate 1: contract freeze</h3>
+    <p>Freeze the shared contracts that every later workstream consumes:</p>
+    <ul>
+      <li>Hub Wire and Runtime Wire fixtures, bounds, versions, capabilities, and error states.</li>
+      <li>
+        The session state machine and the command transitions from pending through claim, dispatch,
+        acceptance, completion, failure, and indeterminate outcome.
+      </li>
+      <li>
+        PostgreSQL schema, transactional outbox, event cursor, payload hash, owner epoch, and lease
+        semantics.
+      </li>
+      <li>
+        Stale-writer fencing for CephFS. A replacement cannot start until the old runtime is
+        observed terminated or its Ceph access is revoked and eviction is confirmed.
+      </li>
+      <li>
+        Immutable MinIO object upload, checksum, PostgreSQL manifest commit, orphan collection, and
+        database-filesystem-object backup generation ordering.
+      </li>
+      <li>
+        Stable project, session, CephFS subvolume, worktree, Tailnet service, OCI image, and
+        compatibility identifiers.
+      </li>
+      <li>
+        Versioned development, single-node, and HA profile schemas plus one explicit failure-state
+        table.
+      </li>
+    </ul>
+    <p>
+      Gate 1 is a serial integration decision. Parallel implementation starts only after its
+      fixtures and failure semantics are reviewable and executable.
+    </p>
+    <h3 id="deliberate-parallel-work">Deliberate parallel work</h3>
+    <p>
+      After Gate 1, the following workstreams can proceed concurrently against the same fixtures:
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Workstream</th>
+          <th>Bounded responsibility</th>
+          <th>Integration gate</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Hub core</td>
+          <td>PostgreSQL migrations, command ledger, outbox, authentication, and Hub Wire API.</td>
+          <td>Deterministic command and cursor conformance.</td>
+        </tr>
+        <tr>
+          <td>Runtime</td>
+          <td>
+            Stock OMP supervisor, Runtime Wire, transcript reconciliation, lease loss, and shutdown.
+          </td>
+          <td>Gate 0 scenarios repeated through Runtime Wire.</td>
+        </tr>
+        <tr>
+          <td>Operator</td>
+          <td>
+            Session reconciliation, pod identity, owner epochs, Ceph mounts, and bounded
+            replacement.
+          </td>
+          <td>No duplicate runtime across restart and lease-loss cases.</td>
+        </tr>
+        <tr>
+          <td>Platform</td>
+          <td>
+            k3s, Tailscale ingress, Rook/CephFS, PostgreSQL, MinIO, and compact Grafana release
+            profile.
+          </td>
+          <td>One reproducible single-node installation and reboot.</td>
+        </tr>
+        <tr>
+          <td>Flutter</td>
+          <td>
+            Hub profile transport and projection into the retained state/action and adaptive GUI
+            contracts.
+          </td>
+          <td>Hub Wire fixture conformance before real-server attachment.</td>
+        </tr>
+        <tr>
+          <td>Supply chain</td>
+          <td>
+            OCI builds, pinned digests, SBOM, signing, compatibility manifest, and release chart.
+          </td>
+          <td>The same artifacts run in CI and on the Linux node.</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      The installer does not stabilize in parallel with changing profile semantics. k3s datastore,
+      Ceph pool, PostgreSQL, and MinIO topology migrations are never run concurrently during
+      expansion. Those are serial evidence gates because concurrent migrations make failure
+      attribution and rollback ambiguous.
+    </p>
+    <h3 id="gate-2-single-node-substrate">Gate 2: single-node substrate</h3>
+    <p>
+      Install the first real Linux node through the intended path: k3s with embedded etcd from the
+      beginning, containerd, a stable Tailscale Kubernetes service identity, one CloudNativePG
+      instance, explicitly enrolled size-one Rook/CephFS pools, MinIO, and a compact nonblocking
+      Grafana LGTM profile. Use one versioned release chart; Docker, Docker Desktop, k3d, and a
       separate Docker Compose architecture are not required.
     </p>
-    <h3 id="cephfs-qualification">CephFS qualification</h3>
     <p>
-      Prove the packaged Rook/CephFS topology in single-node and HA profiles. Qualification includes
-      explicit device enrollment, CSI mounting, OMP worktree concurrency, metadata-service failover,
-      expansion from size-one pools to host-distributed size-three pools, backfill observability,
-      snapshots, restore, and Git integrity. T4 Code and Hub Wire remain independent of
-      Ceph-specific administration even though the packaged platform standardizes on CephFS.
+      Before running OMP, mount one CephFS project from multiple disposable test pods, reboot the
+      node, remount it, and verify content and filesystem semantics. PostgreSQL, MinIO, Ceph, and
+      telemetry health must be distinguishable; Grafana impairment must never block product
+      commands.
     </p>
-    <h3 id="ha-expansion">HA expansion</h3>
+    <h3 id="gate-3-physical-client-slice">Gate 3: physical-client slice</h3>
+    <p>Prove one complete path with real components:</p>
+    <ol type="1">
+      <li>T4 Code connects over Tailscale to the stable single-node Hub service.</li>
+      <li>T4 Hub persists a project, session, and prompt in PostgreSQL.</li>
+      <li>T4 Operator starts a real T4 Session Runtime with the correct CephFS project mounted.</li>
+      <li>The runtime launches pinned stock OMP and reconciles its ready watermark.</li>
+      <li>OMP creates or uses its worktree and changes a file on CephFS.</li>
+      <li>Durable progress and transcript events reach the existing Flutter GUI projection.</li>
+      <li>A desktop client and a physical mobile client observe the same authoritative session.</li>
+    </ol>
     <p>
-      Prove three-node k3s quorum, Hub API replication, operator leader replacement, CloudNativePG
-      failover, object and filesystem replication, and stable Tailnet routing.
+      A deterministic protocol client runs this path before Flutter to localize server defects, but
+      the phase does not pass until the physical Flutter client completes it. The full backend is
+      not allowed to drift ahead of this slice.
     </p>
-    <h3 id="cicd-integration">CI/CD integration</h3>
+    <h3 id="gate-4-recovery-and-restore">Gate 4: recovery and restore</h3>
     <p>
-      Add GitHub and self-hosted runner integration only after command durability and workspace
-      recovery work independently.
+      Exercise every command dispatch crash window, OMP child failure, runtime pod deletion, Hub API
+      restart, operator leader restart, Tailnet interruption, and full single-node reboot. A stale
+      runtime must not modify the shared worktree after replacement, an ambiguous prompt must not be
+      replayed, transcript cursors must converge, and Git integrity must remain valid.
     </p>
-    <h3 id="guided-installer">Guided installer</h3>
     <p>
-      Package T4 Hub and T4 Node installation, expansion, backup, update, rollback, and support
-      collection behind the Flutter setup UI. Installer automation uses the same signed release
-      bundle exercised by CI.
+      Create a coordinated PostgreSQL, CephFS, and MinIO backup generation on an independent
+      destination, wipe the test installation, and restore it onto a clean host. Backup creation
+      without a successful bare-host restore is not evidence.
+    </p>
+    <h3 id="gate-5-guided-installer">Gate 5: guided installer</h3>
+    <p>
+      Turn the exact automation used by Gates 2 through 4 into the signed T4 Node bootstrap and the
+      Flutter setup flow. Installation, health checks, support collection, update, failed-update
+      stop, rollback, and recovery must be repeatable from a clean supported Linux image without
+      requiring the user to understand Kubernetes, Ceph, PostgreSQL, or MinIO.
+    </p>
+    <h3 id="gate-6-ha-expansion">Gate 6: HA expansion</h3>
+    <p>
+      Add two validated Linux nodes and perform topology changes serially: expand embedded-etcd
+      quorum, add Ceph OSDs and monitors, raise CephFS pools from size one to host-distributed size
+      three and wait for backfill, add CloudNativePG replicas, migrate or expand MinIO through a
+      proven path, add Hub and operator replicas, then validate the stable Tailnet endpoint. After
+      every store reports healthy, remove one node and prove continued operation before applying the
+      HA label.
+    </p>
+    <h3 id="product-breadth-and-cicd">Product breadth and CI/CD</h3>
+    <p>
+      After Gate 4, approvals, questions, steering, cancellation, files, terminals, artifacts, and
+      remaining managed workflows proceed as vertical backend-plus-GUI slices. GitHub App, checks,
+      self-hosted runner, and deployment progress can proceed in parallel once command durability,
+      event ordering, and workspace recovery are stable. No CI/CD integration may bypass the command
+      ledger or product event model.
+    </p>
+    <h3 id="first-linux-test-node">First Linux test node</h3>
+    <p>
+      The offered Tailnet Linux box is the correct first external environment. It is disposable test
+      infrastructure, not production data, and should provide:
+    </p>
+    <ul>
+      <li>A supported Linux distribution, kernel, cgroup mode, and OCI image architecture.</li>
+      <li>
+        Root or controlled sudo access, a stable hostname, synchronized time, and reboot
+        persistence.
+      </li>
+      <li>
+        A separately approved raw SSD or NVMe device addressed by stable
+        <code>/dev/disk/by-id</code>, with no filesystem signatures or data to preserve, for Ceph.
+      </li>
+      <li>
+        Measured CPU, memory, root-disk, inode, and Ceph capacity headroom for one OMP session plus
+        the compact platform; final profile floors come from this evidence rather than guesses.
+      </li>
+      <li>
+        Tailnet enrollment, intended ACL/tag policy, working MTU, OCI and source-provider egress,
+        and no required public inbound port.
+      </li>
+      <li>An independent off-node backup destination for destructive restore testing.</li>
+      <li>Disabled sleep and an understood power-loss/restart policy.</li>
+    </ul>
+    <p>
+      Hostnames, Tailnet addresses, enrollment credentials, provider tokens, and private repository
+      data remain runtime configuration and never enter the repository or documentation.
     </p>
     <h2 id="reliability-and-release-gates">Reliability and release gates</h2>
     <p>
@@ -1076,7 +1259,7 @@ session.recovered</code></pre>
       <li>Failed upgrades stop safely and expose a tested recovery or rollback path.</li>
       <li>Backup restoration is exercised, not inferred from successful backup creation.</li>
     </ul>
-    <h2 id="initial-non-goals">Initial non-goals</h2>
+    <h2 id="out-of-scope">Out of scope</h2>
     <ul>
       <li>Native macOS or Windows Hub implementations.</li>
       <li>Docker or Docker Desktop as a user prerequisite.</li>
