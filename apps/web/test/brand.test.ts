@@ -1,5 +1,5 @@
 // Product-name guard: every human-visible surface says "T4 Code"; the
-// retired name never comes back, and runtime references ("OMP appserver",
+// retired name never comes back, and runtime references ("T4 host",
 // "Oh My Pi") stay untouched.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -45,7 +45,7 @@ describe("product identity", () => {
 
   it("keeps the runtime named OMP in onboarding copy", () => {
     const flow = readFileSync(join(SRC_ROOT, "features/onboarding/flow.ts"), "utf8");
-    expect(flow).toContain("OMP appserver");
+    expect(flow).toContain("local T4 host backed by OMP");
   });
 
   it("names the product and its runtime in the onboarding header", () => {

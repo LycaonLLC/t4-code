@@ -34,6 +34,10 @@ export type TranscriptImageAvailability =
   | { readonly available: true }
   | { readonly available: false; readonly reason: string };
 
+export type TranscriptMediaAvailability =
+  | TranscriptImageAvailability
+  | ((reference: TranscriptMediaReference) => TranscriptImageAvailability);
+
 export type TranscriptImageSnapshot =
   | { readonly status: "loading" }
   | {
@@ -74,7 +78,7 @@ interface TranscriptMediaSourceOptions<TReference extends TranscriptMediaReferen
     offset: number,
     signal: TranscriptImageReadSignal,
   ) => Promise<TranscriptImageCommandResult>;
-  readonly availability?: TranscriptImageAvailability;
+  readonly availability?: TranscriptMediaAvailability;
   readonly hostId?: string;
   readonly sessionId?: string;
   readonly maxCacheBytes?: number;
@@ -622,9 +626,9 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
   private readonly sessionId: string | undefined;
   private readonly entries = new Map<string, CacheEntry>();
   private readonly pendingLoads: CacheEntry[] = [];
-  private availability: TranscriptImageAvailability;
-  private unavailable: TranscriptImageSnapshot | null;
+  private availability: TranscriptMediaAvailability;
   private readonly pausedSnapshot = unavailableSnapshot(TRANSCRIPT_IMAGE_PAUSED_REASON);
+  private readonly unavailableSnapshots = new Map<string, TranscriptImageSnapshot>();
   private paused = false;
   private disposedReason: string | null = null;
   private disposedSnapshot: TranscriptImageSnapshot | null = null;
@@ -660,9 +664,6 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
       available: false,
       reason: TRANSCRIPT_IMAGE_FIXTURE_REASON,
     };
-    this.unavailable = this.availability.available
-      ? null
-      : unavailableSnapshot(this.availability.reason);
     this.hostId = options.hostId;
     this.sessionId = options.sessionId;
     if (this.hostId !== undefined && this.sessionId !== undefined) {
@@ -670,18 +671,14 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
     }
   }
 
-  setAvailability(availability: TranscriptImageAvailability): void {
+  setAvailability(availability: TranscriptMediaAvailability): void {
     if (this.disposedReason !== null) return;
-    const unchanged =
-      this.availability.available === availability.available &&
-      (this.availability.available ||
-        (!availability.available && this.availability.reason === availability.reason));
-    if (unchanged) return;
-    const becameAvailable = !this.availability.available && availability.available;
+    const previous = this.availability;
     this.availability = availability;
-    this.unavailable = availability.available ? null : unavailableSnapshot(availability.reason);
     for (const entry of this.entries.values()) {
-      if (!availability.available) {
+      const before = this.availabilityFor(entry.reference, previous);
+      const after = this.availabilityFor(entry.reference);
+      if (!after.available) {
         if (entry.state === "queued") this.cancelQueued(entry);
         if (entry.state === "waiting") {
           entry.state = "idle";
@@ -689,26 +686,35 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
         }
         if (entry.state === "loading") this.cancelActive(entry);
       }
-      if (becameAvailable && entry.state === "error" && entry.retryable) {
+      if (!before.available && after.available && entry.state === "error" && entry.retryable) {
         entry.state = "idle";
         entry.snapshot = null;
       }
       this.notify(entry);
-      if (!this.paused && availability.available && entry.refCount > 0 && entry.state === "idle") {
+      if (!this.paused && after.available && entry.refCount > 0 && entry.state === "idle") {
         this.start(entry);
       }
     }
-    if (!this.paused && availability.available) this.drainQueue();
+    if (!this.paused) this.drainQueue();
   }
 
   getSnapshot(reference: TranscriptMediaReference): TranscriptImageSnapshot {
     if (this.disposedSnapshot !== null) return this.disposedSnapshot;
     if (this.paused) return this.pausedSnapshot;
     const entry = this.entries.get(mediaKey(reference));
+    const availability = this.availabilityFor(reference);
+    if (!availability.available) return this.unavailableSnapshot(availability.reason);
     if (entry?.state === "ready" && entry.snapshot !== null) return entry.snapshot;
-    if (this.unavailable !== null) return this.unavailable;
     if (entry?.state === "error" && entry.snapshot !== null) return entry.snapshot;
     return LOADING_SNAPSHOT;
+  }
+
+  private unavailableSnapshot(reason: string): TranscriptImageSnapshot {
+    const existing = this.unavailableSnapshots.get(reason);
+    if (existing !== undefined) return existing;
+    const snapshot = unavailableSnapshot(reason);
+    this.unavailableSnapshots.set(reason, snapshot);
+    return snapshot;
   }
 
   subscribe(reference: TranscriptMediaReference, listener: () => void): () => void {
@@ -732,7 +738,7 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
       entry.snapshot = null;
       this.notify(entry);
     }
-    if (this.availability.available && entry.state === "idle") this.start(entry);
+    if (this.availabilityFor(entry.reference).available && entry.state === "idle") this.start(entry);
     let retained = true;
     return () => {
       if (!retained) return;
@@ -810,11 +816,15 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
     this.paused = false;
     for (const entry of this.entries.values()) {
       this.notify(entry);
-      if (this.availability.available && entry.refCount > 0 && entry.state === "idle") {
+      if (
+        this.availabilityFor(entry.reference).available &&
+        entry.refCount > 0 &&
+        entry.state === "idle"
+      ) {
         this.start(entry);
       }
     }
-    if (this.availability.available) this.drainQueue();
+    this.drainQueue();
   }
 
   dispose(reason = "Transcript image cache was closed."): void {
@@ -870,6 +880,12 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
     this.entries.set(key, entry);
     return entry;
   }
+  private availabilityFor(
+    reference: TranscriptMediaReference,
+    availability = this.availability,
+  ): TranscriptImageAvailability {
+    return typeof availability === "function" ? availability(reference) : availability;
+  }
 
   private touch(entry: CacheEntry): void {
     this.clock += 1;
@@ -881,9 +897,13 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
   }
 
   private retryCapacityWaiters(): void {
-    if (this.disposedReason !== null || this.paused || !this.availability.available) return;
+    if (this.disposedReason !== null || this.paused) return;
     for (const entry of this.entries.values()) {
-      if (entry.refCount > 0 && entry.state === "waiting") {
+      if (
+        this.availabilityFor(entry.reference).available &&
+        entry.refCount > 0 &&
+        entry.state === "waiting"
+      ) {
         entry.state = "idle";
         entry.snapshot = null;
         this.notify(entry);
@@ -896,7 +916,7 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
     if (
       this.disposedReason !== null ||
       this.paused ||
-      !this.availability.available ||
+      !this.availabilityFor(entry.reference).available ||
       entry.refCount <= 0 ||
       entry.state !== "idle" ||
       entry.promise !== null ||
@@ -914,12 +934,13 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
   }
 
   private drainQueue(): void {
-    if (this.disposedReason !== null || this.paused || !this.availability.available) return;
+    if (this.disposedReason !== null || this.paused) return;
     while (this.activeLoads < this.maxConcurrentLoads && this.pendingLoads.length > 0) {
       const entry = this.pendingLoads.shift();
       if (
         entry === undefined ||
         this.entries.get(entry.key) !== entry ||
+        !this.availabilityFor(entry.reference).available ||
         entry.refCount <= 0 ||
         entry.state !== "queued" ||
         !entry.queued
@@ -941,7 +962,7 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
         if (
           this.disposedReason === null &&
           !this.paused &&
-          this.availability.available &&
+          this.availabilityFor(entry.reference).available &&
           this.entries.get(entry.key) === entry &&
           entry.refCount > 0 &&
           entry.state === "idle"
@@ -1096,8 +1117,7 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
       if (chunks > TRANSCRIPT_IMAGE_MAX_CHUNKS) {
         throw new TranscriptImageFailure(TRANSCRIPT_IMAGE_PROTOCOL_ERROR, false);
       }
-      this.assertCurrent(entry, signal);
-      if (!this.availability.available) {
+      if (!this.availabilityFor(entry.reference).available) {
         throw new TranscriptImageFailure(TRANSCRIPT_IMAGE_LOAD_ERROR, true);
       }
       let response: TranscriptImageCommandResult;

@@ -447,7 +447,7 @@ export class DesktopIpcRegistry {
   private unavailableInspection(): ServiceInspection {
     const raw = this.runtime.getServiceAvailabilityIssue?.() ?? {
       code: "service_unavailable" as const,
-      message: "The local OMP service is unavailable. Choose Check again to retry.",
+      message: "The local T4 host is unavailable. Choose Check again to retry.",
     };
     const code = ["omp_incompatible", "omp_not_found", "service_unavailable"].includes(raw.code)
       ? raw.code
@@ -465,7 +465,7 @@ export class DesktopIpcRegistry {
     this.serviceInspectionPromise = undefined;
     const operation = async (): Promise<void> => {
       const manager = await this.acquireServiceManager();
-      if (manager === undefined) throw new Error(this.unavailableInspection().issue?.message ?? "appserver service is unavailable");
+      if (manager === undefined) throw new Error(this.unavailableInspection().issue?.message ?? "T4 host service is unavailable");
       await manager[action]();
     };
     return this.enqueueService(operation);

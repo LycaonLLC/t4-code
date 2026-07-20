@@ -29,6 +29,7 @@ function runtime(overrides: Partial<DoctorRuntime> = {}): DoctorRuntime {
     sourceContract: async () => contract,
     pnpmVersion: async () => "11.10.0",
     discoverOmp: async () => "/opt/omp/bin/omp",
+    inspectPathOmp: async () => "compatible",
     probeOmp: async () => true,
     profileCount: async () => 3,
     inspectTailnet: async () => "ready",
@@ -41,9 +42,9 @@ describe("T4 setup doctor", () => {
     const source = await readSourceContract();
 
     expect(source.ompVersion).toBe("17.0.5");
-    expect(source.ompTag).toBe("t4code-17.0.5-appserver-9");
+    expect(source.ompTag).toBe("t4code-17.0.5-appserver-10");
     expect(source.ompUrl).toBe(
-      "https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-9",
+      "https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-10",
     );
   });
 
@@ -56,11 +57,24 @@ describe("T4 setup doctor", () => {
       ["node", "pass"],
       ["pnpm", "pass"],
       ["omp", "pass"],
+      ["terminal-omp", "pass"],
       ["appserver", "pass"],
       ["profiles", "pass"],
       ["tailscale", "pass"],
     ]);
     expect(formatDoctorReport(report)).toContain("Required setup checks passed.");
+  });
+
+  it("warns when shells and apps can resolve different OMP builds", async () => {
+    const report = await collectDoctorReport(
+      runtime({ inspectPathOmp: async () => "mixed" }),
+    );
+    const terminalOmp = report.checks.find((item) => item.id === "terminal-omp");
+
+    expect(report.ok).toBe(true);
+    expect(terminalOmp).toMatchObject({ status: "warning", label: "OMP commands" });
+    expect(terminalOmp?.detail).toContain("look live in one app but idle or delayed in another");
+    expect(terminalOmp?.action).toContain(contract.ompTag);
   });
 
   it("explains incompatible tools without exposing executable paths or raw errors", async () => {
@@ -82,7 +96,7 @@ describe("T4 setup doctor", () => {
       "pnpm",
       "omp",
     ]);
-    expect(rendered).toContain("does not provide the appserver status contract");
+    expect(rendered).toContain("does not provide the versioned authority bridge");
     expect(rendered).toContain(contract.ompTag);
     expect(rendered).not.toContain("/private/example");
     expect(rendered).not.toContain("REDACT_ME");

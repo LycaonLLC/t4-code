@@ -2,7 +2,7 @@
 // view was; every row kind serializes; unknown entries are preserved, never
 // dropped; the transient working row is omitted; Markdown caps long tool
 // output while JSON preserves durable rows; filenames are filesystem-safe.
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   EXPORT_TOOL_OUTPUT_MAX_CHARS,
@@ -114,6 +114,80 @@ describe("transcriptRowsToMarkdown", () => {
     expect(out).toContain("### Run tests (`bash`) — ok");
     expect(out).toContain('"command": "pnpm test"');
     expect(out).toContain('"exitCode": 0');
+  });
+
+  it("preserves artifact metadata and issues without fetching message or tool bytes", () => {
+    const fetch = vi.spyOn(globalThis, "fetch");
+    const messageArtifact = {
+      artifactId: "message-artifact",
+      kind: "image" as const,
+      mediaType: "image/png",
+      disposition: "attachment" as const,
+      retention: "session" as const,
+      sha256: "a".repeat(64),
+      source: "artifact" as const,
+    };
+    const toolArtifact = {
+      artifactId: "tool-artifact",
+      kind: "patch" as const,
+      mediaType: "text/x-diff",
+      disposition: "inline" as const,
+      retention: "session" as const,
+      name: "fix.patch",
+      source: "artifact" as const,
+    };
+
+    try {
+      const out = transcriptRowsToMarkdown(
+        [
+          messageRow({
+            artifacts: [messageArtifact],
+            artifactIssue: "Message artifact metadata was incomplete.",
+          }),
+          {
+            id: "g1",
+            kind: "tool-group",
+            calls: [
+              toolCall({
+                artifacts: [toolArtifact],
+                artifactIssue: "Tool artifact metadata was incomplete.",
+              }),
+            ],
+            running: false,
+          },
+        ],
+        meta(),
+      );
+
+      expect(out).toContain('"artifactId": "message-artifact"');
+      expect(out).toContain('"artifactId": "tool-artifact"');
+      expect(out).toContain('"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"');
+      expect(out).toContain('"name": "fix.patch"');
+      expect(out).toContain("> Artifact issue: Message artifact metadata was incomplete.");
+      expect(out).toContain("> Artifact issue: Tool artifact metadata was incomplete.");
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it("preserves artifact metadata beyond the tool-output readability cap", () => {
+    const artifacts = Array.from({ length: 64 }, (_, index) => ({
+      artifactId: `artifact-${index}`,
+      kind: "text" as const,
+      mediaType: "text/plain",
+      disposition: "attachment" as const,
+      retention: "session" as const,
+      name: `${index}-${"x".repeat(256)}.txt`,
+      source: "artifact" as const,
+    }));
+    const out = transcriptRowsToMarkdown(
+      [messageRow({ artifacts, artifactIssue: null })],
+      meta(),
+    );
+
+    expect(out).toContain('"artifactId": "artifact-63"');
+    expect(out).not.toContain("truncated for export");
   });
 
   it("marks running and errored calls", () => {

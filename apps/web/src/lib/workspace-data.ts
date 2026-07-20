@@ -9,6 +9,8 @@ import type { RuntimeKind } from "@t4-code/client";
 /** How current the projection of a session is. */
 export type SessionFreshness = "live" | "cached" | "offline";
 export type SessionListView = "current" | "archived";
+/** Runtime-reported lifecycle, kept separate from T4's richer attention/status pills. */
+export type SessionLifecycle = "active" | "idle" | "closed" | "unknown";
 
 export interface WorkspaceHost {
   readonly id: string;
@@ -36,8 +38,10 @@ export interface WorkspaceSession {
   /** Durable session title (survives disconnects and restarts). */
   readonly title: string;
   readonly model: string;
-  /** Live status, or null when the session is idle with nothing pending. */
+  /** Rich live activity/attention status, or null when no pill applies. */
   readonly status: SessionStatus | null;
+  /** Raw lifecycle reported by the runtime. Missing fixture data is treated as unknown. */
+  readonly lifecycle?: SessionLifecycle;
   readonly freshness: SessionFreshness;
   /** Commands waiting on the user's go-ahead. */
   readonly pendingApprovals: number;

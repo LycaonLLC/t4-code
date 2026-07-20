@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import {
 	COMMAND_DESCRIPTORS,
 	commandId,
@@ -298,6 +298,94 @@ describe("desktop operation dispatcher", () => {
 			),
 		).not.toThrow();
 	});
+
+	test("flushes synchronous terminal output exactly once after claiming its owner", async () => {
+		let authorityOutputs = 0;
+		let forwardedOutputs = 0;
+		const dispatcher = new DesktopOperationDispatcher(
+			authority({
+				termOpen: async (_args, operationContext) => {
+					operationContext.emitTerminalOutput?.({
+						v: "omp-app/1",
+						type: "terminal.output",
+						hostId: context.hostId,
+						sessionId: context.sessionId,
+						terminalId: terminalId("term-1"),
+						cursor: { epoch: "e", seq: 1 },
+						stream: "stdout",
+						data: "synchronous",
+					});
+					return { terminalId: "term-1" };
+				},
+				terminalOutput: () => {
+					authorityOutputs++;
+				},
+			}),
+			undefined,
+			() => {
+				forwardedOutputs++;
+			},
+		);
+		await dispatcher.dispatch(command("term.open"), context);
+		expect(authorityOutputs).toBe(1);
+		expect(forwardedOutputs).toBe(1);
+	});
+
+	test("discards synchronous output when a terminal owner claim conflicts", async () => {
+		const owners = new TerminalOwnerRegistry();
+		owners.claim({
+			connectionId: "other-connection",
+			deviceId: "other-device",
+			hostId: context.hostId,
+			sessionId: context.sessionId!,
+			terminalId: terminalId("term-1"),
+		});
+		let closes = 0;
+		const dispatcher = new DesktopOperationDispatcher(
+			authority({
+				termOpen: async (_args, operationContext) => {
+					operationContext.emitTerminalOutput?.({
+						v: "omp-app/1",
+						type: "terminal.output",
+						hostId: context.hostId,
+						sessionId: context.sessionId,
+						terminalId: terminalId("term-1"),
+						cursor: { epoch: "e", seq: 1 },
+						stream: "stdout",
+						data: "discard",
+					});
+					return { terminalId: "term-1" };
+				},
+				terminalClose: async () => {
+					closes++;
+				},
+			}),
+			owners,
+		);
+		const publish = spyOn(dispatcher, "publishTerminalOutput");
+		await expect(dispatcher.dispatch(command("term.open"), context)).rejects.toMatchObject({ code: "FORBIDDEN" });
+		expect(publish).not.toHaveBeenCalled();
+		expect(closes).toBe(1);
+	});
+
+	test("releases a claimed terminal owner when buffered output is invalid", async () => {
+		let closes = 0;
+		const dispatcher = new DesktopOperationDispatcher(
+			authority({
+				termOpen: async (_args, operationContext) => {
+					operationContext.emitTerminalOutput?.({ type: "invalid-terminal-frame" });
+					return { terminalId: "term-1" };
+				},
+				terminalClose: async () => {
+					closes++;
+				},
+			}),
+		);
+		await expect(dispatcher.dispatch(command("term.open"), context)).rejects.toBeDefined();
+		expect(dispatcher.hasOpenTerminals(context.sessionId!)).toBe(false);
+		expect(closes).toBe(1);
+	});
+
 	test("authority receives unchanged revision and abort signal", async () => {
 		let seen: OperationContext | undefined;
 		const dispatcher = new DesktopOperationDispatcher(

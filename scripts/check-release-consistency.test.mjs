@@ -80,9 +80,10 @@ test("rejects duplicate keys in JSON release contracts", () => {
   );
 });
 
-test("keeps verified and published runtime records aligned after promotion", () => {
+test("promotes the verified runtime into the product release", () => {
   const matrix = JSON.parse(files.get("compat/omp-app-matrix.json"));
-  assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.5-appserver-9");
+  assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.5-appserver-10");
+  assert.equal(matrix.publishedRuntime.sourceTag, "t4code-17.0.5-appserver-10");
   assert.deepEqual(matrix.publishedRuntime, matrix.verifiedRuntime);
 });
 
@@ -244,9 +245,34 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [core, tooling, android-debug, flutter, flutter-android, flutter-apple]",
+          "needs: [core, legacy-bridge-continuity, tooling, android-debug, flutter, flutter-android, flutter-apple]",
           "needs: [core, tooling, android-debug]",
         ),
+    ],
+    [
+      ".github/workflows/ci.yml",
+      (text) =>
+        text.replace(
+          "ref: ${{ github.event.pull_request.head.sha || github.sha }}",
+          "ref: ${{ github.ref }}",
+        ),
+    ],
+    [
+      ".github/workflows/ci.yml",
+      (text) =>
+        replaceRequired(
+          text,
+          'test "$source_repository" = "https://github.com/lyc-aon/oh-my-pi"',
+          'test "$source_repository" = "https://github.com/example/other"',
+        ),
+    ],
+    [
+      ".github/workflows/ci.yml",
+      (text) => replaceRequired(text, '[[ "$sha" =~ ^[0-9a-f]{40}$ ]]', '[[ -n "$sha" ]]'),
+    ],
+    [
+      ".github/workflows/ci.yml",
+      (text) => text.replace("run: pnpm test:legacy-bridge-continuity", "run: pnpm test"),
     ],
     [
       "scripts/reconcile-release-assets.mjs",
@@ -476,6 +502,27 @@ test("deploys release site source only after artifact publication", () => {
 
   assert.ok(ciWorkflow.includes("android-debug:"));
   assert.ok(ciWorkflow.includes("core:"));
+  assert.ok(ciWorkflow.includes("legacy-bridge-continuity:"));
+  assert.ok(ciWorkflow.includes("ref: ${{ github.event.pull_request.head.sha || github.sha }}"));
+  assert.ok(
+    ciWorkflow.includes(
+      `source_repository="$(jq -er '.sourceRepository' provenance/omp-host-migration.json)"`,
+    ),
+  );
+  assert.ok(
+    ciWorkflow.includes('test "$source_repository" = "https://github.com/lyc-aon/oh-my-pi"'),
+  );
+  assert.ok(
+    ciWorkflow.includes("sha=\"$(jq -er '.inputs.operationsContinuity' provenance/omp-host-migration.json)\""),
+  );
+  assert.ok(ciWorkflow.includes('[[ "$sha" =~ ^[0-9a-f]{40}$ ]]'));
+  assert.ok(ciWorkflow.includes('echo "repository=lyc-aon/oh-my-pi" >> "$GITHUB_OUTPUT"'));
+  assert.ok(ciWorkflow.includes("repository: ${{ steps.authority.outputs.repository }}"));
+  assert.ok(ciWorkflow.includes("ref: ${{ steps.authority.outputs.sha }}"));
+  assert.ok(ciWorkflow.includes("T4_OMP_SOURCE_DIR: ${{ github.workspace }}/.continuity/omp"));
+  assert.ok(ciWorkflow.includes("run: pnpm test:legacy-bridge-continuity"));
+  assert.ok(ciWorkflow.includes("path: artifacts/legacy-bridge-continuity/"));
+  assert.ok(ciWorkflow.includes("if-no-files-found: error"));
   assert.ok(ciWorkflow.includes("tooling:"));
   assert.ok(ciWorkflow.includes("flutter:"));
   assert.ok(ciWorkflow.includes("flutter-android:"));
@@ -484,10 +531,11 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("if: ${{ always() }}"));
   assert.ok(
     ciWorkflow.includes(
-      "needs: [core, tooling, android-debug, flutter, flutter-android, flutter-apple]",
+      "needs: [core, legacy-bridge-continuity, tooling, android-debug, flutter, flutter-android, flutter-apple]",
     ),
   );
   assert.ok(ciWorkflow.includes('test "$CORE_RESULT" = success'));
+  assert.ok(ciWorkflow.includes('test "$CONTINUITY_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$TOOLING_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$ANDROID_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$FLUTTER_RESULT" = success'));

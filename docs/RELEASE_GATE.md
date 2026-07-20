@@ -11,7 +11,7 @@ Every release must pass the layers below. Destructive lifecycle checks use a dis
    - Reject stale or locally reimplemented command shapes.
    - Verify the vendored tarball, source tree, fixture corpus, and recorded hashes.
 2. OMP runtime packages
-   - Run app-wire, appserver, and coding-agent type checks and focused tests.
+   - Run app-wire compatibility, authority-bridge, and coding-agent type checks and focused tests.
    - Cover cursor-domain separation, ordered delivery, bounded replay, lifecycle revision conflicts, busy-session refusal, operation and terminal drain, path containment, deletion recovery, and external discovery deltas.
 3. T4 workspaces
    - Run lint, type checks, unit/integration suites, production builds, packaging/tooling checks, and Playwright.
@@ -22,29 +22,29 @@ Every release must pass the layers below. Destructive lifecycle checks use a dis
    - Use real CDP touch input at 320 pixels for model-list drag scrolling and selection. Check Send and session-management control reachability at 320, 360, and 390 pixels, including a short 390 x 500 viewport.
    - Open and close the session rail, create a session, reach the Send control, drag-scroll the model list, and select its last available model.
 
-## Operations continuity proof
+## OMP bridge continuity proof
 
-Run the deterministic cross-runtime gate from the T4 repository root with Node 24.13.1 and a Lycaon OMP source worktree:
+Run the deterministic compatibility gate from the T4 repository root with Node 24.13.1 and the pinned Lycaon OMP source:
 
 ```sh
-T4_OMP_SOURCE_DIR=/path/to/lycaon-oh-my-pi pnpm test:operations:real
+T4_OMP_SOURCE_DIR=/path/to/lycaon-oh-my-pi pnpm test:legacy-bridge-continuity
 ```
 
-The gate creates two disposable OMP profiles, two project roots, 27 sessions, and a 10,000-entry transcript. It launches checksum-pinned T4 host artifacts through the thin OMP authority bridge, plus a real OMP TUI and multiple production T4 clients, then verifies bounded transcript loading, live ownership refusal, concurrent profile isolation, reconnect after an in-flight transport loss, appserver restart recovery, transcript search/read-around, stale-revision rejection, and recovered control. The cleanup endpoint terminates test-owned RPC workers, removes only manifest-owned sessions, and must report zero indexed sessions, locks, workers, files, and errors. A second cleanup call proves idempotence.
+The gate builds and launches T4's standalone `t4-host`, connects it to `omp bridge --stdio` from the pinned authority source, and starts a real OMP TUI plus multiple production T4 clients. Its historical command name still says `legacy-bridge`. The gate proves client compatibility across bounded transcript loading, live ownership refusal, concurrent profile isolation, reconnect after an in-flight transport loss, host restart recovery, transcript search/read-around, stale-revision rejection, recovered control, and cleanup.
 
 CI resolves the exact OMP authority commit from `provenance/omp-host-migration.json`, checks out the exact T4 pull-request head, runs this gate, and attaches the evidence directory to that commit's check run.
 
-Each successful run writes machine-readable evidence under `artifacts/operations-continuity/<run>/`: `report.json`, sanitized `wire-events.ndjson`, `failure-matrix.json`, `cleanup-status.json`, and an executable `rollback.sh`. The report records both source commits, dirty-state fingerprints including untracked fixture files, bounded snapshot sizes, failure codes, delivered cursor integrity, profile overlap, restart persistence, search/context results, and cleanup state. These artifacts are local and ignored by Git.
+Each successful run writes machine-readable evidence under the historical `artifacts/legacy-bridge-continuity/<run>/` path: `report.json`, sanitized `wire-events.ndjson`, `failure-matrix.json`, `cleanup-status.json`, and an executable `rollback.sh`. The report names the host implementation, records both source commits and dirty-state fingerprints, and captures bounded snapshot sizes, failure codes, delivered cursor integrity, profile overlap, restart persistence, search/context results, and cleanup state. These artifacts are local and ignored by Git.
 
 For a manual failure investigation, rerun with `T4_KEEP_CONTINUITY_SANDBOX=1`. The failed run retains its disposable profile and writes `report.json` plus sanitized `wire-events.ndjson`; successful runs also include `rollback.sh`, which documents the authenticated cleanup request for an explicitly test-mode appserver. Never point the gate or rollback helper at a normal OMP profile.
 
 ## Required release-operator proof
 
-1. Start a freshly built OMP appserver with isolated config, state, socket, and session directories.
+1. Start a freshly built `t4-host` with an exact released OMP bridge and isolated config, state, socket, and session directories.
 2. Connect two independent T4 clients. Create a disposable session and confirm both clients receive it.
 3. Send a prompt, wait for the durable transcript, reconnect both clients, and confirm the history appears once in the same order.
 4. Rename, archive, restore, and permanently delete the disposable session. Confirm both clients converge after every change and that archived sessions reject writes.
-5. Build and install the Linux desktop package. Launch the installed executable, not a development Electron process, and confirm the expected appserver service, socket, host identity, session list, transcript, and composer state.
+5. Build and install the Linux desktop package. Launch the installed executable, not a development Electron process, and confirm the expected T4 host service, socket, host identity, session list, transcript, and composer state.
 6. Open the actual Tailscale Serve HTTPS URL in a touch browser. Confirm connected state, shared history, model selection, prompt round-trip, reload recovery, and usable controls at the narrowest viewport.
 7. Confirm the route is Tailscale Serve only. Funnel must be off.
 8. Verify the exact seven-asset GitHub bundle: five installable packages, `latest-linux.yml`, and `SHA256SUMS.txt`. The checksum file must contain exactly the five package digests plus the Linux updater-metadata digest. Fetch `https://t4code.net/releases/latest.json` and match its schema, version, tag, release URL, five canonical package records, sizes, immutable URLs, and SHA-256 digests against that GitHub release.

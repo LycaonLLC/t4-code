@@ -5,7 +5,8 @@ import { extname, join, relative, resolve } from "node:path";
 import { extractFile, listPackage } from "@electron/asar";
 import config from "../electron-builder.config.mjs";
 
-const forbiddenPath = /(^|[/\\])(?:reference|references|proof|proofs|\.env(?:$|[.])|auth)(?:[/\\]|$)/iu;
+const forbiddenPath =
+  /(^|[/\\])(?:reference|references|proof|proofs|\.env(?:$|[.])|auth)(?:[/\\]|$)/iu;
 
 function fail(message) {
   throw new Error(`package inspection failed: ${message}`);
@@ -69,9 +70,14 @@ function assertResourceTree(root) {
   const resources = resolveChildDirectory(root, "resources");
   const webIndex = join(resolveChildDirectory(resources, "web"), "index.html");
   const license = join(resources, "LICENSE");
+  const hostExecutable = join(resolveChildDirectory(resources, "runtime"), "t4-host");
   if (!statFile(webIndex)) fail("resources/web/index.html is missing");
   if (!statFile(license)) fail("resources/LICENSE is missing");
-  if (readFileSync(webIndex).length === 0 || readFileSync(license).length === 0) fail("web index or license is empty");
+  if (!statFile(hostExecutable)) fail("resources/runtime/t4-host is missing");
+  if ((statSync(hostExecutable).mode & 0o111) === 0)
+    fail("resources/runtime/t4-host is not executable");
+  if (readFileSync(webIndex).length === 0 || readFileSync(license).length === 0)
+    fail("web index or license is empty");
   const asarPath = join(resources, "app.asar");
   if (!statFile(asarPath)) fail("resources/app.asar is missing");
   return assertAsar(asarPath);
@@ -102,8 +108,10 @@ function assertLinuxMetadata(root) {
   const desktopFiles = findFiles(root, ".desktop");
   if (desktopFiles.length === 0) fail("Linux package has no desktop metadata");
   const metadata = desktopFiles.map((path) => readFileSync(path, "utf8")).join("\n");
-  if (!metadata.includes("x-scheme-handler/t4-code")) fail("Linux desktop metadata lacks t4-code protocol");
-  if (!metadata.includes(`Name=${config.productName}`)) fail("Linux desktop metadata lacks product name");
+  if (!metadata.includes("x-scheme-handler/t4-code"))
+    fail("Linux desktop metadata lacks t4-code protocol");
+  if (!metadata.includes(`Name=${config.productName}`))
+    fail("Linux desktop metadata lacks product name");
 }
 
 function findAllRelativeFiles(root) {
@@ -153,7 +161,9 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename
     try {
       for (const path of paths) {
         const result = inspectPackage(path);
-        console.log(`${path}: inspected ${result.kind}, ${result.asarEntries} ASAR entries, protocol metadata=${result.protocolMetadata}`);
+        console.log(
+          `${path}: inspected ${result.kind}, ${result.asarEntries} ASAR entries, protocol metadata=${result.protocolMetadata}`,
+        );
       }
     } catch (error) {
       console.error(error instanceof Error ? error.message : String(error));

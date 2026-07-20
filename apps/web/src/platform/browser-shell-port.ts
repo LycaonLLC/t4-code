@@ -122,7 +122,7 @@ function parseBackendPayload(value: unknown): BrowserBackendConfig {
   const data = value as Record<string, unknown>;
   const wsUrl = validatedWsUrl(data.wsUrl);
   const label =
-    data.label === undefined ? "OMP Appserver" : boundedText(data.label, "label", MAX_LABEL_LENGTH);
+    data.label === undefined ? "T4 host" : boundedText(data.label, "label", MAX_LABEL_LENGTH);
   const auth = data.auth;
   let deviceId = data.deviceId;
   let deviceToken = data.deviceToken ?? data.token;

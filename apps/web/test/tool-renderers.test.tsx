@@ -16,7 +16,6 @@ import {
   ResultImages,
 } from "../src/features/transcript/tool-render/parts.tsx";
 import type { ToolRenderProps } from "../src/features/transcript/tool-render/types.ts";
-import { sessionPreviewDestination } from "../src/features/transcript/SessionMain.tsx";
 import { initialProjection, reduceTranscript } from "../src/features/transcript/projection.ts";
 import { deriveTranscriptRows } from "../src/features/transcript/rows.ts";
 
@@ -781,9 +780,5 @@ describe("OMP semantic tool renderers", () => {
     const exported =
       Body === undefined ? "" : renderToStaticMarkup(<Body {...props} host={undefined} />);
     expect(exported).not.toContain("Open Preview");
-    expect(sessionPreviewDestination("host-a/session-a")).toEqual({
-      params: { sessionId: "host-a/session-a" },
-      to: "/sessions/$sessionId/preview",
-    });
   });
 });

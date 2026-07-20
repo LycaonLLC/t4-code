@@ -23,12 +23,20 @@ function sameFile(before: fs.Stats, after: fs.Stats): boolean {
 	);
 }
 
+const DIGEST_CACHE_LIMIT = 64;
+const DIGEST_READ_BYTES = 64 * 1024;
+
+function fileIdentity(info: fs.Stats): string {
+	return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+}
+
 function aborted(signal: AbortSignal | undefined): void {
 	if (signal?.aborted) throw new ArtifactReadError("connection_closed", "artifact read was cancelled");
 }
 
 /** Reads an already-authorized, session-local artifact in bounded chunks without exposing its path. */
 export class ArtifactReader {
+	readonly #verifiedDigests = new Map<string, undefined>();
 	async read(
 		root: string,
 		descriptor: ArtifactDescriptor,
@@ -86,18 +94,10 @@ export class ArtifactReader {
 				if (offset >= before.size)
 					throw new ArtifactReadError("artifact_invalid", "artifact offset exceeds its size");
 				const nextOffset = Math.min(offset + ARTIFACT_CHUNK_BYTES, before.size);
-				const data = Buffer.allocUnsafe(nextOffset - offset);
-				aborted(signal);
-				const { bytesRead } = await handle.read(data, 0, data.byteLength, offset);
-				const after = await handle.stat();
-				aborted(signal);
-				if (bytesRead !== data.byteLength || !sameFile(before, after))
-					throw new ArtifactReadError("artifact_invalid", "artifact changed while reading");
-				if (descriptor.sha256 !== undefined) {
-					const content = await fs.promises.readFile(path.join(canonicalRoot, fileName));
-					if (createHash("sha256").update(content).digest("hex") !== descriptor.sha256)
-						throw new ArtifactReadError("artifact_invalid", "artifact digest does not match its descriptor");
-				}
+				const data =
+					descriptor.sha256 === undefined
+						? await this.#readSlice(handle, before, offset, nextOffset, signal)
+						: await this.#readVerifiedSlice(handle, before, offset, nextOffset, descriptor.sha256, signal);
 				return {
 					artifactId: descriptor.artifactId,
 					kind: descriptor.kind,
@@ -118,5 +118,62 @@ export class ArtifactReader {
 				throw new ArtifactReadError("artifact_not_found", "artifact is unavailable");
 			throw new ArtifactReadError("artifact_invalid", "artifact could not be read");
 		}
+	}
+	async #readSlice(
+		handle: fs.promises.FileHandle,
+		before: fs.Stats,
+		offset: number,
+		nextOffset: number,
+		signal: AbortSignal | undefined,
+	): Promise<Buffer> {
+		const data = Buffer.allocUnsafe(nextOffset - offset);
+		aborted(signal);
+		const { bytesRead } = await handle.read(data, 0, data.byteLength, offset);
+		const after = await handle.stat();
+		aborted(signal);
+		if (bytesRead !== data.byteLength || !sameFile(before, after))
+			throw new ArtifactReadError("artifact_invalid", "artifact changed while reading");
+		return data;
+	}
+
+	async #readVerifiedSlice(
+		handle: fs.promises.FileHandle,
+		before: fs.Stats,
+		offset: number,
+		nextOffset: number,
+		expectedDigest: string,
+		signal: AbortSignal | undefined,
+	): Promise<Buffer> {
+		const key = `${expectedDigest}:${fileIdentity(before)}`;
+		if (this.#verifiedDigests.has(key)) return this.#readSlice(handle, before, offset, nextOffset, signal);
+
+		const data = Buffer.allocUnsafe(nextOffset - offset);
+		const block = Buffer.allocUnsafe(Math.min(DIGEST_READ_BYTES, before.size));
+		const hash = createHash("sha256");
+		for (let position = 0; position < before.size; ) {
+			aborted(signal);
+			const length = Math.min(block.byteLength, before.size - position);
+			const { bytesRead } = await handle.read(block, 0, length, position);
+			if (bytesRead !== length) throw new ArtifactReadError("artifact_invalid", "artifact changed while reading");
+			hash.update(block.subarray(0, bytesRead));
+			const copyStart = Math.max(position, offset);
+			const copyEnd = Math.min(position + bytesRead, nextOffset);
+			if (copyStart < copyEnd)
+				block.copy(data, copyStart - offset, copyStart - position, copyEnd - position);
+			position += bytesRead;
+		}
+		const after = await handle.stat();
+		aborted(signal);
+		if (!sameFile(before, after)) throw new ArtifactReadError("artifact_invalid", "artifact changed while reading");
+		if (hash.digest("hex") !== expectedDigest)
+			throw new ArtifactReadError("artifact_invalid", "artifact digest does not match its descriptor");
+		this.#rememberDigest(key);
+		return data;
+	}
+
+	#rememberDigest(key: string): void {
+		this.#verifiedDigests.delete(key);
+		this.#verifiedDigests.set(key, undefined);
+		if (this.#verifiedDigests.size > DIGEST_CACHE_LIMIT) this.#verifiedDigests.delete(this.#verifiedDigests.keys().next().value!);
 	}
 }

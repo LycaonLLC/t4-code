@@ -2,14 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-} from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -83,10 +76,14 @@ export function validateMacosSignatureReport(report, contract) {
   const identity = validateMacosIdentityContract(contract);
   const errors = [];
   if (report.identifier !== identity.bundleId) {
-    errors.push(`bundle identifier ${report.identifier ?? "missing"} does not match ${identity.bundleId}`);
+    errors.push(
+      `bundle identifier ${report.identifier ?? "missing"} does not match ${identity.bundleId}`,
+    );
   }
   if (report.teamIdentifier !== identity.teamId) {
-    errors.push(`team identifier ${report.teamIdentifier ?? "missing"} does not match ${identity.teamId}`);
+    errors.push(
+      `team identifier ${report.teamIdentifier ?? "missing"} does not match ${identity.teamId}`,
+    );
   }
   if (!report.authorities.includes(identity.certificateCommonName)) {
     errors.push(`signing authority does not include ${identity.certificateCommonName}`);
@@ -139,7 +136,8 @@ function findSingleApp(directory) {
   const apps = readdirSync(directory, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && extname(entry.name).toLowerCase() === ".app")
     .map((entry) => join(directory, entry.name));
-  if (apps.length !== 1) throw new Error(`expected exactly one top-level macOS app; found ${apps.length}`);
+  if (apps.length !== 1)
+    throw new Error(`expected exactly one top-level macOS app; found ${apps.length}`);
   return apps[0];
 }
 
@@ -158,7 +156,9 @@ function inspectApp(appPath, contract, certificatePrefix) {
   };
   validateMacosSignatureReport(report, contract);
   const runtimePath = join(appPath, "Contents", "Resources", "runtime", "omp");
+  const hostPath = join(appPath, "Contents", "Resources", "runtime", "t4-host");
   run("codesign", ["--verify", "--strict", "--verbose=2", runtimePath]);
+  run("codesign", ["--verify", "--strict", "--verbose=2", hostPath]);
   const appEntitlements = run("codesign", ["--display", "--entitlements", ":-", appPath]);
   const runtimeEntitlements = run("codesign", ["--display", "--entitlements", ":-", runtimePath]);
   validateMacosLibraryValidationBoundary(appEntitlements, runtimeEntitlements);
@@ -183,7 +183,9 @@ function requireArtifact(path, extension) {
 
 export function inspectMacosRelease(zipPath, dmgPath, identityPath) {
   if (process.platform !== "darwin") {
-    throw new Error(`macOS release inspection requires darwin; current platform is ${process.platform}`);
+    throw new Error(
+      `macOS release inspection requires darwin; current platform is ${process.platform}`,
+    );
   }
   const zip = requireArtifact(zipPath, ".zip");
   const dmg = requireArtifact(dmgPath, ".dmg");
@@ -200,7 +202,15 @@ export function inspectMacosRelease(zipPath, dmgPath, identityPath) {
     run("ditto", ["-x", "-k", zip, zipRoot]);
     const zipReport = inspectApp(findSingleApp(zipRoot), identity, join(root, "zip-cert-"));
 
-    run("hdiutil", ["attach", "-readonly", "-nobrowse", "-noautoopen", "-mountpoint", mountPoint, dmg]);
+    run("hdiutil", [
+      "attach",
+      "-readonly",
+      "-nobrowse",
+      "-noautoopen",
+      "-mountpoint",
+      mountPoint,
+      dmg,
+    ]);
     mounted = true;
     const dmgReport = inspectApp(findSingleApp(mountPoint), identity, join(root, "dmg-cert-"));
     return Object.freeze({ zip: zipReport, dmg: dmgReport });
@@ -216,15 +226,21 @@ export function inspectMacosRelease(zipPath, dmgPath, identityPath) {
   }
 }
 
-const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
+const isMain =
+  process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (isMain) {
   try {
-    const [zipPath, dmgPath, identityPath = ".github/macos-release-identity.json"] = process.argv.slice(2);
+    const [zipPath, dmgPath, identityPath = ".github/macos-release-identity.json"] =
+      process.argv.slice(2);
     if (!zipPath || !dmgPath) {
-      throw new Error("usage: node scripts/inspect-macos-release.mjs APP.zip APP.dmg [identity.json]");
+      throw new Error(
+        "usage: node scripts/inspect-macos-release.mjs APP.zip APP.dmg [identity.json]",
+      );
     }
     inspectMacosRelease(zipPath, dmgPath, identityPath);
-    console.log("macOS Developer ID identity, hardened runtime, Gatekeeper, and notarization checks passed");
+    console.log(
+      "macOS Developer ID identity, hardened runtime, Gatekeeper, and notarization checks passed",
+    );
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

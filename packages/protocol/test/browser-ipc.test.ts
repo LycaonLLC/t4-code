@@ -33,6 +33,45 @@ function surface(lifecycle: "creating" | "loading" | "ready" | "closed" | "crash
 }
 
 describe("browser IPC boundary", () => {
+  it("keeps the design brief out of page-bound design-mode requests", () => {
+    const call = decodeBrowserCall({
+      version: BROWSER_IPC_VERSION,
+      method: "browser.design_mode.set",
+      ownerSessionId: "session-a",
+      request: {
+        surfaceId: SURFACE_ID,
+        enabled: true,
+      },
+    });
+    expect(call.request).toEqual({
+      surfaceId: SURFACE_ID,
+      enabled: true,
+    });
+
+    expect(
+      decodeBrowserResult("browser.design_mode.status", {
+        enabled: true,
+        selection: "Heading\nSupporting copy",
+      }),
+    ).toEqual({
+      enabled: true,
+      selection: "Heading\nSupporting copy",
+    });
+
+    expect(() =>
+      decodeBrowserCall({
+        version: BROWSER_IPC_VERSION,
+        method: "browser.design_mode.set",
+        ownerSessionId: "session-a",
+        request: {
+          surfaceId: SURFACE_ID,
+          enabled: true,
+          prompt: "This must stay in T4 chrome",
+        },
+      }),
+    ).toThrow();
+  });
+
   it("decodes every browser surface lifecycle", () => {
     for (const lifecycle of ["creating", "loading", "ready", "closed", "crashed", "failed"] as const) {
       expect(decodeBrowserResult("surface.get", { surface: surface(lifecycle) })).toMatchObject({

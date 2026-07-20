@@ -1165,6 +1165,56 @@ test("shows verified session context and groups command-palette actions", async 
   await expect(page.getByRole("button", { name: "Close terminal drawer", exact: true })).toBeVisible();
 });
 
+test("finds loaded files and stages reviewed file context", async ({ page }) => {
+  await page.route("**/*", async (route) => {
+    const requestUrl = new URL(route.request().url());
+    const appUrl = new URL(web.url);
+    if (requestUrl.origin === appUrl.origin && requestUrl.pathname === "/") {
+      const response = await route.fetch();
+      const body = (await response.text()).replace(
+        /<script id="t4-backend" type="application\/json">.*?<\/script>/u,
+        "",
+      );
+      await route.fulfill({ body, response });
+      return;
+    }
+    await route.continue();
+  });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(web.url, { waitUntil: "domcontentloaded" });
+  await expect(page.getByText("Sample data", { exact: true })).toBeVisible();
+  await page.getByText("Pin protocol fixtures for desktop CI", { exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Message the session" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Workspace tools", exact: true }).click();
+  await page.getByRole("button", { name: "Open Files panel", exact: true }).click();
+  const files = page.getByRole("complementary", { name: "Files", exact: true });
+  await expect(files.getByRole("treeitem", { name: "README.md", exact: true })).toBeVisible();
+
+  await page.keyboard.press("Control+k");
+  const palette = page.getByRole("dialog", {
+    name: "Search sessions, transcripts, and commands",
+  });
+  await palette.getByRole("combobox").fill("README");
+  await expect(
+    palette.getByRole("option", { name: /README\.md.*Current session · loaded file/u }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await files.getByRole("treeitem", { name: "README.md", exact: true }).click();
+  await files.getByRole("button", { name: "Add context", exact: true }).click();
+  const stagedContext = page.getByLabel("Context for the next new message");
+  await expect(stagedContext).toContainText("README.md");
+  await stagedContext.locator("summary").click();
+  const contextPreview = stagedContext.locator("pre");
+  await expect(contextPreview).toBeVisible();
+  const previewBounds = await contextPreview.boundingBox();
+  expect(previewBounds).not.toBeNull();
+  expect(previewBounds?.y ?? -1).toBeGreaterThanOrEqual(0);
+  expect((previewBounds?.y ?? 0) + (previewBounds?.height ?? 0)).toBeLessThanOrEqual(900);
+  await expect(files.getByRole("button", { name: "Refresh context", exact: true })).toBeVisible();
+});
+
 test("groups sample settings on desktop and in the mobile category picker", async ({ page }) => {
   await page.route("**/*", async (route) => {
     const requestUrl = new URL(route.request().url());

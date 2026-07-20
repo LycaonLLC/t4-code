@@ -18,7 +18,7 @@ export function localSocketPath(policy: UnixSocketPolicy = {}): string {
     ? "appserver.sock"
     : `appserver-profile-${createHash("sha256").update(profileId, "utf8").digest("hex").slice(0, 24)}.sock`;
   if (platform === "darwin") return join(home, ".omp", "run", name);
-  if (platform !== "linux") throw new Error("local appserver is supported only on Linux and macOS");
+  if (platform !== "linux") throw new Error("the local T4 host is supported only on Linux and macOS");
   const configuredRuntime = policy.runtimeDirectory ?? process.env.XDG_RUNTIME_DIR;
   const runtime = configuredRuntime === undefined || configuredRuntime.length === 0
     ? join(home, ".omp", "run")

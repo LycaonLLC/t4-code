@@ -33,7 +33,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 function parseArgs(argv) {
   const output = {
-    artifactRoot: resolve(repoRoot, "artifacts/operations-continuity"),
+    artifactRoot: resolve(repoRoot, "artifacts/legacy-bridge-continuity"),
     ompRepo: process.env.T4_OMP_SOURCE_DIR,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -78,7 +78,7 @@ function delay(ms) {
 }
 
 function progress(stage) {
-  process.stderr.write(`[operations-continuity] ${stage}\n`);
+  process.stderr.write(`[legacy-bridge-continuity] ${stage}\n`);
 }
 
 async function waitUntil(check, label, timeoutMs = PROCESS_TIMEOUT_MS) {
@@ -470,7 +470,7 @@ class T4Probe {
       client: {
         name: "T4 Code",
         version: "0.1.28",
-        build: "operations-continuity",
+        build: "legacy-bridge-continuity",
         platform: process.platform,
       },
       reconnect: { baseMs: 100, maxMs: 1_000 },
@@ -646,14 +646,14 @@ function failureDescriptor(error) {
   };
 }
 
-export async function runOperationsContinuity(argv = []) {
+export async function runLegacyBridgeContinuity(argv = []) {
   const options = parseArgs(argv);
   const ompRepo = await realpath(options.ompRepo);
   const artifactRoot = options.artifactRoot;
   const runStamp = new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-");
   const artifactDir = join(artifactRoot, runStamp);
   const temporaryBase = process.platform === "darwin" ? "/private/tmp" : tmpdir();
-  const temporaryRoot = await realpath(await mkdtemp(join(temporaryBase, "t4-ops-")));
+  const temporaryRoot = await realpath(await mkdtemp(join(temporaryBase, "t4-legacy-bridge-")));
   const home = join(temporaryRoot, "home");
   const projectsRoot = join(temporaryRoot, "projects");
   const projectA = join(projectsRoot, "project-a");
@@ -1191,6 +1191,8 @@ export async function runOperationsContinuity(argv = []) {
       v: 1,
       status: "passed",
       scenario: {
+        hostImplementation: "legacy-omp-appserver",
+        authorityImplementation: "lycaon-omp",
         profiles: 2,
         projects: 2,
         seededSessions: 27,

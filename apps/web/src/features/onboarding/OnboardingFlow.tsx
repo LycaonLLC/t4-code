@@ -112,7 +112,7 @@ function ServiceCard({
         data-service-status={service.status}
       >
         <div className="flex min-w-0 items-center gap-2">
-          <span className="min-w-0 flex-1 truncate font-medium text-sm">Local OMP appserver</span>
+          <span className="min-w-0 flex-1 truncate font-medium text-sm">Local T4 host</span>
           <ToneBadge label={meta.label} live={meta.live} tone={meta.tone} />
         </div>
         <p className={cn("text-xs", failed ? "text-destructive-foreground" : "text-muted-foreground")}>

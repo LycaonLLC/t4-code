@@ -95,13 +95,16 @@ import {
 import { useWorkspace, workspaceStore } from "../state/store-instance.ts";
 import { SessionListTabs } from "./SessionListTabs.tsx";
 
-function describeSessionState(session: WorkspaceSession): string {
+export function describeSessionState(session: WorkspaceSession): string {
   if (session.freshness === "offline") return "Offline";
   if (session.freshness === "cached") return "Cached";
   // Owner kind is never proven across the wire, so labels stay generic —
   // and only a confirmed live lock reads "Active elsewhere".
   if (session.control !== undefined) return presentSessionControlKind(session.control).railLabel;
-  return session.status === null ? "Idle" : "";
+  if (session.status !== null) return "";
+  if (session.lifecycle === "idle") return "Idle";
+  if (session.lifecycle === "closed") return "Stopped";
+  return "Status unknown";
 }
 
 type SessionDialog = "rename" | "terminate" | "delete" | null;
@@ -138,7 +141,7 @@ function SessionRowItem({
   const { session } = row;
   const pinned = useWorkspace((state) => state.pinnedSessionIds[session.id] === true);
   const stateLabel = describeSessionState(session);
-  const ariaState = stateLabel !== "" ? stateLabel : (session.status ?? "idle");
+  const ariaState = stateLabel !== "" ? stateLabel : (session.status ?? "Status unknown");
   const [menuOpen, setMenuOpen] = useState(false);
   const [dialog, setDialog] = useState<SessionDialog>(null);
   const [renameValue, setRenameValue] = useState(session.title);

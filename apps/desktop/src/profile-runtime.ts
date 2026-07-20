@@ -36,7 +36,7 @@ function unavailableInspection(issue?: ServiceAvailabilityIssue): ServiceInspect
     diagnostics: "",
     issue: issue ?? {
       code: "service_unavailable",
-      message: "The local OMP service is unavailable. Check the OMP installation and try again.",
+      message: "The local T4 host is unavailable. Check the OMP installation and try again.",
     },
   };
 }
@@ -166,7 +166,7 @@ export class LocalProfileRuntime {
     const manager = await this.acquireManager(profileId);
     if (manager === undefined) {
       throw new Error(
-        this.availabilityIssue(profileId)?.message ?? "The local OMP service is unavailable.",
+        this.availabilityIssue(profileId)?.message ?? "The local T4 host is unavailable.",
       );
     }
     return manager;

@@ -20,12 +20,14 @@ import {
   thinkingLabel,
   type ComposerControlsSnapshot,
 } from "../session-runtime/session-controls.ts";
-import {
-  CACHED_WRITE_REASON,
-  OFFLINE_WRITE_REASON,
-} from "../session-runtime/session-observer.ts";
+import { CACHED_WRITE_REASON, OFFLINE_WRITE_REASON } from "../session-runtime/session-observer.ts";
 import { useWorkspace, workspaceStore } from "../../state/store-instance.ts";
 import { selectSessionView } from "../../state/workspace-store.ts";
+import { ContextPacketChips } from "../context-packet/ContextPacketChips.tsx";
+import {
+  compilePromptWithContext,
+  type ContextPacketItem,
+} from "../context-packet/context-packet.ts";
 import {
   admitAttachments,
   toPromptAttachment,
@@ -63,7 +65,9 @@ const MAX_TEXTAREA_HEIGHT = 220;
 const EMPTY_ATTACHMENTS: readonly StagedAttachment[] = [];
 const EMPTY_FILE_ENTRIES: readonly FileRefEntry[] = [];
 const EMPTY_REJECTIONS: readonly string[] = [];
-const IMAGE_REVISION_REASON = "Images cannot be added to a plan revision. Remove them or finish the revision first.";
+const EMPTY_CONTEXT_ITEMS: readonly ContextPacketItem[] = [];
+const IMAGE_REVISION_REASON =
+  "Images cannot be added to a plan revision. Remove them or finish the revision first.";
 const IMAGE_ACTIVE_TURN_REASON =
   "Images can be sent with the next prompt after the running turn finishes.";
 
@@ -141,6 +145,10 @@ export function Composer({
   const rejections = useComposer(
     (state) => state.attachmentRejectionsBySessionId[sessionId] ?? EMPTY_REJECTIONS,
   );
+  const contextItems = useComposer(
+    (state) => state.contextItemsBySessionId[sessionId] ?? EMPTY_CONTEXT_ITEMS,
+  );
+  const contextNotice = useComposer((state) => state.contextNoticeBySessionId[sessionId] ?? null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [caret, setCaret] = useState(0);
@@ -151,11 +159,8 @@ export function Composer({
   // Freshness copy always wins: a cached/offline surface explains itself
   // before any view-level read-only (observer/reconciling) policy speaks.
   const disabledReason =
-    (link === "cached"
-      ? CACHED_WRITE_REASON
-      : link === "offline"
-        ? OFFLINE_WRITE_REASON
-        : null) ?? readOnlyReason;
+    (link === "cached" ? CACHED_WRITE_REASON : link === "offline" ? OFFLINE_WRITE_REASON : null) ??
+    readOnlyReason;
 
   // Slash menu state derives from the draft + caret.
   const slashQuery = disabled ? null : activeSlashQuery(draft, caret);
@@ -222,8 +227,7 @@ export function Composer({
     [sessionId],
   );
   const setRejections = useCallback(
-    (next: readonly string[]) =>
-      composerStore.getState().setAttachmentRejections(sessionId, next),
+    (next: readonly string[]) => composerStore.getState().setAttachmentRejections(sessionId, next),
     [sessionId],
   );
 
@@ -306,6 +310,7 @@ export function Composer({
       removeAttachments: (ids) => {
         for (const id of ids) composerStore.getState().removeAttachment(sessionId, id);
       },
+      removeContextItems: (ids) => composerStore.getState().removeContextItems(sessionId, ids),
       setNotice: (next: SubmissionNotice) =>
         composerStore.getState().setSubmissionNotice(sessionId, next),
     }),
@@ -351,9 +356,19 @@ export function Composer({
       runSubmission({ kind: "steer", text }, { text: draft, attachmentIds: [] });
       return;
     }
+    const compiled = compilePromptWithContext(text, contextItems);
+    if (!compiled.ok) {
+      composerStore.getState().setContextNotice(sessionId, compiled.reason);
+      return;
+    }
+    composerStore.getState().setContextNotice(sessionId, null);
     runSubmission(
-      { kind: "prompt", text, attachments: attachments.map(toPromptAttachment) },
-      { text: draft, attachmentIds: attachments.map((attachment) => attachment.id) },
+      { kind: "prompt", text: compiled.text, attachments: attachments.map(toPromptAttachment) },
+      {
+        text: draft,
+        attachmentIds: attachments.map((attachment) => attachment.id),
+        contextItemIds: compiled.contextItemIds,
+      },
     );
   }, [
     draft,
@@ -363,6 +378,8 @@ export function Composer({
     turnActive,
     revisingPlanId,
     onCancelRevise,
+    contextItems,
+    sessionId,
     runSubmission,
   ]);
 
@@ -536,7 +553,11 @@ export function Composer({
         )}
         {fileMenuOpen && (
           <div className="absolute inset-x-0 bottom-full mb-2 overflow-hidden rounded-lg border border-border bg-popover shadow-(--overlay-shadow)">
-            <ul aria-label="File references" className="max-h-64 overflow-y-auto p-1" role="listbox">
+            <ul
+              aria-label="File references"
+              className="max-h-64 overflow-y-auto p-1"
+              role="listbox"
+            >
               {fileItems.map((item, index) => (
                 <li
                   aria-selected={index === menuIndex}
@@ -550,9 +571,15 @@ export function Composer({
                   role="option"
                 >
                   {item.isDir ? (
-                    <Folder aria-hidden="true" className="size-3.5 shrink-0 self-center text-muted-foreground" />
+                    <Folder
+                      aria-hidden="true"
+                      className="size-3.5 shrink-0 self-center text-muted-foreground"
+                    />
                   ) : (
-                    <FileText aria-hidden="true" className="size-3.5 shrink-0 self-center text-muted-foreground" />
+                    <FileText
+                      aria-hidden="true"
+                      className="size-3.5 shrink-0 self-center text-muted-foreground"
+                    />
                   )}
                   <span className="font-mono text-sm">{item.name}</span>
                   <span className="min-w-0 flex-1 truncate text-right font-mono text-muted-foreground text-xs">
@@ -602,9 +629,15 @@ export function Composer({
                     key={`${token.start}:${token.path}`}
                   >
                     {entry?.isDir === true ? (
-                      <Folder aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+                      <Folder
+                        aria-hidden="true"
+                        className="size-3.5 shrink-0 text-muted-foreground"
+                      />
                     ) : (
-                      <FileText aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+                      <FileText
+                        aria-hidden="true"
+                        className="size-3.5 shrink-0 text-muted-foreground"
+                      />
                     )}
                     <span className="max-w-32 truncate font-mono sm:max-w-40" title={token.path}>
                       {token.path.split("/").pop()}
@@ -622,6 +655,19 @@ export function Composer({
               })}
             </ul>
           )}
+          <ContextPacketChips
+            deferredReason={
+              contextItems.length === 0
+                ? null
+                : revisingPlanId !== null
+                  ? "Saved for the next new message; plan revisions do not include file context yet."
+                  : turnActive
+                    ? "Saved for the next new message; steering and queued follow-ups do not include file context yet."
+                    : null
+            }
+            items={contextItems}
+            onRemove={(id) => composerStore.getState().removeContextItem(sessionId, id)}
+          />
           <AttachmentChips
             attachments={attachments}
             onRemove={(id) => composerStore.getState().removeAttachment(sessionId, id)}
@@ -802,6 +848,11 @@ export function Composer({
         {notice !== null && (
           <p className="mt-1.5 px-1 text-warning-foreground text-xs" role="status">
             {notice.message}
+          </p>
+        )}
+        {contextNotice !== null && (
+          <p className="mt-1.5 px-1 text-warning-foreground text-xs" role="status">
+            {contextNotice}
           </p>
         )}
         {controls.controlError !== null && (

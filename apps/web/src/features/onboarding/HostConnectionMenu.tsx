@@ -98,7 +98,7 @@ export function HostConnectionMenu({
     <div aria-label="Hosts" className="flex min-w-0 flex-col gap-4" role="group">
       {groups.length === 0 && (
         <p className="rounded-lg border border-border border-dashed px-3 py-4 text-center text-muted-foreground text-sm">
-          No hosts yet. Sessions live on a host — this computer counts once its appserver runs.
+          No hosts yet. Sessions live on a host — this computer counts once its T4 host runs.
         </p>
       )}
       {groups.map((group) => (

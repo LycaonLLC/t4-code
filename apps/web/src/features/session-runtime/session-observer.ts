@@ -151,7 +151,7 @@ export function presentSessionControl(state: SessionControlState): SessionContro
       return {
         railLabel: "Active elsewhere",
         bannerTitle: "Active in another app",
-        bannerDetail: `Finished lines land here as the other app saves them. ${TRANSFER_HINT}`,
+        bannerDetail: `Following saved output, not a token-by-token stream. Finished steps appear here as the other app saves them. ${TRANSFER_HINT}`,
         bannerBusy: false,
         composerReason: OBSERVER_COMPOSER_REASON,
         cancelReason: "Only the app running this session can stop it.",

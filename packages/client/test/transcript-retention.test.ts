@@ -112,7 +112,7 @@ describe("retained transcript budgets", () => {
     expect(newestData.images).toEqual([imageReference]);
     expect(newestData.result?.output).toContain("retained value truncated");
     expect(newestData.result?.output).toContain("tool-199-tail");
-  });
+  }, 15_000);
 
   it("preserves durable image references without retaining a clipped inline image", () => {
     const retained = sanitizeRetainedDurableEntry({

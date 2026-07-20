@@ -21,6 +21,21 @@ export const RIGHT_PANE_WIDTH = { minWidth: 320, maxWidth: 560, defaultWidth: 44
 
 export const PANE_FAMILIES = ["agents", "activity", "review", "files", "terminals"] as const;
 export type PaneFamily = (typeof PANE_FAMILIES)[number];
+/** Stable ID for a registered session surface in the optional right column. */
+export type SessionSurfaceId = PaneFamily;
+
+export const PRIMARY_SESSION_SURFACE_ID = "transcript" as const;
+
+/**
+ * The session workspace always has the transcript in its main column and may
+ * have one registered surface in a second column. The terminal drawer is a
+ * separate surface below these columns and is intentionally not part of this
+ * layout.
+ */
+export interface SessionWorkspaceLayout {
+  readonly primary: typeof PRIMARY_SESSION_SURFACE_ID;
+  readonly secondary: SessionSurfaceId | null;
+}
 
 export type ThemePreference = "light" | "dark" | "system";
 export type PreviewScaleMode = "fit" | "actual";
@@ -160,6 +175,12 @@ export interface WorkspaceActions {
   /** Select a family; selecting the active family again closes the pane. */
   togglePaneFamily(sessionId: string, family: PaneFamily): void;
   setPaneOpen(sessionId: string, open: boolean): void;
+  /** Open a registered surface in the optional second column. */
+  openSessionSurface(sessionId: string, surfaceId: SessionSurfaceId): void;
+  /** Toggle one registered surface without changing any other session. */
+  toggleSessionSurface(sessionId: string, surfaceId: SessionSurfaceId): void;
+  /** Close this surface if it is still the one shown in the second column. */
+  closeSessionSurface(sessionId: string, surfaceId: SessionSurfaceId): void;
   setPaneWidth(sessionId: string, width: number): void;
   setTerminalDrawerOpen(sessionId: string, open: boolean): void;
   setSessionPreview(sessionId: string, selection: SessionPreviewSelection): void;
@@ -448,6 +469,18 @@ export function selectSessionView(state: WorkspaceState, sessionId: string): Ses
   return state.sessionViewById[sessionId] ?? DEFAULT_SESSION_VIEW;
 }
 
+/** Derive the two-column workspace without adding a second persisted model. */
+export function selectSessionWorkspaceLayout(
+  state: WorkspaceState,
+  sessionId: string,
+): SessionWorkspaceLayout {
+  const view = selectSessionView(state, sessionId);
+  return {
+    primary: PRIMARY_SESSION_SURFACE_ID,
+    secondary: view.paneOpen ? view.paneFamily : null,
+  };
+}
+
 export interface CreateWorkspaceStoreOptions {
   readonly persistence: WorkspacePersistence;
   /** Applied over persisted (or initial) state at boot, e.g. fixture seeds. */
@@ -596,6 +629,27 @@ export function createWorkspaceStore(options: CreateWorkspaceStoreOptions): Work
       }),
     setPaneOpen: (sessionId, open) =>
       set((state) => updateSessionView(state, sessionId, { paneOpen: open })),
+    openSessionSurface: (sessionId, surfaceId) =>
+      set((state) =>
+        updateSessionView(state, sessionId, {
+          paneFamily: surfaceId,
+          paneOpen: true,
+        }),
+      ),
+    toggleSessionSurface: (sessionId, surfaceId) =>
+      set((state) => {
+        const view = selectSessionView(state, sessionId);
+        return updateSessionView(state, sessionId, {
+          paneFamily: surfaceId,
+          paneOpen: !(view.paneOpen && view.paneFamily === surfaceId),
+        });
+      }),
+    closeSessionSurface: (sessionId, surfaceId) =>
+      set((state) => {
+        const view = selectSessionView(state, sessionId);
+        if (!view.paneOpen || view.paneFamily !== surfaceId) return state;
+        return updateSessionView(state, sessionId, { paneOpen: false });
+      }),
     setPaneWidth: (sessionId, paneWidth) =>
       set((state) =>
         updateSessionView(state, sessionId, {

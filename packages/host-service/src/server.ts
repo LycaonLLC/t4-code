@@ -756,6 +756,8 @@ export class LocalAppserver implements AppserverHandle {
 	#projections = new Map<SessionId, SessionProjection>();
 	#supervisors = new Map<SessionId, RpcChildSupervisor>();
 	#externalRuntimes = new Map<SessionId, ExternalRuntimeOwner>();
+	readonly #openingExternalRuntimes = new Map<string, number>();
+	readonly #archivingWorkspaces = new Set<string>();
 	#externalPermissions = new Map<SessionId, Map<string, ExternalPermissionRequest>>();
 	#externalTurns = new Map<SessionId, ExternalTurnProjection>();
 	#promptLifecycles = new Map<SessionId, PromptLifecycle>();
@@ -764,7 +766,7 @@ export class LocalAppserver implements AppserverHandle {
 	#stateRefreshGenerations = new Map<SessionId, number>();
 	#transcripts = new Map<SessionId, TranscriptEventTranslator>();
 	#subagents = new Map<SessionId, SubagentProjection>();
-	#lockStatus: (session: SessionRecord) => SessionLockStatus;
+	#lockStatus: (session: SessionRecord) => SessionLockStatus | Promise<SessionLockStatus>;
 	#observers = new Map<SessionId, SessionTranscriptObserver>();
 	#observerTimers = new Map<SessionId, ReturnType<typeof setInterval>>();
 	#observerRefreshes = new Map<SessionId, { promise: Promise<void>; rerun: boolean }>();
@@ -884,7 +886,7 @@ export class LocalAppserver implements AppserverHandle {
 			? new TranscriptImageReader({ root: options.transcriptImageRoot })
 			: undefined;
 		this.#lockStatus = options.lockStatus ?? (() => "missing");
-		this.#factory = options.childFactory ?? new BunRpcChildFactory(undefined, this.#imageUploads.root);
+		this.#factory = options.childFactory ?? new BunRpcChildFactory(options.rpcChildInvocation, this.#imageUploads.root);
 		this.#ringSize = options.ringSize ?? 256;
 		if (options.lockStatus && !options.lockCheck)
 			this.#lockCheck = () => {
@@ -2181,6 +2183,9 @@ export class LocalAppserver implements AppserverHandle {
 		if (workspace.lifecycle !== "active") throw new Error("workspace is not active");
 		if (workspace.repositoryId !== requestedProject)
 			throw new Error("workspace does not belong to the requested project");
+		if (this.#archivingWorkspaces.has(workspace.instanceId))
+			throw new Error("workspace is being archived");
+		this.#reserveExternalRuntimeOpening(workspace.instanceId);
 		const publicSessionId = sessionId(`session-${randomUUID()}`);
 		const runtimeWorkspace: RuntimeWorkspaceIdentity = {
 			instanceId: workspace.instanceId,
@@ -2219,9 +2224,30 @@ export class LocalAppserver implements AppserverHandle {
 			this.#records.delete(publicSessionId);
 			this.#projections.delete(publicSessionId);
 			throw cause;
+		} finally {
+			this.#releaseExternalRuntimeOpening(workspace.instanceId);
 		}
 	}
 
+	#reserveExternalRuntimeOpening(workspaceInstanceId: string): void {
+		this.#openingExternalRuntimes.set(
+			workspaceInstanceId,
+			(this.#openingExternalRuntimes.get(workspaceInstanceId) ?? 0) + 1,
+		);
+	}
+
+	#releaseExternalRuntimeOpening(workspaceInstanceId: string): void {
+		const openings = this.#openingExternalRuntimes.get(workspaceInstanceId);
+		if (openings === undefined || openings <= 1) this.#openingExternalRuntimes.delete(workspaceInstanceId);
+		else this.#openingExternalRuntimes.set(workspaceInstanceId, openings - 1);
+	}
+
+	#workspaceHasExternalRuntimeOwner(workspaceInstanceId: string): boolean {
+		return (
+			this.#openingExternalRuntimes.has(workspaceInstanceId) ||
+			[...this.#externalRuntimes.values()].some(owner => owner.workspaceInstanceId === workspaceInstanceId)
+		);
+	}
 	private appendExternalEntry(
 		sessionId: SessionId,
 		kind: string,
@@ -2585,11 +2611,30 @@ export class LocalAppserver implements AppserverHandle {
 		});
 	}
 	private handleWorkspaceArchive(command: CommandFrame): Promise<CommandOutcome> {
-		return this.workspaceCommand(command, async () => ({
-			workspace: this.workspaceProjection(
-				await this.#workspaceAuthority!.archive({ instanceId: command.args.instanceId as string }),
-			),
-		}));
+		return this.workspaceCommand(command, async () => {
+			const instanceId = command.args.instanceId as string;
+			const authority = this.#workspaceAuthority!;
+			const workspace = authority.get(instanceId);
+			if (!workspace) throw new WorkspaceAuthorityError("worktree-not-found", "Workspace record was not found");
+			if (workspace.ownership === "repository-root")
+				throw new WorkspaceAuthorityError("repository-root-protected", "Repository root worktrees cannot be archived");
+			if (workspace.ownership !== "managed")
+				throw new WorkspaceAuthorityError(
+					"ownership-protected",
+					"Imported and detected worktrees are never deleted by the authority",
+				);
+			if (this.#archivingWorkspaces.has(instanceId))
+				throw new WorkspaceAuthorityError("mutation-in-progress", "Workspace archive is already in progress");
+			if (this.#workspaceHasExternalRuntimeOwner(instanceId))
+				throw new WorkspaceAuthorityError("mutation-in-progress", "Workspace is owned by a live external runtime");
+			this.#archivingWorkspaces.add(instanceId);
+			try {
+				const sealed = await authority.seal({ instanceId });
+				return { workspace: this.workspaceProjection(await authority.archive({ instanceId: sealed.instanceId })) };
+			} finally {
+				this.#archivingWorkspaces.delete(instanceId);
+			}
+		});
 	}
 	private handleWorkspaceRecover(command: CommandFrame): Promise<CommandOutcome> {
 		return this.workspaceCommand(command, async () => ({
@@ -4186,7 +4231,7 @@ export class LocalAppserver implements AppserverHandle {
 		if (this.#supervisors.has(sessionId)) return;
 		let status: SessionLockStatus;
 		try {
-			status = this.#lockStatus(record);
+			status = await this.#lockStatus(record);
 		} catch {
 			status = "malformed";
 		}
@@ -4243,7 +4288,7 @@ export class LocalAppserver implements AppserverHandle {
 		if (poll.unresolvedPendingCount !== 0) return;
 		let promotionLockStatus: SessionLockStatus;
 		try {
-			promotionLockStatus = this.#lockStatus(record);
+			promotionLockStatus = await this.#lockStatus(record);
 		} catch {
 			promotionLockStatus = "malformed";
 		}

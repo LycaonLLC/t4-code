@@ -57,6 +57,10 @@ T4 Code v0.1.30 makes a large session library easier to navigate. The rail now s
 
 Project menus can create a session in that folder, reveal the folder in the system file manager, collapse the group, or hide it from the rail. Hidden projects are not deleted and can be restored from the filter menu. The reveal action is deliberately narrow: the host accepts only project paths already present in its session catalog.
 
+## Faster transcripts and easier context sharing
+
+Opening a large session paints its newest saved transcript entries before older history finishes loading. The composer can insert bounded file references from the active workspace, and the session menu can export a transcript without exposing hidden host state. Session activity labels now follow authoritative runtime events, so a settled session no longer appears busy because of stale client-side timing.
+
 ## Workspace polish and stable empty panes
 
 The workspace shell, transcript, home pane, composer, and supporting panes now share a clearer and denser visual hierarchy. Empty activity, agent, file, review, and terminal panes keep their normal header and close control visible, so an empty result never traps the user in a pane without navigation.
@@ -66,6 +70,12 @@ The workspace shell, transcript, home pane, composer, and supporting panes now s
 When a bundled OMP upgrade temporarily fails to stop the existing macOS service, T4 Code now retries the stop-and-replace sequence. This avoids leaving the installed backend half-updated during normal desktop upgrades while preserving the existing signed-runtime checks.
 
 The bundled backend now also recovers from an inactive Unix socket when the crashed owner's process ID still appears alive. It confirms the endpoint is unreachable more than once and revalidates every ownership file before reclaiming it, while leaving a responsive backend untouched.
+
+## T4 now owns the host service
+
+T4 Code now packages its own standalone `t4-host` executable instead of running the network host inside OMP. The desktop replaces the old service definition directly and automatically repairs a stopped default service when the local connection falls back to reconnecting. The service label and local socket stay stable, so ordinary local clients and administrative commands keep using the same connection point.
+
+OMP remains the authority for session files, locks, agent execution, credentials, and takeover decisions. The smaller `omp bridge --stdio` command exposes only the versioned authority operations T4 needs. T4 validates the exact `t4-omp-authority/1` bridge before accepting an OMP installation and rejects older appserver-only runtimes.
 
 ## Native Browser workspace
 
@@ -79,9 +89,9 @@ Session-linked Host Browser Previews continue to open in their dedicated workspa
 
 ## Runtime provenance
 
-T4 Code v0.1.30 vendors app-wire 0.6.2 from integration commit [04229b1f](https://github.com/lyc-aon/oh-my-pi/commit/04229b1f46547ac7c0617e55a993496ec9725f46), source tree `8400a3af618e8af11cccf6b20aadcf3a22baf9a1`. The client contract remains `omp-app/1`.
+T4 Code v0.1.30 vendors app-wire 0.7.0 from integration commit [796bb7dc](https://github.com/lyc-aon/oh-my-pi/commit/796bb7dca45027bd4b7b94017cdf41ef214a11f2), source tree `0c195a01ba0bb98fbf4d4863aee59bf23a6e81b7`. The frozen package remains compatibility evidence; T4 owns the active `omp-app/1` wire schema.
 
-The verified OMP 17.0.5 runtime is built from commit [073506e5](https://github.com/lyc-aon/oh-my-pi/commit/073506e5ca278d08037beffd9ee78964f659ef12) and tagged [t4code-17.0.5-appserver-9](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-9). It integrates the T4-owned host packages and adds bounded newest-first transcript paging for fast mobile session opens. It preserves stale-owner recovery, privacy-safe local project reveal, lazy session indexing, cross-session attention and transcript search, and the negotiated browser-preview command surface. Unsupported optional capabilities remain hidden when the host does not advertise them.
+The verified OMP 17.0.5 runtime is built from commit [8476f445](https://github.com/lyc-aon/oh-my-pi/commit/8476f4451ed95c5d5401785d279a93d3c659fac4) and tagged [t4code-17.0.5-appserver-10](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-10). It provides the bounded authority bridge used by T4's standalone host and no longer exposes the old public appserver launchers. It preserves bounded newest-first transcript paging, stale-owner recovery, privacy-safe local project reveal, lazy session indexing, cross-session attention and transcript search, and the negotiated browser-preview command surface. Unsupported optional capabilities remain hidden when the host does not advertise them.
 
 The integration is based on the official upstream [v17.0.5 tag](https://github.com/can1357/oh-my-pi/tree/v17.0.5), commit [9fd6e971](https://github.com/can1357/oh-my-pi/commit/9fd6e97113f5ed3a847e66d346970efdf8afcad9). Official upstream OMP v17.0.5 has no `appserver` command and cannot host T4 Code.
 

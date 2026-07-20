@@ -4,8 +4,8 @@ This guide separates two useful development paths:
 
 - **UI and interaction work** can run against deterministic sample data. It does not need OMP.
 - **Live desktop and remote work** needs the verified OMP integration listed in
-  `compat/omp-app-matrix.json`. An ordinary upstream OMP release without the appserver cannot host
-  T4 Code.
+  `compat/omp-app-matrix.json`. An ordinary upstream OMP release without the authority bridge cannot
+  supply T4 Code's standalone host.
 
 ## 1. Prepare the source toolchain
 
@@ -16,6 +16,20 @@ node --version
 pnpm --version
 pnpm install --frozen-lockfile
 ```
+
+If you use [Task](https://taskfile.dev/) as a Make alternative, install it first (`brew install
+go-task` on macOS), then use the repository shortcuts:
+
+```sh
+task setup
+task doctor
+task dev:web
+task verify
+```
+
+Run `task` to see every available shortcut and a short explanation. These commands wrap the same
+`pnpm` scripts documented below; Task is optional and does not replace the pinned Node or pnpm
+versions.
 
 If Node reports a different major version, select a compatible Node 24 release with your normal
 version manager and reinstall dependencies. Do not ignore the engine warning: using another Node
@@ -39,8 +53,8 @@ It checks:
 | ----------------------------------- | ------------------------------------------- |
 | Supported platform and architecture | Packaged desktop parity                     |
 | Node and pnpm versions              | All source development                      |
-| Compatible OMP appserver contract   | Live desktop sessions                       |
-| Default appserver health            | Immediate local connection                  |
+| Compatible OMP authority bridge     | Live desktop sessions                       |
+| Default T4 host health              | Immediate local connection                  |
 | Native OMP profile discovery        | Multiple local profiles                     |
 | Tailscale status                    | Android, browser, and paired computers only |
 
@@ -54,7 +68,7 @@ For a machine-readable report that is safe to attach to a public bug report:
 node scripts/t4-doctor.mjs --json
 ```
 
-Still review any attachment yourself before publishing it. Do not attach appserver logs without
+Still review any attachment yourself before publishing it. Do not attach host logs without
 following the redaction rules in `CONTRIBUTING.md`.
 
 ## 3. Choose a development path
@@ -108,9 +122,9 @@ pnpm dev
 ```
 
 T4 Code discovers OMP through `OMP_EXECUTABLE`, `PATH`, and its bounded list of common install
-locations. The desktop can offer to start the compatible appserver. Do not point development at a
-personal production profile when testing destructive session lifecycle behavior; use a disposable
-OMP profile and session root.
+locations. The desktop builds and starts `t4-host`, which launches the compatible OMP authority
+bridge. Do not point development at a personal production profile when testing destructive session
+lifecycle behavior; use a disposable OMP profile and session root.
 
 ### Remote browser or Android work
 

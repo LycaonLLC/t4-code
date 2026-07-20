@@ -70,7 +70,6 @@ import {
   ISOLATED_BROWSER_PROFILE,
   liveBrowserSurfaces,
   MAX_BROWSER_ADDRESS_LENGTH,
-  MAX_BROWSER_DESIGN_PROMPT_LENGTH,
   MAX_BROWSER_EVAL_LENGTH,
   nativeBoundsFromRect,
   normalizeBrowserAddress,
@@ -249,8 +248,7 @@ export function BrowserWorkspace({
   const [automationOpen, setAutomationOpen] = useState(false);
   const [automationResult, setAutomationResult] = useState("Run an automation action to inspect its result.");
   const [expression, setExpression] = useState("document.title");
-  const [designPrompt, setDesignPrompt] = useState("");
-  const [designMode, setDesignMode] = useState(false);
+  const [designMode, setDesignMode] = useState<boolean | "checking" | "unavailable">("checking");
   const [focusMode, setFocusMode] = useState(false);
   const [devtoolsOpen, setDevtoolsOpen] = useState(false);
   const [zoomBySurface, setZoomBySurface] = useState<Readonly<Record<string, number>>>({});
@@ -389,6 +387,30 @@ export function BrowserWorkspace({
   useEffect(() => {
     setAddress(activeSurface?.url === "about:blank" ? "" : (activeSurface?.url ?? ""));
   }, [activeSurface?.surfaceId, activeSurface?.url]);
+
+  useEffect(() => {
+    setDesignMode("checking");
+    if (port === null || activeSurface === null) return;
+    const generation = lifecycleRef.current;
+    const surfaceId = activeSurface.surfaceId;
+    let disposed = false;
+    settleBrowserWorkspaceCall(
+      port.call(callBrowser("browser.design_mode.status", { surfaceId })),
+      () =>
+        !disposed &&
+        lifecycleRef.current === generation &&
+        modelRef.current.activeSurfaceId === surfaceId,
+      (result) => {
+        if (typeof result !== "object" || result === null) return;
+        const enabled = (result as { readonly enabled?: unknown }).enabled;
+        if (typeof enabled === "boolean") setDesignMode(enabled);
+      },
+      () => setDesignMode("unavailable"),
+    );
+    return () => {
+      disposed = true;
+    };
+  }, [activeSurface?.surfaceId, callBrowser, port]);
 
   useEffect(() => {
     if (port === null || activeSurface === null) return;
@@ -961,20 +983,27 @@ export function BrowserWorkspace({
                   <p className="text-muted-foreground text-xs">Edit page content in place.</p>
                 </div>
                 <button
-                  aria-checked={designMode}
+                  aria-checked={designMode === true}
                   className={cn(
                     "relative inline-flex h-6 w-11 shrink-0 rounded-full border outline-none transition-colors duration-(--motion-duration-fast) after:absolute after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 focus-visible:ring-2 focus-visible:ring-ring",
-                    designMode ? "border-primary bg-primary" : "border-input bg-secondary",
+                    designMode === true ? "border-primary bg-primary" : "border-input bg-secondary",
                   )}
-                  disabled={activeSurface === null || busyAction !== null}
+                  disabled={
+                    activeSurface === null ||
+                    busyAction !== null ||
+                    designMode === "checking" ||
+                    designMode === "unavailable"
+                  }
                   onClick={() => {
+                    if (typeof designMode !== "boolean") return;
                     const enabled = !designMode;
                     void runAutomation("Changing design mode", "browser.design_mode.set", {
                       enabled,
-                      prompt: designPrompt,
                     })
                       .then((result) => {
-                        if (result !== null) setDesignMode(enabled);
+                        if (typeof result !== "object" || result === null) return;
+                        const confirmed = (result as { readonly enabled?: unknown }).enabled;
+                        if (typeof confirmed === "boolean") setDesignMode(confirmed);
                       })
                       .catch(() => undefined);
                   }}
@@ -985,25 +1014,21 @@ export function BrowserWorkspace({
                     aria-hidden="true"
                     className={cn(
                       "mt-0.5 block size-4.5 rounded-full bg-primary-foreground shadow-xs transition-transform duration-(--motion-duration-fast)",
-                      designMode ? "translate-x-5.5" : "translate-x-0.5 bg-muted-foreground",
+                      designMode === true
+                        ? "translate-x-5.5"
+                        : "translate-x-0.5 bg-muted-foreground",
                     )}
                   />
                 </button>
               </div>
-              <label className="mt-3 block text-xs" htmlFor="browser-design-prompt">
-                Design brief
-              </label>
-              <textarea
-                className={cn(FIELD_CLASS, "mt-1 min-h-20 w-full resize-y py-2 text-xs")}
-                id="browser-design-prompt"
-                maxLength={MAX_BROWSER_DESIGN_PROMPT_LENGTH}
-                onChange={(event) => setDesignPrompt(event.target.value)}
-                placeholder="Describe the intended change"
-                value={designPrompt}
-              />
-              <p className="mt-1 text-right text-muted-foreground text-xs tabular-nums">
-                {designPrompt.length}/{MAX_BROWSER_DESIGN_PROMPT_LENGTH}
-              </p>
+              {designMode === "checking" && (
+                <p className="mt-2 text-muted-foreground text-xs">Checking this tab’s state…</p>
+              )}
+              {designMode === "unavailable" && (
+                <p className="mt-2 text-warning text-xs">
+                  Design Mode status is unavailable. Switch tabs or reload to retry.
+                </p>
+              )}
             </section>
 
             <section className="mt-4 border-border border-t pt-3">

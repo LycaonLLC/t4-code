@@ -15,7 +15,9 @@ import { discoverNativeOmpProfiles } from "./local-profiles.ts";
 import {
   createSafeServiceEnvironment,
   discoverOmpExecutable,
+  inspectPathOmpCompatibility,
   OmpAppserverCompatibilityError,
+  type PathOmpCompatibility,
   probeOmpAppserver,
 } from "./service.ts";
 
@@ -46,6 +48,7 @@ export interface DoctorRuntime {
   readonly sourceContract: () => Promise<SourceContract>;
   readonly pnpmVersion: () => Promise<string | null>;
   readonly discoverOmp: () => Promise<string | undefined>;
+  readonly inspectPathOmp: () => Promise<PathOmpCompatibility>;
   readonly probeOmp: (executable: string) => Promise<boolean>;
   readonly profileCount: () => Promise<number>;
   readonly inspectTailnet: () => Promise<TailnetInspection>;
@@ -193,6 +196,7 @@ export function createDoctorRuntime(): DoctorRuntime {
     sourceContract: () => readSourceContract(),
     pnpmVersion: installedPnpmVersion,
     discoverOmp: () => discoverOmpExecutable(),
+    inspectPathOmp: () => inspectPathOmpCompatibility(),
     probeOmp: (executable) => probeOmpAppserver(executable),
     profileCount: async () => (await discoverNativeOmpProfiles()).length,
     inspectTailnet,
@@ -294,14 +298,14 @@ export async function collectDoctorReport(
             "omp",
             "OMP runtime",
             "fail",
-            "No compatible OMP appserver runtime was found.",
+            "No compatible OMP authority bridge was found.",
             `Install the verified OMP ${contract.ompVersion} integration (${contract.ompTag}): ${contract.ompUrl}`,
           )
         : check(
             "omp",
             "OMP runtime",
             "pass",
-            `A compatible OMP ${contract.ompVersion} appserver runtime is available.`,
+            `A compatible OMP ${contract.ompVersion} authority bridge is available.`,
           ),
     );
   } catch (error) {
@@ -311,7 +315,7 @@ export async function collectDoctorReport(
             "omp",
             "OMP runtime",
             "fail",
-            "OMP is installed, but it does not provide the appserver status contract T4 Code requires.",
+            "OMP is installed, but it does not provide the versioned authority bridge T4 Code requires.",
             `Install the verified OMP ${contract.ompVersion} integration (${contract.ompTag}): ${contract.ompUrl}`,
           )
         : check(
@@ -324,22 +328,61 @@ export async function collectDoctorReport(
     );
   }
 
+  const pathOmp = await runtime.inspectPathOmp().catch(() => "unavailable" as const);
+  const pathOmpChecks: Record<PathOmpCompatibility, DoctorCheck> = {
+    compatible: check(
+      "terminal-omp",
+      "OMP commands",
+      "pass",
+      "Every omp command found on PATH provides the authority bridge T4 requires.",
+    ),
+    incompatible: check(
+      "terminal-omp",
+      "OMP commands",
+      "warning",
+      "The omp commands found on PATH are too old for T4 live ownership signals. T4 can still open saved history, but a running task may look idle or update in chunks.",
+      `Install the verified OMP integration (${contract.ompTag}) in every shell or app launch path: ${contract.ompUrl}`,
+    ),
+    missing: check(
+      "terminal-omp",
+      "OMP commands",
+      "warning",
+      "No omp command was found on PATH.",
+      `Install the verified OMP integration (${contract.ompTag}) before starting tasks from another shell or app: ${contract.ompUrl}`,
+    ),
+    mixed: check(
+      "terminal-omp",
+      "OMP commands",
+      "warning",
+      "Different omp commands are installed, and they do not all pass T4's authority-bridge check. A task can therefore look live in one app but idle or delayed in another.",
+      `Update or remove stale OMP copies so every shell and app uses the verified integration (${contract.ompTag}): ${contract.ompUrl}`,
+    ),
+    unavailable: check(
+      "terminal-omp",
+      "OMP commands",
+      "warning",
+      "The omp commands found on PATH could not be verified safely.",
+      `Check that every shell and app uses the verified OMP integration (${contract.ompTag}): ${contract.ompUrl}`,
+    ),
+  };
+  checks.push(pathOmpChecks[pathOmp]);
+
   if (executable !== undefined) {
     const running = await runtime.probeOmp(executable).catch(() => false);
     checks.push(
       running
         ? check(
             "appserver",
-            "OMP appserver",
+            "T4 host",
             "pass",
-            "The default OMP appserver is running and healthy.",
+            "The default T4 host is running and healthy.",
           )
         : check(
             "appserver",
-            "OMP appserver",
+            "T4 host",
             "warning",
-            "The compatible OMP runtime was found, but its default appserver is not running.",
-            "Open T4 Code and start the default local profile, or run the appserver using the matching OMP documentation.",
+            "The compatible OMP runtime was found, but the default T4 host is not running.",
+            "Open T4 Code and start the default local profile.",
           ),
     );
   }

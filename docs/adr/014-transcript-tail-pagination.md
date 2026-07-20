@@ -1,6 +1,6 @@
 # ADR 014: Paint the transcript tail before loading older history
 
-- Status: released through OMP integration tag `t4code-17.0.5-appserver-9`.
+- Status: introduced through OMP integration tag `t4code-17.0.5-appserver-9` and retained in the v0.1.30 pairing `t4code-17.0.5-appserver-10`.
 
 ## The problem
 

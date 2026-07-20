@@ -4,8 +4,15 @@
 // frames into a TranscriptProjection; rows derive from the projection; user
 // actions leave through typed SessionIntents. The shell's outer scroll
 // container stays inert — this surface owns its own virtualized scroller.
-import { useNavigate } from "@tanstack/react-router";
-import { Badge, cn, Tooltip, TooltipPopup, TooltipTrigger, useReducedMotion } from "@t4-code/ui";
+import {
+  Badge,
+  cn,
+  StatusPill,
+  Tooltip,
+  TooltipPopup,
+  TooltipTrigger,
+  useReducedMotion,
+} from "@t4-code/ui";
 import {
   useCallback,
   useEffect,
@@ -16,13 +23,14 @@ import {
   type RefObject,
 } from "react";
 
+import { useActionRegistry } from "../../actions/index.ts";
 import type { WorkspaceProject, WorkspaceSession } from "../../lib/workspace-data.ts";
-import { workspaceStore } from "../../state/store-instance.ts";
 import { useDesktopRuntimeSnapshot } from "../../platform/desktop-runtime.ts";
 import { resolveLiveSession } from "../../platform/live-workspace.ts";
 import { Composer } from "../composer/Composer.tsx";
 import { flattenFileIndex } from "../composer/file-refs.ts";
 import { getInspectorStore, type FileChildren } from "../panes/inspector-store.ts";
+import { useNowTick } from "../panes/hooks.ts";
 import {
   ApprovalPanel,
   AskPanel,
@@ -48,6 +56,7 @@ import {
   computeStableRows,
   deriveAttention,
   deriveTranscriptRows,
+  formatElapsed,
   initialStableRowsState,
   shouldShowAttention,
   type StableRowsState,
@@ -58,17 +67,14 @@ import { TranscriptTimeline } from "./TranscriptTimeline.tsx";
 import type { ToolRenderHost } from "./tool-render/types.ts";
 
 export interface SessionMainProps {
+  /** Route-owned identity, passed explicitly through the whole session surface. */
+  readonly sessionId: string;
   readonly session: WorkspaceSession;
   readonly project: WorkspaceProject;
   readonly nowMs: number;
   readonly onOpenHostHealth: () => void;
   /** Export hook: registered with the current rows so the header menu can serialize them. */
   readonly exportRowsRef: RefObject<(() => ExportContent) | null>;
-}
-
-/** Stable session-scoped destination; all transcript state stays in the workspace store. */
-export function sessionPreviewDestination(sessionId: string) {
-  return { params: { sessionId }, to: "/sessions/$sessionId/preview" as const };
 }
 
 const NO_FILE_CHILDREN: Readonly<Record<string, FileChildren>> = {};
@@ -95,6 +101,32 @@ export function FreshnessBadge({ session }: { readonly session: WorkspaceSession
     );
   }
   return null;
+}
+
+/** Plain lifecycle badge for sessions that have no richer live status pill. */
+export function SessionLifecycleBadge({ session }: { readonly session: WorkspaceSession }) {
+  if (session.freshness !== "live" || session.status !== null || session.control !== undefined)
+    return null;
+
+  const label =
+    session.lifecycle === "idle"
+      ? "Idle"
+      : session.lifecycle === "closed"
+        ? "Stopped"
+        : "Status unknown";
+  const detail =
+    label === "Status unknown"
+      ? "T4 has saved history for this task, but the runtime did not report whether it is running, idle, or stopped."
+      : label === "Stopped"
+        ? "The runtime reports that this task has stopped."
+        : "The runtime reports that this task is waiting and has no work in progress.";
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<Badge variant="outline">{label}</Badge>} />
+      <TooltipPopup side="bottom">{detail}</TooltipPopup>
+    </Tooltip>
+  );
 }
 
 /** Subheader ownership badge; mirrors FreshnessBadge, which wins when set. */
@@ -148,6 +180,56 @@ function activityLabel(activity: SessionActivity): string {
   if (activity === "compacting") return "Compacting context";
   if (activity === "working") return "Working";
   return "";
+}
+
+/**
+ * A quiet, continuously moving confirmation that this task is genuinely
+ * running here. The separate announcer below owns screen-reader updates so
+ * this visual timer can tick without speaking every second.
+ */
+export function SessionActivityBanner({
+  activity,
+  nowMs,
+  startedAt,
+}: {
+  readonly activity: SessionActivity;
+  readonly nowMs: number;
+  readonly startedAt: string | null;
+}) {
+  if (activity === null) return null;
+
+  return (
+    <div
+      aria-hidden="true"
+      className="flex min-h-9 shrink-0 items-center justify-center gap-2 border-border/60 border-b bg-secondary/60 px-3 text-muted-foreground text-xs"
+      data-session-activity-banner={activity}
+    >
+      <StatusPill labelHidden status="working" />
+      <span className="font-medium text-foreground">{activityLabel(activity)}</span>
+      {startedAt !== null && (
+        <>
+          <span className="text-border" aria-hidden="true">
+            ·
+          </span>
+          <SessionActivityElapsed fromIso={startedAt} nowMs={nowMs} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function SessionActivityElapsed({
+  fromIso,
+  nowMs,
+}: {
+  readonly fromIso: string;
+  readonly nowMs: number;
+}) {
+  const tickMs = useNowTick();
+  const baselineRef = useRef({ nowMs, tickMs });
+  if (baselineRef.current.nowMs !== nowMs) baselineRef.current = { nowMs, tickMs };
+  const elapsedNowMs = baselineRef.current.nowMs + tickMs - baselineRef.current.tickMs;
+  return <span className="font-mono tabular-nums">{formatElapsed(fromIso, elapsedNowMs)}</span>;
 }
 
 /**
@@ -365,15 +447,20 @@ export function SessionControlBanner({
   );
 }
 
-export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: SessionMainProps) {
+export function SessionMain({
+  onOpenHostHealth,
+  session,
+  sessionId,
+  exportRowsRef,
+}: SessionMainProps) {
   const archived = session.archivedAt !== undefined;
-  const navigate = useNavigate();
-  const { snapshot, runtime } = useSessionRuntime(session.id, session.freshness);
+  const actionRegistry = useActionRegistry();
+  const { snapshot, runtime } = useSessionRuntime(sessionId, session.freshness);
   const projection = snapshot.projection;
   const desktopSnapshot = useDesktopRuntimeSnapshot();
   // The composer "@" picker rides the session's lazy file index; no
   // inspector store (fixture hosts without a factory) means no entries.
-  const inspectorApi = getInspectorStore(session.id);
+  const inspectorApi = getInspectorStore(sessionId);
   const fileChildren = useSyncExternalStore(
     useCallback(
       (onStoreChange: () => void) => inspectorApi?.subscribe(onStoreChange) ?? (() => {}),
@@ -386,12 +473,12 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
   );
   const fileEntries = useMemo(() => flattenFileIndex(fileChildren), [fileChildren]);
   const ensureFileDir = useCallback(
-    (dir: string) => getInspectorStore(session.id)?.getState().requestDir(dir),
-    [session.id],
+    (dir: string) => getInspectorStore(sessionId)?.getState().requestDir(dir),
+    [sessionId],
   );
   const liveAddress = useMemo(
-    () => (desktopSnapshot === null ? null : resolveLiveSession(desktopSnapshot, session.id)),
-    [desktopSnapshot, session.id],
+    () => (desktopSnapshot === null ? null : resolveLiveSession(desktopSnapshot, sessionId)),
+    [desktopSnapshot, sessionId],
   );
   const previews =
     desktopSnapshot === null || liveAddress === null
@@ -407,34 +494,23 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
   const toolHost = useMemo<ToolRenderHost>(
     () => ({
       hasAgent: (agentId) =>
-        getInspectorStore(session.id)?.getState().agentMap.agents[agentId] !== undefined,
+        getInspectorStore(sessionId)?.getState().agentMap.agents[agentId] !== undefined,
       openAgent: (agentId) => {
-        const inspector = getInspectorStore(session.id);
-        if (inspector?.getState().agentMap.agents[agentId] === undefined) return;
-        inspector.getState().selectAgent(agentId);
-        const workspace = workspaceStore.getState();
-        const view = workspace.sessionViewById[session.id];
-        if (view?.paneFamily !== "agents") workspace.togglePaneFamily(session.id, "agents");
-        workspace.setPaneOpen(session.id, true);
+        actionRegistry.execute({ id: "agent.open", args: { sessionId, agentId } });
       },
       openTurnReview: (turnId) => {
-        const inspector = getInspectorStore(session.id);
-        inspector?.getState().loadTurnReview(turnId);
-        const workspace = workspaceStore.getState();
-        const view = workspace.sessionViewById[session.id];
-        if (view?.paneFamily !== "review") workspace.togglePaneFamily(session.id, "review");
-        workspace.setPaneOpen(session.id, true);
+        actionRegistry.execute({ id: "review.open", args: { sessionId, turnId } });
       },
       openPreview: () => {
-        void navigate(sessionPreviewDestination(session.id));
+        actionRegistry.execute({ id: "preview.open", args: { sessionId } });
       },
     }),
-    [navigate, session.id],
+    [actionRegistry, sessionId],
   );
 
   // Leaving this session surface (switch or unmount) ends any read-aloud
   // playback: speech only ever belongs to a response the user can see.
-  useEffect(() => () => getReadAloudController().stop(), [session.id]);
+  useEffect(() => () => getReadAloudController().stop(), [sessionId]);
 
   const rawRows = useMemo(
     () =>
@@ -498,7 +574,11 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
     projection.entries,
   );
   const sessionActivity: SessionActivity =
-    snapshot.link === "live" && !catchingUp && snapshot.sessionActive
+    !archived &&
+    sessionControl === null &&
+    snapshot.link === "live" &&
+    !catchingUp &&
+    snapshot.sessionActive
       ? projection.contextMaintenance === null
         ? "working"
         : "compacting"
@@ -518,10 +598,10 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      <SessionActivityAnnouncer activity={sessionActivity} key={session.id} />
+      <SessionActivityAnnouncer activity={sessionActivity} key={sessionId} />
       <SessionControlAnnouncer
         control={sessionControl}
-        key={`${session.id}:control`}
+        key={`${sessionId}:control`}
         link={snapshot.link}
         writable={!archived && snapshot.canPrompt}
       />
@@ -534,6 +614,11 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
           Catching up — refreshing this transcript from a snapshot
         </div>
       )}
+      <SessionActivityBanner
+        activity={sessionActivity}
+        nowMs={snapshot.nowMs}
+        startedAt={projection.turnStartedAt}
+      />
       {controlPresentation !== null && sessionControl !== null && (
         <SessionControlBanner
           mode={sessionControl.mode}
@@ -582,11 +667,11 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
             bottomInset={archived ? 16 : dockHeight + 16}
             history={snapshot.transcriptHistory}
             imageSource={runtime.transcriptImages}
-            key={session.id}
+            key={sessionId}
             nowMs={snapshot.nowMs}
             onLoadEarlier={runtime.loadEarlierTranscript}
             rows={rows}
-            sessionId={session.id}
+            sessionId={sessionId}
             streaming={snapshot.sessionActive}
             toolHost={toolHost}
           />
@@ -633,7 +718,7 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
               queuedFollowUps={snapshot.queuedFollowUps}
               readOnlyReason={controlPresentation?.composerReason ?? null}
               revisingPlanId={revisingPlanId}
-              sessionId={session.id}
+              sessionId={sessionId}
               slashCommands={snapshot.slashCommands}
               submitPrompt={submitPrompt}
               turnActive={snapshot.sessionActive}

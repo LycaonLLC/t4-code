@@ -32,6 +32,7 @@ const config = {
   ],
   extraResources: [
     { from: "apps/web/dist", to: "web" },
+    { from: "packages/host-daemon/dist/t4-host", to: "runtime/t4-host" },
     { from: "LICENSE", to: "LICENSE" },
   ],
   protocols: [{ name: "T4 Code", schemes: ["t4-code"] }],

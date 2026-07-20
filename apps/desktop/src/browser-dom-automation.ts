@@ -1,5 +1,4 @@
 const MAX_STRING_BYTES = 32 * 1024;
-const MAX_PROMPT_BYTES = 4_000;
 const MAX_ELEMENTS = 512;
 const MAX_SNAPSHOT_ELEMENTS = 256;
 const MAX_DEPTH = 12;
@@ -36,9 +35,8 @@ const refs = new Map<string, RefEntry>();
 const elements = new WeakMap<Element, string>();
 let nextRef = 1;
 let activeDocument: Document | null = null;
-let designMode = false;
-let designPrompt = "";
-let designOverlay: HTMLElement | null = null;
+let designModeOriginals = new WeakMap<Document, string>();
+const designModeDocuments = new Set<Document>();
 let savedState: JsonValue | null = null;
 const dialogQueue: Array<{ type: "alert" | "confirm" | "prompt"; message: string; defaultValue?: string }> = [];
 let dialogInstalled = false;
@@ -272,22 +270,36 @@ function installDialogs(): void {
   window.prompt = (message?: unknown, defaultValue?: string) => { dialogQueue.push({ type: "prompt", message: bound(String(message ?? "")), defaultValue: bound(defaultValue ?? "") }); return null; };
   void original;
 }
-function designModeStatus(): JsonValue { return { enabled: designMode, prompt: bound(designPrompt, MAX_PROMPT_BYTES), selection: bound(window.getSelection()?.toString() ?? "", 4_000) }; }
+function designModeStatus(): JsonValue { return { enabled: designModeDocuments.size > 0, selection: bound(window.getSelection()?.toString() ?? "", 4_000) }; }
 function setDesignMode(params: Record<string, unknown>): JsonValue {
-  designMode = params.enabled === true;
-  designPrompt = typeof params.prompt === "string" ? bound(params.prompt, MAX_PROMPT_BYTES) : "";
-  documentRoot().designMode = designMode ? "on" : "off";
-  documentRoot().body?.setAttribute("contenteditable", designMode ? "true" : "false");
-  if (designMode && !designOverlay) { designOverlay = documentRoot().createElement("div"); designOverlay.setAttribute("data-t4-design-overlay", "true"); designOverlay.textContent = designPrompt; Object.assign(designOverlay.style, { position: "fixed", top: "4px", right: "4px", zIndex: "2147483647", maxWidth: "300px", padding: "4px", background: "#222", color: "#fff", font: "12px sans-serif", pointerEvents: "none" }); documentRoot().body?.append(designOverlay); }
-  if (!designMode && designOverlay) { designOverlay.remove(); designOverlay = null; }
+  const root = documentRoot();
+  const enabled = params.enabled === true;
+  if (enabled) {
+    if (!designModeOriginals.has(root)) {
+      designModeOriginals.set(root, root.designMode);
+      designModeDocuments.add(root);
+    }
+    root.designMode = "on";
+  } else {
+    for (const document of designModeDocuments) {
+      const original = designModeOriginals.get(document);
+      if (original !== undefined) document.designMode = original;
+    }
+    designModeDocuments.clear();
+    designModeOriginals = new WeakMap<Document, string>();
+  }
   return designModeStatus();
 }
 function storage(area: "local" | "session"): Storage { try { return area === "local" ? window.localStorage : window.sessionStorage; } catch { throw new BrowserDomAutomationError("security", "Storage is unavailable"); } }
 
 export function resetBrowserDomAutomation(): void {
+  for (const root of designModeDocuments) {
+    const original = designModeOriginals.get(root);
+    if (original !== undefined) root.designMode = original;
+  }
+  designModeDocuments.clear();
   refs.clear(); nextRef = 1; activeDocument = null;
-  if (designOverlay) { designOverlay.remove(); designOverlay = null; }
-  designMode = false; designPrompt = ""; savedState = null; dialogQueue.length = 0;
+  designModeOriginals = new WeakMap<Document, string>(); savedState = null; dialogQueue.length = 0;
 }
 
 export async function executeBrowserDomAutomation(method: string, rawParams: Record<string, unknown>): Promise<unknown> {
