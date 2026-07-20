@@ -527,6 +527,13 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("flutter:"));
   assert.ok(ciWorkflow.includes("flutter-android:"));
   assert.ok(ciWorkflow.includes("flutter-apple:"));
+  assert.ok(ciWorkflow.includes("Run Flutter iOS launch smoke test"));
+  assert.ok(
+    ciWorkflow.includes(
+      'xcrun simctl install "$DEVICE_ID" build/ios/iphonesimulator/Runner.app',
+    ),
+  );
+  assert.ok(ciWorkflow.includes('kill -0 "$app_pid"'));
   assert.ok(ciWorkflow.includes("Build standalone T4 host for Flutter macOS"));
   assert.ok(ciWorkflow.includes("Verify bundled Flutter macOS host"));
   assert.ok(

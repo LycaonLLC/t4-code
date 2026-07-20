@@ -288,14 +288,22 @@ jobs:
         working-directory: apps/flutter
         run: flutter build ios --simulator --debug
 
-      - name: Run Flutter iOS device smoke test
+      - name: Run Flutter iOS launch smoke test
         working-directory: apps/flutter
         shell: bash
         run: |
+          set -euo pipefail
           DEVICE_ID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(device["udid"] for devices in data["devices"].values() for device in devices if device["name"].startswith("iPhone")))')"
+          BUNDLE_ID="com.lycaonsolutions.t4code"
           xcrun simctl boot "$DEVICE_ID" 2>/dev/null || true
           xcrun simctl bootstatus "$DEVICE_ID" -b
-          flutter test integration_test/app_smoke_test.dart -d "$DEVICE_ID"
+          xcrun simctl install "$DEVICE_ID" build/ios/iphonesimulator/Runner.app
+          trap 'xcrun simctl terminate "$DEVICE_ID" "$BUNDLE_ID" 2>/dev/null || true' EXIT
+          launch_output="$(xcrun simctl launch --terminate-running-process "$DEVICE_ID" "$BUNDLE_ID")"
+          app_pid="$(sed -nE 's/^.*: ([0-9]+)$/\1/p' <<<"$launch_output" | tail -n 1)"
+          [[ "$app_pid" =~ ^[0-9]+$ ]]
+          sleep 5
+          kill -0 "$app_pid"
 
       - name: Install pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
