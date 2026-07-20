@@ -65,7 +65,7 @@ OMP authority: `packages/coding-agent/src/session/agent-session.ts`, `session-ma
 |---|---|---|---|
 | Multiline prompt and draft | session prompt API | Per-session/host draft preservation, undo, paste, IME, large input | `ChatComposer.tsx`, `ComposerPromptEditor.tsx`, draft store |
 | Slash commands | `slash-commands/builtin-registry.ts` | Schema-fed autocomplete, aliases, argument hints, subcommands, disabled reason by mode/guest authority | T3 slash search/menu logic |
-| File/path references | read/workspace/LSP context | Fuzzy file picker, chips, drag/drop, remote paths, remove/reorder | T3 inline chips and file context |
+| File/path references | read/workspace/LSP context | Fuzzy loaded-file picker and draft-visible chips; a selected text preview can be deliberately captured as bounded, redacted, removable context for the next new prompt | T3 inline chips and file context |
 | Images/attachments | session image attachments, inspect/image tools | Paste/drop/file picker, thumbnails, size/type errors, upload/promotion state | T3 attachment preview/promotion logic |
 | Voice/STT/TTS | `stt/stt-controller.ts`, setup CLI, TTS tool | Optional record/transcribe/read-aloud with explicit install/error state | T3 composer controls; T4 host capability |
 | Model selector | model registry and `/model`/`/switch` | Provider/model search, active role, unavailable/limit state, per-session switch | T3 model picker/provider state |
@@ -131,7 +131,7 @@ Subagent event authority includes `TASK_SUBAGENT_LIFECYCLE_CHANNEL`, `TASK_SUBAG
 
 | Surface | T3 implementation reference | OMP data/control | Required states |
 |---|---|---|---|
-| Right-panel families | `rightPanelStore.ts`, `RightPanelTabs.tsx`, `RightPanelSheet.tsx` | protocol surface registry | Five persistent families: Agents, Activity, Review, Files, Terminal; open/close/reorder/select/restore per session; context is a composer popover/dialog and raw events are Activity filters |
+| Right-panel families | `rightPanelStore.ts`, `RightPanelTabs.tsx`, `RightPanelSheet.tsx` | T4 session-surface registry above the OMP protocol | Five exact families: Agents, Activity, Review, Files, Terminal; transcript plus zero or one right surface; user terminal drawer below; selection/open/width restored per session; context stays in the composer and raw events stay under Activity |
 | Diff/review | `ReviewPane`, `turn-review.ts`, unified/split diff renderers | Implemented app-wire 0.7 turn snapshots plus turn-scoped `files.diff` / `review.apply` | Per-turn file attribution, lazy patch loading, independent keep/discard decisions, comments, and binary/missing/huge states |
 | File preview/editor | `files/FilePreviewPanel.tsx`, file save coordinator | read/write/LSP | loading, dirty, save conflict, diagnostics, binary/image, offline read-only |
 | Terminal drawer | `ThreadTerminalDrawer.tsx`, server terminal manager/node-pty | T4 host terminal routed through the OMP authority bridge | tabs/splits/resizing/history/input/exit/restart/reconnect/backpressure |

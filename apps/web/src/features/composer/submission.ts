@@ -17,6 +17,8 @@ export interface SubmittedPrompt {
   readonly text: string;
   /** Attachment ids sent with the prompt; removed only on acceptance. */
   readonly attachmentIds: readonly string[];
+  /** Reviewed context ids compiled into this send; removed only on acceptance. */
+  readonly contextItemIds?: readonly string[];
 }
 
 /** Inline status under the composer; null when the last send settled clean. */
@@ -28,6 +30,7 @@ export type SubmissionNotice = {
 export interface SubmissionSettlement {
   readonly clearDraft: boolean;
   readonly removeAttachmentIds: readonly string[];
+  readonly removeContextItemIds: readonly string[];
   readonly notice: SubmissionNotice;
 }
 
@@ -46,12 +49,14 @@ export function settleSubmission(
     return {
       clearDraft: currentDraft === submitted.text,
       removeAttachmentIds: submitted.attachmentIds,
+      removeContextItemIds: submitted.contextItemIds ?? [],
       notice: null,
     };
   }
   return {
     clearDraft: false,
     removeAttachmentIds: [],
+    removeContextItemIds: [],
     notice: { kind: outcome.kind, message: outcome.reason },
   };
 }
@@ -61,6 +66,7 @@ export interface SubmissionIo {
   readonly getDraft: () => string;
   readonly clearDraft: () => void;
   readonly removeAttachments: (ids: readonly string[]) => void;
+  readonly removeContextItems?: (ids: readonly string[]) => void;
   readonly setNotice: (notice: SubmissionNotice) => void;
 }
 
@@ -129,7 +135,8 @@ export function createSubmissionGate(
         // "unknown": nothing may be cleared and nothing replays.
         outcome = {
           kind: "unknown",
-          reason: "The connection dropped before the host answered. Check the transcript before sending again.",
+          reason:
+            "The connection dropped before the host answered. Check the transcript before sending again.",
         };
       }
       try {
@@ -140,6 +147,9 @@ export function createSubmissionGate(
         if (settlement.clearDraft) io.clearDraft();
         if (settlement.removeAttachmentIds.length > 0) {
           io.removeAttachments(settlement.removeAttachmentIds);
+        }
+        if (settlement.removeContextItemIds.length > 0) {
+          io.removeContextItems?.(settlement.removeContextItemIds);
         }
         io.setNotice(settlement.notice);
         return outcome;

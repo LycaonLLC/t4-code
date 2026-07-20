@@ -14,7 +14,7 @@ test("ADR file and title numbers are unique and agree", () => {
     .map(({ file, match }) => {
       const firstLine = readFileSync(join(adrDirectory, file), "utf8").split(/\r?\n/u, 1)[0];
       const title = titlePattern.exec(firstLine);
-      assert.ok(title, `${file} must start with \"# ADR-NNN:\" or \"# ADR NNN:\"`);
+      assert.ok(title, `${file} must start with "# ADR-NNN:" or "# ADR NNN:"`);
       assert.equal(title[1], match[1], `${file} title must use ADR ${match[1]}`);
       return { file, number: match[1] };
     });
