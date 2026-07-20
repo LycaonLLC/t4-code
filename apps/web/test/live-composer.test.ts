@@ -2365,6 +2365,106 @@ describe("session lifecycle", () => {
     expect(shell.commandCount("session.attach")).toBe(1);
   });
 
+  it("paints a bounded cold tail before starting the full live attach", async () => {
+    const shell = new FakeShell();
+    shell.commandResult = (request) =>
+      request.intent.command === "transcript.page"
+        ? {
+            entries: [entry("tail-1", "Newest saved answer")],
+            nextCursor: "older-1",
+            hasMore: true,
+            generation: "generation-1",
+          }
+        : undefined;
+    const controller = createDesktopRuntimeController({ shell });
+    await controller.start();
+    shell.emitFrame({
+      targetId: "local",
+      frame: makeWelcome(HOST, ["sessions.read"], ["transcript.page"]),
+    });
+    shell.emitFrame({ targetId: "local", frame: pendingPromptsSessionsFrame([], 0, "idle") });
+
+    const runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    await settle();
+
+    expect(
+      shell.commands
+        .map((request) => request.intent.command)
+        .filter((command) => command === "transcript.page" || command === "session.attach"),
+    ).toEqual(["transcript.page", "session.attach"]);
+    expect(runtime.getSnapshot().projection.entries.map((value) => value.id)).toEqual(["tail-1"]);
+    expect(runtime.getSnapshot().transcriptHistory).toMatchObject({
+      phase: "ready",
+      hasMore: true,
+    });
+
+    runtime.dispose();
+    await controller.stop();
+  });
+
+  it("prepends overlapping history without changing the live cursor", async () => {
+    const shell = new FakeShell();
+    shell.commandResult = (request) => {
+      if (request.intent.command !== "transcript.page") return undefined;
+      return request.intent.args.before === "older-1"
+        ? {
+            entries: [entry("history-1", "Earlier"), entry("tail-1", "Overlap")],
+            hasMore: false,
+            generation: "generation-1",
+          }
+        : {
+            entries: [entry("tail-1", "Tail"), entry("tail-2", "Tail two")],
+            nextCursor: "older-1",
+            hasMore: true,
+            generation: "generation-1",
+          };
+    };
+    const controller = createDesktopRuntimeController({ shell });
+    await controller.start();
+    shell.emitFrame({
+      targetId: "local",
+      frame: makeWelcome(HOST, ["sessions.read"], ["transcript.page"]),
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: snapshotFrame(5, [
+        entry("tail-1", "Tail"),
+        entry("tail-2", "Tail two"),
+        entry("live-1", "Live"),
+      ]),
+    });
+    shell.emitFrame({ targetId: "local", frame: pendingPromptsSessionsFrame([], 0, "idle") });
+    const runtime = createLiveSessionRuntime({
+      controller,
+      targetId: "local",
+      hostId: HOST,
+      sessionId: SESSION,
+    });
+    await settle();
+
+    await runtime.loadEarlierTranscript?.();
+
+    expect(runtime.getSnapshot().projection.entries.map((value) => value.id)).toEqual([
+      "history-1",
+      "tail-1",
+      "tail-2",
+      "live-1",
+    ]);
+    expect(runtime.getSnapshot().projection.cursor).toEqual({ epoch: "epoch-1", seq: 5 });
+    expect(runtime.getSnapshot().transcriptHistory).toMatchObject({
+      phase: "ready",
+      hasMore: false,
+    });
+
+    runtime.dispose();
+    await controller.stop();
+  });
+
   it("rebuilds retained ask, approval, and plan state across runtime recreation", async () => {
     const { shell, controller, runtime } = await startedRuntime();
     shell.emitFrame({

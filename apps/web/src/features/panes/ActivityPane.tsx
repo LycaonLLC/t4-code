@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { memo, useMemo, useRef, useState, type ComponentType } from "react";
+import type * as React from "react";
 
 import { useMediaQuery } from "../../hooks/useMediaQuery.ts";
 import { exportActivity, redactPayload, selectVisibleActivity } from "./activity-log.ts";
@@ -183,7 +184,7 @@ function ActivityInspector({
   );
 }
 
-export function ActivityPane({ api }: { readonly api: InspectorStoreApi }) {
+export function ActivityPane({ api, trailing }: { readonly api: InspectorStoreApi; readonly trailing?: React.ReactNode | undefined }) {
   const entries = useInspector(api, (state) => state.activity);
   const filter = useInspector(api, (state) => state.activityFilter);
   const query = useInspector(api, (state) => state.activityQuery);
@@ -205,7 +206,14 @@ export function ActivityPane({ api }: { readonly api: InspectorStoreApi }) {
   const expandedEntry =
     expandedSeq === null ? undefined : entries.find((entry) => entry.seq === expandedSeq);
 
-  if (entries.length === 0) return <FamilyEmpty family="activity" />;
+  if (entries.length === 0) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <PaneHeading family="activity" summary="0 recorded" trailing={trailing} />
+        <FamilyEmpty className="min-h-0 flex-1" family="activity" />
+      </div>
+    );
+  }
 
   const exportText = () => exportActivity(visible);
   const copyAll = () => {
@@ -229,6 +237,7 @@ export function ActivityPane({ api }: { readonly api: InspectorStoreApi }) {
       <PaneHeading
         family="activity"
         summary={`${entries.length} recorded${pausedAtSeq !== null ? " · paused" : ""}`}
+        trailing={trailing}
       />
       <div className="flex shrink-0 flex-wrap items-center gap-1 border-border border-b px-2 py-1.5">
         <div

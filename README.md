@@ -4,15 +4,15 @@ T4 Code is a free, open-source (MIT) desktop app for [Oh My Pi](https://github.c
 
 ![T4 Code main window](docs/assets/t4-code-main.png)
 
-[**Download v0.1.24**](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.24) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
+[**Download v0.1.30**](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.30) · [**Docs**](https://t4code.net/docs) · [**Get the source**](#build-from-source)
 
 ## Requirements
 
-T4 Code needs an OMP build with desktop appserver support. For v0.1.24, use the public integration build below.
+T4 Code needs an OMP build with desktop appserver support. For v0.1.30, use the public integration build below.
 
-T4 Code v0.1.24 was verified with OMP 17.0.5 built from [`3393ae0f`](https://github.com/lyc-aon/oh-my-pi/commit/3393ae0f7fc5b2ea9919d8bdb3a2d5719b1cbc2f), tagged [`t4code-17.0.5-appserver-3`](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-3). That public integration is based on the official upstream [`v17.0.5`](https://github.com/can1357/oh-my-pi/tree/v17.0.5) tag at [`9fd6e971`](https://github.com/can1357/oh-my-pi/commit/9fd6e97113f5ed3a847e66d346970efdf8afcad9). It adds faster appserver startup, cross-session attention and transcript search, redacted Codex transport diagnostics, the versioned Agent View lifecycle contract, session-owned cancellation, macOS system-temp aliases, workspace-native build artifacts, retry-safe release metadata, lock-aware session observation, complete transcript reconciliation, missing-lock-only promotion, the cooperative `/continue-in-t4` handoff, and deterministic session ordering. Fork CI verifies the exact upstream base, ancestry, release gates, and published binaries. The official upstream v17.0.5 tag has no `appserver` command, so it cannot host T4 Code. The verified runtime is a normal build from the public `lyc-aon/oh-my-pi` source. T4 Code vendors `@oh-my-pi/app-wire` 0.6.1 from integration commit [`e3e15c03`](https://github.com/lyc-aon/oh-my-pi/commit/e3e15c03ae95ebbda5f26495cd21213cc53518b1), source tree `e0f32b279eb4b8cbc403e47d765a226bee99c99f`.
+T4 Code v0.1.30 was verified with OMP 17.0.5 built from [`09835b92`](https://github.com/lyc-aon/oh-my-pi/commit/09835b929cd028e7e3f800b3e4203e3d1f37931c), tagged [`t4code-17.0.5-appserver-8`](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-8). That public integration is based on the official upstream [`v17.0.5`](https://github.com/can1357/oh-my-pi/tree/v17.0.5) tag at [`9fd6e971`](https://github.com/can1357/oh-my-pi/commit/9fd6e97113f5ed3a847e66d346970efdf8afcad9). It recovers safely from a crashed backend whose old process ID still appears alive, while preserving a responsive owner. It also includes privacy-safe project reveal, fast lazy session indexing, cross-session attention and transcript search, the negotiated browser-preview command surface, redacted Codex transport diagnostics, the versioned Agent View lifecycle contract, session-owned cancellation, lock-aware session observation, complete transcript reconciliation, the cooperative `/continue-in-t4` handoff, and deterministic session ordering. Fork CI verifies the exact upstream base, ancestry, release gates, and published binaries. The official upstream v17.0.5 tag has no `appserver` command, so it cannot host T4 Code. The verified runtime is a normal build from the public `lyc-aon/oh-my-pi` source. T4 Code vendors `@oh-my-pi/app-wire` 0.6.2 from integration commit [`04229b1f`](https://github.com/lyc-aon/oh-my-pi/commit/04229b1f46547ac7c0617e55a993496ec9725f46), source tree `8400a3af618e8af11cccf6b20aadcf3a22baf9a1`.
 
-The current source tree advances the vendored contract to `@oh-my-pi/app-wire` 0.6.1 from integration commit [`e3e15c03`](https://github.com/lyc-aon/oh-my-pi/commit/e3e15c03ae95ebbda5f26495cd21213cc53518b1), source tree `e0f32b279eb4b8cbc403e47d765a226bee99c99f`. This adds the bounded cross-session transcript search and historical context contract.
+The development tree now owns the protocol source and generic host service in `@t4-code/host-wire` and `@t4-code/host-service`. The frozen `@oh-my-pi/app-wire` 0.7.0 tarball remains only as a compatibility snapshot for the current OMP bridge. OMP still owns session files, locks, agent execution, and takeover decisions. The verified runtime continues to carry the legacy embedded host copy until a thin bridge release replaces it, so ordinary upstream OMP is not yet compatible.
 
 | Platform | Arch                  | Package                                   |
 | -------- | --------------------- | ----------------------------------------- |
@@ -20,15 +20,16 @@ The current source tree advances the vendored contract to `@oh-my-pi/app-wire` 0
 | Linux    | x86_64                | `.deb`, AppImage                          |
 | macOS    | Apple Silicon (arm64) | `.dmg`, `.zip` (**signed and notarized**) |
 
-No Windows build and no Intel Mac build in v0.1.24. The iOS TestFlight build is coming soon.
+No Windows build and no Intel Mac build in v0.1.30. The iOS TestFlight build is coming soon.
 
-## What changed in v0.1.24
+## What changed in v0.1.30
 
-- macOS downloads are now signed with the project's pinned Developer ID identity, notarized by Apple, stapled, and checked by Gatekeeper before publication.
-- The new attention inbox gathers sessions that need a decision, confirmation, or reply, while keeping the host's state authoritative.
-- Session transport health now explains reconnecting, delayed, and degraded connections instead of reducing them to a generic disconnected state.
-- Browser preview opens session-linked pages in a permission-gated workspace with bounded captures, coordinate-mapped input, and lease-based concurrency control.
-- Bounded transcript and attention projections do less repeated work, improving responsiveness without weakening ordering or safety checks.
+- The session rail now matches the Codex desktop organization model: search, activity filters, sort controls, collapsible projects, flat and grouped views, and persistent preferences.
+- Project menus can create sessions, open folders in the system file manager, collapse a group, or hide it from the rail. Hidden projects remain recoverable through the filter menu.
+- The whole workspace received a visual polish pass, with denser information hierarchy, clearer transcript rows, and empty panes that keep their header and close control visible.
+- macOS upgrades retry temporary service-stop failures instead of leaving the bundled backend half-updated.
+- A crashed backend can no longer trap launchd in a restart loop when its stale process ID still appears alive.
+- OMP app-wire 0.6.2 adds the narrow host command used to reveal only a project path already known to the session catalog.
 
 ![An OMP TUI session followed in T4 Code: the transcript fills in read-only under an "Active in another app" banner, /continue-in-t4 runs in the terminal, T4 takes over, and the composer accepts input again.](docs/assets/t4-code-tui-handoff.gif)
 
@@ -46,7 +47,7 @@ No Windows build and no Intel Mac build in v0.1.24. The iOS TestFlight build is 
 ### Android
 
 1. On the Android phone, sign in to Tailscale with an account that can reach the T4 Code host.
-2. Download [`T4-Code-0.1.24-android.apk`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.24/T4-Code-0.1.24-android.apk).
+2. Download [`T4-Code-0.1.30-android.apk`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.30/T4-Code-0.1.30-android.apk).
 3. If Android asks, allow your browser or file manager to install unknown apps, then install the APK.
 4. Open T4 Code and enter the host's HTTPS Tailscale address, including its port. The app saves the address; you can add more hosts later and switch between them.
 
@@ -55,8 +56,8 @@ The APK does not contain an appserver or expose one to the public internet. It c
 ### Linux (Debian/Ubuntu)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.24/T4-Code-0.1.24-linux-amd64.deb
-sudo apt install ./T4-Code-0.1.24-linux-amd64.deb
+wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.30/T4-Code-0.1.30-linux-amd64.deb
+sudo apt install ./T4-Code-0.1.30-linux-amd64.deb
 ```
 
 Use `apt install` rather than `dpkg -i` so system dependencies resolve automatically.
@@ -64,14 +65,14 @@ Use `apt install` rather than `dpkg -i` so system dependencies resolve automatic
 ### Linux (AppImage)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.24/T4-Code-0.1.24-linux-x86_64.AppImage
-chmod +x T4-Code-0.1.24-linux-x86_64.AppImage
-./T4-Code-0.1.24-linux-x86_64.AppImage
+wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.30/T4-Code-0.1.30-linux-x86_64.AppImage
+chmod +x T4-Code-0.1.30-linux-x86_64.AppImage
+./T4-Code-0.1.30-linux-x86_64.AppImage
 ```
 
 ### macOS (Apple Silicon)
 
-1. Download [`T4-Code-0.1.24-mac-arm64.dmg`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.24/T4-Code-0.1.24-mac-arm64.dmg) (or [`T4-Code-0.1.24-mac-arm64.zip`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.24/T4-Code-0.1.24-mac-arm64.zip)).
+1. Download [`T4-Code-0.1.30-mac-arm64.dmg`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.30/T4-Code-0.1.30-mac-arm64.dmg) (or [`T4-Code-0.1.30-mac-arm64.zip`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.30/T4-Code-0.1.30-mac-arm64.zip)).
 2. Drag `T4 Code.app` into `/Applications`.
 3. Open T4 Code normally. The release workflow verifies the pinned publisher, hardened runtime, secure timestamp, Apple notarization, stapled ticket, and Gatekeeper acceptance before publication.
 
@@ -79,8 +80,10 @@ chmod +x T4-Code-0.1.24-linux-x86_64.AppImage
 
 - **Sessions.** Browse sessions grouped by their working folder, create new ones, and switch between them. Rename, terminate a stuck runtime, archive, restore, or permanently delete a session from its menu. Recently used sessions stay warm, so switching back is instant and nothing is replayed twice.
 - **Composer.** Send prompts, use slash commands (`/model`, `/compact`, `/retry`, `/review`, `/terminal`, and more), and change the session's model, thinking level, or fast mode inline.
-- **Panes.** Watch subagents (and cancel them), apply reviews, browse and preview files on the host, and attach to live terminals with real keyboard input and resize.
-- **Browser preview.** Open session-linked browser previews to inspect page layouts, follow live navigations, and interact with the page via coordinate-mapped clicks and keyboard input. Previews use pluggable authority gates, lease-based concurrency locks, and strict opt-in security boundaries.
+- **Panes.** Watch subagents (and cancel them), inspect turn-owned code changes, keep or discard each changed file, browse and preview files on the host, and attach to live terminals with real keyboard input and resize.
+- **Artifacts.** Preview images, patches, text, and downloadable tool output directly beside the transcript entry that produced them. Large bytes load only when requested, remain scoped to the session, and show an explicit unavailable state offline.
+- **Browser (desktop).** The built-in native Browser workspace is separate from host-backed Browser Preview. It manages stable native surfaces with their own URL, title, lifecycle, bounds, and visibility state. New tabs use the credential-isolated `isolated-session` profile. An authenticated profile is never auto-selected: use requires the exact profile explicitly chosen by the user with opt-in. Browser automation is limited to the native surface contract; touch input currently reports unsupported.
+- **Browser preview.** Open session-linked host previews to inspect page layouts, follow live navigations, and interact with the page via coordinate-mapped clicks and keyboard input. Preview control remains subject to the host's advertised authority and capability gates.
 - **Settings.** Edit host settings over the wire, with an explicit host selector when several hosts are connected; each host keeps its own drafts. Edits stage locally and only apply when the host confirms; a dropped connection never silently writes anything.
 - **Hosts & usage.** Run one local appserver per OMP profile, pair remote machines, and read each connected host's account usage and broker status. Everything shown is redacted host truth.
 - **Keyboard.** `Ctrl/Cmd+K` search, `Ctrl/Cmd+B` sidebar, `Ctrl/Cmd+1..9` session switch, `Ctrl/Cmd+,` settings. Every workflow is keyboard-operable.
@@ -131,15 +134,16 @@ native release checks.
 ## Architecture
 
 ```
-apps/desktop   Electron main process: window, local omp discovery,
-               appserver lifecycle, pairing, credential storage
+apps/desktop   Electron main process: window, local OMP discovery,
+               host lifecycle, pairing, credential storage
 apps/web       React UI (Vite): sessions, composer, panes, settings
 apps/flutter   Native Android/iOS/macOS client: responsive UI,
                secure credentials, lifecycle, updates, OMP service controls
-packages/      client, protocol, remote, service-manager, ui
+packages/      client, protocol, host-wire, host-service, remote,
+               service-manager, ui
 ```
 
-The UI talks to an OMP host over typed WebSocket frames (`omp-app/1`, via the vendored `@oh-my-pi/app-wire`). State flows host → app as frames; user actions flow app → host as commands. The app projects what it receives and never fabricates state.
+The UI talks to the T4 host over typed WebSocket frames (`omp-app/1`, owned by `@t4-code/host-wire`). The host delegates authoritative session work to OMP through a narrow runtime bridge. State flows host → app as frames; user actions flow app → host as commands. The app projects what it receives and never fabricates state.
 
 ## Security and license
 

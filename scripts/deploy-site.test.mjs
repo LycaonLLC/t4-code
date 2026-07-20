@@ -46,7 +46,10 @@ test("site deploy uploads immutable assets before switching entry documents", ()
   );
 
   assert.equal(calls.length, 5);
-  assert.deepEqual(calls.map(({ command }) => command), ["pnpm", "node", "aws", "aws", "aws"]);
+  assert.deepEqual(
+    calls.map(({ command }) => command),
+    ["pnpm", "node", "aws", "aws", "aws"],
+  );
   assert.deepEqual(calls[1].args, [
     "scripts/generate-release-manifest.mjs",
     "--version",
@@ -58,5 +61,14 @@ test("site deploy uploads immutable assets before switching entry documents", ()
   assert.equal(calls[3].args[2], "apps/site/dist");
   assert.equal(calls[2].args.includes("--delete"), false);
   assert.equal(calls[3].args.includes("--delete"), true);
-  assert.deepEqual(calls.map(({ cwd }) => cwd), ["/repo", "/repo", "/repo", "/repo", "/repo"]);
+  assert.deepEqual(
+    calls[3].args.flatMap((argument, index) =>
+      argument === "--exclude" ? [calls[3].args[index + 1]] : [],
+    ),
+    ["assets/*", "demo/*"],
+  );
+  assert.deepEqual(
+    calls.map(({ cwd }) => cwd),
+    ["/repo", "/repo", "/repo", "/repo", "/repo"],
+  );
 });

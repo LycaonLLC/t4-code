@@ -6,14 +6,23 @@
 // container stays inert — this surface owns its own virtualized scroller.
 import { useNavigate } from "@tanstack/react-router";
 import { Badge, cn, Tooltip, TooltipPopup, TooltipTrigger, useReducedMotion } from "@t4-code/ui";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type RefObject,
+} from "react";
 
 import type { WorkspaceProject, WorkspaceSession } from "../../lib/workspace-data.ts";
 import { workspaceStore } from "../../state/store-instance.ts";
 import { useDesktopRuntimeSnapshot } from "../../platform/desktop-runtime.ts";
 import { resolveLiveSession } from "../../platform/live-workspace.ts";
 import { Composer } from "../composer/Composer.tsx";
-import { getInspectorStore } from "../panes/inspector-store.ts";
+import { flattenFileIndex } from "../composer/file-refs.ts";
+import { getInspectorStore, type FileChildren } from "../panes/inspector-store.ts";
 import {
   ApprovalPanel,
   AskPanel,
@@ -43,6 +52,7 @@ import {
   shouldShowAttention,
   type StableRowsState,
 } from "./rows.ts";
+import type { ExportContent } from "./export.ts";
 import { getReadAloudController } from "./ReadAloud.tsx";
 import { TranscriptTimeline } from "./TranscriptTimeline.tsx";
 import type { ToolRenderHost } from "./tool-render/types.ts";
@@ -52,12 +62,16 @@ export interface SessionMainProps {
   readonly project: WorkspaceProject;
   readonly nowMs: number;
   readonly onOpenHostHealth: () => void;
+  /** Export hook: registered with the current rows so the header menu can serialize them. */
+  readonly exportRowsRef: RefObject<(() => ExportContent) | null>;
 }
 
 /** Stable session-scoped destination; all transcript state stays in the workspace store. */
 export function sessionPreviewDestination(sessionId: string) {
   return { params: { sessionId }, to: "/sessions/$sessionId/preview" as const };
 }
+
+const NO_FILE_CHILDREN: Readonly<Record<string, FileChildren>> = {};
 
 export function FreshnessBadge({ session }: { readonly session: WorkspaceSession }) {
   if (session.freshness === "cached") {
@@ -231,7 +245,11 @@ export const RECORD_ARRIVAL_PULSE_MS = 1200;
  * regression-tested without a DOM renderer.
  */
 export interface RecordArrivalPulseController {
-  observe(active: boolean, entries: readonly { readonly id: string }[], reducedMotion: boolean): void;
+  observe(
+    active: boolean,
+    entries: readonly { readonly id: string }[],
+    reducedMotion: boolean,
+  ): void;
   dispose(): void;
 }
 
@@ -347,12 +365,30 @@ export function SessionControlBanner({
   );
 }
 
-export function SessionMain({ onOpenHostHealth, session }: SessionMainProps) {
+export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: SessionMainProps) {
   const archived = session.archivedAt !== undefined;
   const navigate = useNavigate();
   const { snapshot, runtime } = useSessionRuntime(session.id, session.freshness);
   const projection = snapshot.projection;
   const desktopSnapshot = useDesktopRuntimeSnapshot();
+  // The composer "@" picker rides the session's lazy file index; no
+  // inspector store (fixture hosts without a factory) means no entries.
+  const inspectorApi = getInspectorStore(session.id);
+  const fileChildren = useSyncExternalStore(
+    useCallback(
+      (onStoreChange: () => void) => inspectorApi?.subscribe(onStoreChange) ?? (() => {}),
+      [inspectorApi],
+    ),
+    useCallback(
+      () => inspectorApi?.getState().files.childrenByPath ?? NO_FILE_CHILDREN,
+      [inspectorApi],
+    ),
+  );
+  const fileEntries = useMemo(() => flattenFileIndex(fileChildren), [fileChildren]);
+  const ensureFileDir = useCallback(
+    (dir: string) => getInspectorStore(session.id)?.getState().requestDir(dir),
+    [session.id],
+  );
   const liveAddress = useMemo(
     () => (desktopSnapshot === null ? null : resolveLiveSession(desktopSnapshot, session.id)),
     [desktopSnapshot, session.id],
@@ -361,11 +397,9 @@ export function SessionMain({ onOpenHostHealth, session }: SessionMainProps) {
     desktopSnapshot === null || liveAddress === null
       ? []
       : [
-          ...(
-            desktopSnapshot.projection.sessions.get(
-              `${liveAddress.hostId}\u0000${liveAddress.sessionId}`,
-            )?.previews.values() ?? []
-          ),
+          ...(desktopSnapshot.projection.sessions
+            .get(`${liveAddress.hostId}\u0000${liveAddress.sessionId}`)
+            ?.previews.values() ?? []),
         ];
   const previewFreshness = previews.some((preview) => preview.freshness !== "fresh")
     ? "Cached"
@@ -381,6 +415,14 @@ export function SessionMain({ onOpenHostHealth, session }: SessionMainProps) {
         const workspace = workspaceStore.getState();
         const view = workspace.sessionViewById[session.id];
         if (view?.paneFamily !== "agents") workspace.togglePaneFamily(session.id, "agents");
+        workspace.setPaneOpen(session.id, true);
+      },
+      openTurnReview: (turnId) => {
+        const inspector = getInspectorStore(session.id);
+        inspector?.getState().loadTurnReview(turnId);
+        const workspace = workspaceStore.getState();
+        const view = workspace.sessionViewById[session.id];
+        if (view?.paneFamily !== "review") workspace.togglePaneFamily(session.id, "review");
         workspace.setPaneOpen(session.id, true);
       },
       openPreview: () => {
@@ -403,6 +445,18 @@ export function SessionMain({ onOpenHostHealth, session }: SessionMainProps) {
     [projection, snapshot.pendingPrompts, snapshot.sessionActive],
   );
   const rows = useStableTranscriptRows(rawRows);
+  // The export menu lives in the header; rows live here. Hand the menu a
+  // getter instead of subscribing to the runtime a second time.
+  useEffect(() => {
+    exportRowsRef.current = () => ({
+      rows: rawRows,
+      historyTruncated: projection.historyTruncated,
+      turnActive: projection.turnActive,
+    });
+    return () => {
+      exportRowsRef.current = null;
+    };
+  }, [exportRowsRef, rawRows, projection]);
   const attention = useMemo(() => deriveAttention(projection), [projection]);
 
   const [revisingPlanId, setRevisingPlanId] = useState<string | null>(null);
@@ -526,9 +580,11 @@ export function SessionMain({ onOpenHostHealth, session }: SessionMainProps) {
         ) : (
           <TranscriptTimeline
             bottomInset={archived ? 16 : dockHeight + 16}
+            history={snapshot.transcriptHistory}
             imageSource={runtime.transcriptImages}
             key={session.id}
             nowMs={snapshot.nowMs}
+            onLoadEarlier={runtime.loadEarlierTranscript}
             rows={rows}
             sessionId={session.id}
             streaming={snapshot.sessionActive}
@@ -569,7 +625,9 @@ export function SessionMain({ onOpenHostHealth, session }: SessionMainProps) {
               contextUsedTokens={snapshot.contextUsedTokens}
               contextWindowTokens={snapshot.contextWindowTokens}
               controls={snapshot.controls}
+              fileEntries={fileEntries}
               link={snapshot.link}
+              onEnsureFileDir={ensureFileDir}
               onCancelRevise={() => setRevisingPlanId(null)}
               onIntent={onIntent}
               queuedFollowUps={snapshot.queuedFollowUps}

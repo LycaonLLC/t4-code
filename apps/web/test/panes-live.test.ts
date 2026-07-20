@@ -2,7 +2,7 @@
 // Review, and Files pane families; cross-session frames never leak; replays
 // stay stable; reconnects preserve prior safe projection; unsafe paths are
 // hidden; and every pane action leaves as an exact, gated typed command.
-import { applyPublicFrame, createProjectionSnapshot } from "@t4-code/client";
+import { OMP_RUNTIME_INTEGRATION, applyPublicFrame, createProjectionSnapshot } from "@t4-code/client";
 import type {
   DesktopHostMetadata,
   DesktopRuntimeSnapshot,
@@ -321,6 +321,7 @@ class FakeRuntime implements LiveInspectorRuntime {
   constructor(options: FakeRuntimeOptions = {}) {
     this.snapshotValue = {
       version: 1,
+      integration: OMP_RUNTIME_INTEGRATION,
       platform: "linux",
       desktopVersion: "test",
       startState: "started",

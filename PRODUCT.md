@@ -12,6 +12,12 @@ T4 Code is for expert developers and maintainers who run OMP across Linux and ma
 
 Provide one desktop observability and control surface for OMP sessions, subagents, command execution, files, terminals, and reviews while OMP remains the runtime and configuration authority. Success means a user can discover local or paired hosts, resume the right session, understand current work, intervene safely, and survive disconnects or restarts without duplicate output, hidden state, or terminal scraping.
 
+## Flagship Workflow: Agent Operations Center
+
+Agent View is T4 Code's primary operational workspace for concurrent OMP work. It provides one global, hierarchy-preserving view across loaded sessions, with compact health summaries, attention triage, search, bounded pagination, and direct navigation into the selected agent's session detail. Session-local panes remain the place for focused transcript and control work; Agent View is where an operator finds the right work and decides where to intervene.
+
+The control center must remain useful from a few agents through large agent fleets. Rendering stays bounded, parent context remains visible around filtered descendants, every action resolves against current runtime authority, and phone-sized layouts retain the same search, triage, inspect, and control affordances.
+
 ## Brand Personality
 
 Precise, capable, calm — with a wink in the name. T4 Code is the product; Oh My Pi is the runtime it fronts, and the interface says so plainly where hierarchy helps (onboarding, about, empty welcome). It should carry the confidence and interaction quality of a mature developer tool: dense when the work demands it, quiet when it does not, and unmistakably OMP through the exact pi/plugin mark and restrained Pi Pink identity details. The T4 name is a deliberate nod to its T3 interaction reference; the UI never fakes T3 branding.

@@ -1,10 +1,10 @@
 {
   "name": "@t4-code/root",
-  "version": "0.1.24",
+  "version": "0.1.30",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vp run --parallel --filter @t4-code/web --filter @t4-code/desktop dev",
+    "dev": "node scripts/dev.mjs",
     "dev:web": "vp run --filter @t4-code/web dev",
     "dev:desktop": "vp run --filter @t4-code/desktop dev",
     "dev:site": "vp run --filter @t4-code/site dev",
@@ -18,7 +18,10 @@
     "build:flutter:macos": "vp run --filter @t4-code/flutter build:macos",
     "build:flutter:android": "vp run --filter @t4-code/flutter build:android",
     "build:flutter:ios": "vp run --filter @t4-code/flutter build:ios",
+    "build:demo": "pnpm --filter @t4-code/web exec vp build --mode demo --base /demo/ --outDir ../site/dist/demo --emptyOutDir",
     "deploy:site": "node scripts/deploy-site.mjs",
+    "deploy:demo": "node scripts/deploy-demo.mjs",
+    "deploy:site-bundle": "node scripts/deploy-site-bundle.mjs",
     "prepackage": "pnpm check && pnpm build:web && pnpm build:desktop && node scripts/package-preflight.mjs",
     "package:linux": "pnpm prepackage && node scripts/run-electron-builder.mjs --linux --x64",
     "package:mac:unsigned": "node scripts/package-mac-unsigned.mjs",
@@ -28,7 +31,7 @@
     "inspect:package": "node scripts/inspect-package.mjs",
     "inspect:dmg": "node scripts/inspect-macos-dmg.mjs",
     "test:packaging": "node --test scripts/packaging.test.mjs scripts/inspect-linux-update.test.mjs scripts/inspect-macos-dmg.test.mjs scripts/inspect-macos-release.test.mjs",
-    "test:tooling": "node --test scripts/benchmark-omp-codex-transport.test.mjs scripts/check-flutter-coverage.test.mjs scripts/check-release-consistency.test.mjs scripts/check-release-publication.test.mjs scripts/check-provenance.test.mjs scripts/deploy-site.test.mjs scripts/dispatch-site-deployment.test.mjs scripts/generate-release-manifest.test.mjs scripts/perf/perf.test.mjs scripts/reconcile-release-assets.test.mjs scripts/t4-maintainer-contract.test.mjs scripts/t4-maintainer-integration.test.mjs scripts/t4-maintainer-omp-publish.test.mjs scripts/test-temporary-directory.test.mjs scripts/tailnet-gateway.test.mjs scripts/tailnet-service.test.mjs scripts/wait-for-exact-ci.test.mjs scripts/wait-for-release-assets.test.mjs",
+    "test:tooling": "node --test scripts/benchmark-omp-codex-transport.test.mjs scripts/check-flutter-coverage.test.mjs scripts/check-host-ownership.test.mjs scripts/check-release-consistency.test.mjs scripts/check-release-publication.test.mjs scripts/check-provenance.test.mjs scripts/deploy-demo.test.mjs scripts/deploy-site.test.mjs scripts/dispatch-site-deployment.test.mjs scripts/generate-release-manifest.test.mjs scripts/perf/perf.test.mjs scripts/reconcile-release-assets.test.mjs scripts/t4-maintainer-contract.test.mjs scripts/t4-maintainer-integration.test.mjs scripts/t4-maintainer-omp-publish.test.mjs scripts/test-temporary-directory.test.mjs scripts/tailnet-gateway.test.mjs scripts/tailnet-service.test.mjs scripts/wait-for-exact-ci.test.mjs scripts/wait-for-release-assets.test.mjs",
     "check:release": "node scripts/check-release-consistency.mjs",
     "check:provenance": "node scripts/check-provenance.mjs",
     "lint": "vp lint --deny-warnings",
@@ -41,23 +44,25 @@
     "test:e2e": "pnpm build:web && pnpm build:site && playwright test",
     "test:soak": "pnpm --filter @t4-code/client exec vp test run test/projection.test.ts -t \"retains a 10k snapshot\" && pnpm build:web && playwright test e2e/remote-app.spec.ts --grep \"@soak\"",
     "test:protocol": "vp run --filter @t4-code/protocol --filter @t4-code/fixture-server test",
+    "test:operations:real": "vp test run scripts/operations-continuity-real.test.ts --reporter=verbose",
     "perf:core": "vp test run scripts/perf/core.test.ts",
     "perf:ui": "pnpm build:web && node scripts/perf/ui.mjs",
     "perf:electron": "pnpm build:web && pnpm build:desktop && node scripts/perf/electron.mjs",
     "perf:compare": "node scripts/perf/compare.mjs",
     "perf:vps": "bash ops/perf/run-vps.sh"
   },
+  "dependencies": {
+    "ws": "^8.18.3"
+  },
   "devDependencies": {
     "@electron/asar": "3.4.1",
+    "@electron/osx-sign": "1.3.3",
     "@playwright/test": "1.61.1",
     "@types/node": "catalog:",
     "@typescript/native-preview": "catalog:",
     "jiti": "2.7.0",
     "js-yaml": "4.3.0",
     "vite-plus": "catalog:"
-  },
-  "dependencies": {
-    "ws": "^8.18.3"
   },
   "engines": {
     "node": "^24.13.1"

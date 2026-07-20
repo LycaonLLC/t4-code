@@ -222,6 +222,7 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
       // the first live welcome replaces it with authenticated metadata.
       hosts.push({
         id: hostId,
+        runtimeKind: snapshot.integration.kind,
         name: hostId,
         kind: "remote",
         sessionInventoryTruncated: true,
@@ -232,6 +233,7 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
     const inventoryMetadata = snapshot.projection.sessionIndexMetadata.get(hostId);
     hosts.push({
       id: hostId,
+      runtimeKind: snapshot.integration.kind,
       name: target?.label ?? "This machine",
       kind: target?.kind ?? "local",
       ...(target?.kind === "local"

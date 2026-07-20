@@ -4,6 +4,7 @@
 import { Badge, Button, cn, Skeleton } from "@t4-code/ui";
 import { ChevronRight, FileText, Folder, ImageIcon, WifiOff } from "lucide-react";
 import { useEffect, useMemo } from "react";
+import type * as React from "react";
 
 import { FamilyEmpty } from "./FamilyEmpty.tsx";
 import { PaneHeading } from "./PaneHeading.tsx";
@@ -246,7 +247,7 @@ function EditorBody({
   );
 }
 
-export function FilesPane({ api }: { readonly api: InspectorStoreApi }) {
+export function FilesPane({ api, trailing }: { readonly api: InspectorStoreApi; readonly trailing?: React.ReactNode | undefined }) {
   const query = useInspector(api, (state) => state.files.query);
   const selectedPath = useInspector(api, (state) => state.files.selectedPath);
   const preview = useInspector(api, (state) => state.files.preview);
@@ -269,7 +270,7 @@ export function FilesPane({ api }: { readonly api: InspectorStoreApi }) {
   if (offline) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <PaneHeading family="files" summary="host unreachable" />
+        <PaneHeading family="files" summary="host unreachable" trailing={trailing} />
         <FamilyEmpty family="files" />
         <p className="border-border border-t px-3 py-2 text-muted-foreground text-xs">
           This session's host is offline. Files return when the host does.
@@ -280,7 +281,7 @@ export function FilesPane({ api }: { readonly api: InspectorStoreApi }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <PaneHeading family="files" summary={selectedPath ?? undefined} />
+      <PaneHeading family="files" summary={selectedPath ?? undefined} trailing={trailing} />
       <div className="shrink-0 border-border border-b px-2 py-1.5">
         <input
           aria-label="Search loaded files"

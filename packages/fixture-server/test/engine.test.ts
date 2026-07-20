@@ -24,6 +24,7 @@ const command = (
     "host.list",
     "session.list",
     "session.create",
+    "project.reveal",
     "audit.read",
     "audit.tail",
     "config.write",
@@ -63,6 +64,7 @@ describe("deterministic fixture engine", () => {
     expect(names).toEqual([...DESKTOP_CATALOG_COMMANDS].sort());
     expect(names).toEqual([
       "broker.status",
+      "project.reveal",
       "session.archive",
       "session.cancel",
       "session.close",

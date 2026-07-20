@@ -4,6 +4,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  AGENT_VIEW_FIXTURE_GROUPS,
+  AGENT_VIEW_FIXTURE_NOW_MS,
+} from "../src/features/agent-view/fixtures.ts";
+import {
   FIXTURE_EPOCH_MS,
   installFixtureInspector,
 } from "../src/features/panes/fixtures.ts";
@@ -73,5 +77,23 @@ describe("fixture determinism", () => {
     store.getState().startFileEdit(path);
 
     expect(store.getState().files.draftsByPath[path]?.baseRevision).toBe("fixture-revision-1");
+  });
+});
+
+describe("global Agent View fixtures", () => {
+  it("exposes deterministic multi-session lifecycle samples", () => {
+    expect(AGENT_VIEW_FIXTURE_NOW_MS).toBe(FIXTURE_EPOCH_MS);
+    expect(AGENT_VIEW_FIXTURE_GROUPS.map(({ viewId }) => viewId)).toEqual([
+      "sess-stream",
+      "sess-bundle",
+    ]);
+
+    const agents = AGENT_VIEW_FIXTURE_GROUPS.flatMap(({ agents }) => agents);
+    expect(agents).toHaveLength(11);
+    expect(new Set(agents.map(({ node }) => node.state))).toEqual(
+      new Set(["running", "waiting", "parked", "completed", "failed", "queued"]),
+    );
+    expect(agents.some(({ node }) => node.path === "packages/client/src/replay.ts")).toBe(true);
+    expect(agents.find(({ node }) => node.state === "parked")?.resumable).toBe(true);
   });
 });

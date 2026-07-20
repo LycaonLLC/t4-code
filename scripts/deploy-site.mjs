@@ -69,6 +69,8 @@ export function deploySite(
       "--delete",
       "--exclude",
       "assets/*",
+      "--exclude",
+      "demo/*",
       "--cache-control",
       "public,max-age=0,must-revalidate",
       "--only-show-errors",
@@ -89,7 +91,8 @@ export function deploySite(
   );
 }
 
-const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
+const isMain =
+  process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (isMain) {
   try {
     deploySite(resolveDeployConfig());

@@ -4,6 +4,14 @@ This file maps product ideas to their OMP authority and intended T4 Code surface
 
 The README and release notes are the release contract. They must only claim behavior exercised by the current build. OMP remains the behavioral authority, and T3 Code remains a presentation and interaction reference where noted below.
 
+## Host ownership status
+
+| State | What it means |
+|---|---|
+| Exists today | T4 owns `packages/host-wire` and `packages/host-service`; the client protocol consumes the T4-owned wire package. |
+| Compatibility transition | The verified OMP integration binary still embeds the legacy host copy, and T4 retains a bounded read-only JSONL projector for that exact bridge. |
+| Planned next | Replace the embedded copy with a thin OMP launcher and authority adapter, then test supported upstream OMP versions by bridge capability instead of requiring every T4 host feature inside the fork. |
+
 ## 1. Hosts, connections, and environments
 
 | Capability | OMP authority | T3 reference | Desktop surface and required states | Priority |
@@ -31,9 +39,10 @@ OMP authority: `packages/coding-agent/src/session/agent-session.ts`, `session-ma
 
 | Capability | Source command/state | Desktop behavior | T3 reference | Priority |
 |---|---|---|---|---|
-| List/recent/search/filter | session store and metadata | Virtualized left rail; project/host grouping; running/waiting/failed/unread badges; fuzzy search | `Sidebar.tsx`, sidebar logic/tests | Launch |
+| List/recent/search/filter | session store and metadata | Codex-parity left rail: By project or In one list; Priority, Last updated, or Manual order; real project/session dragging with keyboard fallbacks; title/project/host search; attention/running/unread/error filters; pinned shortcuts; five-row Show more; project aliases; reversible hidden projects; bulk read/archive; local-only Finder reveal; direct pin/archive controls | `Rail.tsx`, `session-tree.ts`, workspace store, management helpers, browser tests | Launch |
 | New session | `/new` | Create in selected project/host; model/profile defaults visible before first prompt | draft routes and composer draft store | Launch |
 | Fast switch and tabs | session IDs and snapshots | One-click/keyboard switch; preserve draft, scroll anchor, panel widths/tabs, terminal focus; no white flash | T3 routes, `composerDraftStore`, `rightPanelStore`, terminal store | Launch |
+| Tail-first transcript history | Bounded `transcript.page` range reads plus the existing live attach cursor | Paint a small newest page on cold open; prepend older pages without moving the reading anchor or live cursor | T4-owned host and web client implemented; Flutter local cache and thin OMP bridge planned | Launch |
 | Resume | `/resume` | Open existing session by stable ID/path; recover moved/missing files with explicit error | thread routing and reconnect supervisor | Launch |
 | Rename | `/rename` | Inline rename with optimistic state and rollback | sidebar row actions | Launch |
 | Move working directory/session | `/move` | Native/remote path picker, validation, explicit impact message | environment picker patterns | Parity |
@@ -85,12 +94,22 @@ OMP authority: `packages/coding-agent/src/session/agent-session.ts`, `session-ma
 | Ask/approval/resolve | blocking card, keyboard navigation, submitted value, timeout/cancel | ask/client bridge/plan actions |
 | Compaction/retry/provider error | causal grouping and attempt history; no duplicate transcript rows | session events |
 | Notifications/system notices | restrained inline status; never masquerade as model output | client bridge/events |
-| Artifacts/images | preview/open/save and missing/offline state | artifact manager/internal URLs |
+| Artifacts/images | Session-retained cards with lazy preview/open/save and explicit unavailable/offline state | Implemented by `TranscriptArtifacts`, the shared transcript artifact source, and app-wire 0.7 `artifact.read` |
 | Unknown extension/MCP tool | safe generic JSON/tree renderer with raw copy; never crash stream | extension/MCP tool contract |
 
 ## 6. Subagents, tasks, jobs, IRC, and todos
 
 OMP authority: `task/executor.ts`, `task/types.ts`, `async/job-manager.ts`, `irc/bus.ts`, tool implementations, and task tests.
+
+Agent View is the flagship global operations surface, not a secondary pane. Session-local panes retain focused transcript and control detail; the global view owns fleet-wide discovery, triage, hierarchy, and routing into the exact selected agent.
+
+### Agent operations roadmap
+
+| Horizon | Product outcome | Acceptance evidence |
+|---|---|---|
+| Current control center | Compact session/agent/running/attention summary; task/model/tool/path search; active/attention/finished filters; parent-preserving hierarchy; direct session and selected-agent inspection; cancel under runtime authority | At most 100 agent cards mounted per page; deterministic 10,000-agent hierarchy and pagination coverage; keyboard labels and touch-sized controls |
+| Operational depth | Explicit host/profile/model/tool dimensions, saved filters, batch health, stall thresholds, steer and wake parity, and clearer lifecycle/audit feedback | Every command carries target, capability, confirmation, and outcome identity; failures remain attributable to one agent and session |
+| Fleet coordination | Confirmed bulk actions, multi-host capacity and queue views, resumable operator workspaces, and durable command history | Bulk scope is previewable and reversible where possible; disconnect/reconnect preserves selection, filters, command outcomes, and runtime authority |
 
 | Capability | Desktop contract | Right-pane behavior | Priority |
 |---|---|---|---|
@@ -113,7 +132,7 @@ Subagent event authority includes `TASK_SUBAGENT_LIFECYCLE_CHANNEL`, `TASK_SUBAG
 | Surface | T3 implementation reference | OMP data/control | Required states |
 |---|---|---|---|
 | Right-panel families | `rightPanelStore.ts`, `RightPanelTabs.tsx`, `RightPanelSheet.tsx` | protocol surface registry | Five persistent families: Agents, Activity, Review, Files, Terminal; open/close/reorder/select/restore per session; context is a composer popover/dialog and raw events are Activity filters |
-| Diff/review | `DiffPanel.tsx`, `AnnotatableCodeView.tsx`, `@pierre/diffs` | git/files/edit artifacts | unified/split, wrap, collapse, comments, binary/missing/huge diff |
+| Diff/review | `ReviewPane`, `turn-review.ts`, unified/split diff renderers | Implemented app-wire 0.7 turn snapshots plus turn-scoped `files.diff` / `review.apply` | Per-turn file attribution, lazy patch loading, independent keep/discard decisions, comments, and binary/missing/huge states |
 | File preview/editor | `files/FilePreviewPanel.tsx`, file save coordinator | read/write/LSP | loading, dirty, save conflict, diagnostics, binary/image, offline read-only |
 | Terminal drawer | `ThreadTerminalDrawer.tsx`, server terminal manager/node-pty | OMP persistent shell/appserver PTY | tabs/splits/resizing/history/input/exit/restart/reconnect/backpressure |
 | Browser/app preview | T3 preview manager/panel/webview security | OMP browser tool and app preview | Required Wave 4 focused preview workspace or secondary Electron window; navigation, inspect/click/scroll/type, screenshots, crash/reload, trusted partitions; not a sixth permanent right-pane tab |

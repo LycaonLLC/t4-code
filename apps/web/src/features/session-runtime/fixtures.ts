@@ -197,11 +197,15 @@ function historySeeds(): EntrySeed[] {
       data: {
         tool: "subagent",
         title: "ReplayAudit subagent",
-        args: { agent: "ReplayAudit", task: "Audit remaining time-based comparisons in packages/client" },
+        args: {
+          agent: "ReplayAudit",
+          task: "Audit remaining time-based comparisons in packages/client",
+        },
         ok: true,
         result: {
           status: "completed",
-          summary: "No other time-based ordering found. Two comments referenced the old behavior; both updated.",
+          summary:
+            "No other time-based ordering found. Two comments referenced the old behavior; both updated.",
         },
       },
     },
@@ -213,7 +217,22 @@ function historySeeds(): EntrySeed[] {
         title: "verify in dev shell",
         args: { url: "http://localhost:5173/#/sessions/sess-stream" },
         ok: true,
-        result: { title: "T4 Code", note: "Reconnected 20 times under packet loss; zero duplicate rows." },
+        result: {
+          title: "T4 Code",
+          note: "Reconnected 20 times under packet loss; zero duplicate rows.",
+        },
+        artifacts: [
+          {
+            artifactId: "1001",
+            kind: "image",
+            mediaType: "image/png",
+            size: 28_412,
+            sha256: "a".repeat(64),
+            name: "reconnect-soak.png",
+            disposition: "attachment",
+            retention: "session",
+          },
+        ],
       },
     },
     {
@@ -224,6 +243,36 @@ function historySeeds(): EntrySeed[] {
         reconnects: 20,
         duplicates: 0,
         p95ReplayMs: 184,
+      },
+    },
+    {
+      kind: "turn-review",
+      timestamp: at(9, 10),
+      data: {
+        turnId: "turn-reconnect-fix",
+        baseTree: "1".repeat(40),
+        headTree: "2".repeat(40),
+        changes: [
+          {
+            path: "packages/client/src/replay.ts",
+            status: "modified",
+            kind: "text",
+            state: "pending",
+            additions: 5,
+            deletions: 4,
+            size: 4_218,
+          },
+          {
+            path: "packages/client/test/replay-fence.test.ts",
+            status: "untracked",
+            kind: "text",
+            state: "pending",
+            additions: 47,
+            deletions: 0,
+            size: 2_806,
+          },
+        ],
+        artifacts: [],
       },
     },
     {
@@ -348,7 +397,9 @@ function stressSeeds(): EntrySeed[] {
         text: user
           ? `Batch ${i}: verify the projection stays stable when frame ${i} lands out of band.\n\nThe duplicate arrives with the same cursor twice, so the reducer must return the identical state object.\n\n\`\`\`ts\nexpect(reduce(state, frame${i})).toBe(state);\n\`\`\`\n\n- duplicate seq must be a no-op\n- epoch change must pause`
           : `Verified batch ${i}. The reducer ignored the duplicate and kept every untouched row reference.\n\nDerivation stayed allocation-free for the settled prefix; only the tail row was rebuilt.\n\n\`\`\`txt\ncursor: {epoch: e1, seq: ${i}}\nrows reused: ${100 + (i % 400)}/${100 + (i % 400)}\n\`\`\`\n\n1. dedupe by entry id held\n2. no live/durable double render\n3. gap counter unchanged`,
-        reasoning: user ? "" : `Spot-check ${i}: identity preserved across ${(i % 9) + 2} derivations.`,
+        reasoning: user
+          ? ""
+          : `Spot-check ${i}: identity preserved across ${(i % 9) + 2} derivations.`,
       },
     });
   }
@@ -359,7 +410,10 @@ function stressSeeds(): EntrySeed[] {
 // Per-session scripts
 // ---------------------------------------------------------------------------
 
-function scriptFor(sessionKey: string, variant: TranscriptVariant): Omit<SessionScript, "modelChoices"> {
+function scriptFor(
+  sessionKey: string,
+  variant: TranscriptVariant,
+): Omit<SessionScript, "modelChoices"> {
   const factory = new FrameFactory({
     host: "host-local",
     session: sessionKey,
@@ -504,9 +558,21 @@ function scriptFor(sessionKey: string, variant: TranscriptVariant): Omit<Session
             multiple: false,
             allowText: true,
             options: [
-              { id: "stream", label: "stream-v1", detail: "Deterministic streaming and tool deltas — fastest, 40s" },
-              { id: "faults", label: "faults-v1", detail: "Malformed frames, gaps, reordering — broadest, 3m" },
-              { id: "multi", label: "multi-client-v1", detail: "Concurrent client convergence — 90s" },
+              {
+                id: "stream",
+                label: "stream-v1",
+                detail: "Deterministic streaming and tool deltas — fastest, 40s",
+              },
+              {
+                id: "faults",
+                label: "faults-v1",
+                detail: "Malformed frames, gaps, reordering — broadest, 3m",
+              },
+              {
+                id: "multi",
+                label: "multi-client-v1",
+                detail: "Concurrent client convergence — 90s",
+              },
             ],
           }),
         ],
@@ -519,7 +585,10 @@ function scriptFor(sessionKey: string, variant: TranscriptVariant): Omit<Session
         {
           kind: "message",
           timestamp: at(0),
-          data: { role: "user", text: "Split the renderer bundle so cold start stops shipping xterm and markdown to the splash screen." },
+          data: {
+            role: "user",
+            text: "Split the renderer bundle so cold start stops shipping xterm and markdown to the splash screen.",
+          },
         },
       ]);
       return {
@@ -558,7 +627,8 @@ function scriptFor(sessionKey: string, variant: TranscriptVariant): Omit<Session
             ok: false,
             result: {
               exitCode: 137,
-              output: "run 34/50\nFAIL resize.test.ts > refits within 50ms after release\nKilled (OOM): exit 137",
+              output:
+                "run 34/50\nFAIL resize.test.ts > refits within 50ms after release\nKilled (OOM): exit 137",
             },
           },
         },
@@ -579,7 +649,8 @@ function scriptFor(sessionKey: string, variant: TranscriptVariant): Omit<Session
           factory.event({
             type: "turn.error",
             at: at(3, 40),
-            message: "The test runner was killed twice at repeat 34 (exit 137, out of memory). The turn stopped before the bisect finished.",
+            message:
+              "The test runner was killed twice at repeat 34 (exit 137, out of memory). The turn stopped before the bisect finished.",
             retryable: true,
           }),
         ],
@@ -617,10 +688,7 @@ export function buildSessionScript(sessionKey: string, variant: TranscriptVarian
 // reply to renderer intents. Each inner array is one tick's worth of frames.
 // ---------------------------------------------------------------------------
 
-export function framesForIntent(
-  factory: FrameFactory,
-  intent: SessionIntent,
-): TranscriptFrame[][] {
+export function framesForIntent(factory: FrameFactory, intent: SessionIntent): TranscriptFrame[][] {
   const stamp = at(20);
   switch (intent.kind) {
     case "prompt": {
@@ -709,7 +777,10 @@ export function framesForIntent(
             text: "Holding off. The migration script stays staged; nothing was written. Tell me what should change before we apply it.",
           },
         });
-        return [[resolved], [factory.entry(entry), factory.event({ type: "turn.end", at: at(20, 3) })]];
+        return [
+          [resolved],
+          [factory.entry(entry), factory.event({ type: "turn.end", at: at(20, 3) })],
+        ];
       }
       return [
         [resolved],
@@ -729,7 +800,10 @@ export function framesForIntent(
             at: at(20, 8),
             callId: "call-approved",
             ok: true,
-            result: { exitCode: 0, output: "214 rows migrated to schema v3\nbackup written to settings.db.bak" },
+            result: {
+              exitCode: 0,
+              output: "214 rows migrated to schema v3\nbackup written to settings.db.bak",
+            },
           }),
         ],
         [
@@ -750,8 +824,7 @@ export function framesForIntent(
     }
     case "ask": {
       const resolved = factory.event({ type: "ask.resolved", at: stamp, askId: intent.askId });
-      const answerText =
-        intent.optionIds.length > 0 ? intent.optionIds.join(", ") : intent.text;
+      const answerText = intent.optionIds.length > 0 ? intent.optionIds.join(", ") : intent.text;
       const userEntry = factory.entryRecord({
         id: factory.nextEntryId("answer"),
         kind: "message",

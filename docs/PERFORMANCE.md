@@ -13,6 +13,11 @@ GPU behavior, or packaging.
 | `pnpm perf:electron` | Source-build desktop window launch and settled Electron working set | Same-host desktop regression signal |
 | `pnpm perf:compare -- <baseline> <current>` | Median change for matching metrics | Fails when a median regresses by more than 10% |
 
+The host-service transcript-page tests are the cold-history performance guard below the UI benchmark.
+They create a transcript larger than 64 MiB and verify that the newest page is produced through
+bounded end-range reads rather than a whole-file read. The page command is routed before the legacy
+full `loadSession()` path, so the UI can paint that result before starting a cold live attach.
+
 Reports are written to `test-results/perf/`. Each run writes a timestamped JSON file and a
 `latest-<kind>.json` copy. The reports include the Git commit, dirty state, Node version, operating
 system, CPU model, CPU count, and memory size. They do not record the machine hostname. Set a

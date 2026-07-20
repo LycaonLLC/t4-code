@@ -1,7 +1,9 @@
 // Right-pane family body: routes the active family to its panel, bound to
 // the active session's inspector store. The shell owns the frame; this seam
 // owns everything inside it.
+import type * as React from "react";
 import { FamilyEmpty } from "./FamilyEmpty.tsx";
+import { PaneHeading } from "./PaneHeading.tsx";
 import { desktopRuntime } from "../../platform/desktop-runtime.ts";
 import { rendererPlatform, useWorkspace } from "../../state/store-instance.ts";
 import type { PaneFamily } from "../../state/workspace-store.ts";
@@ -70,13 +72,22 @@ if (rendererPlatform.mode === "browser") {
 
 export interface PaneContentProps {
   readonly family: PaneFamily;
+  /** Optional trailing action forwarded to the pane heading (e.g. dock close button). */
+  readonly trailing?: React.ReactNode | undefined;
 }
 
 
-export function PaneContent({ family }: PaneContentProps) {
+export function PaneContent({ family, trailing }: PaneContentProps) {
   const sessionId = useWorkspace((state) => state.activeSessionId);
   const store = sessionId === null ? null : getInspectorStore(sessionId);
-  if (sessionId === null || store === null) return <FamilyEmpty family={family} />;
+  if (sessionId === null || store === null) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <PaneHeading family={family} trailing={trailing} />
+        <FamilyEmpty className="min-h-0 flex-1" family={family} />
+      </div>
+    );
+  }
   switch (family) {
     case "agents": {
       const controller = rendererPlatform.mode === "browser" ? null : desktopRuntime();
@@ -86,15 +97,15 @@ export function PaneContent({ family }: PaneContentProps) {
         address === null
           ? undefined
           : (transcriptImageSourceForSession(address.hostId, address.sessionId) ?? undefined);
-      return <AgentsPane api={store} imageSource={imageSource} sessionId={sessionId} />;
+      return <AgentsPane api={store} imageSource={imageSource} sessionId={sessionId} trailing={trailing} />;
     }
     case "activity":
-      return <ActivityPane api={store} />;
+      return <ActivityPane api={store} trailing={trailing} />;
     case "review":
-      return <ReviewPane api={store} />;
+      return <ReviewPane api={store} trailing={trailing} />;
     case "files":
-      return <FilesPane api={store} />;
+      return <FilesPane api={store} trailing={trailing} />;
     case "terminals":
-      return <TerminalsPane api={store} sessionId={sessionId} />;
+      return <TerminalsPane api={store} sessionId={sessionId} trailing={trailing} />;
   }
 }

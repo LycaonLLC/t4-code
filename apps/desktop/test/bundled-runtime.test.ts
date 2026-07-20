@@ -16,7 +16,7 @@ describe("bundled OMP runtime", () => {
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     await writeFile(join(runtimeRoot, "omp"), bytes);
     await writeFile(join(runtimeRoot, "manifest.json"), JSON.stringify({
-      version: 1, tag: "t4code-17.0.5-appserver-3", platform: "darwin", arch: "arm64",
+      version: 1, tag: "t4code-17.0.5-appserver-8", platform: "darwin", arch: "arm64",
       executable: "omp", size: bytes.length, sha256,
     }));
 
@@ -35,11 +35,63 @@ describe("bundled OMP runtime", () => {
     await mkdir(runtimeRoot, { recursive: true });
     await writeFile(join(runtimeRoot, "omp"), "wrong");
     await writeFile(join(runtimeRoot, "manifest.json"), JSON.stringify({
-      version: 1, tag: "t4code-17.0.5-appserver-3", platform: "darwin", arch: "arm64",
+      version: 1, tag: "t4code-17.0.5-appserver-8", platform: "darwin", arch: "arm64",
       executable: "omp", size: 5, sha256: "0".repeat(64),
     }));
 
-    await expect(installBundledOmpRuntime({ resourcesPath, applicationSupportPath: join(root, "support") }))
+    await expect(installBundledOmpRuntime({
+      resourcesPath,
+      applicationSupportPath: join(root, "support"),
+      verifySignedRuntime: async () => { throw new Error("not signed"); },
+    }))
       .rejects.toThrow("integrity check");
+  });
+
+  it("installs the exact signed bytes after verifying their Developer ID identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "t4-bundled-runtime-signed-"));
+    const resourcesPath = join(root, "resources");
+    const supportPath = join(root, "support");
+    const runtimeRoot = join(resourcesPath, "runtime");
+    await mkdir(runtimeRoot, { recursive: true });
+    const unsignedBytes = Buffer.from("unsigned release artifact");
+    const signedBytes = Buffer.from("signed release artifact with a code signature");
+    await writeFile(join(runtimeRoot, "omp"), signedBytes);
+    await writeFile(join(runtimeRoot, "manifest.json"), JSON.stringify({
+      version: 1,
+      tag: "t4code-17.0.5-appserver-8",
+      platform: "darwin",
+      arch: "arm64",
+      executable: "omp",
+      size: unsignedBytes.length,
+      sha256: createHash("sha256").update(unsignedBytes).digest("hex"),
+    }));
+    const verified: string[] = [];
+
+    const installed = await installBundledOmpRuntime({
+      resourcesPath,
+      applicationSupportPath: supportPath,
+      verifySignedRuntime: async (path) => {
+        await stat(path);
+        verified.push(path);
+        return "signed-code-directory-hash";
+      },
+    });
+    const reused = await installBundledOmpRuntime({
+      resourcesPath,
+      applicationSupportPath: supportPath,
+      verifySignedRuntime: async (path) => {
+        await stat(path);
+        verified.push(path);
+        return "signed-code-directory-hash";
+      },
+    });
+
+    expect(reused).toBe(installed);
+    expect(verified).toEqual([
+      join(runtimeRoot, "omp"),
+      installed,
+      join(runtimeRoot, "omp"),
+    ]);
+    expect(await readFile(installed)).toEqual(signedBytes);
   });
 });

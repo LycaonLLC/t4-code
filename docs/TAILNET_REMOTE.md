@@ -39,6 +39,10 @@ and current Serve syntax in its [Serve reference](https://tailscale.com/docs/ref
 ## Automatic Mac setup
 
 1. Install and sign in to Tailscale on the Mac and phone.
+   On iPhone, open the Tailscale profile menu, choose **VPN On Demand**, and
+   set both **Wi-Fi** and **Cellular** to **Always** if you want T4 Code to
+   reconnect without opening Tailscale first. If another VPN uses On Demand,
+   iOS allows only one of them to own that behavior at a time.
 2. Open T4 Code on the Mac and go to **Settings → Hosts**.
 3. Choose **Set up phone access**.
 4. Scan the displayed QR code with the phone camera.

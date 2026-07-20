@@ -1,0 +1,148 @@
+{
+  "schema": "agent-view/1",
+  "frames": [
+    {
+      "v": "omp-app/1",
+      "type": "agent",
+      "hostId": "agent-view-host",
+      "sessionId": "agent-view-session",
+      "agentId": "WorkerA",
+      "state": "started",
+      "detail": {
+        "title": "Inspect runtime",
+        "name": "task",
+        "agent": "task",
+        "index": 0,
+        "startedAt": "1970-01-01T00:00:01.000Z",
+        "lastActivityAt": "1970-01-01T00:00:01.000Z",
+        "resumable": false,
+        "description": "Inspect runtime"
+      }
+    },
+    {
+      "v": "omp-app/1",
+      "type": "agent",
+      "hostId": "agent-view-host",
+      "sessionId": "agent-view-session",
+      "agentId": "WorkerA",
+      "state": "running",
+      "detail": {
+        "title": "Verify parity",
+        "name": "task",
+        "agent": "task",
+        "index": 0,
+        "startedAt": "1970-01-01T00:00:01.000Z",
+        "lastActivityAt": "1970-01-01T00:00:02.000Z",
+        "resumable": false,
+        "model": "openai/gpt-5.6-sol:high",
+        "progress": "Checking fixture parity",
+        "evidence": "Parity frame emitted",
+        "currentTool": "read",
+        "contextUsage": { "used": 2000, "limit": 8000 },
+        "tokenVolume": 12000,
+        "toolCount": 4,
+        "durationMs": 500
+      }
+    },
+    {
+      "v": "omp-app/1",
+      "type": "agent",
+      "hostId": "agent-view-host",
+      "sessionId": "agent-view-session",
+      "agentId": "WorkerA",
+      "state": "completed",
+      "detail": {
+        "title": "Verify parity",
+        "name": "task",
+        "agent": "task",
+        "index": 0,
+        "startedAt": "1970-01-01T00:00:01.000Z",
+        "lastActivityAt": "1970-01-01T00:00:03.000Z",
+        "resumable": false,
+        "model": "openai/gpt-5.6-sol:high",
+        "progress": "Checking fixture parity",
+        "evidence": "Parity frame emitted",
+        "currentTool": "read",
+        "contextUsage": { "used": 2000, "limit": 8000 },
+        "tokenVolume": 12000,
+        "toolCount": 4,
+        "durationMs": 500
+      }
+    },
+    {
+      "v": "omp-app/1",
+      "type": "agent",
+      "hostId": "agent-view-host",
+      "sessionId": "agent-view-session",
+      "agentId": "WorkerA",
+      "state": "parked",
+      "detail": {
+        "title": "Verify parity",
+        "name": "task",
+        "agent": "task",
+        "index": 0,
+        "startedAt": "1970-01-01T00:00:01.000Z",
+        "lastActivityAt": "1970-01-01T00:00:04.000Z",
+        "resumable": true,
+        "model": "openai/gpt-5.6-sol:high",
+        "progress": "Checking fixture parity",
+        "evidence": "Parity frame emitted",
+        "currentTool": "read",
+        "contextUsage": { "used": 2000, "limit": 8000 },
+        "tokenVolume": 12000,
+        "toolCount": 4,
+        "durationMs": 500
+      }
+    },
+    {
+      "v": "omp-app/1",
+      "type": "agent",
+      "hostId": "agent-view-host",
+      "sessionId": "agent-view-session",
+      "agentId": "WorkerA",
+      "state": "started",
+      "detail": {
+        "title": "Verify parity",
+        "name": "task",
+        "agent": "task",
+        "index": 0,
+        "startedAt": "1970-01-01T00:00:01.000Z",
+        "lastActivityAt": "1970-01-01T00:00:05.000Z",
+        "resumable": true,
+        "model": "openai/gpt-5.6-sol:high",
+        "progress": "Checking fixture parity",
+        "evidence": "Parity frame emitted",
+        "currentTool": "read",
+        "contextUsage": { "used": 2000, "limit": 8000 },
+        "tokenVolume": 12000,
+        "toolCount": 4,
+        "durationMs": 500
+      }
+    },
+    {
+      "v": "omp-app/1",
+      "type": "agent",
+      "hostId": "agent-view-host",
+      "sessionId": "agent-view-session",
+      "agentId": "WorkerA",
+      "state": "cancelled",
+      "detail": {
+        "title": "Verify parity",
+        "name": "task",
+        "agent": "task",
+        "index": 0,
+        "startedAt": "1970-01-01T00:00:01.000Z",
+        "lastActivityAt": "1970-01-01T00:00:06.000Z",
+        "resumable": false,
+        "model": "openai/gpt-5.6-sol:high",
+        "progress": "Checking fixture parity",
+        "evidence": "Parity frame emitted",
+        "currentTool": "read",
+        "contextUsage": { "used": 2000, "limit": 8000 },
+        "tokenVolume": 12000,
+        "toolCount": 4,
+        "durationMs": 500
+      }
+    }
+  ]
+}

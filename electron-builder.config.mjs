@@ -54,6 +54,7 @@ const config = {
     entitlementsInherit: signedMacBuild
       ? "apps/desktop/build/entitlements.mac.plist"
       : undefined,
+    sign: signedMacBuild ? "scripts/sign-macos.mjs" : undefined,
     notarize: signedMacBuild,
     // The first signed release remains an explicit GitHub download. Keep the
     // updater feed disabled until signed-to-signed update migration has its

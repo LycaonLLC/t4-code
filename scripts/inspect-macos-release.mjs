@@ -103,6 +103,21 @@ export function validateMacosSignatureReport(report, contract) {
   return Object.freeze({ ...report });
 }
 
+function hasEnabledEntitlement(output, entitlement) {
+  const escaped = entitlement.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(`<key>\\s*${escaped}\\s*</key>\\s*<true\\s*/>`, "u").test(String(output));
+}
+
+export function validateMacosLibraryValidationBoundary(appEntitlements, runtimeEntitlements) {
+  const entitlement = "com.apple.security.cs.disable-library-validation";
+  if (hasEnabledEntitlement(appEntitlements, entitlement)) {
+    throw new Error("top-level T4 Code app must keep library validation enabled");
+  }
+  if (!hasEnabledEntitlement(runtimeEntitlements, entitlement)) {
+    throw new Error("bundled OMP runtime must disable library validation");
+  }
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     encoding: "utf8",
@@ -142,6 +157,11 @@ function inspectApp(appPath, contract, certificatePrefix) {
     certificateSha256: createHash("sha256").update(leafCertificate).digest("hex"),
   };
   validateMacosSignatureReport(report, contract);
+  const runtimePath = join(appPath, "Contents", "Resources", "runtime", "omp");
+  run("codesign", ["--verify", "--strict", "--verbose=2", runtimePath]);
+  const appEntitlements = run("codesign", ["--display", "--entitlements", ":-", appPath]);
+  const runtimeEntitlements = run("codesign", ["--display", "--entitlements", ":-", runtimePath]);
+  validateMacosLibraryValidationBoundary(appEntitlements, runtimeEntitlements);
   run("spctl", ["--assess", "--type", "execute", "--verbose=4", appPath]);
   run("xcrun", ["stapler", "validate", appPath]);
   return report;

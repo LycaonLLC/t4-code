@@ -15,6 +15,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@t4-code/ui";
+import { History } from "lucide-react";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 
 import { desktopRuntime, useDesktopRuntimeSnapshot } from "../platform/desktop-runtime.ts";
@@ -290,8 +291,8 @@ function BrowserHomePane({ railOverlaid }: { railOverlaid: boolean }) {
       </div>
       <Empty className="flex-1 border-0">
         <EmptyHeader>
-          <EmptyMedia variant="default">
-            <BrandLockup byline size="lg" />
+          <EmptyMedia variant="icon">
+            <History aria-hidden="true" className="size-5 text-muted-foreground" />
           </EmptyMedia>
           <EmptyTitle>Pick up where a session left off</EmptyTitle>
           <EmptyDescription>
@@ -317,7 +318,7 @@ function BrowserHomePane({ railOverlaid }: { railOverlaid: boolean }) {
               Search sessions
             </Button>
           </div>
-          <p className="text-muted-foreground text-xs">
+          <p className="text-muted-foreground text-sm">
             {modKey}K searches, {modKey}1 to {modKey}9 jump straight to a session.
           </p>
         </EmptyContent>

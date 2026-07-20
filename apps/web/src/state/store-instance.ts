@@ -24,8 +24,11 @@ const bootOptions = parseFixtureBootOptions(
   typeof window === "undefined" ? "" : window.location.search,
 );
 
+const demoMode = import.meta.env.MODE === "demo";
+
 export const rendererPlatform: RendererPlatform = resolveRendererPlatform(
   bootOptions.platform ?? undefined,
+  { forceFixture: demoMode },
 );
 
 const browserMode = rendererPlatform.mode === "browser";

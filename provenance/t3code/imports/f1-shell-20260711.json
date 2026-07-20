@@ -9,7 +9,7 @@
       "sourceBlobSha": "4a97f0542b4c95e96eae835a8d01db56e7156f1a;70d163306cca5b32d32319359c8ecc9a68c3dbf8",
       "targetPath": "apps/web/src/state/workspace-store.ts",
       "classification": "adapted",
-      "checksum": "sha256:114958f57d4814ff4c9a9a40a9c5455f4b81df5678a58fa1477ba5a0cc6e5ada"
+      "checksum": "sha256:d036d53564f21935a7964d33eb3b5044f284236bd3857f1b72f000445c420654"
     },
     {
       "sourcePath": "apps/web/src/hooks/useTheme.ts",
@@ -44,14 +44,14 @@
       "sourceBlobSha": "9d6109a7780654557d165d9b2bd9a6246573b2f1",
       "targetPath": "apps/web/src/keyboard/shortcuts.ts",
       "classification": "reference-only",
-      "checksum": "sha256:09febf119f383753d1e414a03f7b6e4d9bc0489a0245c51b6c65e2c4f63cce70"
+      "checksum": "sha256:cb3a524c3b3ef4f415e2e00ee58e40e5bd5f1ef791337ff35bca3e1c2cdeba16"
     },
     {
       "sourcePath": "apps/web/src/components/Sidebar.logic.ts",
       "sourceBlobSha": "4e7614ed55161f50f756184251c80cf9dfb16ea2",
       "targetPath": "apps/web/src/lib/session-tree.ts",
       "classification": "reference-only",
-      "checksum": "sha256:7f78fd2e887eb6d8d1b0c2961b4693ca56a97464703a1ee4e3ca936ae6248246"
+      "checksum": "sha256:1fedb20c636999cf99e5b3332f1c2c6dd62fb1be096bf0864b8d83052f64997c"
     }
   ]
 }

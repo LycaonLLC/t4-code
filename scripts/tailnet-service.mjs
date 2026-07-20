@@ -362,7 +362,7 @@ async function readOptional(path) {
   }
 }
 
-async function writeAtomic(path, content) {
+async function writeAtomic(path, content, mode = 0o600) {
   const existing = await readOptional(path);
   void existing;
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -370,7 +370,7 @@ async function writeAtomic(path, content) {
   const handle = await open(
     temporary,
     fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW,
-    0o600,
+    mode,
   );
   try {
     await handle.writeFile(content, "utf8");
@@ -380,10 +380,14 @@ async function writeAtomic(path, content) {
   }
   try {
     await rename(temporary, path);
-    await chmod(path, 0o600);
+    await chmod(path, mode);
   } finally {
     await rm(temporary, { force: true }).catch(() => undefined);
   }
+}
+
+export function serviceFileMode(paths, path) {
+  return paths.platform === "darwin" && path === paths.definition ? 0o644 : 0o600;
 }
 
 function sanitizedOutput(value) {
@@ -393,7 +397,12 @@ function sanitizedOutput(value) {
     .slice(0, 2_048);
 }
 
-async function runCommand(command) {
+export function isTransientLaunchctlBootstrap(command, result) {
+  if (command.argv[0] !== "launchctl" || command.argv[1] !== "bootstrap") return false;
+  return result.code === 37 || /operation already in progress|bootstrap failed:\s*37\b/iu.test(`${result.stdout}\n${result.stderr}`);
+}
+
+async function runCommandOnce(command) {
   return await new Promise((resolvePromise, reject) => {
     const [executable, ...args] = command.argv;
     const child = spawn(executable, args, { shell: false, stdio: ["ignore", "pipe", "pipe"] });
@@ -419,6 +428,25 @@ async function runCommand(command) {
       }
     });
   });
+}
+
+async function runCommand(command) {
+  // macOS service removal is asynchronous even after `launchctl bootout` exits.
+  // Retry only launchd's explicit EINPROGRESS response during replacement.
+  const retryDeadline = Date.now() + 3_000;
+  while (true) {
+    const result = await runCommandOnce({ ...command, allowFailure: true });
+    if (result.code === 0) return result;
+    if (isTransientLaunchctlBootstrap(command, result) && Date.now() < retryDeadline) {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+      continue;
+    }
+    if (command.allowFailure !== true) {
+      const executable = command.argv[0];
+      throw new Error(`${executable} exited ${result.code}: ${result.stderr || result.stdout || "no diagnostics"}`);
+    }
+    return result;
+  }
 }
 
 async function runCommands(commands) {
@@ -599,7 +627,9 @@ export function validateCliOptions(command, options) {
           "deferStart",
           "electronRunAsNode",
         ])
-      : new Set(["help"]);
+      : command === "status"
+        ? new Set(["help", "deploymentIdentity"])
+        : new Set(["help"]);
   for (const key of Object.keys(options)) {
     if (!allowed.has(key)) fail(`unsupported option for ${command}: --${key}`);
   }
@@ -655,8 +685,8 @@ async function install(options, paths) {
   });
   await preflight(config);
   if (paths.logs !== undefined) await mkdir(paths.logs, { recursive: true, mode: 0o700 });
-  await writeAtomic(paths.config, `${JSON.stringify(config, null, 2)}\n`);
-  await writeAtomic(paths.definition, expectedDefinition(config, paths));
+  await writeAtomic(paths.config, `${JSON.stringify(config, null, 2)}\n`, serviceFileMode(paths, paths.config));
+  await writeAtomic(paths.definition, expectedDefinition(config, paths), serviceFileMode(paths, paths.definition));
   if (options.deferStart === true) {
     await runCommands(supervisorCommands("install-deferred", paths));
     await requireDurablyStoppedSupervisor(paths);
@@ -671,7 +701,7 @@ async function install(options, paths) {
   console.log(`gateway healthy on http://127.0.0.1:${config.port} (${result.activeSessions ?? 0} active sessions)`);
 }
 
-async function inspect(paths) {
+async function inspect(paths, options = {}) {
   let config;
   try {
     config = await loadConfig(paths);
@@ -696,6 +726,9 @@ async function inspect(paths) {
   const supervisorState = supervisorRunning ? "running" : "stopped or failed";
   const enablementState = supervisorEnabled ? "enabled" : "disabled or unknown";
   const definitionState = definition === undefined ? "missing" : definition === expected ? "current" : "drifted";
+  const deploymentIdentityState = options.deploymentIdentity === undefined
+    ? undefined
+    : options.deploymentIdentity === config.deploymentIdentity ? "current" : "stale";
   console.log(`definition: ${definitionState}`);
   console.log(`supervisor: ${supervisorState}`);
   console.log(`enablement: ${enablementState}`);
@@ -703,8 +736,15 @@ async function inspect(paths) {
   console.log(`local URL: http://127.0.0.1:${config.port}`);
   console.log(`allowed origin: ${config.allowedOrigin}`);
   console.log(`native origins: ${config.nativeAllowedOrigins.join(", ")}`);
+  if (deploymentIdentityState !== undefined) console.log(`deployment identity: ${deploymentIdentityState}`);
   if (supervisorResult?.stderr) console.log(`diagnostics: ${supervisorResult.stderr}`);
-  if (definitionState !== "current" || !supervisorRunning || !supervisorEnabled || !healthResult.ok) {
+  if (
+    definitionState !== "current"
+    || !supervisorRunning
+    || !supervisorEnabled
+    || !healthResult.ok
+    || deploymentIdentityState === "stale"
+  ) {
     process.exitCode = 1;
   }
 }
@@ -746,7 +786,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
   const paths = servicePaths();
   if (command === "install") await install(options, paths);
-  else if (command === "status") await inspect(paths);
+  else if (command === "status") await inspect(paths, options);
   else if (["start", "stop", "restart"].includes(command)) await lifecycle(command, paths);
   else if (command === "uninstall") await uninstall(paths);
   else fail(`unknown command: ${command}\n\n${usage()}`);

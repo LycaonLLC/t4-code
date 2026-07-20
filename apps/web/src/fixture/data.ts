@@ -17,8 +17,8 @@ function minutesAgo(minutes: number): string {
 
 export const SHELL_FIXTURE: ShellFixture = {
   hosts: [
-    { id: "host-local", name: "This machine", kind: "local" },
-    { id: "host-remote", name: "dev-server", kind: "remote" },
+    { id: "host-local", runtimeKind: "omp", name: "This machine", kind: "local" },
+    { id: "host-remote", runtimeKind: "omp", name: "dev-server", kind: "remote" },
   ],
   projects: [
     { id: "proj-omp", name: "oh-my-pi", path: "~/dev/oh-my-pi", hostId: "host-local" },

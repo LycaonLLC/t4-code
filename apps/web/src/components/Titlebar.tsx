@@ -3,7 +3,7 @@
 // Linux window controls are injected by the desktop shell later.
 import { Badge, BrandLockup, IconButton, Tooltip, TooltipPopup, TooltipTrigger } from "@t4-code/ui";
 import { useNavigate } from "@tanstack/react-router";
-import { Moon, PanelLeft, Search, Settings, Sun, UsersRound } from "lucide-react";
+import { Minimize2, Moon, PanelLeft, Search, Settings, Sun, UsersRound } from "lucide-react";
 import { useEffect } from "react";
 
 import { updateIsAvailable } from "../features/updates/update-model.ts";
@@ -25,7 +25,7 @@ function ThemeToggle() {
         render={
           <IconButton
             aria-label={nextLabel}
-            className="size-11 sm:size-7"
+            className="hidden size-11 sm:inline-flex sm:size-7"
             onClick={() =>
               workspaceStore.getState().setTheme(resolved === "dark" ? "light" : "dark")
             }
@@ -84,16 +84,20 @@ function SettingsButton() {
 }
 
 export function Titlebar({
+  focusMode,
+  onExitFocus,
   onToggleRail,
   railToggle,
 }: {
+  focusMode: boolean;
+  onExitFocus: () => void;
   onToggleRail: () => void;
   railToggle: RailTogglePresentation;
 }) {
   const navigate = useNavigate();
   return (
     <header
-      className="drag-region workspace-topbar titlebar-traffic-light-inset titlebar-window-controls-reserve shrink-0 gap-0 border-border border-b bg-background px-0 sm:gap-2 sm:px-3"
+      className="drag-region workspace-topbar titlebar-traffic-light-inset titlebar-window-controls-reserve shrink-0 gap-1 border-border/60 border-b bg-(--sidebar-background) px-1 sm:gap-1.5 sm:px-2.5"
       data-window-chrome={rendererPlatform.windowChrome ?? undefined}
     >
       <Tooltip>
@@ -117,6 +121,24 @@ export function Titlebar({
         className="min-w-0 [&>span>span]:hidden sm:[&>span>span]:inline"
       />
       <div className="flex-1" />
+      {focusMode && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                aria-label="Exit focus mode"
+                className="flex size-11 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-border/60 bg-secondary/60 text-foreground outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:h-7 sm:w-auto sm:rounded-md sm:px-2"
+                onClick={onExitFocus}
+                type="button"
+              >
+                <Minimize2 aria-hidden="true" className="size-3.5" />
+                <span className="hidden text-xs md:inline">Focus mode</span>
+              </button>
+            }
+          />
+          <TooltipPopup side="bottom">Exit focus mode (Ctrl+Shift+F)</TooltipPopup>
+        </Tooltip>
+      )}
       {rendererPlatform.mode === "browser" && (
         <Tooltip>
           <TooltipTrigger

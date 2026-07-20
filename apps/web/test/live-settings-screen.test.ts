@@ -25,7 +25,12 @@ import {
   type LiveSettingsScreenState,
 } from "../src/features/settings/live-screen-model.ts";
 import { SCOPE_LABEL } from "../src/features/settings/SettingRow.tsx";
-import { buildSettingsRailSections, SCOPE_TAB_LABEL, UPDATE_SECTION_ID } from "../src/features/settings/SettingsWorkspace.tsx";
+import {
+  buildSettingsRailGroups,
+  buildSettingsRailSections,
+  SCOPE_TAB_LABEL,
+  UPDATE_SECTION_ID,
+} from "../src/features/settings/SettingsWorkspace.tsx";
 import { filterSections } from "../src/features/settings/view-model.ts";
 
 const SETTINGS_SRC = join(import.meta.dirname, "../src/features/settings");
@@ -475,6 +480,24 @@ describe("defensive labels and advanced grouping", () => {
       { id: "advanced", label: "Advanced", summary: "", rows: [] },
     ]);
     expect(rail.map((entry) => entry.id)).toEqual(["appearance", "advanced", UPDATE_SECTION_ID]);
+  });
+
+  it("groups familiar settings while keeping unknown host sections honest and reachable", () => {
+    const groups = buildSettingsRailGroups([
+      { id: "general", label: "General", summary: "", rows: [] },
+      { id: "models", label: "Models", summary: "", rows: [] },
+      { id: "mcp", label: "MCP", summary: "", rows: [] },
+      { id: "vendor-runtime", label: "Vendor runtime", summary: "", rows: [] },
+      { id: "diagnostics", label: "Diagnostics", summary: "", rows: [] },
+    ]);
+    expect(groups.map((group) => [group.label, group.sections.map((section) => section.id)])).toEqual([
+      ["Personal", ["general"]],
+      ["AI & agents", ["models"]],
+      ["Integrations", ["mcp"]],
+      ["Host settings", ["vendor-runtime"]],
+      ["System", [UPDATE_SECTION_ID, "diagnostics"]],
+    ]);
+    expect(groups.flatMap((group) => group.sections).map((section) => section.id)).toHaveLength(6);
   });
 });
 

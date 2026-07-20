@@ -748,7 +748,7 @@ test("settles a typed incompatible desktop inspection and recovers without a sta
     control.mode = "resolve";
     control.resolvePending?.({ definition: "current", service: "running", diagnostics: "" });
   });
-  await expect(page.getByText("Running", { exact: true })).toBeVisible();
+  await expect(page.getByRole("main").getByText("Running", { exact: true })).toBeVisible();
   await page.clock.fastForward(60_000);
   expect(await inspectCalls()).toBe(2);
 });
@@ -1064,6 +1064,144 @@ test("keeps an empty Archived filter selected on the home route", async ({ page 
   ).toHaveAttribute("aria-pressed", "true");
 });
 
+test("opens supporting tools from one workspace menu and toggles the terminal shortcut", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openSession(page, false);
+
+  const workspace = page.getByRole("button", { name: "Workspace tools", exact: true });
+  await expect(workspace).toBeVisible();
+  await workspace.click();
+  await expect(page.getByText("Open on the right", { exact: true })).toBeVisible();
+  await expect(page.getByText("Open below", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open Agent terminals panel" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Open Activity panel", exact: true }).click();
+  await expect(page.getByRole("complementary", { name: "Activity", exact: true })).toBeVisible();
+  await expect(workspace).toHaveAttribute("aria-pressed", "true");
+
+  await page.keyboard.press("Control+j");
+  await expect(page.getByRole("button", { name: "Close terminal drawer", exact: true })).toBeVisible();
+  await page.keyboard.press("Control+j");
+  await expect(
+    page.getByRole("button", { name: "Close terminal drawer", exact: true }),
+  ).toBeHidden();
+});
+
+test("temporarily hides workspace chrome in focus mode and restores it", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openSession(page, false);
+
+  const workspace = page.getByRole("button", { name: "Workspace tools", exact: true });
+  await workspace.click();
+  await page.getByRole("button", { name: "Open Activity panel", exact: true }).click();
+  await page.keyboard.press("Control+j");
+  await expect(page.getByRole("complementary", { name: "Activity", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Close terminal drawer", exact: true })).toBeVisible();
+
+  await workspace.click();
+  await page.getByRole("button", { name: "Enter focus mode", exact: true }).click();
+  await expect(page.getByRole("navigation", { name: "Working folders and sessions" })).toBeHidden();
+  await expect(page.getByRole("complementary", { name: "Activity", exact: true })).toBeHidden();
+  await expect(page.getByRole("button", { name: "Close terminal drawer", exact: true })).toBeHidden();
+  await expect(page.getByRole("button", { name: "Workspace tools", exact: true })).toBeHidden();
+
+  const exitFocus = page.getByRole("button", { name: "Exit focus mode", exact: true });
+  await expect(exitFocus).toBeVisible();
+  await exitFocus.click();
+  await expect(page.getByRole("navigation", { name: "Working folders and sessions" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Activity", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Close terminal drawer", exact: true })).toBeVisible();
+
+  await page.keyboard.press("Control+Shift+f");
+  await expect(exitFocus).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(exitFocus).toBeHidden();
+  await page.getByRole("button", { name: "Close Activity", exact: true }).click();
+  await page.getByRole("button", { name: "Close terminal drawer", exact: true }).click();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.keyboard.press("Control+Shift+f");
+  await expect(exitFocus).toBeVisible();
+  const exitBox = await exitFocus.boundingBox();
+  expect(exitBox).not.toBeNull();
+  expect(exitBox!.width).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+  expect(exitBox!.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+  await exitFocus.click();
+  await expect(page.getByRole("textbox", { name: "Message the session" })).toBeVisible();
+});
+
+test("shows verified session context and groups command-palette actions", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openSession(page, false);
+
+  const context = page.getByRole("button", { name: /^Session context:/u });
+  await expect(context).toBeVisible();
+  await context.click();
+  await expect(page.getByText("Host", { exact: true })).toBeVisible();
+  await expect(page.getByText("Model", { exact: true })).toBeVisible();
+  await expect(page.getByText("Connection", { exact: true })).toBeVisible();
+  await expect(page.getByText("Live connection", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "View host health", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await page.keyboard.press("Control+k");
+  const palette = page.getByRole("dialog", {
+    name: "Search sessions, transcripts, and commands",
+  });
+  await expect(palette.getByText("Recent work", { exact: true })).toBeVisible();
+  await expect(palette.getByText("Workspace", { exact: true })).toBeVisible();
+  await expect(palette.getByText("Navigate", { exact: true })).toBeVisible();
+  await expect(palette.getByText("App", { exact: true })).toBeVisible();
+  await expect(palette.getByLabel("Command menu keyboard help")).toContainText(
+    /Navigate.*Open.*Esc.*Close/u,
+  );
+
+  const search = palette.getByRole("combobox");
+  await search.fill("open terminal");
+  await expect(palette.getByText("Workspace", { exact: true })).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "Close terminal drawer", exact: true })).toBeVisible();
+});
+
+test("groups sample settings on desktop and in the mobile category picker", async ({ page }) => {
+  await page.route("**/*", async (route) => {
+    const requestUrl = new URL(route.request().url());
+    const appUrl = new URL(web.url);
+    if (requestUrl.origin === appUrl.origin && requestUrl.pathname === "/") {
+      const response = await route.fetch();
+      const body = (await response.text()).replace(
+        /<script id="t4-backend" type="application\/json">.*?<\/script>/u,
+        "",
+      );
+      await route.fulfill({ body, response });
+      return;
+    }
+    await route.continue();
+  });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`${web.url}#/settings`, { waitUntil: "domcontentloaded" });
+
+  const sections = page.getByRole("navigation", { name: "Settings sections" });
+  await expect(sections.getByText("Personal", { exact: true })).toBeVisible();
+  await expect(sections.getByText("AI & agents", { exact: true })).toBeVisible();
+  await expect(sections.getByText("Tools", { exact: true })).toBeVisible();
+  await expect(sections.getByText("Integrations", { exact: true })).toBeVisible();
+  await expect(sections.getByText("System", { exact: true })).toBeVisible();
+  await sections.getByRole("button", { name: "Diagnostics", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Diagnostics", exact: true })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const picker = page.getByLabel("Settings category");
+  await expect(picker).toBeVisible();
+  await expect(picker.locator('optgroup[label="Personal"] option')).toHaveCount(5);
+  await expect(picker.locator('optgroup[label="AI & agents"] option')).toHaveCount(4);
+  await expect(picker.locator('optgroup[label="System"] option')).toHaveCount(2);
+  await picker.selectOption("general");
+  await expect(page.getByRole("heading", { name: "General", exact: true })).toBeVisible();
+});
+
 for (const viewport of [
   { width: 390, height: 844 },
   { width: 390, height: 500 },
@@ -1190,9 +1328,9 @@ test("manages a session from a phone and converges another live client", async (
     await page.getByRole("button", { name: "Show session list", exact: true }).click();
     const rail = page.getByRole("dialog", { name: "Working folders and sessions" });
     await expect(rail).toBeVisible();
-    await expect(rail.getByRole("heading", { name: "Working folders", exact: true })).toBeVisible();
+    await expect(rail.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
     await expect(
-      rail.getByText("OMP groups sessions by the folder they were started in.", { exact: true }),
+      rail.getByRole("button", { name: "Open attention inbox", exact: true }),
     ).toBeVisible();
     await expect(rail.getByRole("button", { name: "Current · 1", exact: true })).toBeVisible();
     await expect(rail.getByRole("button", { name: "Archived · 0", exact: true })).toBeVisible();

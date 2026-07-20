@@ -14,8 +14,8 @@ import {
 } from "@t4-code/ui";
 import { Check, MessageSquarePlus, WrapText, X } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
+import type * as React from "react";
 
-import { FamilyEmpty } from "./FamilyEmpty.tsx";
 import { PaneHeading } from "./PaneHeading.tsx";
 import { useInspector, type InspectorStoreApi } from "./inspector-store.ts";
 import type { ReviewComment, ReviewFile, ReviewFileStatus } from "./model.ts";
@@ -28,6 +28,8 @@ const STATUS_BADGES: Readonly<
   modified: { letter: "M", className: "text-info-foreground", label: "Modified" },
   deleted: { letter: "D", className: "text-destructive-foreground", label: "Deleted" },
   renamed: { letter: "R", className: "text-warning-foreground", label: "Renamed" },
+  copied: { letter: "C", className: "text-warning-foreground", label: "Copied" },
+  untracked: { letter: "U", className: "text-success-foreground", label: "Untracked" },
 };
 
 function formatBytes(bytes: number): string {
@@ -63,7 +65,10 @@ function FileListRow({
       >
         <span
           aria-label={badge.label}
-          className={cn("w-3 shrink-0 text-center font-mono font-semibold text-xs", badge.className)}
+          className={cn(
+            "w-3 shrink-0 text-center font-mono font-semibold text-xs",
+            badge.className,
+          )}
         >
           {badge.letter}
         </span>
@@ -109,7 +114,10 @@ function CommentCard({
 }) {
   return (
     <div className="mx-2 my-1 flex items-start gap-2 rounded-md border border-border bg-card px-2.5 py-1.5">
-      <MessageSquarePlus aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+      <MessageSquarePlus
+        aria-hidden="true"
+        className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
+      />
       <div className="min-w-0 flex-1">
         <p className="text-xs">{comment.text}</p>
         <p className="pt-0.5 text-[.6875rem] text-muted-foreground">
@@ -246,7 +254,10 @@ function ApplyDiscardDialog({
   const applying = action === "apply";
   return (
     <Dialog onOpenChange={(open) => (open ? undefined : onClose())} open>
-      <DialogPopup aria-label={applying ? "Keep this change" : "Discard this change"} className="max-w-sm">
+      <DialogPopup
+        aria-label={applying ? "Keep this change" : "Discard this change"}
+        className="max-w-sm"
+      >
         <DialogHeader>
           <DialogTitle className="text-base">
             {applying ? "Keep this change?" : "Discard this change?"}
@@ -286,13 +297,7 @@ function ApplyDiscardDialog({
   );
 }
 
-function FileBody({
-  api,
-  file,
-}: {
-  readonly api: InspectorStoreApi;
-  readonly file: ReviewFile;
-}) {
+function FileBody({ api, file }: { readonly api: InspectorStoreApi; readonly file: ReviewFile }) {
   const view = useInspector(api, (state) => state.review.view);
   const wrap = useInspector(api, (state) => state.review.wrap);
   const draftAnchor = useInspector(api, (state) => state.review.draftAnchor);
@@ -335,11 +340,8 @@ function FileBody({
     const line = row.kind === "del" ? row.oldLine : row.newLine;
     const side = row.kind === "del" ? "old" : "new";
     if (line === null) return null;
-    const own = fileComments.filter(
-      (comment) => comment.line === line && comment.side === side,
-    );
-    const draft =
-      draftAnchor !== null && draftAnchor.line === line && draftAnchor.side === side;
+    const own = fileComments.filter((comment) => comment.line === line && comment.side === side);
+    const draft = draftAnchor !== null && draftAnchor.line === line && draftAnchor.side === side;
     if (own.length === 0 && !draft) return null;
     return (
       <>
@@ -383,7 +385,13 @@ function FileBody({
   );
 }
 
-export function ReviewPane({ api }: { readonly api: InspectorStoreApi }) {
+export function ReviewPane({
+  api,
+  trailing,
+}: {
+  readonly api: InspectorStoreApi;
+  readonly trailing?: React.ReactNode | undefined;
+}) {
   const files = useInspector(api, (state) => state.review.files);
   const selectedPath = useInspector(api, (state) => state.review.selectedPath);
   const view = useInspector(api, (state) => state.review.view);
@@ -391,11 +399,33 @@ export function ReviewPane({ api }: { readonly api: InspectorStoreApi }) {
   const viewedByPath = useInspector(api, (state) => state.review.viewedByPath);
   const sampleMode = useInspector(api, (state) => state.sampleMode);
   const actions = useInspector(api, (state) => state.actions);
+  const loading = useInspector(api, (state) => state.review.loading ?? false);
+  const error = useInspector(api, (state) => state.review.error ?? null);
+  const source = useInspector(api, (state) => state.review.source ?? "legacy");
+  const pendingAction = useInspector(api, (state) => state.review.pendingAction ?? null);
   const [confirm, setConfirm] = useState<{ action: "apply" | "discard"; path: string } | null>(
     null,
   );
 
-  if (files.length === 0) return <FamilyEmpty family="review" />;
+  if (files.length === 0) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <PaneHeading
+          family="review"
+          summary={loading ? "Loading review" : "0 files"}
+          trailing={trailing}
+        />
+        <div className="flex min-h-0 flex-1 items-center justify-center px-6">
+          <p
+            className="text-center text-muted-foreground text-xs"
+            role={error === null ? "status" : "alert"}
+          >
+            {error ?? (loading ? "Loading changed files…" : "Nothing to review")}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const selected = files.find((file) => file.path === selectedPath);
   const additions = files.reduce((sum, file) => sum + file.additions, 0);
@@ -407,7 +437,13 @@ export function ReviewPane({ api }: { readonly api: InspectorStoreApi }) {
       <PaneHeading
         family="review"
         summary={`${files.length} ${files.length === 1 ? "file" : "files"} · +${additions} −${deletions} · ${viewedCount}/${files.length} viewed`}
+        trailing={trailing}
       />
+      {error !== null && (
+        <p className="border-border border-b px-2 py-1.5 text-destructive text-xs" role="alert">
+          {error}
+        </p>
+      )}
       <div
         aria-label="Changed files"
         className="max-h-[38%] shrink-0 overflow-y-auto border-border border-b p-1.5"
@@ -466,19 +502,34 @@ export function ReviewPane({ api }: { readonly api: InspectorStoreApi }) {
             {selected.applyState === "pending" ? (
               <>
                 <Button
-                  disabled={!actions.reviewDiscard.enabled}
+                  disabled={
+                    pendingAction !== null ||
+                    !(source === "turn"
+                      ? actions.reviewApply.enabled
+                      : actions.reviewDiscard.enabled)
+                  }
                   onClick={() => setConfirm({ action: "discard", path: selected.path })}
                   size="xs"
-                  title={actions.reviewDiscard.reason ?? undefined}
+                  title={
+                    pendingAction !== null
+                      ? "Waiting for the host to confirm the current review action."
+                      : ((source === "turn"
+                          ? actions.reviewApply.reason
+                          : actions.reviewDiscard.reason) ?? undefined)
+                  }
                   variant="destructive-outline"
                 >
                   Discard
                 </Button>
                 <Button
-                  disabled={!actions.reviewApply.enabled}
+                  disabled={pendingAction !== null || !actions.reviewApply.enabled}
                   onClick={() => setConfirm({ action: "apply", path: selected.path })}
                   size="xs"
-                  title={actions.reviewApply.reason ?? undefined}
+                  title={
+                    pendingAction !== null
+                      ? "Waiting for the host to confirm the current review action."
+                      : (actions.reviewApply.reason ?? undefined)
+                  }
                 >
                   Keep
                 </Button>

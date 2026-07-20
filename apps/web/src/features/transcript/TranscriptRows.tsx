@@ -38,6 +38,7 @@ import { resolveToolRenderer } from "./tool-render/registry.ts";
 import type { ToolRenderHost, ToolRenderProps } from "./tool-render/types.ts";
 import "./tool-render/tool-render.css";
 import { TranscriptImages } from "./TranscriptImages.tsx";
+import { TranscriptArtifacts } from "./TranscriptArtifacts.tsx";
 
 // ---------------------------------------------------------------------------
 // Self-ticking elapsed label
@@ -115,7 +116,11 @@ function ReasoningDisclosure({ reasoning }: { readonly reasoning: string }) {
  * response is speaking (or just failed to), the strip stays visible on
  * desktop instead of waiting for hover, so "Stop reading" is never hidden.
  */
-function AssistantMessageActions({ row }: { readonly row: Extract<TranscriptRow, { kind: "message" }> }) {
+function AssistantMessageActions({
+  row,
+}: {
+  readonly row: Extract<TranscriptRow, { kind: "message" }>;
+}) {
   const { controller, state } = useReadAloud();
   const speaking = state.speakingId === row.id;
   const notice = state.notice !== null && state.notice.messageId === row.id ? state.notice : null;
@@ -155,12 +160,18 @@ function MessageRow({
 }) {
   if (row.role === "user") {
     return (
-      <div className="group/message flex justify-end py-2">
-        <div className="relative max-w-[85%] rounded-lg bg-secondary px-3 py-2">
+      <div className="group/message flex justify-end pt-5 pb-2">
+        <div className="relative max-w-[85%] rounded-lg border border-border/50 bg-secondary px-3 py-2">
           <Markdown text={row.text} />
           <TranscriptImages
             images={row.images}
             issue={row.imageIssue}
+            label="Attached"
+            source={imageSource}
+          />
+          <TranscriptArtifacts
+            artifacts={row.artifacts ?? []}
+            issue={row.artifactIssue ?? null}
             label="Attached"
             source={imageSource}
           />
@@ -172,12 +183,18 @@ function MessageRow({
     );
   }
   return (
-    <div className="group/message py-2">
+    <div className="group/message pt-1.5 pb-2.5">
       {row.reasoning !== "" && <ReasoningDisclosure reasoning={row.reasoning} />}
       <Markdown text={row.text} />
       <TranscriptImages
         images={row.images}
         issue={row.imageIssue}
+        label="Response"
+        source={imageSource}
+      />
+      <TranscriptArtifacts
+        artifacts={row.artifacts ?? []}
+        issue={row.artifactIssue ?? null}
         label="Response"
         source={imageSource}
       />
@@ -440,7 +457,8 @@ const ToolCallRow = memo(function ToolCallRow({
         <Icon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="shrink-0 font-medium text-xs">{label}</span>
         <span
-          className="tv-render tv-summary min-w-0 flex-1 truncate"
+          className="tv-render tv-summary min-w-0 flex-1 line-clamp-2 sm:line-clamp-none sm:truncate"
+          data-tool-preview="multi"
           data-tool-renderer={view.known ? "known" : "generic"}
         >
           <Summary {...renderProps} />
@@ -467,6 +485,13 @@ const ToolCallRow = memo(function ToolCallRow({
         className="mr-1 ml-7"
         images={call.images}
         issue={call.imageIssue}
+        label={`${label} result`}
+        source={imageSource}
+      />
+      <TranscriptArtifacts
+        className="mr-1 ml-7"
+        artifacts={call.artifacts ?? []}
+        issue={call.artifactIssue ?? null}
         label={`${label} result`}
         source={imageSource}
       />
@@ -497,7 +522,7 @@ function ToolGroupRow({
   readonly toolHost?: ToolRenderHost | undefined;
 }) {
   return (
-    <div className="my-1.5 rounded-lg border border-border/60 px-1 py-1">
+    <div className="my-1 rounded-lg border border-border/70 bg-card/40 px-1 py-1 divide-y divide-border/40">
       {row.calls.map((call) => (
         <ToolCallRow
           call={call}
@@ -648,6 +673,39 @@ function WorkingRow({
   );
 }
 
+function TurnReviewRow({
+  row,
+  toolHost,
+}: {
+  readonly row: Extract<TranscriptRow, { kind: "turn-review" }>;
+  readonly toolHost?: ToolRenderHost | undefined;
+}) {
+  return (
+    <section
+      className="my-2 rounded-md border border-border/70 bg-muted/30 p-3"
+      aria-label="Turn review"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="font-medium text-sm">Review changes</p>
+          <p className="text-muted-foreground text-xs">
+            {row.changes} {row.changes === 1 ? "file" : "files"} ·{" "}
+            <span className="text-success-foreground">+{row.additions}</span>{" "}
+            <span className="text-destructive-foreground">−{row.deletions}</span>
+          </p>
+        </div>
+        <button
+          className="min-h-8 rounded border border-input px-2 text-xs hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => toolHost?.openTurnReview?.(row.turnId)}
+          type="button"
+        >
+          Review changes
+        </button>
+      </div>
+    </section>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Dispatcher
 // ---------------------------------------------------------------------------
@@ -682,6 +740,8 @@ export const TranscriptRowContent = memo(function TranscriptRowContent({
       return <NoticeRow row={row} />;
     case "unknown-entry":
       return <UnknownEntryRow row={row} />;
+    case "turn-review":
+      return <TurnReviewRow row={row} toolHost={toolHost} />;
     case "working":
       return <WorkingRow ghost={ghost} nowMs={nowMs} row={row} />;
   }

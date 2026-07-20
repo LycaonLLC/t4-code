@@ -45,6 +45,7 @@ import type {
 import type { CatalogFrame, SettingsFrame } from "@t4-code/protocol";
 import { ImmutableMap } from "./immutable-map.ts";
 import type { ProjectionOptions, ProjectionSnapshot, ProjectionStore } from "./projection.ts";
+import type { RuntimeIntegrationDescriptor } from "./runtime-integration.ts";
 
 export interface DesktopShellPort {
   readonly kind: "desktop";
@@ -139,6 +140,7 @@ export type DesktopServerEventSubscription = (event: RendererServerEventEnvelope
 
 export interface DesktopRuntimeSnapshot {
   readonly version: 1;
+  readonly integration: RuntimeIntegrationDescriptor;
   readonly platform: "linux" | "darwin";
   readonly desktopVersion: string;
   readonly startState: DesktopRuntimeStartState;

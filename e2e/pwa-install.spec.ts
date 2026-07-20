@@ -1,128 +1,10 @@
-import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
-import { access, readFile, stat } from "node:fs/promises";
-import { extname, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { BuiltWebServer } from "./built-web-server.ts";
 
-const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
-const WEB_DIST = resolve(REPO_ROOT, "apps/web/dist");
-
-const MIME_TYPES: Readonly<Record<string, string>> = {
-  ".css": "text/css; charset=utf-8",
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".png": "image/png",
-  ".webmanifest": "application/manifest+json; charset=utf-8",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-};
-
-function injectBackend(html: string): string {
-  const payload = JSON.stringify({
-    wsUrl: "ws://127.0.0.1:1/v1/ws",
-    label: "PWA fixture backend",
-  });
-  const tag = `<script id="t4-backend" type="application/json">${payload}</script>`;
-  if (!html.includes("</head>")) throw new Error("web dist index is missing </head>");
-  return html.replace("</head>", `${tag}</head>`);
-}
-
-class BuiltPwaServer {
-  private readonly server: Server;
-  private port = 0;
-
-  constructor() {
-    this.server = createServer((request, response) => {
-      void this.handle(request.url ?? "/", request.method ?? "GET")
-        .then(({ body, contentType, status }) => {
-          response.writeHead(status, {
-            "cache-control": "no-store",
-            "content-type": contentType,
-            "x-content-type-options": "nosniff",
-          });
-          response.end(request.method === "HEAD" ? undefined : body);
-        })
-        .catch((error: unknown) => {
-          response.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
-          response.end(error instanceof Error ? error.message : "fixture web server failed");
-        });
-    });
-  }
-
-  get url(): string {
-    if (this.port === 0) throw new Error("fixture web server is not running");
-    return `http://127.0.0.1:${this.port}/`;
-  }
-
-  async start(): Promise<void> {
-    await access(resolve(WEB_DIST, "index.html"));
-    await new Promise<void>((resolveStart, reject) => {
-      const onError = (error: Error) => {
-        this.server.off("listening", onListening);
-        reject(error);
-      };
-      const onListening = () => {
-        this.server.off("error", onError);
-        this.port = (this.server.address() as AddressInfo).port;
-        resolveStart();
-      };
-      this.server.once("error", onError);
-      this.server.once("listening", onListening);
-      this.server.listen(0, "127.0.0.1");
-    });
-  }
-
-  async stop(): Promise<void> {
-    if (this.port === 0) return;
-    await new Promise<void>((resolveStop) => this.server.close(() => resolveStop()));
-    this.port = 0;
-  }
-
-  private async handle(
-    rawUrl: string,
-    method: string,
-  ): Promise<{ body: Buffer | string; contentType: string; status: number }> {
-    if (method !== "GET" && method !== "HEAD") {
-      return { body: "method not allowed", contentType: "text/plain; charset=utf-8", status: 405 };
-    }
-    const pathname = decodeURIComponent(new URL(rawUrl, "http://fixture.invalid").pathname);
-    if (pathname === "/fixture") {
-      return {
-        body: await readFile(resolve(WEB_DIST, "index.html"), "utf8"),
-        contentType: MIME_TYPES[".html"]!,
-        status: 200,
-      };
-    }
-    if (pathname === "/" || pathname === "/index.html") {
-      return {
-        body: injectBackend(await readFile(resolve(WEB_DIST, "index.html"), "utf8")),
-        contentType: MIME_TYPES[".html"]!,
-        status: 200,
-      };
-    }
-
-    const candidate = resolve(WEB_DIST, `.${pathname}`);
-    if (!candidate.startsWith(`${WEB_DIST}${sep}`)) {
-      return { body: "not found", contentType: "text/plain; charset=utf-8", status: 404 };
-    }
-    try {
-      if (!(await stat(candidate)).isFile()) throw new Error("not a file");
-      return {
-        body: await readFile(candidate),
-        contentType: MIME_TYPES[extname(candidate)] ?? "application/octet-stream",
-        status: 200,
-      };
-    } catch {
-      return { body: "not found", contentType: "text/plain; charset=utf-8", status: 404 };
-    }
-  }
-}
-
-let web: BuiltPwaServer;
+let web: BuiltWebServer;
 
 test.beforeAll(async () => {
-  web = new BuiltPwaServer();
+  web = new BuiltWebServer();
   await web.start();
 });
 
@@ -137,7 +19,7 @@ test("reserves macOS traffic-light space only for native window chrome", async (
 
   const titlebar = page.locator("header");
   await expect(titlebar).not.toHaveAttribute("data-window-chrome");
-  await expect(titlebar).toHaveCSS("padding-left", "12px");
+  await expect(titlebar).toHaveCSS("padding-left", "10px");
 
   await titlebar.evaluate((element) => element.setAttribute("data-window-chrome", "darwin"));
   await expect(titlebar).toHaveCSS("padding-left", "76px");
@@ -278,9 +160,7 @@ test("keeps the compaction lifecycle precise inside a 320px viewport", async ({ 
   await page.evaluate(() => {
     const state: { firstWorkingText: string | null } = { firstWorkingText: null };
     const capture = () => {
-      const working = document.querySelector<HTMLElement>(
-        '[data-transcript-status="working"]',
-      );
+      const working = document.querySelector<HTMLElement>('[data-transcript-status="working"]');
       if (working !== null && state.firstWorkingText === null) {
         state.firstWorkingText = working.textContent?.replaceAll(/\s+/gu, " ").trim() ?? "";
       }

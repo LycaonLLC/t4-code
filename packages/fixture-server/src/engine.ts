@@ -1018,6 +1018,9 @@ export class FixtureEngine {
       const session = this.createSession(frame);
       return { ...base, ok: true, result: { session: this.createdSessionRef(session) } };
     }
+    if (frame.command === "project.reveal") {
+      return { ...base, ok: true, result: { revealed: true } };
+    }
     if (frame.command === "session.list")
       return {
         ...base,

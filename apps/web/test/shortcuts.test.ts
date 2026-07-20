@@ -23,6 +23,24 @@ describe("resolveShortcut", () => {
     expect(resolveShortcut(event({ key: "b", ctrlKey: true }))).toEqual({ kind: "toggle-rail" });
   });
 
+  it("maps Cmd/Ctrl+J to the active session terminal", () => {
+    expect(resolveShortcut(event({ key: "j", ctrlKey: true }))).toEqual({
+      kind: "toggle-terminal",
+    });
+    expect(resolveShortcut(event({ key: "J", metaKey: true }))).toEqual({
+      kind: "toggle-terminal",
+    });
+  });
+
+  it("maps Cmd/Ctrl+Shift+F to focus mode", () => {
+    expect(resolveShortcut(event({ key: "f", ctrlKey: true, shiftKey: true }))).toEqual({
+      kind: "toggle-focus",
+    });
+    expect(resolveShortcut(event({ key: "F", metaKey: true, shiftKey: true }))).toEqual({
+      kind: "toggle-focus",
+    });
+  });
+
   it("maps Cmd/Ctrl+1..9 to zero-based session positions", () => {
     expect(resolveShortcut(event({ key: "1", code: "Digit1", ctrlKey: true }))).toEqual({
       kind: "session-index",

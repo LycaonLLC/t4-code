@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
 const protocolRoot = join(repoRoot, "packages", "protocol");
+const hostRoots = [join(repoRoot, "packages", "host-wire"), join(repoRoot, "packages", "host-service")];
 const scannedRoots = [join(repoRoot, "apps"), join(repoRoot, "packages")];
 
 function sourceFiles(directory: string): string[] {
@@ -18,9 +19,9 @@ function sourceFiles(directory: string): string[] {
   return files;
 }
 
-function rawAppWireImports(path: string): string[] {
+function rawHostWireImports(path: string): string[] {
   const content = readFileSync(path, "utf8");
-  if (!content.includes("@oh-my-pi/app-wire")) return [];
+  if (!content.includes("@t4-code/host-wire")) return [];
   const source = ts.createSourceFile(
     path,
     content,
@@ -41,8 +42,8 @@ function rawAppWireImports(path: string): string[] {
     if (
       specifier !== undefined &&
       ts.isStringLiteral(specifier) &&
-      (specifier.text === "@oh-my-pi/app-wire" ||
-        specifier.text.startsWith("@oh-my-pi/app-wire/"))
+      (specifier.text === "@t4-code/host-wire" ||
+        specifier.text.startsWith("@t4-code/host-wire/"))
     ) {
       imports.push(specifier.text);
     }
@@ -67,13 +68,13 @@ function rawAppWireImports(path: string): string[] {
   return imports;
 }
 
-describe("app-wire ownership boundary", () => {
-  it("keeps raw app-wire imports inside @t4-code/protocol", () => {
+describe("host-wire ownership boundary", () => {
+  it("keeps raw host-wire imports inside the protocol and host packages", () => {
     const violations = scannedRoots
       .flatMap(sourceFiles)
-      .filter((path) => !path.startsWith(`${protocolRoot}/`))
+      .filter((path) => !path.startsWith(`${protocolRoot}/`) && !hostRoots.some((root) => path.startsWith(`${root}/`)))
       .flatMap((path) =>
-        rawAppWireImports(path).map((specifier) => ({
+        rawHostWireImports(path).map((specifier) => ({
           path: relative(repoRoot, path),
           specifier,
         })),

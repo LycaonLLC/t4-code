@@ -1,6 +1,7 @@
 // Bounded transcript-image transport and object-URL cache. The app-wire
 // projection carries metadata only; bytes are read sequentially from the
 // attached host, verified, then retained outside React and the projection.
+import type { TranscriptArtifactReference } from "../transcript/artifact-metadata.ts";
 import type {
   TranscriptImageMimeType,
   TranscriptImageReference,
@@ -26,6 +27,9 @@ export const TRANSCRIPT_IMAGE_FIXTURE_REASON =
 export const TRANSCRIPT_IMAGE_PAUSED_REASON =
   "Switch back to this session to reload its transcript images.";
 
+/** Metadata-only reference to either legacy image bytes or a 0.7 artifact. */
+export type TranscriptMediaReference = TranscriptImageReference | TranscriptArtifactReference;
+
 export type TranscriptImageAvailability =
   | { readonly available: true }
   | { readonly available: false; readonly reason: string };
@@ -35,7 +39,7 @@ export type TranscriptImageSnapshot =
   | {
       readonly status: "ready";
       readonly url: string;
-      readonly mimeType: TranscriptImageMimeType;
+      readonly mimeType: string;
       readonly size: number;
       readonly animated: boolean;
     }
@@ -43,12 +47,15 @@ export type TranscriptImageSnapshot =
   | { readonly status: "unavailable"; readonly reason: string };
 
 export interface TranscriptImageSource {
-  getSnapshot(reference: TranscriptImageReference): TranscriptImageSnapshot;
-  subscribe(reference: TranscriptImageReference, listener: () => void): () => void;
-  retain(reference: TranscriptImageReference): () => void;
-  reportDecodeFailure(reference: TranscriptImageReference): void;
+  getSnapshot(reference: TranscriptMediaReference): TranscriptImageSnapshot;
+  subscribe(reference: TranscriptMediaReference, listener: () => void): () => void;
+  retain(reference: TranscriptMediaReference): () => void;
+  reportDecodeFailure(reference: TranscriptMediaReference): void;
   dispose(reason?: string): void;
 }
+
+/** Additive name; legacy image consumers keep the same source interface. */
+export type TranscriptArtifactSource = TranscriptImageSource;
 
 export interface TranscriptImageCommandResult {
   readonly accepted: boolean;
@@ -61,9 +68,9 @@ export interface TranscriptImageReadSignal {
   onCancel(listener: () => void): () => void;
 }
 
-export interface TranscriptImageSourceOptions {
+interface TranscriptMediaSourceOptions<TReference extends TranscriptMediaReference> {
   readonly readChunk: (
-    reference: TranscriptImageReference,
+    reference: TReference,
     offset: number,
     signal: TranscriptImageReadSignal,
   ) => Promise<TranscriptImageCommandResult>;
@@ -78,9 +85,14 @@ export interface TranscriptImageSourceOptions {
   readonly digest?: (bytes: Uint8Array) => Promise<string>;
 }
 
+export type TranscriptImageSourceOptions = TranscriptMediaSourceOptions<TranscriptImageReference>;
+export type TranscriptArtifactSourceOptions =
+  TranscriptMediaSourceOptions<TranscriptMediaReference>;
+
 export interface DecodedTranscriptImageChunk {
-  readonly sha256: string;
-  readonly mimeType: TranscriptImageMimeType;
+  readonly sha256?: string | undefined;
+  readonly mimeType: string;
+  readonly kind: "image" | "text" | "patch" | "binary";
   readonly size: number;
   readonly offset: number;
   readonly nextOffset: number;
@@ -88,9 +100,11 @@ export interface DecodedTranscriptImageChunk {
   readonly bytes: Uint8Array;
 }
 
+export type DecodedTranscriptArtifactChunk = DecodedTranscriptImageChunk;
+
 interface CacheEntry {
   readonly key: string;
-  readonly reference: TranscriptImageReference;
+  readonly reference: TranscriptMediaReference;
   readonly listeners: Set<() => void>;
   refCount: number;
   lastUsed: number;
@@ -235,8 +249,10 @@ function unavailableSnapshot(reason: string): TranscriptImageSnapshot {
   return Object.freeze({ status: "unavailable", reason });
 }
 
-function imageKey(reference: TranscriptImageReference): string {
-  return `${reference.entryId}\u0000${reference.sha256}\u0000${reference.mimeType}`;
+function mediaKey(reference: TranscriptMediaReference): string {
+  return "source" in reference
+    ? `artifact\u0000${reference.artifactId}`
+    : `image\u0000${reference.entryId}\u0000${reference.sha256}\u0000${reference.mimeType}`;
 }
 
 function sessionKey(hostId: string, sessionId: string): string {
@@ -338,6 +354,59 @@ export function decodeTranscriptImageChunk(
   return {
     sha256: reference.sha256,
     mimeType: reference.mimeType,
+    kind: "image",
+    size: value.size,
+    offset: value.offset,
+    nextOffset: value.nextOffset,
+    complete: value.complete,
+    bytes,
+  };
+}
+
+/** Strict local mirror of the additive artifact.read chunk result. */
+export function decodeTranscriptArtifactChunk(
+  value: unknown,
+  reference: TranscriptArtifactReference,
+  requestedOffset: number,
+  expectedSize?: number,
+): DecodedTranscriptArtifactChunk {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "artifactId",
+      "kind",
+      "mediaType",
+      "size",
+      "offset",
+      "nextOffset",
+      "complete",
+      "content",
+    ]) ||
+    value.artifactId !== reference.artifactId ||
+    value.kind !== reference.kind ||
+    value.mediaType !== reference.mediaType ||
+    !safeInteger(value.size) ||
+    value.size <= 0 ||
+    value.size > TRANSCRIPT_IMAGE_MAX_BYTES ||
+    (reference.size !== undefined && value.size !== reference.size) ||
+    (expectedSize !== undefined && value.size !== expectedSize) ||
+    !safeInteger(value.offset) ||
+    value.offset !== requestedOffset ||
+    !safeInteger(value.nextOffset) ||
+    value.nextOffset <= value.offset ||
+    value.nextOffset > value.size ||
+    typeof value.complete !== "boolean" ||
+    value.complete !== (value.nextOffset === value.size)
+  ) {
+    throw new TranscriptImageFailure(TRANSCRIPT_IMAGE_PROTOCOL_ERROR, false);
+  }
+  const bytes = canonicalBase64Bytes(value.content);
+  if (bytes.byteLength !== value.nextOffset - value.offset) {
+    throw new TranscriptImageFailure(TRANSCRIPT_IMAGE_PROTOCOL_ERROR, false);
+  }
+  return {
+    mimeType: reference.mediaType,
+    kind: reference.kind,
     size: value.size,
     offset: value.offset,
     nextOffset: value.nextOffset,
@@ -426,7 +495,7 @@ function animatedPng(bytes: Uint8Array): boolean {
   let offset = 8;
   while (offset + 12 <= bytes.byteLength) {
     const size =
-      ((bytes[offset] ?? 0) * 0x1000000) +
+      (bytes[offset] ?? 0) * 0x1000000 +
       ((bytes[offset + 1] ?? 0) << 16) +
       ((bytes[offset + 2] ?? 0) << 8) +
       (bytes[offset + 3] ?? 0);
@@ -456,7 +525,7 @@ function animatedWebp(bytes: Uint8Array): boolean {
       (bytes[offset + 4] ?? 0) +
       ((bytes[offset + 5] ?? 0) << 8) +
       ((bytes[offset + 6] ?? 0) << 16) +
-      ((bytes[offset + 7] ?? 0) * 0x1000000);
+      (bytes[offset + 7] ?? 0) * 0x1000000;
     if (size > bytes.byteLength - offset - 8) return false;
     if (type === "ANIM" || type === "ANMF") return true;
     offset += 8 + size + (size % 2);
@@ -485,20 +554,29 @@ async function defaultDigest(bytes: Uint8Array): Promise<string> {
 }
 
 function validLimit(value: number, name: string): number {
-  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive safe integer`);
+  if (!Number.isSafeInteger(value) || value <= 0)
+    throw new Error(`${name} must be a positive safe integer`);
   return value;
 }
 
 const sourcesBySession = new Map<string, Set<ManagedTranscriptImageSource>>();
 
-function registerSource(hostId: string, sessionId: string, source: ManagedTranscriptImageSource): void {
+function registerSource(
+  hostId: string,
+  sessionId: string,
+  source: ManagedTranscriptImageSource,
+): void {
   const key = sessionKey(hostId, sessionId);
   const sources = sourcesBySession.get(key) ?? new Set<ManagedTranscriptImageSource>();
   sources.add(source);
   sourcesBySession.set(key, sources);
 }
 
-function unregisterSource(hostId: string, sessionId: string, source: ManagedTranscriptImageSource): void {
+function unregisterSource(
+  hostId: string,
+  sessionId: string,
+  source: ManagedTranscriptImageSource,
+): void {
   const key = sessionKey(hostId, sessionId);
   const sources = sourcesBySession.get(key);
   if (sources === undefined) return;
@@ -533,7 +611,7 @@ export function disposeTranscriptImagesForSession(hostId: string, sessionId: str
 }
 
 export class ManagedTranscriptImageSource implements TranscriptImageSource {
-  private readonly readChunk: TranscriptImageSourceOptions["readChunk"];
+  private readonly readChunk: TranscriptArtifactSourceOptions["readChunk"];
   private readonly maxCacheBytes: number;
   private readonly maxCacheEntries: number;
   private readonly maxConcurrentLoads: number;
@@ -559,8 +637,10 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
   private activeLoads = 0;
   private clock = 0;
 
-  constructor(options: TranscriptImageSourceOptions) {
-    this.readChunk = options.readChunk;
+  constructor(options: TranscriptImageSourceOptions);
+  constructor(options: TranscriptArtifactSourceOptions);
+  constructor(options: TranscriptImageSourceOptions | TranscriptArtifactSourceOptions) {
+    this.readChunk = options.readChunk as TranscriptArtifactSourceOptions["readChunk"];
     this.maxCacheBytes = validLimit(
       options.maxCacheBytes ?? TRANSCRIPT_IMAGE_CACHE_BYTES,
       "maxCacheBytes",
@@ -621,17 +701,17 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
     if (!this.paused && availability.available) this.drainQueue();
   }
 
-  getSnapshot(reference: TranscriptImageReference): TranscriptImageSnapshot {
+  getSnapshot(reference: TranscriptMediaReference): TranscriptImageSnapshot {
     if (this.disposedSnapshot !== null) return this.disposedSnapshot;
     if (this.paused) return this.pausedSnapshot;
-    const entry = this.entries.get(imageKey(reference));
+    const entry = this.entries.get(mediaKey(reference));
     if (entry?.state === "ready" && entry.snapshot !== null) return entry.snapshot;
     if (this.unavailable !== null) return this.unavailable;
     if (entry?.state === "error" && entry.snapshot !== null) return entry.snapshot;
     return LOADING_SNAPSHOT;
   }
 
-  subscribe(reference: TranscriptImageReference, listener: () => void): () => void {
+  subscribe(reference: TranscriptMediaReference, listener: () => void): () => void {
     if (this.disposedReason !== null) return () => undefined;
     const entry = this.ensureEntry(reference);
     entry.listeners.add(listener);
@@ -641,7 +721,7 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
     };
   }
 
-  retain(reference: TranscriptImageReference): () => void {
+  retain(reference: TranscriptMediaReference): () => void {
     if (this.disposedReason !== null) return () => undefined;
     const entry = this.ensureEntry(reference);
     const wasUnused = entry.refCount === 0;
@@ -669,9 +749,9 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
     };
   }
 
-  reportDecodeFailure(reference: TranscriptImageReference): void {
+  reportDecodeFailure(reference: TranscriptMediaReference): void {
     if (this.disposedReason !== null) return;
-    const entry = this.entries.get(imageKey(reference));
+    const entry = this.entries.get(mediaKey(reference));
     if (entry?.state !== "ready") return;
     this.releaseReadyUrl(entry);
     entry.state = "error";
@@ -764,8 +844,8 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
     for (const listener of listeners) listener();
   }
 
-  private ensureEntry(reference: TranscriptImageReference): CacheEntry {
-    const key = imageKey(reference);
+  private ensureEntry(reference: TranscriptMediaReference): CacheEntry {
+    const key = mediaKey(reference);
     const existing = this.entries.get(key);
     if (existing !== undefined) return existing;
     const entry: CacheEntry = {
@@ -896,11 +976,7 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
   }
 
   private cleanupUnused(entry: CacheEntry): void {
-    if (
-      this.entries.get(entry.key) !== entry ||
-      entry.refCount > 0 ||
-      entry.listeners.size > 0
-    ) {
+    if (this.entries.get(entry.key) !== entry || entry.refCount > 0 || entry.listeners.size > 0) {
       return;
     }
     if (entry.state === "ready") {
@@ -925,17 +1001,27 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
       const bytes = this.materializeAccumulator(entry, signal);
       const digest = await this.digest(bytes);
       this.assertCurrent(entry, signal);
-      if (digest !== entry.reference.sha256) {
+      const mediaType =
+        "source" in entry.reference ? entry.reference.mediaType : entry.reference.mimeType;
+      if (
+        "source" in entry.reference &&
+        entry.reference.sha256 !== undefined &&
+        digest !== entry.reference.sha256
+      ) {
         throw new TranscriptImageFailure(TRANSCRIPT_IMAGE_INTEGRITY_ERROR, false);
       }
-      if (sniffTranscriptImageMimeType(bytes) !== entry.reference.mimeType) {
+      if (!("source" in entry.reference) && digest !== entry.reference.sha256) {
+        throw new TranscriptImageFailure(TRANSCRIPT_IMAGE_INTEGRITY_ERROR, false);
+      }
+      if (
+        ("source" in entry.reference ? entry.reference.kind === "image" : true) &&
+        sniffTranscriptImageMimeType(bytes) !== mediaType
+      ) {
         throw new TranscriptImageFailure(TRANSCRIPT_IMAGE_INTEGRITY_ERROR, false);
       }
       // `bytes` owns its whole ArrayBuffer; passing it directly avoids the
       // former explicit full-size `slice()` copy before Blob snapshots input.
-      const blob = new Blob([bytes.buffer as ArrayBuffer], {
-        type: entry.reference.mimeType,
-      });
+      const blob = new Blob([bytes.buffer as ArrayBuffer], { type: mediaType });
       const url = this.createObjectUrl(blob);
       try {
         this.assertCurrent(entry, signal);
@@ -952,9 +1038,11 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
       entry.snapshot = Object.freeze({
         status: "ready",
         url,
-        mimeType: entry.reference.mimeType,
+        mimeType: mediaType,
         size: bytes.byteLength,
-        animated: isAnimatedTranscriptImage(bytes, entry.reference.mimeType),
+        animated:
+          !("source" in entry.reference) &&
+          isAnimatedTranscriptImage(bytes, entry.reference.mimeType),
       });
       this.touch(entry);
       this.notify(entry);
@@ -1028,12 +1116,10 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
           code === "outcome_unknown";
         throw new TranscriptImageFailure(TRANSCRIPT_IMAGE_LOAD_ERROR, retryable);
       }
-      const chunk = decodeTranscriptImageChunk(
-        response.result,
-        entry.reference,
-        offset,
-        expectedSize,
-      );
+      const chunk =
+        "source" in entry.reference
+          ? decodeTranscriptArtifactChunk(response.result, entry.reference, offset, expectedSize)
+          : decodeTranscriptImageChunk(response.result, entry.reference, offset, expectedSize);
       if (entry.accumulator === null) {
         const reservation = this.reserve(entry, chunk.size);
         if (reservation === "too-large") {
@@ -1194,6 +1280,12 @@ export class ManagedTranscriptImageSource implements TranscriptImageSource {
 
 export function createTranscriptImageSource(
   options: TranscriptImageSourceOptions,
+): ManagedTranscriptImageSource {
+  return new ManagedTranscriptImageSource(options);
+}
+
+export function createTranscriptArtifactSource(
+  options: TranscriptArtifactSourceOptions,
 ): ManagedTranscriptImageSource {
   return new ManagedTranscriptImageSource(options);
 }

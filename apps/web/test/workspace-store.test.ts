@@ -90,6 +90,30 @@ describe("session continuity (A→B→A)", () => {
     expect(selectSessionView(s(), "A").paneOpen).toBe(false);
     expect(selectSessionView(s(), "A").paneFamily).toBe("terminals");
   });
+
+  it("keeps the underlying workspace intact while focus mode is active", () => {
+    const { store } = makeStore();
+    const state = () => store.getState();
+    state().setRailOverlayOpen(true);
+    state().togglePaneFamily("A", "activity");
+    state().setTerminalDrawerOpen("A", true);
+
+    state().setFocusMode(true);
+    expect(state().focusMode).toBe(true);
+    expect(state().railOverlayOpen).toBe(true);
+    expect(selectSessionView(state(), "A")).toMatchObject({
+      paneFamily: "activity",
+      paneOpen: true,
+      terminalDrawerOpen: true,
+    });
+
+    state().setFocusMode(false);
+    expect(selectSessionView(state(), "A")).toMatchObject({
+      paneFamily: "activity",
+      paneOpen: true,
+      terminalDrawerOpen: true,
+    });
+  });
 });
 
 describe("visited and unread", () => {
@@ -123,13 +147,28 @@ describe("visited and unread", () => {
     expect(store.getState().lastVisitedAtBySessionId["A"]).toBe("2026-07-11T10:00:00Z");
   });
 
+  it("marks a whole project read in one monotonic update", () => {
+    const { store } = makeStore();
+    store.getState().markSessionsVisited({
+      A: "2026-07-11T10:00:00Z",
+      B: "2026-07-11T10:01:00Z",
+    });
+    store.getState().markSessionsVisited({ A: "2026-07-11T09:00:00Z" });
+    expect(store.getState().lastVisitedAtBySessionId).toEqual({
+      A: "2026-07-11T10:00:00Z",
+      B: "2026-07-11T10:01:00Z",
+    });
+  });
+
   it("tracks the latest seen attention outcome per session", () => {
     const { store } = makeStore();
-    expect(isAttentionOutcomeSeen(store.getState().lastSeenAttentionOutcomeBySessionKey, "A", "one"))
-      .toBe(false);
+    expect(
+      isAttentionOutcomeSeen(store.getState().lastSeenAttentionOutcomeBySessionKey, "A", "one"),
+    ).toBe(false);
     store.getState().markAttentionOutcomeSeen("A", "one");
-    expect(isAttentionOutcomeSeen(store.getState().lastSeenAttentionOutcomeBySessionKey, "A", "one"))
-      .toBe(true);
+    expect(
+      isAttentionOutcomeSeen(store.getState().lastSeenAttentionOutcomeBySessionKey, "A", "one"),
+    ).toBe(true);
     store.getState().markAttentionOutcomeSeen("A", "two");
     expect(store.getState().lastSeenAttentionOutcomeBySessionKey).toEqual({ A: "two" });
   });
@@ -143,6 +182,16 @@ describe("persistence", () => {
     first.getState().setSessionDraft("A", "resume me");
     first.getState().setRailWidth(300);
     first.getState().setTheme("dark");
+    first.getState().setRailOrganization("flat");
+    first.getState().setRailSort("manual");
+    first.getState().setProjectPinned("project-a", true);
+    first.getState().setSessionPinned("A", true);
+    first.getState().setProjectAlias("project-a", "Launchpad");
+    first.getState().setProjectHidden("project-hidden", true);
+    first.getState().setProjectManualOrder(["project-b", "project-a"]);
+    first.getState().setSessionManualOrder("project-a", ["B", "A"]);
+    first.getState().setRailQuery("hidden on restart");
+    first.getState().setRailFilter("errors");
     first.getState().setEmptyProjectDismissed("host/project", true);
     first.getState().setSessionPreview("A", {
       previewId: "preview-a",
@@ -153,6 +202,7 @@ describe("persistence", () => {
     first.getState().setSessionPreviewScale("A", "actual");
     first.getState().markAttentionOutcomeSeen("A", "outcome-1");
     first.getState().setPaletteOpen(true); // ephemeral, must not persist
+    first.getState().setFocusMode(true); // ephemeral, must not persist
 
     const second = createWorkspaceStore({ persistence });
     const state = second.getState();
@@ -165,9 +215,23 @@ describe("persistence", () => {
     expect(selectSessionView(state, "A").previewScale).toBe("actual");
     expect(state.railWidth).toBe(300);
     expect(state.theme).toBe("dark");
+    expect(state.railOrganization).toBe("flat");
+    expect(state.railSort).toBe("manual");
+    expect(state.pinnedProjectIds).toEqual({ "project-a": true });
+    expect(state.pinnedSessionIds).toEqual({ A: true });
+    expect(state.projectAliasById).toEqual({ "project-a": "Launchpad" });
+    expect(state.hiddenProjectIds).toEqual({
+      "host/project": true,
+      "project-hidden": true,
+    });
+    expect(state.projectManualOrder).toEqual(["project-b", "project-a"]);
+    expect(state.sessionManualOrderByProjectId).toEqual({ "project-a": ["B", "A"] });
+    expect(state.railQuery).toBe("");
+    expect(state.railFilter).toBe("all");
     expect(state.dismissedEmptyProjectIds).toEqual({ "host/project": true });
     expect(state.lastSeenAttentionOutcomeBySessionKey).toEqual({ A: "outcome-1" });
     expect(state.paletteOpen).toBe(false);
+    expect(state.focusMode).toBe(false);
     expect(state.railOverlayOpen).toBe(false);
   });
 
@@ -203,6 +267,14 @@ describe("persistence", () => {
       dismissedEmptyProjectIds: {},
       lastVisitedAtBySessionId: { A: "2026-07-11T10:00:00Z" },
       lastSeenAttentionOutcomeBySessionKey: {},
+      railOrganization: "by-project",
+      railSort: "priority",
+      pinnedProjectIds: {},
+      pinnedSessionIds: {},
+      projectAliasById: {},
+      hiddenProjectIds: {},
+      projectManualOrder: [],
+      sessionManualOrderByProjectId: {},
     });
     expect(parsed?.sessionViewById.A).toMatchObject({
       scrollTop: 42,
@@ -252,6 +324,14 @@ describe("persistence", () => {
       activeSessionId: 42,
       projectExpandedById: { good: true, bad: "nope" },
       dismissedEmptyProjectIds: { good: true, falseEntry: false, bad: "yes" },
+      railOrganization: "tiles",
+      railSort: "random",
+      pinnedProjectIds: { good: true, bad: false },
+      pinnedSessionIds: { session: true, bad: "yes" },
+      projectAliasById: { good: "  Launch   Pad  ", empty: "   ", control: "bad\u0000name" },
+      hiddenProjectIds: { hidden: true, visible: false },
+      projectManualOrder: ["project", "project", 42],
+      sessionManualOrderByProjectId: { project: ["session", "session", null] },
       lastVisitedAtBySessionId: { good: "2026-07-11T10:00:00Z", bad: "not a date" },
       lastSeenAttentionOutcomeBySessionKey: {
         good: "outcome-1",
@@ -277,6 +357,14 @@ describe("persistence", () => {
     expect(parsed?.activeSessionId).toBeNull();
     expect(parsed?.projectExpandedById).toEqual({ good: true });
     expect(parsed?.dismissedEmptyProjectIds).toEqual({ good: true });
+    expect(parsed?.railOrganization).toBe("by-project");
+    expect(parsed?.railSort).toBe("priority");
+    expect(parsed?.pinnedProjectIds).toEqual({ good: true });
+    expect(parsed?.pinnedSessionIds).toEqual({ session: true });
+    expect(parsed?.projectAliasById).toEqual({ good: "Launch Pad" });
+    expect(parsed?.hiddenProjectIds).toEqual({ hidden: true });
+    expect(parsed?.projectManualOrder).toEqual(["project"]);
+    expect(parsed?.sessionManualOrderByProjectId).toEqual({ project: ["session"] });
     expect(parsed?.lastVisitedAtBySessionId).toEqual({ good: "2026-07-11T10:00:00Z" });
     expect(parsed?.lastSeenAttentionOutcomeBySessionKey).toEqual({ good: "outcome-1" });
     const view = parsed?.sessionViewById["good"];
@@ -293,9 +381,15 @@ describe("persistence", () => {
     const { store } = makeStore();
     store.getState().setPaletteOpen(true);
     store.getState().setRailOverlayOpen(true);
+    store.getState().setFocusMode(true);
+    store.getState().setRailQuery("temporary");
+    store.getState().setRailFilter("running");
     const snapshot = toPersistedWorkspace(store.getState()) as unknown as Record<string, unknown>;
     expect("paletteOpen" in snapshot).toBe(false);
     expect("railOverlayOpen" in snapshot).toBe(false);
+    expect("focusMode" in snapshot).toBe(false);
+    expect("railQuery" in snapshot).toBe(false);
+    expect("railFilter" in snapshot).toBe(false);
   });
 
   it("can clear an empty-project dismissal without disturbing other projects", () => {
@@ -307,6 +401,38 @@ describe("persistence", () => {
     expect(store.getState().dismissedEmptyProjectIds).toEqual({
       "same-name/project-b": true,
     });
+    expect(store.getState().hiddenProjectIds).toEqual({
+      "same-name/project-b": true,
+    });
+  });
+
+  it("renames and hides projects without changing runtime-backed ids", () => {
+    const { store } = makeStore();
+    store.getState().setProjectAlias("host/project", "  My   Project  ");
+    store.getState().setEmptyProjectDismissed("host/project", true);
+    expect(store.getState().projectAliasById).toEqual({ "host/project": "My Project" });
+    expect(store.getState().hiddenProjectIds).toEqual({ "host/project": true });
+    store.getState().setProjectHidden("host/project", false);
+    expect(store.getState().dismissedEmptyProjectIds).toEqual({});
+    expect(store.getState().hiddenProjectIds).toEqual({});
+
+    store.getState().setProjectAlias("host/project", null);
+    store.getState().setProjectHidden("host/project", false);
+    expect(store.getState().projectAliasById).toEqual({});
+    expect(store.getState().hiddenProjectIds).toEqual({});
+  });
+
+  it("pins and unpins shortcuts without touching runtime session state", () => {
+    const { store } = makeStore();
+    store.getState().setProjectPinned("project-a", true);
+    store.getState().setSessionPinned("session-a", true);
+    expect(store.getState().pinnedProjectIds).toEqual({ "project-a": true });
+    expect(store.getState().pinnedSessionIds).toEqual({ "session-a": true });
+
+    store.getState().setProjectPinned("project-a", false);
+    store.getState().setSessionPinned("session-a", false);
+    expect(store.getState().pinnedProjectIds).toEqual({});
+    expect(store.getState().pinnedSessionIds).toEqual({});
   });
 });
 

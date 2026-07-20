@@ -39,6 +39,12 @@ import {
 /** How current this session's connection is; mirrors shell freshness. */
 export type SessionLink = "live" | "cached" | "offline";
 
+export interface TranscriptHistoryPageState {
+  readonly phase: "loading" | "ready" | "error" | "unsupported";
+  readonly hasMore: boolean;
+  readonly error: string | null;
+}
+
 export interface SessionRuntimeSnapshot {
   readonly projection: TranscriptProjection;
   readonly link: SessionLink;
@@ -69,6 +75,8 @@ export interface SessionRuntimeSnapshot {
   readonly sessionControl: SessionControlState | null;
   /** Redacted provider-owned transport evidence for this session. */
   readonly providerTransport: ProviderTransportState | null;
+  /** Read-only backward history; independent from the live stream cursor. */
+  readonly transcriptHistory?: TranscriptHistoryPageState;
   /**
    * Time base for elapsed labels. The fixture runtime reports the fixed
    * scripted "now" so renders are reproducible; a real bridge runtime
@@ -94,6 +102,8 @@ export interface SessionRuntime {
    * draft only on "accepted" and keeps it otherwise.
    */
   submitPrompt(intent: SessionIntent): Promise<PromptOutcome>;
+  /** Request the next older bounded page without changing live/reconnect state. */
+  loadEarlierTranscript?(): Promise<void>;
   /** Stop timers; the runtime keeps its state for A→B→A switch-back. */
   pause(): void;
   /** Resume draining scripted live steps. */

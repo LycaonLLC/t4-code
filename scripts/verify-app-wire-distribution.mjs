@@ -39,7 +39,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename
 	const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 	const tarballPath = join(repoRoot, "vendor/app-wire", manifest.tarball);
 	const fixtureRoot =
-		process.argv[2] ?? resolve(repoRoot, "packages/protocol/node_modules/@oh-my-pi/app-wire/fixtures/v1");
+		process.argv[2] ?? resolve(repoRoot, "packages/host-wire/fixtures/v1");
 	if (!existsSync(fixtureRoot) || !statSync(fixtureRoot).isDirectory()) {
 		console.error(`installed app-wire fixtures not found: ${fixtureRoot}; run pnpm install first`);
 		process.exitCode = 1;

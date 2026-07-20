@@ -1,4 +1,4 @@
-import type { ServerFrame } from "@oh-my-pi/app-wire";
+import type { ServerFrame } from "@t4-code/host-wire";
 
 /** Server frames the upstream decoder can actually emit. */
 export type OmpServerFrame = Exclude<ServerFrame, { type: "pair.start" }>;

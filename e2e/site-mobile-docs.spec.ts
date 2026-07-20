@@ -130,10 +130,10 @@ test("offers the Android APK without hiding desktop downloads", async ({ page })
   await expect(androidDownload).toBeVisible();
   await expect(androidDownload).toHaveAttribute(
     "href",
-    "https://github.com/LycaonLLC/t4-code/releases/download/v0.1.24/T4-Code-0.1.24-android.apk",
+    "https://github.com/LycaonLLC/t4-code/releases/download/v0.1.30/T4-Code-0.1.30-android.apk",
   );
-  await expect(page.getByRole("link", { name: "Linux build" }).first()).toBeVisible();
-  await expect(page.getByRole("link", { name: "Download for macOS" }).first()).toBeVisible();
+  await expect(page.getByRole("link", { name: /Linux/u }).first()).toBeVisible();
+  await expect(page.getByRole("link", { name: /macOS/u }).first()).toBeVisible();
   await expect(page.getByText("TestFlight coming soon", { exact: true }).first()).toBeVisible();
   const handoff = page.locator('img[src="/screenshots/t4-code-tui-handoff.gif"]');
   await handoff.scrollIntoViewIfNeeded();

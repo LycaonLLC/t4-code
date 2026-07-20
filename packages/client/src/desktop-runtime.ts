@@ -50,6 +50,7 @@ import { DesktopRuntimeHostState } from "./desktop-runtime-hosts.ts";
 import { boundedText, commandFailure, DEFAULT_MAX_RUNTIME_ERRORS, leasePayload, type DesktopControllerLeaseEntry } from "./desktop-runtime-policy.ts";
 import { bootstrapDesktopHost } from "./desktop-runtime-bootstrap.ts";
 import { PromptLeaseStore } from "./prompt-lease.ts";
+import { OMP_RUNTIME_INTEGRATION } from "./runtime-integration.ts";
 import {
   sanitizeRetainedTranscriptEvent,
   type RetainedTranscriptEvent,
@@ -131,6 +132,7 @@ export class DesktopRuntimeController {
     this.maxRuntimeErrors = Math.max(1, Math.min(options.maxRuntimeErrors ?? DEFAULT_MAX_RUNTIME_ERRORS, 128));
     this.current = Object.freeze({
       version: 1 as const,
+      integration: OMP_RUNTIME_INTEGRATION,
       platform: this.shell.platform,
       desktopVersion: "unknown",
       startState: "idle" as const,

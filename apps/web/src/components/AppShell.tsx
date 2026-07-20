@@ -17,7 +17,7 @@ import { getShellData, useShellData } from "../state/shell-data.ts";
 import { RAIL_OVERLAY_QUERY, useMediaQuery } from "../hooks/useMediaQuery.ts";
 import { isEditableTarget, resolveShortcut } from "../keyboard/shortcuts.ts";
 import { buildProjectGroups, listVisibleSessionIds } from "../lib/session-tree.ts";
-import { useWorkspace, workspaceStore } from "../state/store-instance.ts";
+import { rendererPlatform, useWorkspace, workspaceStore } from "../state/store-instance.ts";
 import { RAIL_COLLAPSED_WIDTH, RAIL_WIDTH, selectSessionView } from "../state/workspace-store.ts";
 import { CommandPalette } from "./CommandPalette.tsx";
 import { CollapsedRail, Rail } from "./Rail.tsx";
@@ -31,9 +31,18 @@ export function AppShell() {
   const railCollapsed = useWorkspace((state) => state.railCollapsed);
   const railWidth = useWorkspace((state) => state.railWidth);
   const railOverlayOpen = useWorkspace((state) => state.railOverlayOpen);
+  const focusMode = useWorkspace((state) => state.focusMode);
   const sessionListView = useWorkspace((state) => state.sessionListView);
+  const railSort = useWorkspace((state) => state.railSort);
+  const railQuery = useWorkspace((state) => state.railQuery);
+  const railFilter = useWorkspace((state) => state.railFilter);
+  const projectManualOrder = useWorkspace((state) => state.projectManualOrder);
+  const sessionManualOrderByProjectId = useWorkspace(
+    (state) => state.sessionManualOrderByProjectId,
+  );
   const projectExpandedById = useWorkspace((state) => state.projectExpandedById);
-  const dismissedEmptyProjectIds = useWorkspace((state) => state.dismissedEmptyProjectIds);
+  const hiddenProjectIds = useWorkspace((state) => state.hiddenProjectIds);
+  const projectAliasById = useWorkspace((state) => state.projectAliasById);
   const lastVisitedAtBySessionId = useWorkspace((state) => state.lastVisitedAtBySessionId);
   const lastSeenAttentionOutcomeBySessionKey = useWorkspace(
     (state) => state.lastSeenAttentionOutcomeBySessionKey,
@@ -50,13 +59,101 @@ export function AppShell() {
         projectExpandedById,
         lastVisitedAtBySessionId,
         "current",
-        dismissedEmptyProjectIds,
+        hiddenProjectIds,
+        {
+          filter: railFilter,
+          query: railQuery,
+          sort: railSort,
+          projectManualOrder,
+          sessionManualOrderByProjectId,
+          projectAliasById,
+        },
       ),
-    [shellData, projectExpandedById, lastVisitedAtBySessionId, dismissedEmptyProjectIds],
+    [
+      shellData,
+      projectExpandedById,
+      lastVisitedAtBySessionId,
+      hiddenProjectIds,
+      projectAliasById,
+      railFilter,
+      railQuery,
+      railSort,
+      projectManualOrder,
+      sessionManualOrderByProjectId,
+    ],
   );
   const archivedGroups = useMemo(
-    () => buildProjectGroups(shellData, projectExpandedById, lastVisitedAtBySessionId, "archived"),
-    [shellData, projectExpandedById, lastVisitedAtBySessionId],
+    () =>
+      buildProjectGroups(
+        shellData,
+        projectExpandedById,
+        lastVisitedAtBySessionId,
+        "archived",
+        {},
+        {
+          filter: railFilter,
+          query: railQuery,
+          sort: railSort,
+          projectManualOrder,
+          sessionManualOrderByProjectId,
+          projectAliasById,
+        },
+      ),
+    [
+      shellData,
+      projectExpandedById,
+      lastVisitedAtBySessionId,
+      railFilter,
+      railQuery,
+      railSort,
+      projectManualOrder,
+      sessionManualOrderByProjectId,
+      projectAliasById,
+    ],
+  );
+  const allCurrentGroups = useMemo(
+    () =>
+      buildProjectGroups(
+        shellData,
+        projectExpandedById,
+        lastVisitedAtBySessionId,
+        "current",
+        {},
+        { sort: railSort, projectManualOrder, sessionManualOrderByProjectId, projectAliasById },
+      ),
+    [
+      shellData,
+      projectExpandedById,
+      lastVisitedAtBySessionId,
+      projectAliasById,
+      railSort,
+      projectManualOrder,
+      sessionManualOrderByProjectId,
+    ],
+  );
+  const allArchivedGroups = useMemo(
+    () =>
+      buildProjectGroups(
+        shellData,
+        projectExpandedById,
+        lastVisitedAtBySessionId,
+        "archived",
+        {},
+        { sort: railSort, projectManualOrder, sessionManualOrderByProjectId, projectAliasById },
+      ),
+    [
+      shellData,
+      projectExpandedById,
+      lastVisitedAtBySessionId,
+      railSort,
+      projectManualOrder,
+      sessionManualOrderByProjectId,
+      projectAliasById,
+    ],
+  );
+  const allSessionGroups = useMemo(
+    () => [...allCurrentGroups, ...allArchivedGroups],
+    [allArchivedGroups, allCurrentGroups],
   );
   const groups = sessionListView === "archived" ? archivedGroups : currentGroups;
   const currentCount = shellData.sessions.filter(
@@ -72,24 +169,10 @@ export function AppShell() {
           }).urgentCount,
     [lastSeenAttentionOutcomeBySessionKey, runtimeSnapshot],
   );
-  const hiddenEmptyProjectIds = useMemo(() => {
-    const currentProjectIds = new Set(
-      shellData.sessions
-        .filter((session) => session.archivedAt === undefined)
-        .map((session) => session.projectId),
-    );
-    const hostById = new Map(shellData.hosts.map((host) => [host.id, host]));
-    return new Set(
-      shellData.projects
-        .filter(
-          (project) =>
-            dismissedEmptyProjectIds[project.id] === true &&
-            !currentProjectIds.has(project.id) &&
-            hostById.get(project.hostId)?.sessionInventoryTruncated !== true,
-        )
-        .map((project) => project.id),
-    );
-  }, [dismissedEmptyProjectIds, shellData]);
+  const hiddenProjectIdSet = useMemo(
+    () => new Set(Object.keys(hiddenProjectIds).filter((id) => hiddenProjectIds[id] === true)),
+    [hiddenProjectIds],
+  );
 
   // Desktop mode: start the runtime once. StrictMode's doubled effect and
   // HMR remounts are safe — start is idempotent on a global singleton.
@@ -105,7 +188,12 @@ export function AppShell() {
         // Dialog-based surfaces (palette, sheets) close themselves; the
         // docked pane is plain layout, so Escape peels it here.
         const state = workspaceStore.getState();
-        if (state.paletteOpen || state.railOverlayOpen) return;
+        if (state.paletteOpen || (state.railOverlayOpen && !state.focusMode)) return;
+        if (state.focusMode) {
+          state.setFocusMode(false);
+          event.preventDefault();
+          return;
+        }
         const activeId = state.activeSessionId;
         if (activeId !== null && selectSessionView(state, activeId).paneOpen) {
           state.setPaneOpen(activeId, false);
@@ -123,8 +211,28 @@ export function AppShell() {
       if (action.kind === "palette") {
         state.setPaletteOpen(!state.paletteOpen);
       } else if (action.kind === "toggle-rail") {
-        if (railOverlaid) state.setRailOverlayOpen(!state.railOverlayOpen);
+        if (state.focusMode) {
+          state.setFocusMode(false);
+          state.setRailCollapsed(false);
+        } else if (railOverlaid) state.setRailOverlayOpen(!state.railOverlayOpen);
         else state.setRailCollapsed(!state.railCollapsed);
+      } else if (action.kind === "toggle-terminal") {
+        const activeId = state.activeSessionId;
+        const activeSession =
+          activeId === null
+            ? undefined
+            : getShellData().sessions.find((session) => session.id === activeId);
+        if (activeId !== null && activeSession?.archivedAt === undefined) {
+          const view = selectSessionView(state, activeId);
+          if (state.focusMode) {
+            state.setFocusMode(false);
+            state.setTerminalDrawerOpen(activeId, true);
+          } else {
+            state.setTerminalDrawerOpen(activeId, !view.terminalDrawerOpen);
+          }
+        }
+      } else if (action.kind === "toggle-focus") {
+        state.setFocusMode(!state.focusMode);
       } else if (action.kind === "settings") {
         void navigate({ to: "/settings" });
       } else {
@@ -134,7 +242,15 @@ export function AppShell() {
             state.projectExpandedById,
             state.lastVisitedAtBySessionId,
             state.sessionListView,
-            state.dismissedEmptyProjectIds,
+            state.hiddenProjectIds,
+            {
+              filter: state.railFilter,
+              query: state.railQuery,
+              sort: state.railSort,
+              projectManualOrder: state.projectManualOrder,
+              sessionManualOrderByProjectId: state.sessionManualOrderByProjectId,
+              projectAliasById: state.projectAliasById,
+            },
           ),
         );
         const sessionId = visible[action.index];
@@ -153,31 +269,52 @@ export function AppShell() {
   const railToggle = resolveRailTogglePresentation({
     overlaid: railOverlaid,
     overlayOpen: railOverlayOpen,
-    collapsed: railCollapsed,
+    collapsed: railCollapsed || focusMode,
   });
 
   return (
     <div className="flex h-full min-h-0 min-w-0 max-w-full flex-col overflow-x-hidden bg-background text-foreground">
       <Titlebar
+        focusMode={focusMode}
+        onExitFocus={() => workspaceStore.getState().setFocusMode(false)}
         onToggleRail={() => {
           const state = workspaceStore.getState();
-          if (railOverlaid) state.setRailOverlayOpen(!state.railOverlayOpen);
+          if (state.focusMode) {
+            state.setFocusMode(false);
+            state.setRailCollapsed(false);
+          } else if (railOverlaid) state.setRailOverlayOpen(!state.railOverlayOpen);
           else state.setRailCollapsed(!state.railCollapsed);
         }}
         railToggle={railToggle}
       />
+      {rendererPlatform.demo && (
+        <div
+          aria-label="Sample data notice"
+          className="flex min-h-7 shrink-0 items-center justify-center gap-1.5 border-border/60 border-b bg-primary/8 px-2 text-center text-xs"
+        >
+          <span className="font-semibold text-primary">Sample data</span>
+          <span aria-hidden="true" className="text-muted-foreground">
+            ·
+          </span>
+          <span className="truncate text-muted-foreground">
+            Explore freely. No live hosts, accounts, or files are connected.
+          </span>
+        </div>
+      )}
       <div className="flex min-h-0 flex-1">
-        {!railOverlaid && (
+        {!railOverlaid && !focusMode && (
           <>
             <div
-              className="rail-dock flex h-full shrink-0 flex-col overflow-hidden bg-background"
+              className="rail-dock flex h-full shrink-0 flex-col overflow-hidden border-border/60 border-r bg-(--sidebar-background)"
               style={{ width: railCollapsed ? RAIL_COLLAPSED_WIDTH : effectiveRailWidth }}
             >
               {railCollapsed ? (
                 <div className="h-full" style={{ width: RAIL_COLLAPSED_WIDTH }}>
                   <CollapsedRail
                     attentionCount={attentionCount}
-                    groups={currentGroups}
+                    groups={allCurrentGroups.filter(
+                      (group) => !hiddenProjectIdSet.has(group.project.id),
+                    )}
                     onExpand={(projectId) => {
                       const state = workspaceStore.getState();
                       state.setRailCollapsed(false);
@@ -188,12 +325,14 @@ export function AppShell() {
               ) : (
                 <div className="flex h-full flex-col" style={{ width: effectiveRailWidth }}>
                   <Rail
+                    allGroups={allCurrentGroups}
                     attentionCount={attentionCount}
                     archivedCount={archivedCount}
                     currentCount={currentCount}
                     groups={groups}
-                    hiddenEmptyProjectIds={hiddenEmptyProjectIds}
+                    hiddenProjectIds={hiddenProjectIdSet}
                     nowMs={nowMs}
+                    pinnedSessionGroups={allSessionGroups}
                     view={sessionListView}
                   />
                 </div>
@@ -219,7 +358,7 @@ export function AppShell() {
       {railOverlaid && (
         <Sheet
           onOpenChange={(open) => workspaceStore.getState().setRailOverlayOpen(open)}
-          open={railOverlayOpen}
+          open={railOverlayOpen && !focusMode}
         >
           <SheetPopup
             aria-label="Working folders and sessions"
@@ -229,7 +368,7 @@ export function AppShell() {
           >
             <div className="flex h-14 shrink-0 items-center border-border border-b px-3">
               <SheetTitle className="text-sm">
-                <span aria-hidden="true">Sessions</span>
+                <span aria-hidden="true">T4 Code</span>
                 <span className="sr-only">Working folders and sessions</span>
               </SheetTitle>
               <SheetClose
@@ -242,12 +381,14 @@ export function AppShell() {
             </div>
             <div className="min-h-0 flex-1">
               <Rail
+                allGroups={allCurrentGroups}
                 attentionCount={attentionCount}
                 archivedCount={archivedCount}
                 currentCount={currentCount}
                 groups={groups}
-                hiddenEmptyProjectIds={hiddenEmptyProjectIds}
+                hiddenProjectIds={hiddenProjectIdSet}
                 nowMs={nowMs}
+                pinnedSessionGroups={allSessionGroups}
                 view={sessionListView}
               />
             </div>
@@ -255,7 +396,7 @@ export function AppShell() {
         </Sheet>
       )}
 
-      <CommandPalette groups={currentGroups} />
+      <CommandPalette groups={allCurrentGroups} />
     </div>
   );
 }

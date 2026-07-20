@@ -7,10 +7,10 @@ import {
   type SessionListResult,
   type SessionRef,
   type SessionsFrame,
-} from "@oh-my-pi/app-wire";
+} from "@t4-code/host-wire";
 import type { OmpServerFrame } from "./server-event.ts";
 
-export * from "@oh-my-pi/app-wire";
+export * from "@t4-code/host-wire";
 export * from "./app-update.ts";
 export * from "./pair-link.ts";
 export * from "./server-event.ts";

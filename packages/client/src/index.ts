@@ -1,4 +1,22 @@
 export { OmpClient, createOmpClient } from "./omp-client-runtime.ts";
+export {
+  OMP_RUNTIME_INTEGRATION,
+  OMP_RUNTIME_KIND,
+  T4_RUNTIME_FEATURES,
+  availableRuntimeFeature,
+  runtimeIdentityKey,
+  unavailableRuntimeFeature,
+} from "./runtime-integration.ts";
+export type {
+  KnownRuntimeFeature,
+  RuntimeFeature,
+  RuntimeFeatureMap,
+  RuntimeFeatureSupport,
+  RuntimeIdentity,
+  RuntimeIntegrationDescriptor,
+  RuntimeIntegrationLevel,
+  RuntimeKind,
+} from "./runtime-integration.ts";
 export type {
   PreviewCommandTarget,
   PreviewLaunchIntent,
@@ -213,6 +231,26 @@ export type {
   DesktopControllerLeaseOptions,
 } from "./desktop-runtime.ts";
 export {
+  browserErrorMessage,
+  browserMethodIsMutation,
+  isBrowserShellPort,
+  requireExplicitBrowserProfile,
+} from "./browser-runtime-contracts.ts";
+export type {
+  BrowserShellEventListener,
+  BrowserShellPort,
+  BrowserShellSubscription,
+} from "./browser-runtime-contracts.ts";
+export type {
+  BrowserCall,
+  BrowserCallError,
+  BrowserCallResult,
+  BrowserEvent,
+  BrowserMethod,
+  BrowserProfile,
+  OwnerSessionId,
+} from "@t4-code/protocol/browser-ipc";
+export {
   createTranscriptSearchCoordinator,
   decodeTranscriptContextResult,
   decodeTranscriptSearchResult,
@@ -239,3 +277,10 @@ export type {
   TranscriptSearchRuntime,
   TranscriptSearchSnapshot,
 } from "./transcript-search.ts";
+export { readTranscriptPage, TranscriptPageClientError } from "./transcript-page.ts";
+export type {
+  TranscriptPageAddress,
+  TranscriptPageArguments,
+  TranscriptPageResult,
+  TranscriptPageRuntime,
+} from "./transcript-page.ts";
