@@ -166,7 +166,7 @@ describe("BrowserRuntime native view lifecycle", () => {
       automationCoordinator: {
         call: async (call) => {
           calls.push(call);
-          return { enabled: true, prompt: "Refine heading", selection: "Heading" };
+          return { enabled: true, selection: "Heading" };
         },
         dispose: () => {},
       },
@@ -179,10 +179,9 @@ describe("BrowserRuntime native view lifecycle", () => {
     const result = await runtime.call(browserCall("browser.design_mode.set", {
       surfaceId: created.surface.surfaceId,
       enabled: true,
-      prompt: "Refine heading",
     }));
 
-    expect(result).toEqual({ enabled: true, prompt: "Refine heading", selection: "Heading" });
+    expect(result).toEqual({ enabled: true, selection: "Heading" });
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
       method: "browser.design_mode.set",
@@ -190,7 +189,6 @@ describe("BrowserRuntime native view lifecycle", () => {
       request: {
         surfaceId: created.surface.surfaceId,
         enabled: true,
-        prompt: "Refine heading",
       },
     });
     await runtime.dispose();
@@ -341,6 +339,16 @@ describe("BrowserRuntime native view lifecycle", () => {
       crossOwnerError = error;
     }
     expect((crossOwnerError as { code?: unknown }).code).toBe("not_found");
+
+    let crossOwnerDesignModeError: unknown;
+    try {
+      await runtime.call(browserCall("browser.design_mode.status", {
+        surfaceId: prewarmed.surfaceId,
+      }, OWNER_A));
+    } catch (error) {
+      crossOwnerDesignModeError = error;
+    }
+    expect((crossOwnerDesignModeError as { code?: unknown }).code).toBe("not_found");
 
     let fallbackError: unknown;
     try {

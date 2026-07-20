@@ -391,6 +391,30 @@ export function BrowserWorkspace({
   }, [activeSurface?.surfaceId, activeSurface?.url]);
 
   useEffect(() => {
+    setDesignMode(false);
+    if (port === null || activeSurface === null) return;
+    const generation = lifecycleRef.current;
+    const surfaceId = activeSurface.surfaceId;
+    let disposed = false;
+    settleBrowserWorkspaceCall(
+      port.call(callBrowser("browser.design_mode.status", { surfaceId })),
+      () =>
+        !disposed &&
+        lifecycleRef.current === generation &&
+        modelRef.current.activeSurfaceId === surfaceId,
+      (result) => {
+        if (typeof result !== "object" || result === null) return;
+        const enabled = (result as { readonly enabled?: unknown }).enabled;
+        if (typeof enabled === "boolean") setDesignMode(enabled);
+      },
+      () => setDesignMode(false),
+    );
+    return () => {
+      disposed = true;
+    };
+  }, [activeSurface?.surfaceId, callBrowser, port]);
+
+  useEffect(() => {
     if (port === null || activeSurface === null) return;
     const generation = lifecycleRef.current;
     const surfaceId = activeSurface.surfaceId;
@@ -971,7 +995,6 @@ export function BrowserWorkspace({
                     const enabled = !designMode;
                     void runAutomation("Changing design mode", "browser.design_mode.set", {
                       enabled,
-                      prompt: designPrompt,
                     })
                       .then((result) => {
                         if (result !== null) setDesignMode(enabled);
@@ -1003,6 +1026,9 @@ export function BrowserWorkspace({
               />
               <p className="mt-1 text-right text-muted-foreground text-xs tabular-nums">
                 {designPrompt.length}/{MAX_BROWSER_DESIGN_PROMPT_LENGTH}
+              </p>
+              <p className="mt-1 text-muted-foreground text-xs">
+                This brief stays in T4 and is never inserted into the viewed page.
               </p>
             </section>
 

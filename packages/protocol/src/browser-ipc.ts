@@ -475,11 +475,9 @@ export interface RestoreRequest extends SurfaceIdRequest {
 }
 export interface DesignModeSetRequest extends SurfaceIdRequest {
   readonly enabled: boolean;
-  readonly prompt?: string;
 }
 export interface DesignModeStatusResult {
   readonly enabled: boolean;
-  readonly prompt: string;
   readonly selection: string;
 }
 export type BrowserRequestBase = unknown;
@@ -823,7 +821,7 @@ export function decodeBrowserRequest<M extends BrowserMethod>(method: M, value: 
     case "surface.setMuted": { exact(input, ["surfaceId", "muted"], "request"); return { surfaceId: surfaceId(input.surfaceId), muted: boundedBoolean(input.muted, "request.muted") } as BrowserRequestMap[M]; }
     case "surface.setOmnibarVisible": { exact(input, ["surfaceId", "visible"], "request"); return { surfaceId: surfaceId(input.surfaceId), visible: boundedBoolean(input.visible, "request.visible") } as BrowserRequestMap[M]; }
     case "surface.restore": { exact(input, ["surfaceId", "url"], "request"); return { surfaceId: surfaceId(input.surfaceId), ...(input.url === undefined ? {} : { url: url(input.url, "request.url") }) } as BrowserRequestMap[M]; }
-    case "browser.design_mode.set": { exact(input, ["surfaceId", "enabled", "prompt"], "request"); return { surfaceId: surfaceId(input.surfaceId), enabled: boundedBoolean(input.enabled, "request.enabled"), ...(input.prompt === undefined ? {} : { prompt: boundedText(input.prompt, "request.prompt", 2_048) }) } as BrowserRequestMap[M]; }
+    case "browser.design_mode.set": { exact(input, ["surfaceId", "enabled"], "request"); return { surfaceId: surfaceId(input.surfaceId), enabled: boundedBoolean(input.enabled, "request.enabled") } as BrowserRequestMap[M]; }
     case "browser.design_mode.status": { exact(input, ["surfaceId"], "request"); return idRequest(input) as BrowserRequestMap[M]; }
   }
   return validateJson(input, "request") as BrowserRequestMap[M];
@@ -916,7 +914,7 @@ export function decodeBrowserResult<M extends BrowserMethod>(method: M, value: u
     case "surface.cookies": { const input = record(value, "result"); exact(input, ["count"], "result"); return { count: boundedNumber(input.count, "result.count", 0, MAX_ARRAY_ITEMS, true) } as BrowserResultMap[M]; }
     case "surface.storage": { const input = record(value, "result"); exact(input, ["entries"], "result"); const entries = record(input.entries, "result.entries"); const decoded: Record<string, string> = {}; for (const [key, item] of Object.entries(entries)) { if (isSecretLikeKey(key)) fail(`result.entries.${key} is not allowed`); decoded[key] = boundedString(item, `result.entries.${key}`, MAX_STRING_BYTES, false); } return { entries: decoded } as BrowserResultMap[M]; }
     case "surface.downloads": { const input = record(value, "result"); exact(input, ["downloads"], "result"); return { downloads: boundedArray(input.downloads, "result.downloads").map((item) => decodeBrowserDownload(item)) } as BrowserResultMap[M]; }
-    case "browser.design_mode.set": case "browser.design_mode.status": { const input = record(value, "result"); exact(input, ["enabled", "prompt", "selection"], "result"); return { enabled: boundedBoolean(input.enabled, "result.enabled"), prompt: boundedText(input.prompt, "result.prompt", 2_048), selection: boundedText(input.selection, "result.selection", 4_000) } as BrowserResultMap[M]; }
+    case "browser.design_mode.set": case "browser.design_mode.status": { const input = record(value, "result"); exact(input, ["enabled", "selection"], "result"); return { enabled: boundedBoolean(input.enabled, "result.enabled"), selection: boundedText(input.selection, "result.selection", 4_000) } as BrowserResultMap[M]; }
     default: return validateJson(record(value, "result"), "result") as BrowserResultMap[M];
   }
 }
