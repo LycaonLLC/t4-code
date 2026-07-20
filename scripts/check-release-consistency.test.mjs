@@ -242,7 +242,11 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
     ],
     [
       ".github/workflows/ci.yml",
-      (text) => text.replace("needs: [core, tooling, android-debug]", "needs: [core, tooling]"),
+      (text) =>
+        text.replace(
+          "needs: [core, tooling, android-debug, flutter, flutter-android, flutter-apple]",
+          "needs: [core, tooling, android-debug]",
+        ),
     ],
     [
       "scripts/reconcile-release-assets.mjs",
@@ -359,9 +363,7 @@ test("rejects drift between the compatibility matrix and vendored app-wire manif
 });
 
 test("rejects a stale app-wire third-party notice", () => {
-  const { package: packageName, version } = JSON.parse(
-    files.get("vendor/app-wire/manifest.json"),
-  );
+  const { package: packageName, version } = JSON.parse(files.get("vendor/app-wire/manifest.json"));
   const drifted = changed("THIRD_PARTY_NOTICES.md", (text) =>
     replaceRequired(text, `${packageName}@${version}`, `${packageName}@0.0.0`),
   );
@@ -475,12 +477,22 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("android-debug:"));
   assert.ok(ciWorkflow.includes("core:"));
   assert.ok(ciWorkflow.includes("tooling:"));
+  assert.ok(ciWorkflow.includes("flutter:"));
+  assert.ok(ciWorkflow.includes("flutter-android:"));
+  assert.ok(ciWorkflow.includes("flutter-apple:"));
   assert.ok(ciWorkflow.includes("name: verify"));
   assert.ok(ciWorkflow.includes("if: ${{ always() }}"));
-  assert.ok(ciWorkflow.includes("needs: [core, tooling, android-debug]"));
+  assert.ok(
+    ciWorkflow.includes(
+      "needs: [core, tooling, android-debug, flutter, flutter-android, flutter-apple]",
+    ),
+  );
   assert.ok(ciWorkflow.includes('test "$CORE_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$TOOLING_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$ANDROID_RESULT" = success'));
+  assert.ok(ciWorkflow.includes('test "$FLUTTER_RESULT" = success'));
+  assert.ok(ciWorkflow.includes('test "$FLUTTER_ANDROID_RESULT" = success'));
+  assert.ok(ciWorkflow.includes('test "$FLUTTER_APPLE_RESULT" = success'));
   assert.ok(ciWorkflow.includes("github.event_name == 'pull_request' && github.ref || github.sha"));
   assert.ok(ciWorkflow.includes("cancel-in-progress: ${{ github.event_name == 'pull_request' }}"));
   assert.ok(ciWorkflow.includes('java-version: "21"'));

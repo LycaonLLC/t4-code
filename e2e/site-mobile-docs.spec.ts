@@ -132,8 +132,8 @@ test("offers the Android APK without hiding desktop downloads", async ({ page })
     "href",
     "https://github.com/LycaonLLC/t4-code/releases/download/v0.1.24/T4-Code-0.1.24-android.apk",
   );
-  await expect(page.getByRole("link", { name: "Download for Linux" }).first()).toBeVisible();
-  await expect(page.getByRole("link", { name: "macOS build" }).first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "Linux build" }).first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "Download for macOS" }).first()).toBeVisible();
   await expect(page.getByText("TestFlight coming soon", { exact: true }).first()).toBeVisible();
   const handoff = page.locator('img[src="/screenshots/t4-code-tui-handoff.gif"]');
   await handoff.scrollIntoViewIfNeeded();
@@ -157,7 +157,9 @@ test("every docs topic stays inside a 320px viewport", async ({ page }) => {
       documentScrollWidth: document.documentElement.scrollWidth,
       bodyScrollWidth: document.body.scrollWidth,
     }));
-    expect(geometry.documentScrollWidth, `document overflow at #${topic}`).toBe(geometry.clientWidth);
+    expect(geometry.documentScrollWidth, `document overflow at #${topic}`).toBe(
+      geometry.clientWidth,
+    );
     expect(geometry.bodyScrollWidth, `body overflow at #${topic}`).toBe(geometry.clientWidth);
   }
 });

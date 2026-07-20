@@ -93,10 +93,8 @@ export function Titlebar({
   const navigate = useNavigate();
   return (
     <header
-      className="drag-region workspace-topbar titlebar-traffic-light-inset titlebar-window-controls-reserve shrink-0 gap-1 border-border border-b bg-background px-1 sm:gap-2 sm:px-3"
-      data-window-chrome={
-        rendererPlatform.mode === "desktop" ? rendererPlatform.platform : undefined
-      }
+      className="drag-region workspace-topbar titlebar-traffic-light-inset titlebar-window-controls-reserve shrink-0 gap-0 border-border border-b bg-background px-0 sm:gap-2 sm:px-3"
+      data-window-chrome={rendererPlatform.windowChrome ?? undefined}
     >
       <Tooltip>
         <TooltipTrigger
@@ -114,7 +112,10 @@ export function Titlebar({
         />
         <TooltipPopup side="bottom">{railToggle.label} (Ctrl+B)</TooltipPopup>
       </Tooltip>
-      <BrandLockup className="min-w-0" />
+      <BrandLockup
+        aria-label="T4 Code"
+        className="min-w-0 [&>span>span]:hidden sm:[&>span>span]:inline"
+      />
       <div className="flex-1" />
       {rendererPlatform.mode === "browser" && (
         <Tooltip>

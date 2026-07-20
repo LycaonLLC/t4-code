@@ -12,8 +12,10 @@ import { WORKSPACE_STORAGE_KEY } from "../state/workspace-store.ts";
 export type ShellPlatform = "linux" | "darwin";
 
 export interface RendererPlatform {
-  /** "desktop" when the Electron preload injected the shell port. */
+  /** "desktop" when a live desktop-compatible shell port is available. */
   readonly mode: "desktop" | "browser";
+  /** Native window chrome exists only when Electron injected the shell port. */
+  readonly windowChrome: ShellPlatform | null;
   readonly platform: ShellPlatform;
   /** Workspace view-state persistence; always renderer-local. */
   readonly persistence: WorkspacePersistence;
@@ -51,6 +53,7 @@ export function resolveRendererPlatform(platformOverride?: ShellPlatform): Rende
   return {
     mode: resolvedShell === null ? "browser" : "desktop",
     platform,
+    windowChrome: shell === null ? null : platform,
     persistence: createLocalStoragePersistence(WORKSPACE_STORAGE_KEY),
     shell: resolvedShell,
   };

@@ -8,6 +8,7 @@ import 'package:t4code/src/client/app_state.dart';
 import 'package:t4code/src/client/t4_client_controller.dart';
 import 'package:t4code/src/client/web_socket_connector.dart';
 import 'package:t4code/src/host/host_profile.dart';
+import 'package:t4code/src/host/app_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 void main() {
@@ -1304,9 +1305,414 @@ void main() {
     expect(await origin.future, 'https://localhost');
     await channel.sink.close();
   });
+  test('loads and saves the injected theme preference', () async {
+    final preferences = InMemoryAppPreferenceStore(themePreference: 'dark');
+    final controller = T4ClientController(
+      hostDirectoryStore: _MemoryDirectoryStore(),
+      hostCredentialStore: _MemoryCredentialStore(),
+      appPreferenceStore: preferences,
+      webSocketConnector: _FakeConnector().call,
+    );
+    addTearDown(controller.dispose);
+
+    await controller.initialize();
+    expect(controller.state.themePreference, T4ThemePreference.dark);
+
+    await controller.setThemePreference(T4ThemePreference.light);
+    expect(controller.state.themePreference, T4ThemePreference.light);
+    expect(preferences.themePreference, 'light');
+  });
+
+  test(
+    'projects live settings defensively and explicitly confirms exact writes',
+    () async {
+      final profile = _profile('settings');
+      final connector = _FakeConnector();
+      final controller = _controller(
+        _MemoryDirectoryStore(
+          directory: const HostDirectory.empty().upsert(profile),
+        ),
+        _MemoryCredentialStore(),
+        connector,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      final channel = connector.channels.single;
+      channel.emit(
+        _welcome(
+          'host-settings',
+          capabilities: const <String>[
+            'sessions.read',
+            'catalog.read',
+            'config.read',
+            'config.write',
+          ],
+          features: const <String>['catalog.metadata', 'settings.metadata'],
+        ),
+      );
+      await _flush();
+      expect(
+        channel.sentJson.map((frame) => frame['command']),
+        containsAll(<String>['catalog.get', 'settings.read']),
+      );
+      channel.emit(<String, Object?>{
+        'v': 'omp-app/1',
+        'type': 'sessions',
+        'hostId': 'host-settings',
+        ..._sessionListResultFor('host-settings', const <String>[]),
+      });
+      channel.emit(_settingsCatalog());
+      channel.emit(_settingsValues());
+      await _flush();
+
+      final compact = controller.state.settings.entries.singleWhere(
+        (entry) => entry.path == 'appearance.compact',
+      );
+      expect(compact.control, HostSettingControlKind.boolean);
+      expect(compact.effectiveValue, false);
+      final secret = controller.state.settings.entries.singleWhere(
+        (entry) => entry.path == 'provider.token',
+      );
+      expect(secret.sensitive, isTrue);
+      expect(secret.configured, isTrue);
+      expect(secret.effectiveValue, isNull);
+      expect(secret.control, HostSettingControlKind.unsupported);
+      expect(
+        controller.state.settings.issues,
+        contains('provider.token: sensitive setting arrived with a value'),
+      );
+      expect(
+        controller.state.settings.entries
+            .singleWhere((entry) => entry.path == 'future.setting')
+            .control,
+        HostSettingControlKind.unsupported,
+      );
+
+      final write = controller.writeSetting(
+        'appearance.compact',
+        'global',
+        value: true,
+      );
+      await _flush();
+      final writeFrame = channel.sentJson.lastWhere(
+        (frame) => frame['command'] == 'settings.write',
+      );
+      expect(writeFrame['expectedRevision'], 'settings-rev-1');
+      expect(writeFrame.containsKey('sessionId'), isFalse);
+      expect(writeFrame['args'], <String, Object?>{
+        'edits': <Object?>[
+          <String, Object?>{
+            'path': 'appearance.compact',
+            'scope': 'global',
+            'value': true,
+          },
+        ],
+        'expectedRevision': 'settings-rev-1',
+      });
+
+      channel.emit(_confirmation(writeFrame, 'confirm-settings'));
+      await _flush();
+      expect(
+        channel.sentJson.where((frame) => frame['type'] == 'confirm'),
+        isEmpty,
+      );
+      final confirmation = controller.state.attentionItems.singleWhere(
+        (item) => item.confirmationId == 'confirm-settings',
+      );
+      expect(confirmation.sessionId, isEmpty);
+      await controller.respondToAttention(
+        confirmation,
+        const AttentionResponse(decision: AttentionDecision.approve),
+      );
+      final confirmFrame = channel.sentJson.last;
+      expect(confirmFrame['type'], 'confirm');
+      expect(confirmFrame.containsKey('sessionId'), isFalse);
+      expect(confirmFrame['decision'], 'approve');
+
+      channel.emit(
+        _response(
+          writeFrame,
+          command: 'settings.write',
+          result: const <String, Object?>{
+            'accepted': true,
+            'revision': 'settings-rev-2',
+          },
+        ),
+      );
+      await _flush();
+      expect(
+        channel.sentJson
+            .where(
+              (frame) =>
+                  frame['command'] == 'catalog.get' ||
+                  frame['command'] == 'settings.read',
+            )
+            .length,
+        4,
+      );
+      channel.emit(_settingsCatalog(revision: 'catalog-rev-2'));
+      channel.emit(_settingsValues(revision: 'settings-rev-2'));
+      await write;
+      expect(controller.state.settings.revision, 'settings-rev-2');
+      expect(controller.state.settingsOperationPending, isFalse);
+
+      final conflict = controller.writeSetting(
+        'appearance.compact',
+        'global',
+        value: false,
+      );
+      await _flush();
+      final conflictFrame = channel.sentJson.lastWhere(
+        (frame) => frame['command'] == 'settings.write',
+      );
+      channel.emit(<String, Object?>{
+        'v': 'omp-app/1',
+        'type': 'response',
+        'requestId': conflictFrame['requestId'],
+        'commandId': conflictFrame['commandId'],
+        'hostId': 'host-settings',
+        'command': 'settings.write',
+        'ok': false,
+        'error': <String, Object?>{
+          'code': 'revision_conflict',
+          'message': 'settings changed on the host',
+        },
+      });
+      await expectLater(conflict, throwsStateError);
+      expect(
+        controller.state.settings.error,
+        contains('settings changed on the host'),
+      );
+
+      final reset = controller.writeSetting(
+        'appearance.compact',
+        'session',
+        reset: true,
+      );
+      await _flush();
+      final resetFrame = channel.sentJson.lastWhere(
+        (frame) => frame['command'] == 'settings.write',
+      );
+      expect(resetFrame['args'], <String, Object?>{
+        'edits': <Object?>[
+          <String, Object?>{
+            'path': 'appearance.compact',
+            'scope': 'session',
+            'reset': true,
+          },
+        ],
+        'expectedRevision': 'settings-rev-2',
+      });
+      channel.emit(<String, Object?>{
+        'v': 'omp-app/1',
+        'type': 'response',
+        'requestId': resetFrame['requestId'],
+        'commandId': resetFrame['commandId'],
+        'hostId': 'host-settings',
+        'command': 'settings.write',
+        'ok': false,
+        'error': <String, Object?>{'code': 'denied', 'message': 'reset denied'},
+      });
+      await expectLater(reset, throwsStateError);
+    },
+  );
+
+  test('settings writes require granted permission', () async {
+    final profile = _profile('readonly');
+    final connector = _FakeConnector();
+    final controller = _controller(
+      _MemoryDirectoryStore(
+        directory: const HostDirectory.empty().upsert(profile),
+      ),
+      _MemoryCredentialStore(),
+      connector,
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    final channel = connector.channels.single;
+    channel.emit(
+      _welcome(
+        'host-readonly',
+        capabilities: const <String>[
+          'sessions.read',
+          'catalog.read',
+          'config.read',
+        ],
+        features: const <String>['catalog.metadata', 'settings.metadata'],
+      ),
+    );
+    channel.emit(<String, Object?>{
+      'v': 'omp-app/1',
+      'type': 'sessions',
+      'hostId': 'host-readonly',
+      ..._sessionListResultFor('host-readonly', const <String>[]),
+    });
+    channel.emit(_settingsCatalog(hostId: 'host-readonly'));
+    channel.emit(_settingsValues(hostId: 'host-readonly'));
+    await _flush();
+
+    await expectLater(
+      controller.writeSetting('appearance.compact', 'global', value: true),
+      throwsStateError,
+    );
+  });
+
+  testWidgets('settings refresh settles with a bounded timeout', (
+    tester,
+  ) async {
+    final profile = _profile('refresh-timeout');
+    final connector = _FakeConnector();
+    final controller = _controller(
+      _MemoryDirectoryStore(
+        directory: const HostDirectory.empty().upsert(profile),
+      ),
+      _MemoryCredentialStore(),
+      connector,
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    final channel = connector.channels.single;
+    channel.emit(
+      _welcome(
+        'host-timeout',
+        capabilities: const <String>[
+          'sessions.read',
+          'catalog.read',
+          'config.read',
+        ],
+        features: const <String>['catalog.metadata', 'settings.metadata'],
+      ),
+    );
+    channel.emit(<String, Object?>{
+      'v': 'omp-app/1',
+      'type': 'sessions',
+      'hostId': 'host-timeout',
+      ..._sessionListResultFor('host-timeout', const <String>[]),
+    });
+    channel.emit(_settingsCatalog(hostId: 'host-timeout'));
+    channel.emit(_settingsValues(hostId: 'host-timeout'));
+    await tester.pump();
+    expect(controller.state.settings.loading, isFalse);
+
+    final expectation = expectLater(
+      controller.refreshSettings(),
+      throwsA(isA<TimeoutException>()),
+    );
+    expect(controller.state.settings.loading, isTrue);
+    await tester.pump(const Duration(seconds: 11));
+    await expectation;
+    expect(controller.state.settings.loading, isFalse);
+    expect(controller.state.settings.error, contains('timed out'));
+  });
+
+  test(
+    'background resume reconnects once but deliberate disconnect stays closed',
+    () async {
+      final profile = _profile('lifecycle');
+      final connector = _FakeConnector();
+      final controller = _controller(
+        _MemoryDirectoryStore(
+          directory: const HostDirectory.empty().upsert(profile),
+        ),
+        _MemoryCredentialStore(),
+        connector,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      expect(connector.channels, hasLength(1));
+
+      await controller.handleLifecyclePhase(T4LifecyclePhase.background);
+      expect(controller.state.lifecyclePhase, T4LifecyclePhase.background);
+      expect(controller.state.connectionPhase, ConnectionPhase.disconnected);
+      await controller.handleLifecyclePhase(T4LifecyclePhase.resumed);
+      expect(connector.channels, hasLength(2));
+      await controller.handleLifecyclePhase(T4LifecyclePhase.resumed);
+      expect(connector.channels, hasLength(2));
+
+      await controller.handleLifecyclePhase(T4LifecyclePhase.background);
+      await controller.disconnect();
+      await controller.handleLifecyclePhase(T4LifecyclePhase.resumed);
+      expect(connector.channels, hasLength(2));
+      expect(
+        controller.state.hostDirectory.activeEndpointKey,
+        profile.endpointKey,
+      );
+    },
+  );
 }
 
 const String _token = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+Map<String, Object?> _settingsCatalog({
+  String hostId = 'host-settings',
+  String revision = 'catalog-rev-1',
+}) => <String, Object?>{
+  'v': 'omp-app/1',
+  'type': 'catalog',
+  'hostId': hostId,
+  'revision': revision,
+  'items': <Object?>[
+    <String, Object?>{
+      'id': 'setting:appearance.compact',
+      'kind': 'setting',
+      'name': 'appearance.compact',
+      'metadata': <String, Object?>{
+        'path': 'appearance.compact',
+        'label': 'Compact appearance',
+        'description': 'Use less space.',
+        'controlType': 'boolean',
+        'scopes': <Object?>['global', 'session'],
+        'tab': 'appearance',
+      },
+    },
+    <String, Object?>{
+      'id': 'setting:provider.token',
+      'kind': 'setting',
+      'name': 'provider.token',
+      'metadata': <String, Object?>{
+        'path': 'provider.token',
+        'label': 'Provider token',
+        'controlType': 'string',
+        'sensitive': true,
+        'configured': true,
+        'tab': 'providers',
+      },
+    },
+    <String, Object?>{
+      'id': 'setting:future.setting',
+      'kind': 'setting',
+      'name': 'future.setting',
+      'metadata': <String, Object?>{
+        'path': 'future.setting',
+        'label': 'Future setting',
+        'controlType': 'boolean',
+        'unreviewedKey': true,
+      },
+    },
+  ],
+};
+
+Map<String, Object?> _settingsValues({
+  String hostId = 'host-settings',
+  String revision = 'settings-rev-1',
+}) => <String, Object?>{
+  'v': 'omp-app/1',
+  'type': 'settings',
+  'hostId': hostId,
+  'revision': revision,
+  'settings': <String, Object?>{
+    'appearance.compact': <String, Object?>{
+      'effective': false,
+      'effectiveSource': 'global',
+      'configured': true,
+    },
+    'provider.token': <String, Object?>{
+      'sensitive': true,
+      'configured': true,
+      'effective': 'must-never-render',
+      'effectiveSource': 'global',
+    },
+  },
+};
 
 T4ClientController _controller(
   HostDirectoryStore directory,

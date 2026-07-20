@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:t4code/src/client/app_state.dart';
 import 'package:t4code/src/host/host_profile.dart';
+import 'package:t4code/src/protocol/protocol.dart';
 import 'package:t4code/src/ui/t4_app.dart';
 
 void main() {
@@ -563,12 +564,24 @@ void main() {
         attentionItems: <AttentionItem>[approval],
         agentActivities: <AgentActivity>[
           AgentActivity(
-            agentId: 'agent-1',
+            agentId: 'agent-parent',
             sessionId: 'session-alpha',
-            label: 'Reviewing changes',
+            label: 'Coordinator',
+            status: 'running',
+            progress: 0.75,
+            updatedAt: DateTime.utc(2026, 7, 19),
+          ),
+          AgentActivity(
+            agentId: 'agent-child',
+            sessionId: 'session-alpha',
+            label: 'Review child',
             status: 'running',
             progress: 0.5,
-            updatedAt: DateTime.utc(2026, 7, 19),
+            updatedAt: DateTime.utc(2026, 7, 19, 0, 1),
+            parentAgentId: 'agent-parent',
+            description: 'Reviewing changes',
+            model: 'fixture-model',
+            currentTool: 'read',
           ),
         ],
       ),
@@ -590,10 +603,161 @@ void main() {
       AttentionDecision.approve,
     );
 
-    await tester.tap(find.text('Agents (1)'));
+    await tester.tap(find.text('Agents (2)'));
     await tester.pumpAndSettle();
+    expect(find.text('Coordinator'), findsOneWidget);
+    expect(find.text('Review child'), findsOneWidget);
     expect(find.text('Reviewing changes'), findsOneWidget);
-    expect(find.text('running'), findsOneWidget);
+    expect(find.text('running · fixture-model · read'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Stop Review child'));
+    await tester.pumpAndSettle();
+    expect(find.text('Stop background agent?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Stop agent'));
+    await tester.pumpAndSettle();
+    expect(actions.cancelledAgentIds, <String>['agent-child']);
+  });
+  testWidgets('phone transcript search loads highlighted historical context', (
+    tester,
+  ) async {
+    const searchResult = TranscriptSearchResult(
+      items: <TranscriptSearchItem>[
+        TranscriptSearchItem(
+          sessionId: 'session-history',
+          projectId: 'project-history',
+          sessionTitle: 'Parser investigation',
+          anchorId: 'entry-anchor',
+          role: TranscriptSearchRole.assistant,
+          timestamp: '2026-07-19T12:00:00.000Z',
+          snippet: 'Fixed the parser boundary',
+          highlights: <TranscriptSearchHighlight>[
+            TranscriptSearchHighlight(start: 0, end: 5),
+          ],
+        ),
+      ],
+      incomplete: false,
+      index: TranscriptSearchIndexStatus(
+        state: TranscriptSearchIndexState.ready,
+        indexedSessions: 3,
+        knownSessions: 3,
+        generation: 'generation-1',
+      ),
+    );
+    const contextResult = TranscriptContextResult(
+      anchorId: 'entry-anchor',
+      rows: <TranscriptContextRow>[
+        TranscriptContextRow(
+          anchorId: 'entry-before',
+          role: TranscriptSearchRole.user,
+          timestamp: '2026-07-19T11:59:00.000Z',
+          text: 'Please inspect the parser boundary.',
+        ),
+        TranscriptContextRow(
+          anchorId: 'entry-anchor',
+          role: TranscriptSearchRole.assistant,
+          timestamp: '2026-07-19T12:00:00.000Z',
+          text: 'The parser boundary is fixed.',
+        ),
+      ],
+      anchorIndex: 1,
+      hasBefore: false,
+      hasAfter: false,
+      generation: 'generation-1',
+    );
+    final actions = _FakeActions(
+      transcriptSearchResult: searchResult,
+      transcriptContextResult: contextResult,
+    );
+    await pumpApp(
+      tester,
+      state: const T4ViewState(
+        connectionPhase: ConnectionPhase.ready,
+        authenticationPhase: AuthenticationPhase.paired,
+        targetConfigured: true,
+      ),
+      actions: actions,
+      size: compactPhone,
+    );
+
+    await tester.tap(find.byTooltip('Open navigation'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Search').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Search transcripts'),
+      'parser',
+    );
+    await tester.tap(find.byTooltip('Search'));
+    await tester.pumpAndSettle();
+
+    expect(actions.transcriptQueries, <String>['parser']);
+    expect(find.text('Parser investigation'), findsOneWidget);
+    expect(find.text('Fixed the parser boundary'), findsOneWidget);
+    expect(find.text('3 sessions indexed'), findsOneWidget);
+
+    await tester.tap(find.text('Show context'));
+    await tester.pumpAndSettle();
+    expect(actions.contextAnchors, <String>['entry-anchor']);
+    expect(find.text('Please inspect the parser boundary.'), findsOneWidget);
+    expect(find.text('The parser boundary is fixed.'), findsOneWidget);
+  });
+
+  testWidgets('phone usage surface shows provider and broker status', (
+    tester,
+  ) async {
+    const usage = UsageReadResult(
+      generatedAt: 1720000000000,
+      reports: <UsageReport>[
+        UsageReport(
+          provider: 'OpenAI',
+          fetchedAt: 1720000000000,
+          limits: <UsageLimit>[
+            UsageLimit(
+              id: 'requests',
+              label: 'Requests',
+              scope: UsageScope(provider: 'OpenAI'),
+              amount: UsageAmount(used: 4, limit: 10, unit: UsageUnit.requests),
+              status: UsageStatus.ok,
+              notes: <String>[],
+            ),
+          ],
+          notes: <String>[],
+          metadata: <String, Object?>{},
+        ),
+      ],
+      accountsWithoutUsage: <UsageAccountWithoutReport>[],
+      capacity: <String, List<UsageCapacityWindow>>{},
+    );
+    final actions = _FakeActions(
+      usageReadResult: usage,
+      brokerStatusResult: const BrokerStatusResult(
+        state: BrokerState.connected,
+        generation: 1,
+        endpoint: 'https://broker.example.test',
+      ),
+    );
+    await pumpApp(
+      tester,
+      state: T4ViewState(
+        connectionPhase: ConnectionPhase.ready,
+        authenticationPhase: AuthenticationPhase.paired,
+        targetConfigured: true,
+        grantedCapabilities: const {'usage.read', 'broker.read'},
+      ),
+      actions: actions,
+      size: compactPhone,
+    );
+
+    await tester.tap(find.byTooltip('Open navigation'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Usage').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Broker connected'), findsOneWidget);
+    expect(find.text('https://broker.example.test'), findsOneWidget);
+    expect(find.text('OpenAI'), findsOneWidget);
+    expect(find.text('Requests'), findsOneWidget);
+    expect(find.text('4 / 10 requests'), findsOneWidget);
   });
 
   testWidgets('developer tools expose activity, files, and review on phones', (
@@ -644,7 +808,32 @@ void main() {
           ],
           content: 'void main() {}',
           diff: '-void old() {}\n+void main() {}',
+          revision: 'revision-file',
         ),
+        reviews: const <ReviewWorkspaceItem>[
+          ReviewWorkspaceItem(
+            reviewId: 'review-1',
+            sessionId: 'session-alpha',
+            status: 'pending',
+            path: 'lib/main.dart',
+            findings: <Map<String, Object?>>[
+              <String, Object?>{'message': 'Avoid an empty main body.'},
+            ],
+          ),
+        ],
+        previews: const <PreviewWorkspaceState>[
+          PreviewWorkspaceState(
+            previewId: 'preview-1',
+            sessionId: 'session-alpha',
+            state: 'ready',
+            url: 'https://preview.example.test',
+            revision: 'revision-preview',
+            title: 'Fixture preview',
+            canGoBack: false,
+            canGoForward: false,
+          ),
+        ],
+        activePreviewId: 'preview-1',
       ),
       actions: actions,
       size: compactPhone,
@@ -659,19 +848,58 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('lib/main.dart'), findsWidgets);
     expect(find.text('void main() {}'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'void main() { run(); }');
+    await tester.pump();
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(actions.fileWrites, <({String path, String content})>[
+      (path: 'lib/main.dart', content: 'void main() { run(); }'),
+    ]);
 
     await tester.tap(find.text('Review'));
     await tester.pumpAndSettle();
     expect(find.text('Reload diff'), findsOneWidget);
     expect(find.textContaining('+void main() {}'), findsOneWidget);
+    expect(find.text('Avoid an empty main body.'), findsOneWidget);
+    await tester.tap(find.byTooltip('Apply review'));
+    await tester.pumpAndSettle();
+    expect(actions.appliedReviewIds, <String>['review-1']);
+
+    await tester.drag(find.byType(TabBar), const Offset(-300, 0));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Interact'));
+    await tester.pumpAndSettle();
+    expect(find.text('Preview interaction'), findsOneWidget);
+    await tester.tap(find.text('Run click'));
+    await tester.pumpAndSettle();
+    expect(actions.previewInteractions.single.previewId, 'preview-1');
+    expect(actions.previewInteractions.single.action, 'click');
+    expect(actions.previewInteractions.single.args, <String, Object?>{
+      'selector': 'button',
+    });
   });
 }
 
 final class _FakeActions implements T4Actions {
-  _FakeActions({this.addHostError, this.addHostCompletion});
+  _FakeActions({
+    this.addHostError,
+    this.addHostCompletion,
+    this.transcriptSearchResult,
+    this.transcriptContextResult,
+    this.usageReadResult,
+    this.brokerStatusResult,
+  });
 
   final Object? addHostError;
   final Completer<void>? addHostCompletion;
+  final TranscriptSearchResult? transcriptSearchResult;
+  final TranscriptContextResult? transcriptContextResult;
+  final UsageReadResult? usageReadResult;
+  final BrokerStatusResult? brokerStatusResult;
+  final List<String> transcriptQueries = <String>[];
+  final List<String> contextAnchors = <String>[];
   final List<String> addedAddresses = <String>[];
   final List<String> addedProfileIds = <String>[];
   final List<String> activatedEndpointKeys = <String>[];
@@ -697,6 +925,31 @@ final class _FakeActions implements T4Actions {
   final List<({AttentionItem item, AttentionResponse response})>
   attentionResponses = <({AttentionItem item, AttentionResponse response})>[];
   final List<String> retriedSessionIds = <String>[];
+  final List<String> cancelledAgentIds = <String>[];
+  final List<({String path, String content})> fileWrites =
+      <({String path, String content})>[];
+  final List<String> refreshedReviewIds = <String>[];
+  final List<String> appliedReviewIds = <String>[];
+  final List<({String previewId, String action, Map<String, Object?> args})>
+  previewInteractions =
+      <({String previewId, String action, Map<String, Object?> args})>[];
+
+  @override
+  Future<void> setThemePreference(T4ThemePreference preference) async {}
+
+  @override
+  Future<void> refreshSettings() async {}
+
+  @override
+  Future<void> writeSetting(
+    String path,
+    String scope, {
+    Object? value,
+    bool reset = false,
+  }) async {}
+
+  @override
+  Future<void> handleLifecyclePhase(T4LifecyclePhase phase) async {}
 
   @override
   Future<void> addHost(
@@ -748,6 +1001,47 @@ final class _FakeActions implements T4Actions {
   @override
   Future<void> deleteSession(String sessionId) async {
     deletedSessionIds.add(sessionId);
+  }
+
+  @override
+  Future<TranscriptSearchResult> searchTranscripts({
+    required String query,
+    String? cursor,
+    String? projectId,
+    List<TranscriptSearchRole>? roles,
+    String archived = 'include',
+    DateTime? from,
+    DateTime? to,
+  }) async {
+    transcriptQueries.add(query);
+    return transcriptSearchResult ??
+        (throw UnsupportedError('transcript search is not configured'));
+  }
+
+  @override
+  Future<TranscriptContextResult> loadTranscriptContext({
+    required String sessionId,
+    required String anchorId,
+    int before = 8,
+    int after = 8,
+  }) async {
+    contextAnchors.add(anchorId);
+    return transcriptContextResult ??
+        (throw UnsupportedError('transcript context is not configured'));
+  }
+
+  @override
+  Future<UsageReadResult> readUsage() async =>
+      usageReadResult ?? (throw UnsupportedError('usage is not configured'));
+
+  @override
+  Future<BrokerStatusResult> readBrokerStatus() async =>
+      brokerStatusResult ??
+      (throw UnsupportedError('broker status is not configured'));
+
+  @override
+  Future<void> cancelAgent(String agentId) async {
+    cancelledAgentIds.add(agentId);
   }
 
   @override
@@ -845,6 +1139,30 @@ final class _FakeActions implements T4Actions {
 
   @override
   Future<void> loadSessionDiff() async {}
+
+  @override
+  Future<void> writeFile(String path, String content) async {
+    fileWrites.add((path: path, content: content));
+  }
+
+  @override
+  Future<void> refreshReview(String reviewId) async {
+    refreshedReviewIds.add(reviewId);
+  }
+
+  @override
+  Future<void> applyReview(String reviewId) async {
+    appliedReviewIds.add(reviewId);
+  }
+
+  @override
+  Future<void> runPreviewInteraction(
+    String previewId,
+    String action,
+    Map<String, Object?> args,
+  ) async {
+    previewInteractions.add((previewId: previewId, action: action, args: args));
+  }
 
   @override
   Future<String> launchPreview(String url) async => 'preview-test';

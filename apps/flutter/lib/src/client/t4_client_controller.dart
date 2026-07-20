@@ -8,6 +8,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import '../host/app_preferences.dart';
 import '../host/host_profile.dart';
 import '../protocol/protocol.dart';
 import 'app_state.dart';
@@ -17,12 +18,15 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   T4ClientController({
     required this.hostDirectoryStore,
     required this.hostCredentialStore,
+    AppPreferenceStore? appPreferenceStore,
     WebSocketConnector? webSocketConnector,
     this.developmentEndpoint,
-  }) : _webSocketConnector = webSocketConnector ?? connectPlatformWebSocket;
+  }) : appPreferenceStore = appPreferenceStore ?? InMemoryAppPreferenceStore(),
+       _webSocketConnector = webSocketConnector ?? connectPlatformWebSocket;
 
   final HostDirectoryStore hostDirectoryStore;
   final HostCredentialStore hostCredentialStore;
+  final AppPreferenceStore appPreferenceStore;
   final WebSocketConnector _webSocketConnector;
   final Uri? developmentEndpoint;
 
@@ -45,6 +49,8 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   final Map<String, PreviewWorkspaceState> _previews =
       <String, PreviewWorkspaceState>{};
   final Map<String, Uint8List> _previewCaptures = <String, Uint8List>{};
+  final Map<String, ReviewWorkspaceItem> _reviews =
+      <String, ReviewWorkspaceItem>{};
 
   HostDirectory _hostDirectory = const HostDirectory.empty();
   WebSocketChannel? _channel;
@@ -61,6 +67,18 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   Set<String> _grantedCapabilities = const <String>{};
   Set<String> _grantedFeatures = const <String>{};
   List<CatalogItem> _catalogItems = const <CatalogItem>[];
+  CatalogFrame? _catalogFrame;
+  SettingsFrame? _settingsFrame;
+  HostSettingsState _settingsState = const HostSettingsState();
+  T4ThemePreference _themePreference = T4ThemePreference.system;
+  T4LifecyclePhase _lifecyclePhase = T4LifecyclePhase.resumed;
+  bool _settingsOperationPending = false;
+  bool _resumeConnectionOwed = false;
+  Completer<void>? _settingsRefreshCompleter;
+  bool _settingsRefreshSawCatalog = false;
+  bool _settingsRefreshSawSettings = false;
+  Timer? _settingsRefreshTimer;
+  int _settingsBootstrapGeneration = -1;
   FileWorkspaceState _fileWorkspace = const FileWorkspaceState();
   String? _activeTerminalId;
   String? _activePreviewId;
@@ -122,8 +140,15 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         (preview) => preview.sessionId == _selectedSessionId,
       ),
     ),
+    reviews: List<ReviewWorkspaceItem>.unmodifiable(
+      _reviews.values.where((review) => review.sessionId == _selectedSessionId),
+    ),
     activePreviewId: _activePreviewId,
     developerOperationPending: _developerOperationPending,
+    themePreference: _themePreference,
+    settings: _settingsState,
+    lifecyclePhase: _lifecyclePhase,
+    settingsOperationPending: _settingsOperationPending,
   );
 
   SessionComposerState get _composerState {
@@ -188,12 +213,6 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     );
   }
 
-  String _confirmationSessionId(ConfirmationFrame frame) =>
-      frame.sessionId ??
-      (throw const FormatException(
-        'session confirmation is missing sessionId',
-      ));
-
   List<AttentionItem> get _allAttentionItems {
     final items = <AttentionItem>[
       for (final attention in _attentionBySession.values) ...attention.items,
@@ -203,15 +222,19 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
             )?.isAfter(DateTime.now().toUtc()) ==
             true)
           AttentionItem(
-            key: 'confirmation:${frame.sessionId}:${frame.confirmationId}',
+            key:
+                'confirmation:${frame.sessionId ?? 'host'}:${frame.confirmationId}',
             kind: AttentionKind.confirmation,
-            sessionId: _confirmationSessionId(frame),
-            sessionTitle:
-                _sessions
-                    .where((session) => session.sessionId == frame.sessionId)
-                    .firstOrNull
-                    ?.title ??
-                'Session',
+            sessionId: frame.sessionId ?? '',
+            sessionTitle: frame.sessionId == null
+                ? (_activeProfile?.label ?? 'Host')
+                : _sessions
+                          .where(
+                            (session) => session.sessionId == frame.sessionId,
+                          )
+                          .firstOrNull
+                          ?.title ??
+                      'Session',
             revision: frame.revision,
             title: 'Security confirmation',
             summary: frame.preview ?? frame.summary,
@@ -255,6 +278,20 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
 
   Future<void> _initialize() async {
     try {
+      final storedTheme = await appPreferenceStore.loadThemePreference();
+      if (_disposed) return;
+      _themePreference =
+          T4ThemePreference.values
+              .where((preference) => preference.name == storedTheme)
+              .firstOrNull ??
+          T4ThemePreference.system;
+    } on Object {
+      if (_disposed) return;
+      _themePreference = T4ThemePreference.system;
+    }
+    _publish();
+
+    try {
       final directory = await hostDirectoryStore.load();
       if (_disposed) return;
       _hostDirectory = directory;
@@ -262,7 +299,9 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       _directoryLoaded = true;
       _errorMessage = null;
       _publish();
-      await _connectCurrent();
+      if (_lifecyclePhase == T4LifecyclePhase.resumed && _reconnectEnabled) {
+        await _connectCurrent();
+      }
     } on Object catch (error) {
       if (_disposed) return;
       _initialized = true;
@@ -273,6 +312,11 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   @override
   Future<void> connect() async {
     _reconnectEnabled = true;
+    if (_lifecyclePhase == T4LifecyclePhase.background) {
+      _resumeConnectionOwed = true;
+      _publish();
+      return;
+    }
     if (!_initialized) {
       await initialize();
       return;
@@ -281,8 +325,323 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   }
 
   @override
+  Future<void> setThemePreference(T4ThemePreference preference) async {
+    if (_themePreference == preference) return;
+    _themePreference = preference;
+    _publish();
+    try {
+      await appPreferenceStore.saveThemePreference(preference.name);
+    } on Object catch (error) {
+      _errorMessage = 'Could not save appearance preference: $error';
+      _publish();
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> refreshSettings() {
+    _requireSettingsReadAccess();
+    final completer = Completer<void>();
+    _beginSettingsRefresh(completer: completer);
+    return completer.future;
+  }
+
+  @override
+  Future<void> writeSetting(
+    String path,
+    String scope, {
+    Object? value,
+    bool reset = false,
+  }) async {
+    if (_settingsOperationPending) {
+      throw StateError('another settings change is already running');
+    }
+    if (_phase != ConnectionPhase.ready || _hostId == null) {
+      throw StateError('connect before changing settings');
+    }
+    if (!_grantedCapabilities.contains('config.write')) {
+      throw StateError('this device was not granted config.write');
+    }
+    final revision = _settingsFrame?.revision;
+    if (revision == null) {
+      throw StateError('refresh settings before changing them');
+    }
+    final entry = _settingsState.entries
+        .where((candidate) => candidate.path == path)
+        .firstOrNull;
+    if (entry == null) {
+      throw ArgumentError.value(path, 'path', 'is not a published setting');
+    }
+    if (!entry.available ||
+        entry.sensitive ||
+        entry.control == HostSettingControlKind.secret ||
+        entry.control == HostSettingControlKind.unsupported) {
+      throw StateError('this setting is not writable');
+    }
+    if ((scope != 'global' && scope != 'session') ||
+        !entry.writableScopes.contains(scope)) {
+      throw ArgumentError.value(scope, 'scope', 'is not writable for $path');
+    }
+    if (!reset && !_settingValueMatches(entry, value)) {
+      throw ArgumentError.value(value, 'value', 'does not match $path');
+    }
+    if (reset && value != null) {
+      throw ArgumentError.value(value, 'value', 'must be omitted when reset');
+    }
+
+    final edit = <String, Object?>{
+      'path': path,
+      'scope': scope,
+      if (reset) 'reset': true else 'value': _copySettingValue(value),
+    };
+    _settingsOperationPending = true;
+    _settingsState = HostSettingsState(
+      revision: _settingsState.revision,
+      entries: _settingsState.entries,
+      loading: _settingsState.loading,
+      issues: _settingsState.issues,
+    );
+    _publish();
+    try {
+      final frame = await _runHostCommand(
+        prefix: 'settings-write',
+        command: 'settings.write',
+        expectedRevision: revision,
+        args: <String, Object?>{
+          'edits': <Map<String, Object?>>[edit],
+          'expectedRevision': revision,
+        },
+        confirmationExpected: true,
+      );
+      if (!frame.ok) {
+        throw StateError(frame.error?.message ?? 'settings.write failed');
+      }
+      await refreshSettings();
+    } on Object catch (error) {
+      _settingsState = HostSettingsState(
+        revision: _settingsState.revision,
+        entries: _settingsState.entries,
+        error: 'Settings change failed: $error',
+        issues: _settingsState.issues,
+      );
+      _publish();
+      rethrow;
+    } finally {
+      _settingsOperationPending = false;
+      _publish();
+    }
+  }
+
+  void _requireSettingsReadAccess() {
+    if (_hostId == null || _phase == ConnectionPhase.disconnected) {
+      throw StateError('connect before refreshing settings');
+    }
+    if (!_grantedCapabilities.contains('catalog.read') ||
+        !_grantedFeatures.contains('catalog.metadata') ||
+        !_grantedCapabilities.contains('config.read') ||
+        !_grantedFeatures.contains('settings.metadata')) {
+      throw StateError('this host did not grant live settings metadata');
+    }
+  }
+
+  void _beginSettingsRefresh({Completer<void>? completer}) {
+    _settingsRefreshCompleter?.completeError(
+      StateError('settings refresh was replaced'),
+    );
+    _settingsRefreshCompleter = completer;
+    _settingsRefreshSawCatalog = false;
+    _settingsRefreshSawSettings = false;
+    _settingsRefreshTimer?.cancel();
+    _settingsState = HostSettingsState(
+      revision: _settingsState.revision,
+      entries: _settingsState.entries,
+      loading: true,
+      issues: _settingsState.issues,
+    );
+    _publish();
+    _sendHostProduct('catalog.get');
+    _sendHostProduct('settings.read');
+    _settingsRefreshTimer = Timer(const Duration(seconds: 10), () {
+      if (!_settingsState.loading) return;
+      final error = TimeoutException('settings refresh timed out');
+      _settingsState = HostSettingsState(
+        revision: _settingsState.revision,
+        entries: _settingsState.entries,
+        error: error.message,
+        issues: _settingsState.issues,
+      );
+      final pending = _settingsRefreshCompleter;
+      _settingsRefreshCompleter = null;
+      if (pending != null && !pending.isCompleted) pending.completeError(error);
+      _publish();
+    });
+  }
+
+  void _sendHostProduct(String command) {
+    final hostId = _hostId;
+    if (hostId == null) throw StateError('host identity is unavailable');
+    final ids = _nextCommandIds(command.replaceAll('.', '-'));
+    _pendingCommands[ids.requestId] = _PendingCommand(
+      commandId: ids.commandId,
+      command: command,
+    );
+    _send(
+      WireEncoder.command(
+        requestId: ids.requestId,
+        commandId: ids.commandId,
+        hostId: hostId,
+        command: command,
+        args: const <String, Object?>{},
+      ),
+    );
+  }
+
+  Future<ResponseFrame> _runHostCommand({
+    required String prefix,
+    required String command,
+    required Map<String, Object?> args,
+    String? expectedRevision,
+    bool confirmationExpected = false,
+  }) async {
+    final hostId = _hostId;
+    if (hostId == null) throw StateError('host identity is unavailable');
+    final ids = _nextCommandIds(prefix);
+    final completer = Completer<ResponseFrame>();
+    _pendingCommands[ids.requestId] = _PendingCommand(
+      commandId: ids.commandId,
+      command: command,
+      completer: completer,
+      expectedRevision: expectedRevision,
+      confirmationExpected: confirmationExpected,
+    );
+    try {
+      _send(
+        WireEncoder.command(
+          requestId: ids.requestId,
+          commandId: ids.commandId,
+          hostId: hostId,
+          command: command,
+          expectedRevision: expectedRevision,
+          args: args,
+        ),
+      );
+      return await completer.future.timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => throw TimeoutException('$command timed out'),
+      );
+    } finally {
+      _pendingCommands.remove(ids.requestId);
+    }
+  }
+
+  void _projectHostSettings() {
+    final catalog = _catalogFrame;
+    final settings = _settingsFrame;
+    if (catalog != null &&
+        settings != null &&
+        catalog.hostId == _hostId &&
+        settings.hostId == _hostId) {
+      final projection = _buildHostSettings(catalog, settings);
+      final complete =
+          _settingsRefreshSawCatalog && _settingsRefreshSawSettings;
+      _settingsState = HostSettingsState(
+        revision: settings.revision,
+        entries: projection.entries,
+        loading: !complete,
+        issues: projection.issues,
+      );
+      if (complete) {
+        _settingsRefreshTimer?.cancel();
+        _settingsRefreshTimer = null;
+        final pending = _settingsRefreshCompleter;
+        _settingsRefreshCompleter = null;
+        if (pending != null && !pending.isCompleted) pending.complete();
+      }
+    }
+    _publish();
+  }
+
+  void _clearSettingsProjection() {
+    _catalogFrame = null;
+    _settingsFrame = null;
+    _settingsState = const HostSettingsState();
+    _settingsOperationPending = false;
+    _settingsRefreshTimer?.cancel();
+    _settingsRefreshTimer = null;
+    final pending = _settingsRefreshCompleter;
+    _settingsRefreshCompleter = null;
+    if (pending != null && !pending.isCompleted) {
+      pending.completeError(StateError('settings projection was cleared'));
+    }
+    _settingsRefreshSawCatalog = false;
+    _settingsRefreshSawSettings = false;
+    _settingsBootstrapGeneration = -1;
+  }
+
+  @override
+  Future<void> handleLifecyclePhase(T4LifecyclePhase phase) async {
+    if (_lifecyclePhase == phase) return;
+    _lifecyclePhase = phase;
+    if (phase == T4LifecyclePhase.background) {
+      final active =
+          _channel != null ||
+          _subscription != null ||
+          _reconnectTimer != null ||
+          _phase == ConnectionPhase.connecting ||
+          _phase == ConnectionPhase.synchronizing ||
+          _phase == ConnectionPhase.ready ||
+          _phase == ConnectionPhase.retrying;
+      if (!active || !_reconnectEnabled) {
+        _publish();
+        return;
+      }
+      _resumeConnectionOwed = true;
+      _reconnectEnabled = false;
+      _connectionGeneration += 1;
+      _reconnectTimer?.cancel();
+      _reconnectTimer = null;
+      final previousSubscription = _subscription;
+      final previousChannel = _channel;
+      _subscription = null;
+      _channel = null;
+      _cancelPendingCommands(StateError('app moved to the background'));
+      _settingsOperationPending = false;
+      _settingsRefreshTimer?.cancel();
+      _settingsRefreshTimer = null;
+      final refresh = _settingsRefreshCompleter;
+      _settingsRefreshCompleter = null;
+      if (refresh != null && !refresh.isCompleted) {
+        refresh.completeError(StateError('app moved to the background'));
+      }
+      _settingsState = HostSettingsState(
+        revision: _settingsState.revision,
+        entries: _settingsState.entries,
+        issues: _settingsState.issues,
+      );
+      _phase = ConnectionPhase.disconnected;
+      _authenticationPhase = AuthenticationPhase.unknown;
+      _errorMessage = null;
+      _publish();
+      await previousSubscription?.cancel();
+      await previousChannel?.sink.close();
+      return;
+    }
+
+    final reconnect = _resumeConnectionOwed;
+    _resumeConnectionOwed = false;
+    if (!reconnect) {
+      _publish();
+      return;
+    }
+    _reconnectEnabled = true;
+    _publish();
+    if (_initialized) await _connectCurrent();
+  }
+
+  @override
   Future<void> disconnect() async {
     _reconnectEnabled = false;
+    _resumeConnectionOwed = false;
     _connectionGeneration += 1;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
@@ -300,6 +659,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _grantedCapabilities = const <String>{};
     _grantedFeatures = const <String>{};
     _catalogItems = const <CatalogItem>[];
+    _clearSettingsProjection();
     _bootstrapGeneration = -1;
     _reconnectAttempt = 0;
     _phase = ConnectionPhase.disconnected;
@@ -353,6 +713,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _grantedCapabilities = const <String>{};
     _grantedFeatures = const <String>{};
     _catalogItems = const <CatalogItem>[];
+    _clearSettingsProjection();
     _errorMessage = null;
     _publish();
 
@@ -698,6 +1059,228 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     confirmationExpected: true,
   );
 
+  @override
+  Future<void> cancelAgent(String agentId) async {
+    final activity = _agentActivities[agentId];
+    if (activity == null) {
+      throw ArgumentError.value(agentId, 'agentId', 'is not projected');
+    }
+    if (const {'completed', 'failed', 'cancelled'}.contains(activity.status)) {
+      throw StateError('this agent has already stopped');
+    }
+    final session = _sessions
+        .where((candidate) => candidate.sessionId == activity.sessionId)
+        .firstOrNull;
+    if (session == null) {
+      throw StateError('the agent session is no longer indexed');
+    }
+    await _runSessionOperation(
+      prefix: 'agent-cancel',
+      command: 'agent.cancel',
+      capability: 'agents.control',
+      session: session,
+      args: <String, Object?>{'agentId': agentId},
+      confirmationExpected: true,
+    );
+  }
+
+  @override
+  Future<TranscriptSearchResult> searchTranscripts({
+    required String query,
+    String? cursor,
+    String? projectId,
+    List<TranscriptSearchRole>? roles,
+    String archived = 'include',
+    DateTime? from,
+    DateTime? to,
+  }) async {
+    final normalizedQuery = query.trim();
+    if (normalizedQuery.isEmpty) {
+      throw ArgumentError.value(query, 'query', 'must not be blank');
+    }
+    if (_phase != ConnectionPhase.ready || _hostId == null) {
+      throw StateError('connect before searching transcripts');
+    }
+    if (!_grantedCapabilities.contains('sessions.read')) {
+      throw StateError('this device was not granted sessions.read');
+    }
+    if (!const {'include', 'only', 'exclude'}.contains(archived)) {
+      throw ArgumentError.value(archived, 'archived', 'is not supported');
+    }
+    if (roles != null &&
+        (roles.isEmpty || roles.toSet().length != roles.length)) {
+      throw ArgumentError.value(roles, 'roles', 'must be non-empty and unique');
+    }
+    final fromUtc = from?.toUtc();
+    final toUtc = to?.toUtc();
+    if (fromUtc != null && toUtc != null && fromUtc.isAfter(toUtc)) {
+      throw ArgumentError.value(from, 'from', 'must not be later than to');
+    }
+    final frame = await _runHostCommand(
+      prefix: 'transcript-search',
+      command: 'transcript.search',
+      args: <String, Object?>{
+        'query': normalizedQuery,
+        'limit': 25,
+        'archived': archived,
+        'cursor': ?cursor,
+        'projectId': ?projectId,
+        if (roles != null)
+          'roles': roles.map((role) => role.name).toList(growable: false),
+        if (fromUtc != null) 'from': fromUtc.toIso8601String(),
+        if (toUtc != null) 'to': toUtc.toIso8601String(),
+      },
+    );
+    if (!frame.ok) {
+      throw StateError(frame.error?.message ?? 'transcript search failed');
+    }
+    final result = frame.result;
+    if (result is! TranscriptSearchResult) {
+      throw const WireFormatException(
+        'transcript.search returned an invalid result',
+        'result',
+      );
+    }
+    return result;
+  }
+
+  @override
+  Future<TranscriptContextResult> loadTranscriptContext({
+    required String sessionId,
+    required String anchorId,
+    int before = 8,
+    int after = 8,
+  }) async {
+    if (sessionId.isEmpty) {
+      throw ArgumentError.value(sessionId, 'sessionId', 'must not be empty');
+    }
+    if (anchorId.isEmpty) {
+      throw ArgumentError.value(anchorId, 'anchorId', 'must not be empty');
+    }
+    if (before < 0 || before > 20 || after < 0 || after > 20) {
+      throw ArgumentError('context bounds must be between 0 and 20');
+    }
+    final frame = await _runSessionReadCommand(
+      prefix: 'transcript-context',
+      command: 'transcript.context',
+      sessionId: sessionId,
+      args: <String, Object?>{
+        'anchorId': anchorId,
+        'before': before,
+        'after': after,
+      },
+    );
+    final result = frame.result;
+    if (result is! TranscriptContextResult) {
+      throw const WireFormatException(
+        'transcript.context returned an invalid result',
+        'result',
+      );
+    }
+    return result;
+  }
+
+  @override
+  Future<UsageReadResult> readUsage() async {
+    final frame = await _runHostReadCommand(
+      prefix: 'usage-read',
+      command: 'usage.read',
+      capability: 'usage.read',
+    );
+    final result = frame.result;
+    if (result is! UsageReadResult) {
+      throw const WireFormatException(
+        'usage.read returned an invalid result',
+        'result',
+      );
+    }
+    return result;
+  }
+
+  @override
+  Future<BrokerStatusResult> readBrokerStatus() async {
+    final frame = await _runHostReadCommand(
+      prefix: 'broker-status',
+      command: 'broker.status',
+      capability: 'broker.read',
+    );
+    final result = frame.result;
+    if (result is! BrokerStatusResult) {
+      throw const WireFormatException(
+        'broker.status returned an invalid result',
+        'result',
+      );
+    }
+    return result;
+  }
+
+  Future<ResponseFrame> _runHostReadCommand({
+    required String prefix,
+    required String command,
+    required String capability,
+  }) async {
+    if (_phase != ConnectionPhase.ready || _hostId == null) {
+      throw StateError('connect before reading host status');
+    }
+    if (!_grantedCapabilities.contains(capability)) {
+      throw StateError('this device was not granted $capability');
+    }
+    final frame = await _runHostCommand(
+      prefix: prefix,
+      command: command,
+      args: const <String, Object?>{},
+    );
+    if (!frame.ok) {
+      throw StateError(frame.error?.message ?? '$command failed');
+    }
+    return frame;
+  }
+
+  Future<ResponseFrame> _runSessionReadCommand({
+    required String prefix,
+    required String command,
+    required String sessionId,
+    required Map<String, Object?> args,
+  }) async {
+    final hostId = _hostId;
+    if (_phase != ConnectionPhase.ready || hostId == null) {
+      throw StateError('connect before reading a session');
+    }
+    if (!_grantedCapabilities.contains('sessions.read')) {
+      throw StateError('this device was not granted sessions.read');
+    }
+    final ids = _nextCommandIds(prefix);
+    final completer = Completer<ResponseFrame>();
+    _pendingCommands[ids.requestId] = _PendingCommand(
+      commandId: ids.commandId,
+      command: command,
+      sessionId: sessionId,
+      completer: completer,
+    );
+    try {
+      _send(
+        WireEncoder.command(
+          requestId: ids.requestId,
+          commandId: ids.commandId,
+          hostId: hostId,
+          sessionId: sessionId,
+          command: command,
+          args: args,
+        ),
+      );
+      final frame = await completer.future.timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => throw TimeoutException('$command timed out'),
+      );
+      if (!frame.ok) {
+        throw StateError(frame.error?.message ?? '$command failed');
+      }
+      return frame;
+    } finally {
+      _pendingCommands.remove(ids.requestId);
+    }
+  }
+
   Future<ResponseFrame> _runLifecycleCommand(
     String sessionId, {
     required String command,
@@ -727,6 +1310,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     SessionSummary? session,
     Map<String, Object?> args = const <String, Object?>{},
     bool confirmationExpected = false,
+    String? expectedRevision,
   }) async {
     if (_sessionOperationPending) {
       throw StateError('another session action is already running');
@@ -738,6 +1322,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     if (!_grantedCapabilities.contains(capability)) {
       throw StateError('this device was not granted $capability');
     }
+    final operationRevision = expectedRevision ?? session?.revision;
     final ids = _nextCommandIds(prefix);
     final completer = Completer<ResponseFrame>();
     final pending = _PendingCommand(
@@ -745,7 +1330,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       command: command,
       sessionId: session?.sessionId,
       completer: completer,
-      expectedRevision: session?.revision,
+      expectedRevision: operationRevision,
       confirmationExpected: confirmationExpected,
     );
     _pendingSessionOperations[ids.requestId] = pending;
@@ -760,7 +1345,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
           hostId: hostId,
           sessionId: session?.sessionId,
           command: command,
-          expectedRevision: session?.revision,
+          expectedRevision: operationRevision,
           args: args,
         ),
       );
@@ -952,7 +1537,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
           confirmationId: confirmationId,
           commandId: commandId,
           hostId: hostId,
-          sessionId: current.sessionId,
+          sessionId: current.sessionId.isEmpty ? null : current.sessionId,
           decision: response.decision == AttentionDecision.approve
               ? 'approve'
               : 'deny',
@@ -1284,6 +1869,83 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   });
 
   @override
+  Future<void> writeFile(String path, String content) =>
+      _runDeveloperOperation(() async {
+        final session = _developerSession();
+        if (path != _fileWorkspace.path || _fileWorkspace.content == null) {
+          throw StateError('Read this file again before saving it.');
+        }
+        final revision = _fileWorkspace.revision;
+        if (revision == null) {
+          throw StateError('Waiting for the file revision before saving.');
+        }
+        final frame = await _runSessionOperation(
+          prefix: 'files-write',
+          command: 'files.write',
+          capability: 'files.write',
+          session: session,
+          expectedRevision: revision,
+          args: <String, Object?>{'path': path, 'content': content},
+          confirmationExpected: true,
+        );
+        final result = frame.result;
+        final nextRevision =
+            result is Map<String, Object?> && result['revision'] is String
+            ? result['revision']! as String
+            : _fileWorkspace.revision;
+        _fileWorkspace = FileWorkspaceState(
+          path: path,
+          entries: _fileWorkspace.entries,
+          content: content,
+          revision: nextRevision,
+        );
+      });
+
+  @override
+  Future<void> refreshReview(String reviewId) =>
+      _runDeveloperOperation(() async {
+        final review = _reviews[reviewId];
+        if (review == null) {
+          throw ArgumentError.value(reviewId, 'reviewId', 'is not projected');
+        }
+        final session = _developerSession();
+        if (session.sessionId != review.sessionId) {
+          throw StateError('Open the review session before refreshing it.');
+        }
+        await _runComposerCommand(
+          prefix: 'review-read',
+          command: 'review.read',
+          session: session,
+          capability: 'files.read',
+          expectedRevision: session.revision,
+          args: <String, Object?>{'reviewId': reviewId},
+        );
+      });
+
+  @override
+  Future<void> applyReview(String reviewId) => _runDeveloperOperation(() async {
+    final review = _reviews[reviewId];
+    if (review == null) {
+      throw ArgumentError.value(reviewId, 'reviewId', 'is not projected');
+    }
+    if (review.status == 'applied' || review.status == 'discarded') {
+      throw StateError('This review is no longer pending.');
+    }
+    final session = _developerSession();
+    if (session.sessionId != review.sessionId) {
+      throw StateError('Open the review session before applying it.');
+    }
+    await _runSessionOperation(
+      prefix: 'review-apply',
+      command: 'review.apply',
+      capability: 'files.write',
+      session: session,
+      args: <String, Object?>{'reviewId': reviewId},
+      confirmationExpected: true,
+    );
+  });
+
+  @override
   Future<String> launchPreview(String url) => _runDeveloperOperation(() async {
     final session = _developerSession();
     final frame = await _runSessionOperation(
@@ -1329,10 +1991,45 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     return _runPreviewMutation(previewId, 'preview.$action');
   }
 
+  @override
+  Future<void> runPreviewInteraction(
+    String previewId,
+    String action,
+    Map<String, Object?> args,
+  ) {
+    const inputActions = <String>{
+      'click',
+      'fill',
+      'scroll',
+      'type',
+      'select',
+      'press',
+      'upload',
+    };
+    if (!inputActions.contains(action) && action != 'handoff') {
+      throw ArgumentError.value(
+        action,
+        'action',
+        'is not a supported preview interaction',
+      );
+    }
+    if (args.containsKey('previewId')) {
+      throw ArgumentError.value(args, 'args', 'must not override previewId');
+    }
+    return _runPreviewMutation(
+      previewId,
+      'preview.$action',
+      capability: action == 'handoff' ? 'preview.control' : 'preview.input',
+      extraArgs: args,
+      confirmationExpected: action == 'upload',
+    );
+  }
+
   Future<void> _runPreviewMutation(
     String previewId,
     String command, {
     Map<String, Object?> extraArgs = const <String, Object?>{},
+    String capability = 'preview.control',
     bool confirmationExpected = false,
   }) => _runDeveloperOperation(() async {
     final session = _developerSession();
@@ -1340,17 +2037,17 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         ? await _runSessionOperation(
             prefix: command.replaceAll('.', '-'),
             command: command,
-            capability: 'preview.control',
+            capability: capability,
             session: session,
-            args: <String, Object?>{'previewId': previewId, ...extraArgs},
+            args: <String, Object?>{...extraArgs, 'previewId': previewId},
             confirmationExpected: true,
           )
         : await _runComposerCommand(
             prefix: command.replaceAll('.', '-'),
             command: command,
             session: session,
-            capability: 'preview.control',
-            args: <String, Object?>{'previewId': previewId, ...extraArgs},
+            capability: capability,
+            args: <String, Object?>{...extraArgs, 'previewId': previewId},
           );
     final preview = _previewResult(frame, session.sessionId);
     if (command == 'preview.close' || preview.state == 'closed') {
@@ -1722,6 +2419,28 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         _grantedCapabilities = frame.grantedCapabilities.toSet();
         _grantedFeatures = frame.grantedFeatures.toSet();
         if (_authenticationPhase != AuthenticationPhase.pairingRequired &&
+            _settingsBootstrapGeneration != _connectionGeneration) {
+          final canReadCatalog =
+              _grantedCapabilities.contains('catalog.read') &&
+              _grantedFeatures.contains('catalog.metadata');
+          final canReadSettings =
+              _grantedCapabilities.contains('config.read') &&
+              _grantedFeatures.contains('settings.metadata');
+          if (canReadCatalog || canReadSettings) {
+            _settingsBootstrapGeneration = _connectionGeneration;
+            if (canReadCatalog && canReadSettings) {
+              _beginSettingsRefresh();
+            } else {
+              if (canReadCatalog) {
+                _sendHostProduct('catalog.get');
+              }
+              if (canReadSettings) {
+                _sendHostProduct('settings.read');
+              }
+            }
+          }
+        }
+        if (_authenticationPhase != AuthenticationPhase.pairingRequired &&
             !_grantedCapabilities.contains('sessions.read')) {
           _phase = ConnectionPhase.ready;
           _errorMessage =
@@ -1757,6 +2476,8 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         _applyTerminalExit(frame);
       case FilesAdditiveFrame():
         _applyFilesFrame(frame);
+      case ReviewFrame():
+        _applyReviewFrame(frame);
       case AuditTailFrame():
         _applyAuditEvents(frame.events);
       case AuditEventFrame():
@@ -1769,14 +2490,24 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         _applySessionDelta(frame);
       case ConfirmationFrame():
         _applyConfirmation(frame);
+      case AgentFrame():
+        _applyLegacyAgentFrame(frame);
       case AgentAdditiveFrame():
         _applyAgentFrame(frame);
       case PairErrorFrame():
         _applyPairError(frame);
       case CatalogFrame():
         if (frame.hostId == _hostId) {
+          _catalogFrame = frame;
           _catalogItems = List<CatalogItem>.unmodifiable(frame.items);
-          _publish();
+          _settingsRefreshSawCatalog = true;
+          _projectHostSettings();
+        }
+      case SettingsFrame():
+        if (frame.hostId == _hostId) {
+          _settingsFrame = frame;
+          _settingsRefreshSawSettings = true;
+          _projectHostSettings();
         }
       case ErrorFrame():
         _errorMessage = frame.message;
@@ -2161,6 +2892,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _agentActivities.removeWhere(
       (_, activity) => activity.sessionId == removed,
     );
+    _reviews.removeWhere((_, review) => review.sessionId == removed);
     _savedCursors.remove(removed);
     if (!wasSelected) {
       _publish();
@@ -2187,41 +2919,86 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
 
   void _applyConfirmation(ConfirmationFrame frame) {
     if (frame.hostId != _hostId ||
-        !_sessions.any((session) => session.sessionId == frame.sessionId)) {
+        (frame.sessionId != null &&
+            !_sessions.any(
+              (session) => session.sessionId == frame.sessionId,
+            ))) {
       return;
     }
     final expiresAt = DateTime.tryParse(frame.expiresAt);
     if (expiresAt == null || !expiresAt.isAfter(DateTime.now().toUtc())) {
       throw const FormatException('confirmation is expired');
     }
-    final pending = _pendingSessionOperations.values
+    final sessionPending = _pendingSessionOperations.values
         .where((candidate) => candidate.commandId == frame.commandId)
         .firstOrNull;
-    if (pending == null) {
-      _attentionConfirmations[frame.confirmationId] = frame;
-      _publish();
+    if (sessionPending != null) {
+      if (!sessionPending.confirmationExpected ||
+          sessionPending.confirmationSent ||
+          frame.sessionId != sessionPending.sessionId ||
+          frame.summary != sessionPending.command ||
+          frame.revision != sessionPending.expectedRevision) {
+        throw const FormatException('confirmation correlation mismatch');
+      }
+      sessionPending.confirmationSent = true;
+      final ids = _nextCommandIds('confirm');
+      _send(
+        WireEncoder.confirm(
+          requestId: ids.requestId,
+          confirmationId: frame.confirmationId,
+          commandId: frame.commandId,
+          hostId: frame.hostId,
+          sessionId: frame.sessionId,
+          decision: 'approve',
+        ),
+      );
+      _attentionConfirmations.remove(frame.confirmationId);
       return;
     }
-    if (!pending.confirmationExpected ||
-        pending.confirmationSent ||
-        frame.sessionId != pending.sessionId ||
-        frame.summary != pending.command ||
-        frame.revision != pending.expectedRevision) {
+
+    final hostPending = _pendingCommands.values
+        .where((candidate) => candidate.commandId == frame.commandId)
+        .firstOrNull;
+    if (hostPending != null &&
+        (!hostPending.confirmationExpected ||
+            hostPending.confirmationSent ||
+            frame.sessionId != hostPending.sessionId ||
+            frame.revision != hostPending.expectedRevision)) {
       throw const FormatException('confirmation correlation mismatch');
     }
-    pending.confirmationSent = true;
-    final ids = _nextCommandIds('confirm');
-    _send(
-      WireEncoder.confirm(
-        requestId: ids.requestId,
-        confirmationId: frame.confirmationId,
-        commandId: frame.commandId,
-        hostId: frame.hostId,
-        sessionId: frame.sessionId,
-        decision: 'approve',
-      ),
+    if (hostPending != null) hostPending.confirmationSent = true;
+    _attentionConfirmations[frame.confirmationId] = frame;
+    _publish();
+  }
+
+  void _applyLegacyAgentFrame(AgentFrame frame) {
+    if (frame.hostId != _hostId) return;
+    final detail = frame.detail;
+    String? text(String key) => switch (detail?[key]) {
+      final String value when value.trim().isNotEmpty => value.trim(),
+      _ => null,
+    };
+    final parentAgentId = text('parentId');
+    _agentActivities[frame.agentId] = AgentActivity(
+      agentId: frame.agentId,
+      sessionId: frame.sessionId,
+      label: text('title') ?? text('name') ?? frame.agentId,
+      status: frame.state,
+      progress: frame.progress,
+      updatedAt: DateTime.now().toUtc(),
+      parentAgentId: parentAgentId == frame.agentId ? null : parentAgentId,
+      description: text('description'),
+      model: text('model'),
+      currentTool: text('currentTool') ?? text('tool'),
+      evidence: text('evidence'),
     );
-    _attentionConfirmations.remove(frame.confirmationId);
+    _recordActivity(
+      category: 'agent',
+      title: _agentActivities[frame.agentId]!.label,
+      detail: frame.state,
+      raw: frame.raw,
+    );
+    _publish();
   }
 
   void _applyAgentFrame(AgentAdditiveFrame frame) {
@@ -2249,6 +3026,11 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       status: status,
       progress: frame.progress ?? previous?.progress,
       updatedAt: DateTime.now().toUtc(),
+      parentAgentId: previous?.parentAgentId,
+      description: previous?.description,
+      model: previous?.model,
+      currentTool: previous?.currentTool,
+      evidence: previous?.evidence,
     );
     _recordActivity(
       category: 'agent',
@@ -2338,6 +3120,24 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       category: 'files',
       title: frame.frameType,
       detail: frame.path,
+      raw: frame.raw,
+    );
+    _publish();
+  }
+
+  void _applyReviewFrame(ReviewFrame frame) {
+    if (frame.hostId != _hostId) return;
+    _reviews[frame.reviewId] = ReviewWorkspaceItem(
+      reviewId: frame.reviewId,
+      sessionId: frame.sessionId,
+      status: frame.status,
+      path: frame.path,
+      findings: frame.findings,
+    );
+    _recordActivity(
+      category: 'review',
+      title: 'Review ${frame.status}',
+      detail: frame.path ?? frame.reviewId,
       raw: frame.raw,
     );
     _publish();
@@ -2766,11 +3566,19 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       return;
     }
     final pending = _pendingCommands.remove(frame.requestId);
-    if (pending == null ||
-        pending.commandId != frame.commandId ||
-        pending.command != frame.command ||
-        (pending.sessionId != null && pending.sessionId != frame.sessionId)) {
-      throw const FormatException('response correlation mismatch');
+    if (pending == null) {
+      throw FormatException(
+        'unexpected response for ${frame.command ?? 'unknown command'}',
+      );
+    }
+    if (pending.commandId != frame.commandId) {
+      throw const FormatException('response command ID mismatch');
+    }
+    if (pending.command != frame.command) {
+      throw const FormatException('response command mismatch');
+    }
+    if (pending.sessionId != frame.sessionId) {
+      throw const FormatException('response session mismatch');
     }
     final completer = pending.completer;
     if (completer != null) {
@@ -2782,9 +3590,58 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       return;
     }
     if (!frame.ok) {
+      if (frame.command == 'catalog.get' || frame.command == 'settings.read') {
+        final error = StateError(
+          frame.error?.message ?? '${frame.command} failed',
+        );
+        _settingsRefreshTimer?.cancel();
+        _settingsRefreshTimer = null;
+        _settingsState = HostSettingsState(
+          revision: _settingsState.revision,
+          entries: _settingsState.entries,
+          error: error.message,
+          issues: _settingsState.issues,
+        );
+        final refresh = _settingsRefreshCompleter;
+        _settingsRefreshCompleter = null;
+        if (refresh != null && !refresh.isCompleted) {
+          refresh.completeError(error);
+        }
+      }
       _submitting = false;
       _errorMessage = frame.error?.message ?? 'Command failed.';
       _publish();
+      return;
+    }
+    if (frame.command == 'catalog.get') {
+      final result = frame.catalogResult;
+      if (result == null) {
+        throw const FormatException('catalog.get result is missing');
+      }
+      _catalogFrame = CatalogFrame(
+        hostId: frame.hostId,
+        revision: result.revision,
+        items: result.items,
+        raw: frame.raw,
+      );
+      _catalogItems = List<CatalogItem>.unmodifiable(result.items);
+      _settingsRefreshSawCatalog = true;
+      _projectHostSettings();
+      return;
+    }
+    if (frame.command == 'settings.read') {
+      final result = frame.settingsResult;
+      if (result == null) {
+        throw const FormatException('settings.read result is missing');
+      }
+      _settingsFrame = SettingsFrame(
+        hostId: frame.hostId,
+        revision: result.revision,
+        settings: result.settings,
+        raw: frame.raw,
+      );
+      _settingsRefreshSawSettings = true;
+      _projectHostSettings();
       return;
     }
     if (frame.command == 'session.list') {
@@ -2910,6 +3767,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _terminalCursors.clear();
     _previews.clear();
     _previewCaptures.clear();
+    _reviews.clear();
     _fileWorkspace = const FileWorkspaceState();
     _activeTerminalId = null;
     _activePreviewId = null;
@@ -2925,6 +3783,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _sessionIndexSeq = null;
     _grantedFeatures = const <String>{};
     _catalogItems = const <CatalogItem>[];
+    _clearSettingsProjection();
     _bootstrapGeneration = -1;
     _reconnectAttempt = 0;
     _phase = ConnectionPhase.disconnected;
@@ -3004,6 +3863,11 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
 
   @override
   void dispose() {
+    final settingsRefresh = _settingsRefreshCompleter;
+    _settingsRefreshCompleter = null;
+    if (settingsRefresh != null && !settingsRefresh.isCompleted) {
+      settingsRefresh.completeError(StateError('controller disposed'));
+    }
     _disposed = true;
     _reconnectEnabled = false;
     _hostProbeOperation = null;
@@ -3013,12 +3877,575 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _connectionGeneration += 1;
     _hostOperationGeneration += 1;
     _reconnectTimer?.cancel();
+    _settingsRefreshTimer?.cancel();
     _cancelPendingCommands(StateError('controller disposed'));
     unawaited(_subscription?.cancel());
     unawaited(_channel?.sink.close());
     super.dispose();
   }
 }
+
+const Set<String> _knownSettingItemKeys = <String>{
+  'path',
+  'label',
+  'description',
+  'controlType',
+  'options',
+  'min',
+  'max',
+  'step',
+  'unit',
+  'scopes',
+  'restartRequired',
+  'platform',
+  'availability',
+  'maxItems',
+  'maxEntries',
+  'default',
+  'effective',
+  'effectiveSource',
+  'configured',
+  'sensitive',
+  'tab',
+  'group',
+};
+
+final Set<String> _knownSettingValueKeys = _knownSettingItemKeys
+    .where(
+      (key) =>
+          key != 'path' &&
+          key != 'label' &&
+          key != 'description' &&
+          key != 'tab' &&
+          key != 'group',
+    )
+    .toSet();
+
+final RegExp _settingControlCharacters = RegExp(
+  r'[\u0000-\u001f\u007f-\u009f]',
+);
+
+({List<HostSettingEntry> entries, List<String> issues}) _buildHostSettings(
+  CatalogFrame catalog,
+  SettingsFrame settings,
+) {
+  final issues = <String>[];
+  final rows = <({HostSettingEntry entry, String group})>[];
+  final seen = <String>{};
+  for (final item in catalog.items.where((item) => item.kind == 'setting')) {
+    final metadata = item.metadata;
+    final fallbackPath = _safeSettingText(item.name, 128) ?? item.id;
+    if (metadata == null) {
+      issues.add('${item.id}: setting item carries no metadata');
+      if (seen.add(fallbackPath)) {
+        rows.add((
+          entry: _unsupportedSetting(
+            path: fallbackPath,
+            section: 'advanced',
+            label: _humanizeSettingPath(fallbackPath),
+            help: '',
+          ),
+          group: '',
+        ));
+      }
+      continue;
+    }
+    final path =
+        _safeSettingText(metadata['path'], 128) ??
+        _safeSettingText(item.name, 128);
+    if (path == null || path.startsWith('/') || path.startsWith('~')) {
+      issues.add('${item.id}: setting item has no usable path');
+      continue;
+    }
+    if (!seen.add(path)) {
+      issues.add('$path: duplicate setting path ignored');
+      continue;
+    }
+    final section = _safeSettingText(metadata['tab'], 64) ?? 'advanced';
+    final group = _safeSettingText(metadata['group'], 64) ?? '';
+    final hostLabel = _safeSettingText(metadata['label'], 200);
+    final label = hostLabel != null && hostLabel != path
+        ? hostLabel
+        : _humanizeSettingPath(path);
+    final help = _safeSettingText(metadata['description'], 2000) ?? '';
+    final unknown = metadata.keys
+        .where((key) => !_knownSettingItemKeys.contains(key))
+        .toList(growable: false);
+    if (unknown.isNotEmpty) {
+      issues.add('$path: unrecognized metadata (${unknown.join(', ')})');
+      rows.add((
+        entry: _unsupportedSetting(
+          path: path,
+          section: section,
+          label: label,
+          help: help,
+        ),
+        group: group,
+      ));
+      continue;
+    }
+
+    final rawValues = settings.settings[path];
+    final values = rawValues is Map<String, Object?> ? rawValues : null;
+    if (rawValues != null && values == null) {
+      issues.add('$path: value metadata is not a record');
+      rows.add((
+        entry: _unsupportedSetting(
+          path: path,
+          section: section,
+          label: label,
+          help: help,
+        ),
+        group: group,
+      ));
+      continue;
+    }
+    final unknownValues = values?.keys
+        .where((key) => !_knownSettingValueKeys.contains(key))
+        .toList(growable: false);
+    if (unknownValues != null && unknownValues.isNotEmpty) {
+      issues.add(
+        '$path: unrecognized value metadata (${unknownValues.join(', ')})',
+      );
+      rows.add((
+        entry: _unsupportedSetting(
+          path: path,
+          section: section,
+          label: label,
+          help: help,
+        ),
+        group: group,
+      ));
+      continue;
+    }
+
+    final source = values ?? metadata;
+    final sensitive =
+        metadata['sensitive'] == true || values?['sensitive'] == true;
+    final configured =
+        metadata['configured'] == true || values?['configured'] == true;
+    final restartRequired = metadata['restartRequired'] == true;
+    final available = metadata['availability'] != false;
+    if (sensitive) {
+      final delivered =
+          metadata.containsKey('default') ||
+          metadata.containsKey('effective') ||
+          (values?.containsKey('default') ?? false) ||
+          (values?.containsKey('effective') ?? false);
+      if (delivered) {
+        issues.add('$path: sensitive setting arrived with a value');
+      }
+      rows.add((
+        entry: HostSettingEntry(
+          path: path,
+          section: section,
+          label: label,
+          help: help,
+          control: delivered
+              ? HostSettingControlKind.unsupported
+              : HostSettingControlKind.secret,
+          configured: configured,
+          options: const <HostSettingOption>[],
+          writableScopes: const <String>[],
+          restartRequired: restartRequired,
+          available: available,
+          sensitive: true,
+        ),
+        group: group,
+      ));
+      continue;
+    }
+
+    final combined = <String, Object?>{...metadata, ...?values};
+    final controlProjection = _settingControl(combined);
+    if (controlProjection.issue case final issue?) {
+      issues.add('$path: $issue');
+      rows.add((
+        entry: _unsupportedSetting(
+          path: path,
+          section: section,
+          label: label,
+          help: help,
+          configured: configured,
+          restartRequired: restartRequired,
+          available: available,
+        ),
+        group: group,
+      ));
+      continue;
+    }
+    if (source.containsKey('default') &&
+        _copySafeSettingValue(source['default']) == null) {
+      issues.add('$path: default value has a shape this app cannot edit');
+      rows.add((
+        entry: _unsupportedSetting(
+          path: path,
+          section: section,
+          label: label,
+          help: help,
+          configured: configured,
+          restartRequired: restartRequired,
+          available: available,
+        ),
+        group: group,
+      ));
+      continue;
+    }
+    final hasEffective = source.containsKey('effective');
+    final effective = hasEffective
+        ? _copySafeSettingValue(source['effective'])
+        : null;
+    if (hasEffective && effective == null) {
+      issues.add('$path: effective value has a shape this app cannot edit');
+      rows.add((
+        entry: _unsupportedSetting(
+          path: path,
+          section: section,
+          label: label,
+          help: help,
+          configured: configured,
+          restartRequired: restartRequired,
+          available: available,
+        ),
+        group: group,
+      ));
+      continue;
+    }
+    final effectiveSource = source['effectiveSource'];
+    if (effective != null &&
+        (effectiveSource is! String ||
+            !const <String>{
+              'override',
+              'configOverlay',
+              'project',
+              'global',
+              'default',
+            }.contains(effectiveSource))) {
+      issues.add('$path: unrecognized effective source $effectiveSource');
+      rows.add((
+        entry: _unsupportedSetting(
+          path: path,
+          section: section,
+          label: label,
+          help: help,
+          configured: configured,
+          restartRequired: restartRequired,
+          available: available,
+        ),
+        group: group,
+      ));
+      continue;
+    }
+    final scopeProjection = _settingScopes(metadata['scopes']);
+    if (scopeProjection.issue case final issue?) {
+      issues.add('$path: $issue');
+      rows.add((
+        entry: _unsupportedSetting(
+          path: path,
+          section: section,
+          label: label,
+          help: help,
+          configured: configured,
+          restartRequired: restartRequired,
+          available: available,
+        ),
+        group: group,
+      ));
+      continue;
+    }
+    rows.add((
+      entry: HostSettingEntry(
+        path: path,
+        section: section,
+        label: label,
+        help: help,
+        control: controlProjection.kind,
+        effectiveValue: effective,
+        configured: configured,
+        effectiveSource: effective == null ? null : effectiveSource as String,
+        options: controlProjection.options,
+        min: controlProjection.min,
+        max: controlProjection.max,
+        unit: controlProjection.unit,
+        writableScopes: available ? scopeProjection.scopes : const <String>[],
+        restartRequired: restartRequired,
+        available: available,
+        sensitive: false,
+      ),
+      group: group,
+    ));
+  }
+  rows.sort((left, right) {
+    final section = left.entry.section.compareTo(right.entry.section);
+    if (section != 0) return section;
+    final group = left.group.compareTo(right.group);
+    if (group != 0) return group;
+    return left.entry.path.compareTo(right.entry.path);
+  });
+  return (
+    entries: List<HostSettingEntry>.unmodifiable(rows.map((row) => row.entry)),
+    issues: List<String>.unmodifiable(issues),
+  );
+}
+
+HostSettingEntry _unsupportedSetting({
+  required String path,
+  required String section,
+  required String label,
+  required String help,
+  bool configured = false,
+  bool restartRequired = false,
+  bool available = true,
+}) => HostSettingEntry(
+  path: path,
+  section: section,
+  label: label,
+  help: help,
+  control: HostSettingControlKind.unsupported,
+  configured: configured,
+  options: const <HostSettingOption>[],
+  writableScopes: const <String>[],
+  restartRequired: restartRequired,
+  available: available,
+  sensitive: false,
+);
+
+({
+  HostSettingControlKind kind,
+  List<HostSettingOption> options,
+  num? min,
+  num? max,
+  String? unit,
+  String? issue,
+})
+_settingControl(Map<String, Object?> metadata) {
+  final declared = metadata['controlType'];
+  switch (declared) {
+    case 'boolean':
+      return (
+        kind: HostSettingControlKind.boolean,
+        options: const <HostSettingOption>[],
+        min: null,
+        max: null,
+        unit: null,
+        issue: null,
+      );
+    case 'number':
+      final min = _finiteSettingNumber(metadata['min']);
+      final max = _finiteSettingNumber(metadata['max']);
+      if ((metadata['min'] != null && min == null) ||
+          (metadata['max'] != null && max == null)) {
+        return _unsupportedControl('number bounds are malformed');
+      }
+      return (
+        kind: HostSettingControlKind.number,
+        options: const <HostSettingOption>[],
+        min: min,
+        max: max,
+        unit: _safeSettingText(metadata['unit'], 16),
+        issue: null,
+      );
+    case 'string':
+      return (
+        kind: HostSettingControlKind.text,
+        options: const <HostSettingOption>[],
+        min: null,
+        max: null,
+        unit: null,
+        issue: null,
+      );
+    case 'enum':
+      final options = _settingOptions(metadata['options']);
+      if (options == null) {
+        return _unsupportedControl('enum options are malformed');
+      }
+      return (
+        kind: HostSettingControlKind.enumeration,
+        options: options,
+        min: null,
+        max: null,
+        unit: null,
+        issue: null,
+      );
+    case 'array':
+      return (
+        kind: HostSettingControlKind.list,
+        options: const <HostSettingOption>[],
+        min: null,
+        max: null,
+        unit: null,
+        issue: null,
+      );
+    case 'record':
+      return (
+        kind: HostSettingControlKind.map,
+        options: const <HostSettingOption>[],
+        min: null,
+        max: null,
+        unit: null,
+        issue: null,
+      );
+    default:
+      return _unsupportedControl(
+        declared == null
+            ? 'setting control is missing'
+            : 'unrecognized setting control $declared',
+      );
+  }
+}
+
+({
+  HostSettingControlKind kind,
+  List<HostSettingOption> options,
+  num? min,
+  num? max,
+  String? unit,
+  String? issue,
+})
+_unsupportedControl(String issue) => (
+  kind: HostSettingControlKind.unsupported,
+  options: const <HostSettingOption>[],
+  min: null,
+  max: null,
+  unit: null,
+  issue: issue,
+);
+
+List<HostSettingOption>? _settingOptions(Object? raw) {
+  if (raw is! List<Object?> || raw.isEmpty) return null;
+  final options = <HostSettingOption>[];
+  for (final option in raw) {
+    if (option is String) {
+      final value = _safeSettingText(option, 200);
+      if (value == null) return null;
+      options.add(HostSettingOption(value: value, label: value));
+      continue;
+    }
+    if (option is! Map<String, Object?>) return null;
+    final rawValue = option['value'];
+    final value =
+        _safeSettingText(rawValue, 200) ??
+        (rawValue is num && _finiteSettingNumber(rawValue) != null
+            ? rawValue.toString()
+            : null);
+    if (value == null) return null;
+    options.add(
+      HostSettingOption(
+        value: value,
+        label: _safeSettingText(option['label'], 200) ?? value,
+        help: _safeSettingText(option['description'], 2000),
+      ),
+    );
+  }
+  return List<HostSettingOption>.unmodifiable(options);
+}
+
+({List<String> scopes, String? issue}) _settingScopes(Object? raw) {
+  if (raw == null) {
+    return (scopes: const <String>['global'], issue: null);
+  }
+  if (raw is! List<Object?> || raw.any((scope) => scope is! String)) {
+    return (scopes: const <String>[], issue: 'writable scopes are malformed');
+  }
+  final scopes = raw
+      .cast<String>()
+      .where((scope) => scope == 'global' || scope == 'session')
+      .toSet()
+      .toList(growable: false);
+  return (
+    scopes: scopes.isEmpty
+        ? const <String>['global']
+        : List<String>.unmodifiable(scopes),
+    issue: null,
+  );
+}
+
+String? _safeSettingText(Object? value, int maximumLength) {
+  if (value is! String ||
+      value.isEmpty ||
+      value.length > maximumLength ||
+      _settingControlCharacters.hasMatch(value)) {
+    return null;
+  }
+  return value;
+}
+
+num? _finiteSettingNumber(Object? value) {
+  if (value is int) return value;
+  if (value is double && value.isFinite) return value;
+  return null;
+}
+
+Object? _copySafeSettingValue(Object? value) {
+  if (value is bool) return value;
+  if (value is num) return _finiteSettingNumber(value);
+  if (value is String) {
+    if (value.isEmpty) return value;
+    return _safeSettingText(value, 4096);
+  }
+  if (value is List<Object?>) {
+    final result = <String>[];
+    for (final item in value) {
+      if (item is! String || _settingControlCharacters.hasMatch(item)) {
+        return null;
+      }
+      result.add(item);
+    }
+    return List<String>.unmodifiable(result);
+  }
+  if (value is Map<String, Object?>) {
+    final result = <String, String>{};
+    for (final entry in value.entries) {
+      if (entry.value is! String ||
+          _settingControlCharacters.hasMatch(entry.key) ||
+          _settingControlCharacters.hasMatch(entry.value! as String)) {
+        return null;
+      }
+      result[entry.key] = entry.value! as String;
+    }
+    return Map<String, String>.unmodifiable(result);
+  }
+  return null;
+}
+
+Object? _copySettingValue(Object? value) => _copySafeSettingValue(value);
+
+bool _settingValueMatches(HostSettingEntry entry, Object? value) {
+  final safe = _copySafeSettingValue(value);
+  if (safe == null) return false;
+  return switch (entry.control) {
+    HostSettingControlKind.boolean => safe is bool,
+    HostSettingControlKind.number =>
+      safe is num &&
+          (entry.min == null || safe >= entry.min!) &&
+          (entry.max == null || safe <= entry.max!),
+    HostSettingControlKind.text => safe is String,
+    HostSettingControlKind.enumeration =>
+      safe is String && entry.options.any((option) => option.value == safe),
+    HostSettingControlKind.list => safe is List<String>,
+    HostSettingControlKind.map => safe is Map<String, String>,
+    HostSettingControlKind.secret ||
+    HostSettingControlKind.unsupported => false,
+  };
+}
+
+String _humanizeSettingPath(String path) => path
+    .split('.')
+    .map(
+      (segment) => segment
+          .replaceAllMapped(
+            RegExp(r'([a-z0-9])([A-Z])'),
+            (match) => '${match[1]} ${match[2]}',
+          )
+          .split(RegExp(r'[-_\s]+'))
+          .where((word) => word.isNotEmpty)
+          .map(
+            (word) =>
+                '${word.substring(0, 1).toUpperCase()}${word.substring(1)}',
+          )
+          .join(' '),
+    )
+    .join(' · ');
 
 final class _PendingCommand {
   _PendingCommand({

@@ -1,10 +1,17 @@
 part of 't4_app.dart';
 
 final class _AdaptiveSessionShell extends StatefulWidget {
-  const _AdaptiveSessionShell({required this.state, required this.actions});
+  const _AdaptiveSessionShell({
+    required this.state,
+    required this.actions,
+    required this.platformState,
+    required this.platformActions,
+  });
 
   final T4ViewState state;
   final T4Actions actions;
+  final PlatformLifecycleViewState platformState;
+  final PlatformLifecycleActions? platformActions;
 
   @override
   State<_AdaptiveSessionShell> createState() => _AdaptiveSessionShellState();
@@ -18,6 +25,9 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
   bool _showHostManager = false;
   bool _showAttention = false;
   bool _showDeveloper = false;
+  bool _showSettings = false;
+  bool _showSearch = false;
+  bool _showUsage = false;
 
   Future<void> _connect() async {
     if (_connecting) return;
@@ -58,6 +68,9 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
         _showHostManager = false;
         _showAttention = false;
         _showDeveloper = false;
+        _showSettings = false;
+        _showSearch = false;
+        _showUsage = false;
       });
       if (closeDrawer) _scaffoldKey.currentState?.closeDrawer();
       return;
@@ -67,6 +80,9 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
       _showHostManager = false;
       _showAttention = false;
       _showDeveloper = false;
+      _showSettings = false;
+      _showSearch = false;
+      _showUsage = false;
       _selectingSessionId = sessionId;
     });
     try {
@@ -95,6 +111,9 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
       _showHostManager = true;
       _showAttention = false;
       _showDeveloper = false;
+      _showSettings = false;
+      _showSearch = false;
+      _showUsage = false;
     });
     if (closeDrawer) _scaffoldKey.currentState?.closeDrawer();
   }
@@ -104,6 +123,9 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
   void _openAttention() => setState(() {
     _showHostManager = false;
     _showDeveloper = false;
+    _showSettings = false;
+    _showSearch = false;
+    _showUsage = false;
     _showAttention = true;
   });
 
@@ -113,11 +135,150 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
     _showHostManager = false;
     _showAttention = false;
     _showDeveloper = true;
+    _showSettings = false;
+    _showSearch = false;
+    _showUsage = false;
   });
 
   void _closeDeveloper() => setState(() => _showDeveloper = false);
 
+  void _openSettings({required bool closeDrawer}) {
+    setState(() {
+      _showHostManager = false;
+      _showAttention = false;
+      _showDeveloper = false;
+      _showSettings = true;
+      _showSearch = false;
+      _showUsage = false;
+    });
+    if (closeDrawer) _scaffoldKey.currentState?.closeDrawer();
+  }
+
+  void _closeSettings() => setState(() => _showSettings = false);
+
+  void _openSearch({required bool closeDrawer}) {
+    setState(() {
+      _showHostManager = false;
+      _showAttention = false;
+      _showDeveloper = false;
+      _showSettings = false;
+      _showUsage = false;
+      _showSearch = true;
+    });
+    if (closeDrawer) _scaffoldKey.currentState?.closeDrawer();
+  }
+
+  void _closeSearch() => setState(() => _showSearch = false);
+
+  void _openUsage({required bool closeDrawer}) {
+    setState(() {
+      _showHostManager = false;
+      _showAttention = false;
+      _showDeveloper = false;
+      _showSettings = false;
+      _showSearch = false;
+      _showUsage = true;
+    });
+    if (closeDrawer) _scaffoldKey.currentState?.closeDrawer();
+  }
+
+  void _closeUsage() => setState(() => _showUsage = false);
+
+  Widget _surfaceNavigationEntries({
+    required bool closeDrawer,
+    required bool rail,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: rail ? scheme.surfaceContainerLowest : scheme.surface,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            _T4Space.xs,
+            _T4Space.xxs,
+            _T4Space.xs,
+            _T4Space.sm,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Semantics(
+                button: true,
+                selected: _showSearch,
+                label: 'Search transcripts',
+                child: ListTile(
+                  selected: _showSearch,
+                  selectedTileColor: scheme.secondaryContainer,
+                  leading: const Icon(Icons.manage_search),
+                  title: const Text('Search'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _openSearch(closeDrawer: closeDrawer),
+                ),
+              ),
+              Semantics(
+                button: true,
+                selected: _showUsage,
+                label: 'Open usage and accounts',
+                child: ListTile(
+                  selected: _showUsage,
+                  selectedTileColor: scheme.secondaryContainer,
+                  leading: const Icon(Icons.data_usage_outlined),
+                  title: const Text('Usage'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _openUsage(closeDrawer: closeDrawer),
+                ),
+              ),
+              Semantics(
+                button: true,
+                selected: _showSettings,
+                label: 'Open settings',
+                child: ListTile(
+                  selected: _showSettings,
+                  selectedTileColor: scheme.secondaryContainer,
+                  leading: const Icon(Icons.settings_outlined),
+                  title: const Text('Settings'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _openSettings(closeDrawer: closeDrawer),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _primaryContent({required bool showHeader}) {
+    if (_showSearch) {
+      return _TranscriptSearchPane(
+        actions: widget.actions,
+        showHeader: showHeader,
+        onDone: _closeSearch,
+        onOpenSession: (sessionId) async {
+          await _selectSession(sessionId, closeDrawer: false);
+          if (mounted) _closeSearch();
+        },
+      );
+    }
+    if (_showUsage) {
+      return _UsageStatusPane(
+        state: widget.state,
+        actions: widget.actions,
+        showHeader: showHeader,
+        onDone: _closeUsage,
+      );
+    }
+    if (_showSettings) {
+      return _SettingsPane(
+        state: widget.state,
+        actions: widget.actions,
+        platformState: widget.platformState,
+        platformActions: widget.platformActions,
+        showHeader: showHeader,
+        onDone: _closeSettings,
+      );
+    }
     if (_showAttention) {
       return _AttentionPane(
         state: widget.state,
@@ -190,19 +351,26 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
           children: [
             SizedBox(
               width: _T4Layout.sessionRailWidth,
-              child: _SessionNavigation(
-                state: widget.state,
-                actions: widget.actions,
-                mode: _SessionNavigationMode.rail,
-                connecting: _connecting,
-                disconnecting: _disconnecting,
-                selectingSessionId: _selectingSessionId,
-                showingHostManager: _showHostManager,
-                onConnect: _connect,
-                onDisconnect: _disconnect,
-                onManageHosts: () => _openHostManager(closeDrawer: false),
-                onSelectSession: (sessionId) =>
-                    _selectSession(sessionId, closeDrawer: false),
+              child: Column(
+                children: [
+                  Expanded(
+                    child: _SessionNavigation(
+                      state: widget.state,
+                      actions: widget.actions,
+                      mode: _SessionNavigationMode.rail,
+                      connecting: _connecting,
+                      disconnecting: _disconnecting,
+                      selectingSessionId: _selectingSessionId,
+                      showingHostManager: _showHostManager,
+                      onConnect: _connect,
+                      onDisconnect: _disconnect,
+                      onManageHosts: () => _openHostManager(closeDrawer: false),
+                      onSelectSession: (sessionId) =>
+                          _selectSession(sessionId, closeDrawer: false),
+                    ),
+                  ),
+                  _surfaceNavigationEntries(closeDrawer: false, rail: true),
+                ],
               ),
             ),
             const VerticalDivider(width: _T4Size.divider),
@@ -227,7 +395,13 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
           icon: const Icon(Icons.menu),
         ),
         titleSpacing: 0,
-        title: _showHostManager
+        title: _showSearch
+            ? Text('Search', style: Theme.of(context).textTheme.titleMedium)
+            : _showUsage
+            ? Text('Usage', style: Theme.of(context).textTheme.titleMedium)
+            : _showSettings
+            ? Text('Settings', style: Theme.of(context).textTheme.titleMedium)
+            : _showHostManager
             ? Text('Hosts', style: Theme.of(context).textTheme.titleMedium)
             : _showDeveloper
             ? Text(
@@ -252,56 +426,85 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
                 ],
               ),
         actions: [
-          if (!_showHostManager && !_showAttention && !_showDeveloper)
-            Badge(
-              isLabelVisible: widget.state.urgentAttentionCount > 0,
-              label: Text('${widget.state.urgentAttentionCount}'),
-              child: IconButton(
-                onPressed: _openAttention,
-                tooltip: 'Open inbox',
-                icon: const Icon(Icons.inbox_outlined),
-              ),
-            ),
-          if (!_showHostManager && !_showAttention)
+          if (_showSearch || _showUsage || _showSettings)
             IconButton(
-              onPressed: _showDeveloper ? _closeDeveloper : _openDeveloper,
-              tooltip: _showDeveloper
-                  ? 'Close developer tools'
-                  : 'Open developer tools',
-              icon: Icon(_showDeveloper ? Icons.close : Icons.code),
-            ),
-          if (!_showHostManager)
-            IconButton(
-              onPressed: _connecting || _disconnecting
-                  ? null
-                  : () => unawaited(_runConnectionAction()),
-              tooltip: actionLabel,
-              icon: Icon(
-                phase.canDisconnect
-                    ? Icons.link_off
-                    : phase == ConnectionPhase.failed
-                    ? Icons.refresh
-                    : Icons.power_settings_new,
+              onPressed: _showSearch
+                  ? _closeSearch
+                  : _showUsage
+                  ? _closeUsage
+                  : _closeSettings,
+              tooltip: _showSearch
+                  ? 'Close search'
+                  : _showUsage
+                  ? 'Close usage'
+                  : 'Close settings',
+              icon: const Icon(Icons.close),
+            )
+          else ...[
+            if (!_showHostManager &&
+                !_showAttention &&
+                !_showDeveloper &&
+                !_showSearch &&
+                !_showUsage)
+              Badge(
+                isLabelVisible: widget.state.urgentAttentionCount > 0,
+                label: Text('${widget.state.urgentAttentionCount}'),
+                child: IconButton(
+                  onPressed: _openAttention,
+                  tooltip: 'Open inbox',
+                  icon: const Icon(Icons.inbox_outlined),
+                ),
               ),
-            ),
-          const SizedBox(width: _T4Space.xxs),
+            if (!_showHostManager &&
+                !_showAttention &&
+                !_showSearch &&
+                !_showUsage)
+              IconButton(
+                onPressed: _showDeveloper ? _closeDeveloper : _openDeveloper,
+                tooltip: _showDeveloper
+                    ? 'Close developer tools'
+                    : 'Open developer tools',
+                icon: Icon(_showDeveloper ? Icons.close : Icons.code),
+              ),
+            if (!_showHostManager && !_showSearch && !_showUsage)
+              IconButton(
+                onPressed: _connecting || _disconnecting
+                    ? null
+                    : () => unawaited(_runConnectionAction()),
+                tooltip: actionLabel,
+                icon: Icon(
+                  phase.canDisconnect
+                      ? Icons.link_off
+                      : phase == ConnectionPhase.failed
+                      ? Icons.refresh
+                      : Icons.power_settings_new,
+                ),
+              ),
+          ],
         ],
       ),
       drawer: Drawer(
-        child: _SessionNavigation(
-          state: widget.state,
-          actions: widget.actions,
-          mode: _SessionNavigationMode.drawer,
-          connecting: _connecting,
-          selectingSessionId: _selectingSessionId,
-          disconnecting: _disconnecting,
-          showingHostManager: _showHostManager,
-          onConnect: _connect,
-          onDisconnect: _disconnect,
-          onManageHosts: () => _openHostManager(closeDrawer: true),
-          onSelectSession: (sessionId) =>
-              _selectSession(sessionId, closeDrawer: true),
-          onClose: () => _scaffoldKey.currentState?.closeDrawer(),
+        child: Column(
+          children: [
+            Expanded(
+              child: _SessionNavigation(
+                state: widget.state,
+                actions: widget.actions,
+                mode: _SessionNavigationMode.drawer,
+                connecting: _connecting,
+                selectingSessionId: _selectingSessionId,
+                disconnecting: _disconnecting,
+                showingHostManager: _showHostManager,
+                onConnect: _connect,
+                onDisconnect: _disconnect,
+                onManageHosts: () => _openHostManager(closeDrawer: true),
+                onSelectSession: (sessionId) =>
+                    _selectSession(sessionId, closeDrawer: true),
+                onClose: () => _scaffoldKey.currentState?.closeDrawer(),
+              ),
+            ),
+            _surfaceNavigationEntries(closeDrawer: true, rail: false),
+          ],
         ),
       ),
       body: _primaryContent(showHeader: false),

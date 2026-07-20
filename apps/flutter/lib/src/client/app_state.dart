@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import '../host/host_profile.dart';
+import '../protocol/models.dart';
 
 enum ConnectionPhase {
   disconnected,
@@ -271,6 +272,11 @@ final class AgentActivity {
     required this.status,
     required this.updatedAt,
     this.progress,
+    this.parentAgentId,
+    this.description,
+    this.model,
+    this.currentTool,
+    this.evidence,
   });
 
   final String agentId;
@@ -279,6 +285,11 @@ final class AgentActivity {
   final String status;
   final DateTime updatedAt;
   final double? progress;
+  final String? parentAgentId;
+  final String? description;
+  final String? model;
+  final String? currentTool;
+  final String? evidence;
 }
 
 final class AttentionResponse {
@@ -367,6 +378,22 @@ final class FileWorkspaceState {
   final String? error;
 }
 
+final class ReviewWorkspaceItem {
+  const ReviewWorkspaceItem({
+    required this.reviewId,
+    required this.sessionId,
+    required this.status,
+    required this.findings,
+    this.path,
+  });
+
+  final String reviewId;
+  final String sessionId;
+  final String status;
+  final String? path;
+  final List<Map<String, Object?>> findings;
+}
+
 final class PreviewWorkspaceState {
   const PreviewWorkspaceState({
     required this.previewId,
@@ -395,6 +422,87 @@ final class PreviewWorkspaceState {
   final String? error;
 }
 
+enum T4ThemePreference { system, light, dark }
+
+enum T4LifecyclePhase { resumed, background }
+
+enum HostSettingControlKind {
+  boolean,
+  number,
+  text,
+  enumeration,
+  list,
+  map,
+  secret,
+  unsupported,
+}
+
+final class HostSettingOption {
+  const HostSettingOption({
+    required this.value,
+    required this.label,
+    this.help,
+  });
+
+  final String value;
+  final String label;
+  final String? help;
+}
+
+final class HostSettingEntry {
+  const HostSettingEntry({
+    required this.path,
+    required this.section,
+    required this.label,
+    required this.help,
+    required this.control,
+    required this.configured,
+    required this.options,
+    required this.writableScopes,
+    required this.restartRequired,
+    required this.available,
+    required this.sensitive,
+    this.effectiveValue,
+    this.effectiveSource,
+    this.min,
+    this.max,
+    this.unit,
+  });
+
+  final String path;
+  final String section;
+  final String label;
+  final String help;
+  final HostSettingControlKind control;
+  final Object? effectiveValue;
+  final bool configured;
+  final String? effectiveSource;
+  final List<HostSettingOption> options;
+  final num? min;
+  final num? max;
+  final String? unit;
+  final List<String> writableScopes;
+  final bool restartRequired;
+  final bool available;
+  final bool sensitive;
+}
+
+final class HostSettingsState {
+  const HostSettingsState({
+    this.revision,
+    this.entries = const <HostSettingEntry>[],
+    this.loading = false,
+    this.error,
+    this.issues = const <String>[],
+  });
+
+  final String? revision;
+  final List<HostSettingEntry> entries;
+  final bool loading;
+  final String? error;
+  final List<String> issues;
+}
+
 final class T4ViewState {
   const T4ViewState({
     required this.connectionPhase,
@@ -420,8 +528,13 @@ final class T4ViewState {
     this.activeTerminalId,
     this.fileWorkspace = const FileWorkspaceState(),
     this.previews = const <PreviewWorkspaceState>[],
+    this.reviews = const <ReviewWorkspaceItem>[],
     this.activePreviewId,
     this.developerOperationPending = false,
+    this.themePreference = T4ThemePreference.system,
+    this.settings = const HostSettingsState(),
+    this.lifecyclePhase = T4LifecyclePhase.resumed,
+    this.settingsOperationPending = false,
   });
 
   const T4ViewState.disconnected()
@@ -450,8 +563,13 @@ final class T4ViewState {
   final String? activeTerminalId;
   final FileWorkspaceState fileWorkspace;
   final List<PreviewWorkspaceState> previews;
+  final List<ReviewWorkspaceItem> reviews;
   final String? activePreviewId;
   final bool developerOperationPending;
+  final T4ThemePreference themePreference;
+  final HostSettingsState settings;
+  final T4LifecyclePhase lifecyclePhase;
+  final bool settingsOperationPending;
 
   TerminalSession? get activeTerminal => terminals
       .where((terminal) => terminal.terminalId == activeTerminalId)
@@ -476,6 +594,15 @@ final class T4ViewState {
 abstract interface class T4Actions {
   Future<void> connect();
   Future<void> disconnect();
+  Future<void> setThemePreference(T4ThemePreference preference);
+  Future<void> refreshSettings();
+  Future<void> writeSetting(
+    String path,
+    String scope, {
+    Object? value,
+    bool reset = false,
+  });
+  Future<void> handleLifecyclePhase(T4LifecyclePhase phase);
 
   void cancelHostProbe();
 
@@ -502,6 +629,25 @@ abstract interface class T4Actions {
   Future<void> restoreSession(String sessionId);
 
   Future<void> deleteSession(String sessionId);
+  Future<TranscriptSearchResult> searchTranscripts({
+    required String query,
+    String? cursor,
+    String? projectId,
+    List<TranscriptSearchRole>? roles,
+    String archived = 'include',
+    DateTime? from,
+    DateTime? to,
+  });
+
+  Future<TranscriptContextResult> loadTranscriptContext({
+    required String sessionId,
+    required String anchorId,
+    int before = 8,
+    int after = 8,
+  });
+
+  Future<UsageReadResult> readUsage();
+  Future<BrokerStatusResult> readBrokerStatus();
 
   Future<bool> submitPrompt(
     String message, {
@@ -530,16 +676,26 @@ abstract interface class T4Actions {
   Future<String> openTerminal({String? cwd});
   void sendTerminalInput(String terminalId, String data);
   void resizeTerminal(String terminalId, int cols, int rows);
+
+  Future<void> cancelAgent(String agentId);
   void closeTerminal(String terminalId);
 
   Future<void> listFiles([String path = '']);
   Future<void> readFile(String path);
   Future<void> loadSessionDiff();
+  Future<void> writeFile(String path, String content);
+  Future<void> refreshReview(String reviewId);
+  Future<void> applyReview(String reviewId);
 
   Future<String> launchPreview(String url);
   Future<void> selectPreview(String previewId);
   Future<void> navigatePreview(String previewId, String url);
   Future<void> runPreviewAction(String previewId, String action);
+  Future<void> runPreviewInteraction(
+    String previewId,
+    String action,
+    Map<String, Object?> args,
+  );
   Future<void> capturePreview(String previewId);
 
   Future<Uint8List> readTranscriptImage(

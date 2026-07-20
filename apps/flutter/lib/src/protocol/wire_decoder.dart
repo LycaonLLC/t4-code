@@ -392,9 +392,23 @@ ResponseFrame _decodeResponse(Map<String, Object?> raw) {
       );
     }
     if (hasResult) {
-      result = command == 'session.list' || command == 'host.list'
-          ? _decodeSessionListResult(_map(raw['result'], 'result'))
-          : raw['result'];
+      result = switch (command) {
+        'session.list' ||
+        'host.list' => _decodeSessionListResult(_map(raw['result'], 'result')),
+        'catalog.get' => _decodeCatalogResult(_map(raw['result'], 'result')),
+        'settings.read' => _decodeSettingsResult(_map(raw['result'], 'result')),
+        'transcript.search' => _decodeTranscriptSearchResult(
+          _map(raw['result'], 'result'),
+        ),
+        'transcript.context' => _decodeTranscriptContextResult(
+          _map(raw['result'], 'result'),
+        ),
+        'usage.read' => _decodeUsageReadResult(_map(raw['result'], 'result')),
+        'broker.status' => _decodeBrokerStatusResult(
+          _map(raw['result'], 'result'),
+        ),
+        _ => raw['result'],
+      };
     }
   } else {
     if (hasResult) {
@@ -1057,6 +1071,149 @@ SettingsFrame _decodeSettings(Map<String, Object?> raw) => SettingsFrame(
   raw: raw,
 );
 
+CatalogResult _decodeCatalogResult(Map<String, Object?> raw) {
+  final values = _list(raw['items'], 'result.items');
+  final items = <CatalogItem>[];
+  for (var index = 0; index < values.length; index++) {
+    items.add(_catalogItem(values[index], 'result.items[$index]'));
+  }
+  return CatalogResult(
+    revision: _id(raw['revision'], 'result.revision'),
+    items: List<CatalogItem>.unmodifiable(items),
+  );
+}
+
+SettingsResult _decodeSettingsResult(Map<String, Object?> raw) =>
+    SettingsResult(
+      revision: _id(raw['revision'], 'result.revision'),
+      settings: _map(raw['settings'], 'result.settings'),
+    );
+
+TranscriptSearchResult _decodeTranscriptSearchResult(Map<String, Object?> raw) {
+  final values = _list(raw['items'], 'result.items', 50);
+  final items = <TranscriptSearchItem>[];
+  for (var index = 0; index < values.length; index++) {
+    final path = 'result.items[$index]';
+    final item = _map(values[index], path);
+    final snippet = _boundedText(item['snippet'], '$path.snippet', 768);
+    final rawHighlights = _list(item['highlights'], '$path.highlights', 32);
+    final highlights = <TranscriptSearchHighlight>[];
+    for (
+      var highlightIndex = 0;
+      highlightIndex < rawHighlights.length;
+      highlightIndex++
+    ) {
+      final highlightPath = '$path.highlights[$highlightIndex]';
+      final highlight = _map(rawHighlights[highlightIndex], highlightPath);
+      final start = _safeInteger(highlight['start'], '$highlightPath.start');
+      final end = _safeInteger(highlight['end'], '$highlightPath.end');
+      if (start >= end || end > snippet.length) {
+        throw WireFormatException(
+          'highlight must be a non-empty range within the snippet',
+          highlightPath,
+        );
+      }
+      highlights.add(TranscriptSearchHighlight(start: start, end: end));
+    }
+    highlights.sort((left, right) {
+      final start = left.start.compareTo(right.start);
+      return start != 0 ? start : left.end.compareTo(right.end);
+    });
+    items.add(
+      TranscriptSearchItem(
+        sessionId: _id(item['sessionId'], '$path.sessionId'),
+        projectId: _id(item['projectId'], '$path.projectId'),
+        sessionTitle: _boundedText(
+          item['sessionTitle'],
+          '$path.sessionTitle',
+          512,
+        ),
+        archivedAt: item.containsKey('archivedAt')
+            ? _string(item['archivedAt'], '$path.archivedAt', 128)
+            : null,
+        anchorId: _id(item['anchorId'], '$path.anchorId'),
+        role: _transcriptSearchRole(item['role'], '$path.role'),
+        timestamp: _string(item['timestamp'], '$path.timestamp', 128),
+        snippet: snippet,
+        highlights: List<TranscriptSearchHighlight>.unmodifiable(highlights),
+      ),
+    );
+  }
+  final index = _map(raw['index'], 'result.index');
+  final indexedSessions = _safeInteger(
+    index['indexedSessions'],
+    'result.index.indexedSessions',
+  );
+  final knownSessions = _safeInteger(
+    index['knownSessions'],
+    'result.index.knownSessions',
+  );
+  if (indexedSessions > knownSessions) {
+    throw const WireFormatException(
+      'indexedSessions must not exceed knownSessions',
+      'result.index.indexedSessions',
+    );
+  }
+  final state = _enumString(index['state'], 'result.index.state', const {
+    'building',
+    'ready',
+    'stale',
+  });
+  return TranscriptSearchResult(
+    items: List<TranscriptSearchItem>.unmodifiable(items),
+    nextCursor: raw.containsKey('nextCursor')
+        ? _string(raw['nextCursor'], 'result.nextCursor', 2048)
+        : null,
+    incomplete: _bool(raw['incomplete'], 'result.incomplete'),
+    index: TranscriptSearchIndexStatus(
+      state: TranscriptSearchIndexState.values.byName(state),
+      indexedSessions: indexedSessions,
+      knownSessions: knownSessions,
+      generation: _string(index['generation'], 'result.index.generation', 128),
+    ),
+  );
+}
+
+TranscriptContextResult _decodeTranscriptContextResult(
+  Map<String, Object?> raw,
+) {
+  final anchorId = _id(raw['anchorId'], 'result.anchorId');
+  final values = _list(raw['rows'], 'result.rows', 41);
+  final rows = <TranscriptContextRow>[];
+  for (var index = 0; index < values.length; index++) {
+    final path = 'result.rows[$index]';
+    final row = _map(values[index], path);
+    rows.add(
+      TranscriptContextRow(
+        anchorId: _id(row['anchorId'], '$path.anchorId'),
+        role: _transcriptSearchRole(row['role'], '$path.role'),
+        timestamp: _string(row['timestamp'], '$path.timestamp', 128),
+        text: _boundedText(row['text'], '$path.text', 16384),
+      ),
+    );
+  }
+  final anchorIndex = _safeInteger(raw['anchorIndex'], 'result.anchorIndex');
+  if (anchorIndex >= rows.length || rows[anchorIndex].anchorId != anchorId) {
+    throw const WireFormatException(
+      'anchorIndex must identify the matching anchor row',
+      'result.anchorIndex',
+    );
+  }
+  return TranscriptContextResult(
+    anchorId: anchorId,
+    rows: List<TranscriptContextRow>.unmodifiable(rows),
+    anchorIndex: anchorIndex,
+    hasBefore: _bool(raw['hasBefore'], 'result.hasBefore'),
+    hasAfter: _bool(raw['hasAfter'], 'result.hasAfter'),
+    generation: _string(raw['generation'], 'result.generation', 128),
+  );
+}
+
+TranscriptSearchRole _transcriptSearchRole(Object? value, String path) {
+  final role = _enumString(value, path, const {'user', 'assistant', 'summary'});
+  return TranscriptSearchRole.values.byName(role);
+}
+
 PreviewFrame _decodePreview(Map<String, Object?> raw, String type) {
   final hostId = _id(raw['hostId'], 'hostId');
   final sessionId = _id(raw['sessionId'], 'sessionId');
@@ -1097,6 +1254,508 @@ PreviewFrame _decodePreview(Map<String, Object?> raw, String type) {
         : null,
     raw: raw,
   );
+}
+
+UsageReadResult _decodeUsageReadResult(Map<String, Object?> raw) {
+  _onlyKeys(raw, 'result', const {
+    'generatedAt',
+    'reports',
+    'accountsWithoutUsage',
+    'capacity',
+  });
+  if (utf8.encode(jsonEncode(raw)).length > 512 * 1024) {
+    throw const WireFormatException(
+      'usage result exceeds its wire budget',
+      'result',
+    );
+  }
+  final reports = <UsageReport>[];
+  final reportValues = _list(raw['reports'], 'result.reports', 64);
+  for (var index = 0; index < reportValues.length; index++) {
+    reports.add(
+      _decodeUsageReport(reportValues[index], 'result.reports[$index]'),
+    );
+  }
+  final accounts = <UsageAccountWithoutReport>[];
+  final accountValues = _list(
+    raw['accountsWithoutUsage'],
+    'result.accountsWithoutUsage',
+    128,
+  );
+  for (var index = 0; index < accountValues.length; index++) {
+    accounts.add(
+      _decodeUsageAccount(
+        accountValues[index],
+        'result.accountsWithoutUsage[$index]',
+      ),
+    );
+  }
+  final rawCapacity = _map(raw['capacity'], 'result.capacity');
+  if (rawCapacity.length > 64) {
+    throw const WireFormatException(
+      'usage capacity has too many providers',
+      'result.capacity',
+    );
+  }
+  final capacity = <String, List<UsageCapacityWindow>>{};
+  for (final entry in rawCapacity.entries) {
+    _usageText(entry.key, 'result.capacity.${entry.key}', 128);
+    final windows = <UsageCapacityWindow>[];
+    final values = _list(entry.value, 'result.capacity.${entry.key}', 32);
+    for (var index = 0; index < values.length; index++) {
+      windows.add(
+        _decodeUsageCapacityWindow(
+          values[index],
+          'result.capacity.${entry.key}[$index]',
+        ),
+      );
+    }
+    capacity[entry.key] = List<UsageCapacityWindow>.unmodifiable(windows);
+  }
+  return UsageReadResult(
+    generatedAt: _usageInteger(
+      raw['generatedAt'],
+      'result.generatedAt',
+      8640000000000000,
+    ),
+    reports: List<UsageReport>.unmodifiable(reports),
+    accountsWithoutUsage: List<UsageAccountWithoutReport>.unmodifiable(
+      accounts,
+    ),
+    capacity: Map<String, List<UsageCapacityWindow>>.unmodifiable(capacity),
+  );
+}
+
+UsageReport _decodeUsageReport(Object? value, String path) {
+  final raw = _map(value, path);
+  _onlyKeys(raw, path, const {
+    'provider',
+    'fetchedAt',
+    'limits',
+    'resetCredits',
+    'notes',
+    'metadata',
+  });
+  final provider = _usageText(raw['provider'], '$path.provider', 128);
+  final limits = <UsageLimit>[];
+  final ids = <String>{};
+  final values = _list(raw['limits'], '$path.limits', 32);
+  for (var index = 0; index < values.length; index++) {
+    final limit = _decodeUsageLimit(
+      values[index],
+      '$path.limits[$index]',
+      provider,
+    );
+    if (!ids.add(limit.id)) {
+      throw WireFormatException(
+        'duplicate usage limit id',
+        '$path.limits[$index].id',
+      );
+    }
+    limits.add(limit);
+  }
+  int? availableResetCredits;
+  if (raw.containsKey('resetCredits')) {
+    final credits = _map(raw['resetCredits'], '$path.resetCredits');
+    _onlyKeys(credits, '$path.resetCredits', const {
+      'availableCount',
+      'credits',
+    });
+    availableResetCredits = _usageInteger(
+      credits['availableCount'],
+      '$path.resetCredits.availableCount',
+      64,
+    );
+    if (credits.containsKey('credits')) {
+      final creditValues = _list(
+        credits['credits'],
+        '$path.resetCredits.credits',
+        64,
+      );
+      for (var index = 0; index < creditValues.length; index++) {
+        final creditPath = '$path.resetCredits.credits[$index]';
+        final credit = _map(creditValues[index], creditPath);
+        _onlyKeys(credit, creditPath, const {
+          'grantedAt',
+          'expiresAt',
+          'status',
+        });
+        for (final field in const ['grantedAt', 'expiresAt']) {
+          if (credit.containsKey(field)) {
+            final timestamp = _usageText(
+              credit[field],
+              '$creditPath.$field',
+              64,
+            );
+            if (DateTime.tryParse(timestamp) == null) {
+              throw WireFormatException(
+                'expected ISO timestamp',
+                '$creditPath.$field',
+              );
+            }
+          }
+        }
+        if (credit.containsKey('status')) {
+          _usageText(credit['status'], '$creditPath.status', 64);
+        }
+      }
+    }
+  }
+  final metadata = raw.containsKey('metadata')
+      ? _decodeUsageMetadata(raw['metadata'], '$path.metadata')
+      : const <String, Object?>{};
+  return UsageReport(
+    provider: provider,
+    fetchedAt: _usageInteger(
+      raw['fetchedAt'],
+      '$path.fetchedAt',
+      8640000000000000,
+    ),
+    limits: List<UsageLimit>.unmodifiable(limits),
+    availableResetCredits: availableResetCredits,
+    notes: raw.containsKey('notes')
+        ? _usageNotes(raw['notes'], '$path.notes', 8)
+        : const <String>[],
+    metadata: metadata,
+  );
+}
+
+UsageLimit _decodeUsageLimit(Object? value, String path, String provider) {
+  final raw = _map(value, path);
+  _onlyKeys(raw, path, const {
+    'id',
+    'label',
+    'scope',
+    'window',
+    'amount',
+    'status',
+    'notes',
+  });
+  final scope = _decodeUsageScope(raw['scope'], '$path.scope');
+  if (scope.provider != provider) {
+    throw WireFormatException(
+      'usage limit provider does not match its report',
+      '$path.scope.provider',
+    );
+  }
+  return UsageLimit(
+    id: _usageText(raw['id'], '$path.id', 256),
+    label: _usageText(raw['label'], '$path.label', 512),
+    scope: scope,
+    window: raw.containsKey('window')
+        ? _decodeUsageWindow(raw['window'], '$path.window')
+        : null,
+    amount: _decodeUsageAmount(raw['amount'], '$path.amount'),
+    status: raw.containsKey('status')
+        ? UsageStatus.values.byName(
+            _enumString(raw['status'], '$path.status', const {
+              'ok',
+              'warning',
+              'exhausted',
+              'unknown',
+            }),
+          )
+        : null,
+    notes: raw.containsKey('notes')
+        ? _usageNotes(raw['notes'], '$path.notes', 8)
+        : const <String>[],
+  );
+}
+
+UsageScope _decodeUsageScope(Object? value, String path) {
+  final raw = _map(value, path);
+  _onlyKeys(raw, path, const {
+    'provider',
+    'accountId',
+    'projectId',
+    'orgId',
+    'modelId',
+    'tier',
+    'windowId',
+    'shared',
+  });
+  String? optional(String field, [int max = 512]) => raw.containsKey(field)
+      ? _usageText(raw[field], '$path.$field', max)
+      : null;
+  return UsageScope(
+    provider: _usageText(raw['provider'], '$path.provider', 128),
+    accountId: optional('accountId'),
+    projectId: optional('projectId'),
+    orgId: optional('orgId'),
+    modelId: optional('modelId'),
+    tier: optional('tier', 256),
+    windowId: optional('windowId', 256),
+    shared: raw.containsKey('shared')
+        ? _bool(raw['shared'], '$path.shared')
+        : null,
+  );
+}
+
+UsageWindow _decodeUsageWindow(Object? value, String path) {
+  final raw = _map(value, path);
+  _onlyKeys(raw, path, const {'id', 'label', 'durationMs', 'resetsAt'});
+  return UsageWindow(
+    id: _usageText(raw['id'], '$path.id', 256),
+    label: _usageText(raw['label'], '$path.label', 512),
+    durationMs: raw.containsKey('durationMs')
+        ? _usageInteger(raw['durationMs'], '$path.durationMs', 315576000000)
+        : null,
+    resetsAt: raw.containsKey('resetsAt')
+        ? _usageInteger(raw['resetsAt'], '$path.resetsAt', 8640000000000000)
+        : null,
+  );
+}
+
+UsageAmount _decodeUsageAmount(Object? value, String path) {
+  final raw = _map(value, path);
+  _onlyKeys(raw, path, const {
+    'used',
+    'limit',
+    'remaining',
+    'usedFraction',
+    'remainingFraction',
+    'unit',
+  });
+  double? amount(String field) =>
+      raw.containsKey(field) ? _usageNumber(raw[field], '$path.$field') : null;
+  return UsageAmount(
+    unit: UsageUnit.values.byName(
+      _enumString(raw['unit'], '$path.unit', const {
+        'percent',
+        'tokens',
+        'requests',
+        'usd',
+        'minutes',
+        'bytes',
+        'unknown',
+      }),
+    ),
+    used: amount('used'),
+    limit: amount('limit'),
+    remaining: amount('remaining'),
+    usedFraction: amount('usedFraction'),
+    remainingFraction: amount('remainingFraction'),
+  );
+}
+
+UsageAccountWithoutReport _decodeUsageAccount(Object? value, String path) {
+  final raw = _map(value, path);
+  _onlyKeys(raw, path, const {
+    'provider',
+    'type',
+    'email',
+    'accountId',
+    'projectId',
+    'enterpriseUrl',
+    'orgId',
+    'orgName',
+  });
+  String? optional(String field, [int max = 512]) => raw.containsKey(field)
+      ? _usageText(raw[field], '$path.$field', max)
+      : null;
+  final enterpriseUrl = optional('enterpriseUrl', 2048);
+  if (enterpriseUrl != null) {
+    _safeHttpEndpoint(enterpriseUrl, '$path.enterpriseUrl');
+  }
+  final type = _enumString(raw['type'], '$path.type', const {
+    'api_key',
+    'oauth',
+  });
+  return UsageAccountWithoutReport(
+    provider: _usageText(raw['provider'], '$path.provider', 128),
+    type: type == 'api_key' ? UsageAccountType.apiKey : UsageAccountType.oauth,
+    email: optional('email'),
+    accountId: optional('accountId'),
+    projectId: optional('projectId'),
+    enterpriseUrl: enterpriseUrl,
+    orgId: optional('orgId'),
+    orgName: optional('orgName'),
+  );
+}
+
+UsageCapacityWindow _decodeUsageCapacityWindow(Object? value, String path) {
+  final raw = _map(value, path);
+  _onlyKeys(raw, path, const {
+    'window',
+    'durationMs',
+    'accounts',
+    'usedAccounts',
+    'remainingAccounts',
+  });
+  final accounts = _usageInteger(raw['accounts'], '$path.accounts', 2048);
+  return UsageCapacityWindow(
+    window: _usageText(raw['window'], '$path.window', 256),
+    durationMs: raw.containsKey('durationMs')
+        ? _usageInteger(raw['durationMs'], '$path.durationMs', 315576000000)
+        : null,
+    accounts: accounts,
+    usedAccounts: _usageBoundedNumber(
+      raw['usedAccounts'],
+      '$path.usedAccounts',
+      0,
+      accounts.toDouble(),
+    ),
+    remainingAccounts: _usageBoundedNumber(
+      raw['remainingAccounts'],
+      '$path.remainingAccounts',
+      0,
+      accounts.toDouble(),
+    ),
+  );
+}
+
+Map<String, Object?> _decodeUsageMetadata(Object? value, String path) {
+  final raw = _map(value, path);
+  const stringKeys = {
+    'email',
+    'accountId',
+    'projectId',
+    'orgId',
+    'orgName',
+    'planType',
+    'plan',
+    'currentTierId',
+    'currentTierName',
+    'source',
+    'period',
+    'quotaResetDate',
+  };
+  const booleanKeys = {'allowed', 'limitReached'};
+  _onlyKeys(raw, path, const {...stringKeys, ...booleanKeys});
+  final result = <String, Object?>{};
+  for (final entry in raw.entries) {
+    result[entry.key] = stringKeys.contains(entry.key)
+        ? _usageText(
+            entry.value,
+            '$path.${entry.key}',
+            entry.key == 'email' ? 512 : 256,
+          )
+        : _bool(entry.value, '$path.${entry.key}');
+  }
+  return Map<String, Object?>.unmodifiable(result);
+}
+
+BrokerStatusResult _decodeBrokerStatusResult(Map<String, Object?> raw) {
+  final state = _enumString(raw['state'], 'result.state', const {
+    'local',
+    'connected',
+    'missing-token',
+    'unreachable',
+  });
+  final endpointRequired = state == 'connected' || state == 'unreachable';
+  _onlyKeys(
+    raw,
+    'result',
+    state == 'local'
+        ? const {'state', 'generation'}
+        : const {'state', 'endpoint', 'generation'},
+  );
+  final endpoint = raw.containsKey('endpoint')
+      ? _safeHttpEndpoint(
+          _usageText(raw['endpoint'], 'result.endpoint', 2048),
+          'result.endpoint',
+        )
+      : null;
+  if (endpointRequired && endpoint == null) {
+    throw const WireFormatException(
+      'broker endpoint is required',
+      'result.endpoint',
+    );
+  }
+  return BrokerStatusResult(
+    state: switch (state) {
+      'local' => BrokerState.local,
+      'connected' => BrokerState.connected,
+      'missing-token' => BrokerState.missingToken,
+      _ => BrokerState.unreachable,
+    },
+    generation: _usageInteger(
+      raw['generation'],
+      'result.generation',
+      2147483647,
+    ),
+    endpoint: endpoint,
+  );
+}
+
+String _safeHttpEndpoint(String value, String path) {
+  final uri = Uri.tryParse(value);
+  if (uri == null ||
+      !uri.hasAuthority ||
+      uri.host.isEmpty ||
+      (uri.scheme != 'http' && uri.scheme != 'https') ||
+      uri.userInfo.isNotEmpty ||
+      uri.hasQuery ||
+      uri.hasFragment) {
+    throw WireFormatException(
+      'endpoint must be an HTTP(S) URL without credentials or parameters',
+      path,
+    );
+  }
+  return uri.toString();
+}
+
+List<String> _usageNotes(Object? value, String path, int max) {
+  final values = _list(value, path, max);
+  return List<String>.unmodifiable(
+    List<String>.generate(
+      values.length,
+      (index) => _usageText(values[index], '$path[$index]', 1024),
+      growable: false,
+    ),
+  );
+}
+
+String _usageText(Object? value, String path, int maxBytes) {
+  if (value is! String ||
+      !_utf8LengthAtMost(value, maxBytes) ||
+      _hasControlCharacter(value)) {
+    throw WireFormatException('expected bounded control-free text', path);
+  }
+  return value;
+}
+
+double _usageBoundedNumber(
+  Object? value,
+  String path,
+  double minimum,
+  double maximum,
+) {
+  final result = _usageNumber(value, path);
+  if (result < minimum || result > maximum) {
+    throw WireFormatException(
+      'usage number is outside its allowed range',
+      path,
+    );
+  }
+  return result;
+}
+
+double _usageNumber(Object? value, String path) {
+  if (value is! num ||
+      !value.isFinite ||
+      value < -1000000000000000 ||
+      value > 1000000000000000) {
+    throw WireFormatException(
+      'usage number is outside its allowed range',
+      path,
+    );
+  }
+  return value.toDouble();
+}
+
+int _usageInteger(Object? value, String path, int max) {
+  final result = _safeInteger(value, path);
+  if (result > max) throw WireFormatException('value exceeds limit', path);
+  return result;
+}
+
+void _onlyKeys(Map<String, Object?> value, String path, Set<String> allowed) {
+  for (final key in value.keys) {
+    if (!allowed.contains(key)) {
+      throw WireFormatException('unknown field', '$path.$key');
+    }
+  }
 }
 
 PreviewSnapshot _previewSnapshot(Map<String, Object?> raw) {

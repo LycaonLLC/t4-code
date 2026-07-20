@@ -16,6 +16,8 @@ import io.flutter.plugin.common.MethodChannel;
 public class MainActivity extends FlutterActivity {
     private static final String LEGACY_CREDENTIAL_CHANNEL =
         "com.lycaonsolutions.t4code/legacy_credentials";
+    private T4UpdatePlugin updatePlugin;
+
     private final ExecutorService legacyCredentialExecutor = new ThreadPoolExecutor(
         1,
         1,
@@ -27,6 +29,13 @@ public class MainActivity extends FlutterActivity {
     @Override
     public void configureFlutterEngine(@NonNull FlutterEngine flutterEngine) {
         super.configureFlutterEngine(flutterEngine);
+        if (updatePlugin != null) updatePlugin.destroy();
+        updatePlugin = new T4UpdatePlugin(this);
+        new MethodChannel(
+            flutterEngine.getDartExecutor().getBinaryMessenger(),
+            T4UpdatePlugin.CHANNEL_NAME
+        ).setMethodCallHandler(updatePlugin::handle);
+
         LegacyCredentialMigration migration = new LegacyCredentialMigration(this);
         new MethodChannel(
             flutterEngine.getDartExecutor().getBinaryMessenger(),
@@ -63,7 +72,23 @@ public class MainActivity extends FlutterActivity {
     }
 
     @Override
+    protected void onPause() {
+        if (updatePlugin != null) updatePlugin.onPause();
+        super.onPause();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (updatePlugin != null) updatePlugin.onResume();
+    }
+
+    @Override
     protected void onDestroy() {
+        if (updatePlugin != null) {
+            updatePlugin.destroy();
+            updatePlugin = null;
+        }
         legacyCredentialExecutor.shutdownNow();
         super.onDestroy();
     }

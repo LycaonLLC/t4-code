@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:t4code/src/client/t4_client_controller.dart';
 import 'package:t4code/src/client/app_state.dart';
 import 'package:t4code/src/host/host_profile.dart';
+import 'package:t4code/src/protocol/protocol.dart';
 
 const _startupTimeout = Duration(seconds: 10);
 const _operationTimeout = Duration(seconds: 5);
@@ -169,6 +170,277 @@ void main() {
       expect(fixtureState, containsPair('scenario', 'stream-v1'));
       expect(fixtureState, containsPair('clients', 1));
       expect(fixtureState, containsPair('connections', 2));
+    },
+  );
+  test(
+    'reads and explicitly confirms settings writes against the real fixture',
+    () async {
+      final fixture = await _FixtureProcess.start();
+      final controller = T4ClientController(
+        hostDirectoryStore: _MemoryDirectoryStore(),
+        hostCredentialStore: _MemoryCredentialStore(),
+        developmentEndpoint: fixture.wsUrl,
+      );
+      addTearDown(() async {
+        controller.dispose();
+        await fixture.stop();
+      });
+
+      await controller.initialize().timeout(_operationTimeout);
+      final settingsReady = await _waitForState(
+        controller,
+        (state) =>
+            state.connectionPhase == ConnectionPhase.ready &&
+            !state.settings.loading &&
+            state.settings.entries.any(
+              (entry) => entry.path == 'appearance.mode',
+            ),
+        description: 'fixture settings metadata to load',
+      );
+      final appearance = settingsReady.settings.entries.singleWhere(
+        (entry) => entry.path == 'appearance.mode',
+      );
+      expect(appearance.effectiveValue, 'system');
+      expect(appearance.restartRequired, isTrue);
+      expect(appearance.writableScopes, contains('global'));
+      final secret = settingsReady.settings.entries.singleWhere(
+        (entry) => entry.path == 'provider.apiKey',
+      );
+      expect(secret.sensitive, isTrue);
+      expect(secret.effectiveValue, isNull);
+
+      final write = controller.writeSetting(
+        'appearance.mode',
+        'global',
+        value: 'dark',
+      );
+      final challenged = await _waitForState(
+        controller,
+        (state) => state.attentionItems.any(
+          (item) =>
+              item.kind == AttentionKind.confirmation &&
+              item.sessionId.isEmpty &&
+              item.needsResponse,
+        ),
+        description: 'fixture settings confirmation',
+      );
+      final confirmation = challenged.attentionItems.singleWhere(
+        (item) =>
+            item.kind == AttentionKind.confirmation &&
+            item.sessionId.isEmpty &&
+            item.needsResponse,
+      );
+      await controller.respondToAttention(
+        confirmation,
+        const AttentionResponse(decision: AttentionDecision.approve),
+      );
+      await write.timeout(_operationTimeout);
+
+      final applied = controller.state.settings.entries.singleWhere(
+        (entry) => entry.path == 'appearance.mode',
+      );
+      expect(applied.effectiveValue, 'dark');
+      expect(applied.effectiveSource, 'global');
+      expect(controller.state.settings.error, isNull);
+      expect(controller.state.settingsOperationPending, isFalse);
+
+      final resumeWrite = controller.writeSetting(
+        'session.autoResume',
+        'global',
+        value: false,
+      );
+      final resumeChallenge = await _waitForState(
+        controller,
+        (state) => state.attentionItems.any(
+          (item) =>
+              item.kind == AttentionKind.confirmation &&
+              item.sessionId.isEmpty &&
+              item.needsResponse,
+        ),
+        description: 'fixture resume setting confirmation',
+      );
+      final resumeConfirmation = resumeChallenge.attentionItems.singleWhere(
+        (item) =>
+            item.kind == AttentionKind.confirmation &&
+            item.sessionId.isEmpty &&
+            item.needsResponse,
+      );
+      await controller.respondToAttention(
+        resumeConfirmation,
+        const AttentionResponse(decision: AttentionDecision.approve),
+      );
+      await resumeWrite.timeout(_operationTimeout);
+      expect(
+        controller.state.settings.entries
+            .singleWhere((entry) => entry.path == 'session.autoResume')
+            .effectiveValue,
+        false,
+      );
+    },
+  );
+  test(
+    'runs implemented session and developer workflows against the real fixture',
+    () async {
+      final fixture = await _FixtureProcess.start();
+      final controller = T4ClientController(
+        hostDirectoryStore: _MemoryDirectoryStore(),
+        hostCredentialStore: _MemoryCredentialStore(),
+        developmentEndpoint: fixture.wsUrl,
+      );
+      addTearDown(() async {
+        controller.dispose();
+        await fixture.stop();
+      });
+
+      await controller.initialize().timeout(_operationTimeout);
+      await _waitForState(
+        controller,
+        (state) => state.connectionPhase == ConnectionPhase.ready,
+        description: 'fixture session to become ready',
+      );
+      const sessionId = 'session-stream';
+
+      final search = await controller
+          .searchTranscripts(
+            query: 'fixture',
+            roles: const <TranscriptSearchRole>[TranscriptSearchRole.assistant],
+          )
+          .timeout(_operationTimeout);
+      expect(search.items.single.sessionId, sessionId);
+      expect(search.items.single.snippet, contains('transcript search'));
+      expect(search.index.state, TranscriptSearchIndexState.ready);
+      final context = await controller
+          .loadTranscriptContext(
+            sessionId: sessionId,
+            anchorId: search.items.single.anchorId,
+          )
+          .timeout(_operationTimeout);
+      expect(context.rows, hasLength(2));
+      expect(context.rows[context.anchorIndex].anchorId, context.anchorId);
+
+      final usage = await controller.readUsage().timeout(_operationTimeout);
+      expect(usage.reports.single.provider, 'fixture-provider');
+      expect(usage.reports.single.limits.single.amount.used, 4);
+      final broker = await controller.readBrokerStatus().timeout(
+        _operationTimeout,
+      );
+      expect(broker.state, BrokerState.connected);
+      expect(broker.endpoint, 'https://broker.fixture.invalid');
+
+      await _waitForState(
+        controller,
+        (state) => state.agentActivities.any(
+          (activity) =>
+              activity.agentId == 'agent-fixture' &&
+              activity.parentAgentId == 'agent-parent' &&
+              activity.currentTool == 'read',
+        ),
+        description: 'fixture agent hierarchy projection',
+      );
+      await controller.cancelAgent('agent-fixture').timeout(_operationTimeout);
+      await _waitForState(
+        controller,
+        (state) => state.agentActivities.any(
+          (activity) =>
+              activity.agentId == 'agent-fixture' &&
+              activity.status == 'cancelled',
+        ),
+        description: 'cancelled fixture child agent',
+      );
+
+      await controller
+          .renameSession(sessionId, 'Renamed fixture')
+          .timeout(_operationTimeout);
+      await _waitForState(
+        controller,
+        (state) =>
+            state.sessions
+                .where((session) => session.sessionId == sessionId)
+                .single
+                .title ==
+            'Renamed fixture',
+        description: 'renamed session projection',
+      );
+
+      await controller.refreshActivity().timeout(_operationTimeout);
+      await controller.listFiles().timeout(_operationTimeout);
+      expect(controller.state.fileWorkspace.entries, isEmpty);
+      await controller.readFile('README.md').timeout(_operationTimeout);
+      expect(controller.state.fileWorkspace.path, 'README.md');
+      expect(controller.state.fileWorkspace.content, '');
+      await controller.loadSessionDiff().timeout(_operationTimeout);
+      expect(controller.state.fileWorkspace.diff, '');
+      expect(controller.state.fileWorkspace.revision, isNotNull);
+      expect(controller.state.reviews.single.reviewId, 'review-fixture');
+      await controller
+          .writeFile('README.md', 'fixture edit')
+          .timeout(_operationTimeout);
+      expect(controller.state.fileWorkspace.content, 'fixture edit');
+      await controller.applyReview('review-fixture').timeout(_operationTimeout);
+      await _waitForState(
+        controller,
+        (state) => state.reviews.single.status == 'applied',
+        description: 'applied fixture review projection',
+      );
+
+      final terminalId = await controller
+          .openTerminal(cwd: 'src')
+          .timeout(_operationTimeout);
+      expect(terminalId, 'terminal-fixture');
+      expect(controller.state.activeTerminalId, terminalId);
+      expect(controller.state.terminals.single.running, isTrue);
+      controller.sendTerminalInput(terminalId, 'pwd\n');
+      controller.resizeTerminal(terminalId, 100, 30);
+      controller.closeTerminal(terminalId);
+      expect(controller.state.terminals, isEmpty);
+
+      final previewId = await controller
+          .launchPreview('http://127.0.0.1/fixture')
+          .timeout(_operationTimeout);
+      expect(controller.state.activePreviewId, previewId);
+      await controller.capturePreview(previewId).timeout(_operationTimeout);
+      expect(controller.state.activePreview?.capture, isNotEmpty);
+      await controller
+          .runPreviewInteraction(previewId, 'press', <String, Object?>{
+            'key': 'Enter',
+          })
+          .timeout(_operationTimeout);
+      expect(controller.state.activePreviewId, previewId);
+      await controller
+          .navigatePreview(previewId, 'http://127.0.0.1/next')
+          .timeout(_operationTimeout);
+      expect(controller.state.activePreview?.url, 'http://127.0.0.1/next');
+      await controller
+          .runPreviewAction(previewId, 'close')
+          .timeout(_operationTimeout);
+      expect(controller.state.previews, isEmpty);
+
+      await controller.archiveSession(sessionId).timeout(_operationTimeout);
+      await _waitForState(
+        controller,
+        (state) => state.sessions
+            .where((session) => session.sessionId == sessionId)
+            .single
+            .archived,
+        description: 'archived session projection',
+      );
+      await controller.restoreSession(sessionId).timeout(_operationTimeout);
+      await _waitForState(
+        controller,
+        (state) => !state.sessions
+            .where((session) => session.sessionId == sessionId)
+            .single
+            .archived,
+        description: 'restored session projection',
+      );
+
+      await controller.deleteSession(sessionId).timeout(_operationTimeout);
+      await _waitForState(
+        controller,
+        (state) =>
+            state.sessions.every((session) => session.sessionId != sessionId),
+        description: 'deleted session projection',
+      );
     },
   );
 }

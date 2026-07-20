@@ -206,6 +206,265 @@ final class SessionListResult {
   final Map<String, Object?> raw;
 }
 
+enum TranscriptSearchRole { user, assistant, summary }
+
+enum TranscriptSearchIndexState { building, ready, stale }
+
+final class TranscriptSearchHighlight {
+  const TranscriptSearchHighlight({required this.start, required this.end});
+
+  final int start;
+  final int end;
+}
+
+final class TranscriptSearchItem {
+  const TranscriptSearchItem({
+    required this.sessionId,
+    required this.projectId,
+    required this.sessionTitle,
+    required this.anchorId,
+    required this.role,
+    required this.timestamp,
+    required this.snippet,
+    required this.highlights,
+    this.archivedAt,
+  });
+
+  final String sessionId;
+  final String projectId;
+  final String sessionTitle;
+  final String? archivedAt;
+  final String anchorId;
+  final TranscriptSearchRole role;
+  final String timestamp;
+  final String snippet;
+  final List<TranscriptSearchHighlight> highlights;
+}
+
+final class TranscriptSearchIndexStatus {
+  const TranscriptSearchIndexStatus({
+    required this.state,
+    required this.indexedSessions,
+    required this.knownSessions,
+    required this.generation,
+  });
+
+  final TranscriptSearchIndexState state;
+  final int indexedSessions;
+  final int knownSessions;
+  final String generation;
+}
+
+final class TranscriptSearchResult {
+  const TranscriptSearchResult({
+    required this.items,
+    required this.incomplete,
+    required this.index,
+    this.nextCursor,
+  });
+
+  final List<TranscriptSearchItem> items;
+  final String? nextCursor;
+  final bool incomplete;
+  final TranscriptSearchIndexStatus index;
+}
+
+final class TranscriptContextRow {
+  const TranscriptContextRow({
+    required this.anchorId,
+    required this.role,
+    required this.timestamp,
+    required this.text,
+  });
+
+  final String anchorId;
+  final TranscriptSearchRole role;
+  final String timestamp;
+  final String text;
+}
+
+final class TranscriptContextResult {
+  const TranscriptContextResult({
+    required this.anchorId,
+    required this.rows,
+    required this.anchorIndex,
+    required this.hasBefore,
+    required this.hasAfter,
+    required this.generation,
+  });
+
+  final String anchorId;
+  final List<TranscriptContextRow> rows;
+  final int anchorIndex;
+  final bool hasBefore;
+  final bool hasAfter;
+  final String generation;
+}
+
+enum UsageUnit { percent, tokens, requests, usd, minutes, bytes, unknown }
+
+enum UsageStatus { ok, warning, exhausted, unknown }
+
+enum UsageAccountType { apiKey, oauth }
+
+final class UsageWindow {
+  const UsageWindow({
+    required this.id,
+    required this.label,
+    this.durationMs,
+    this.resetsAt,
+  });
+
+  final String id;
+  final String label;
+  final int? durationMs;
+  final int? resetsAt;
+}
+
+final class UsageAmount {
+  const UsageAmount({
+    required this.unit,
+    this.used,
+    this.limit,
+    this.remaining,
+    this.usedFraction,
+    this.remainingFraction,
+  });
+
+  final UsageUnit unit;
+  final double? used;
+  final double? limit;
+  final double? remaining;
+  final double? usedFraction;
+  final double? remainingFraction;
+}
+
+final class UsageScope {
+  const UsageScope({
+    required this.provider,
+    this.accountId,
+    this.projectId,
+    this.orgId,
+    this.modelId,
+    this.tier,
+    this.windowId,
+    this.shared,
+  });
+
+  final String provider;
+  final String? accountId;
+  final String? projectId;
+  final String? orgId;
+  final String? modelId;
+  final String? tier;
+  final String? windowId;
+  final bool? shared;
+}
+
+final class UsageLimit {
+  const UsageLimit({
+    required this.id,
+    required this.label,
+    required this.scope,
+    required this.amount,
+    required this.notes,
+    this.window,
+    this.status,
+  });
+
+  final String id;
+  final String label;
+  final UsageScope scope;
+  final UsageWindow? window;
+  final UsageAmount amount;
+  final UsageStatus? status;
+  final List<String> notes;
+}
+
+final class UsageReport {
+  const UsageReport({
+    required this.provider,
+    required this.fetchedAt,
+    required this.limits,
+    required this.notes,
+    required this.metadata,
+    this.availableResetCredits,
+  });
+
+  final String provider;
+  final int fetchedAt;
+  final List<UsageLimit> limits;
+  final int? availableResetCredits;
+  final List<String> notes;
+  final Map<String, Object?> metadata;
+}
+
+final class UsageAccountWithoutReport {
+  const UsageAccountWithoutReport({
+    required this.provider,
+    required this.type,
+    this.email,
+    this.accountId,
+    this.projectId,
+    this.enterpriseUrl,
+    this.orgId,
+    this.orgName,
+  });
+
+  final String provider;
+  final UsageAccountType type;
+  final String? email;
+  final String? accountId;
+  final String? projectId;
+  final String? enterpriseUrl;
+  final String? orgId;
+  final String? orgName;
+}
+
+final class UsageCapacityWindow {
+  const UsageCapacityWindow({
+    required this.window,
+    required this.accounts,
+    required this.usedAccounts,
+    required this.remainingAccounts,
+    this.durationMs,
+  });
+
+  final String window;
+  final int? durationMs;
+  final int accounts;
+  final double usedAccounts;
+  final double remainingAccounts;
+}
+
+final class UsageReadResult {
+  const UsageReadResult({
+    required this.generatedAt,
+    required this.reports,
+    required this.accountsWithoutUsage,
+    required this.capacity,
+  });
+
+  final int generatedAt;
+  final List<UsageReport> reports;
+  final List<UsageAccountWithoutReport> accountsWithoutUsage;
+  final Map<String, List<UsageCapacityWindow>> capacity;
+}
+
+enum BrokerState { local, connected, missingToken, unreachable }
+
+final class BrokerStatusResult {
+  const BrokerStatusResult({
+    required this.state,
+    required this.generation,
+    this.endpoint,
+  });
+
+  final BrokerState state;
+  final int generation;
+  final String? endpoint;
+}
+
 final class SnapshotFrame extends WireFrame {
   const SnapshotFrame({
     required this.hostId,
@@ -272,6 +531,20 @@ final class WireResponseError {
   final Map<String, Object?> raw;
 }
 
+final class CatalogResult {
+  const CatalogResult({required this.revision, required this.items});
+
+  final String revision;
+  final List<CatalogItem> items;
+}
+
+final class SettingsResult {
+  const SettingsResult({required this.revision, required this.settings});
+
+  final String revision;
+  final Map<String, Object?> settings;
+}
+
 final class ResponseFrame extends WireFrame {
   const ResponseFrame({
     required this.requestId,
@@ -294,9 +567,31 @@ final class ResponseFrame extends WireFrame {
   final Object? result;
   final WireResponseError? error;
 
-  /// Typed only for the package's host.list/session.list command products.
+  /// Typed command products decoded at the wire boundary.
   SessionListResult? get sessionListResult =>
       result is SessionListResult ? result as SessionListResult : null;
+
+  CatalogResult? get catalogResult =>
+      result is CatalogResult ? result as CatalogResult : null;
+
+  SettingsResult? get settingsResult =>
+      result is SettingsResult ? result as SettingsResult : null;
+
+  TranscriptSearchResult? get transcriptSearchResult =>
+      result is TranscriptSearchResult
+      ? result as TranscriptSearchResult
+      : null;
+
+  TranscriptContextResult? get transcriptContextResult =>
+      result is TranscriptContextResult
+      ? result as TranscriptContextResult
+      : null;
+
+  UsageReadResult? get usageReadResult =>
+      result is UsageReadResult ? result as UsageReadResult : null;
+
+  BrokerStatusResult? get brokerStatusResult =>
+      result is BrokerStatusResult ? result as BrokerStatusResult : null;
 }
 
 final class ErrorFrame extends WireFrame {

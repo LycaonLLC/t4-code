@@ -25,12 +25,15 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
   final TextEditingController _navigationUrlController =
       TextEditingController();
   final FocusNode _navigationUrlFocus = FocusNode();
+  final TextEditingController _fileEditorController = TextEditingController();
 
   String? _activityCategory;
   String? _busyAction;
   String? _actionError;
   String? _selectedFilePath;
   String _directoryPath = '';
+  String? _editedFilePath;
+  bool _fileDirty = false;
   bool _activityPaused = false;
 
   bool get _connected => widget.state.connectionPhase == ConnectionPhase.ready;
@@ -54,6 +57,7 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
       _directoryPath = workspace.path;
     }
     _syncPreviewAddress(force: true);
+    _syncFileEditor(force: true);
   }
 
   @override
@@ -69,6 +73,12 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
         oldPreview?.url != preview?.url) {
       _syncPreviewAddress();
     }
+    final oldWorkspace = oldWidget.state.fileWorkspace;
+    final workspace = widget.state.fileWorkspace;
+    if (oldWorkspace.path != workspace.path ||
+        oldWorkspace.content != workspace.content) {
+      _syncFileEditor();
+    }
   }
 
   @override
@@ -77,6 +87,7 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
     _launchUrlController.dispose();
     _navigationUrlController.dispose();
     _navigationUrlFocus.dispose();
+    _fileEditorController.dispose();
     super.dispose();
   }
 
@@ -87,6 +98,62 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
       text: url,
       selection: TextSelection.collapsed(offset: url.length),
     );
+  }
+
+  void _syncFileEditor({bool force = false}) {
+    final workspace = widget.state.fileWorkspace;
+    final content = workspace.content;
+    if (content == null || workspace.path.isEmpty) return;
+    if (!force && _fileDirty && _editedFilePath == workspace.path) return;
+    _editedFilePath = workspace.path;
+    _fileDirty = false;
+    _fileEditorController.value = TextEditingValue(
+      text: content,
+      selection: TextSelection.collapsed(offset: content.length),
+    );
+  }
+
+  Future<bool> _confirmDiscardFileChanges() async {
+    if (!_fileDirty) return true;
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Discard unsaved changes?'),
+        content: Text(
+          'Your edits to ${_editedFilePath ?? 'this file'} have not been saved.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Keep editing'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Discard'),
+          ),
+        ],
+      ),
+    );
+    if (discard == true && mounted) {
+      setState(() => _fileDirty = false);
+    }
+    return discard == true;
+  }
+
+  void _onFileChanged(String content) {
+    final workspace = widget.state.fileWorkspace;
+    final dirty =
+        _editedFilePath == workspace.path && content != workspace.content;
+    if (dirty != _fileDirty) setState(() => _fileDirty = dirty);
+  }
+
+  Future<void> _saveFile() async {
+    final path = _editedFilePath;
+    if (path == null || !_fileDirty) return;
+    await _runAction('files-write', 'Could not save the file.', () async {
+      await widget.actions.writeFile(path, _fileEditorController.text);
+      if (mounted) setState(() => _fileDirty = false);
+    });
   }
 
   Future<void> _runAction(
@@ -125,9 +192,12 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
   }
 
   Future<void> _listDirectory(String path) async {
+    if (!await _confirmDiscardFileChanges() || !mounted) return;
     setState(() {
       _directoryPath = path;
       _selectedFilePath = null;
+      _editedFilePath = null;
+      _fileEditorController.clear();
     });
     await _runAction(
       'files-list',
@@ -137,6 +207,10 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
   }
 
   Future<void> _selectFile(String path) async {
+    if (path != _editedFilePath &&
+        (!await _confirmDiscardFileChanges() || !mounted)) {
+      return;
+    }
     setState(() => _selectedFilePath = path);
     await _runAction(
       'files-read',
@@ -174,6 +248,32 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
         'Could not $action the preview.',
         () => widget.actions.runPreviewAction(preview.previewId, action),
       );
+
+  Future<void> _openPreviewInteraction(
+    PreviewWorkspaceState preview, {
+    required bool allowInput,
+    required bool allowHandoff,
+  }) async {
+    final request = await showModalBottomSheet<_PreviewInteractionRequest>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => _PreviewInteractionSheet(
+        allowInput: allowInput,
+        allowHandoff: allowHandoff,
+      ),
+    );
+    if (request == null || !mounted) return;
+    await _runAction(
+      'preview-${request.action}',
+      'Could not ${request.action} in the preview.',
+      () => widget.actions.runPreviewInteraction(
+        preview.previewId,
+        request.action,
+        request.args,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -346,6 +446,18 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
           path: filePath,
           content: content,
           loading: _busyAction == 'files-read',
+          controller: _fileEditorController,
+          editable: _hasCapability('files.write') && _connected && !_busy,
+          dirty: _fileDirty,
+          onChanged: _onFileChanged,
+          onSave: _fileDirty && !_busy ? _saveFile : null,
+          onDiscard: _fileDirty
+              ? () => setState(() {
+                  _fileEditorController.text =
+                      widget.state.fileWorkspace.content ?? '';
+                  _fileDirty = false;
+                })
+              : null,
         );
         if (constraints.maxWidth >= _T4Layout.contentMaxWidth) {
           return Row(
@@ -369,85 +481,122 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
 
   Widget _buildReview() {
     final workspace = widget.state.fileWorkspace;
+    final reviews = widget.state.reviews;
     final selectedPath =
         _selectedFilePath ??
         (workspace.content == null ? null : workspace.path);
-    if (!_connected && workspace.diff == null) {
+    if (!_connected && workspace.diff == null && reviews.isEmpty) {
       return const _DeveloperUnavailable(
         icon: Icons.cloud_off_outlined,
         title: 'Review is offline',
-        message: 'Connect to load a diff for the selected file.',
-      );
-    }
-    if (!_hasCapability('files.diff')) {
-      return const _DeveloperUnavailable(
-        icon: Icons.lock_outline,
-        title: 'Review is unavailable',
-        message: 'The paired host did not grant the files.diff capability.',
-      );
-    }
-    if (selectedPath == null || selectedPath.isEmpty) {
-      return _DeveloperUnavailable(
-        icon: Icons.find_in_page_outlined,
-        title: 'Choose a file first',
-        message: 'Select a file in Files, then return here to load its diff.',
-        action: TextButton.icon(
-          onPressed: () => _tabs.animateTo(1),
-          icon: const Icon(Icons.folder_open_outlined),
-          label: const Text('Open files'),
-        ),
+        message: 'Connect to load reviews and file diffs.',
       );
     }
 
-    final diff = workspace.path == selectedPath ? workspace.diff : null;
+    final canReadReview = _hasCapability('files.read');
+    final canApplyReview = _hasCapability('files.write');
+    final canLoadDiff = _hasCapability('files.diff');
+    final diff = selectedPath != null && workspace.path == selectedPath
+        ? workspace.diff
+        : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.all(_T4Space.md),
-          child: Wrap(
-            spacing: _T4Space.sm,
-            runSpacing: _T4Space.xs,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              Icon(
-                Icons.description_outlined,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+        if (reviews.isNotEmpty) ...[
+          SizedBox(
+            height: (112 + reviews.length * 96).clamp(0, 300).toDouble(),
+            child: _ReviewQueue(
+              reviews: reviews,
+              busy: _busy,
+              canRead: _connected && canReadReview,
+              canApply: _connected && canApplyReview,
+              onRefresh: (review) => _runAction(
+                'review-read-${review.reviewId}',
+                'Could not refresh the review.',
+                () => widget.actions.refreshReview(review.reviewId),
               ),
-              Text(selectedPath, style: Theme.of(context).textTheme.titleSmall),
-              FilledButton.tonalIcon(
-                onPressed: _connected && !_busy
-                    ? () => _runAction(
-                        'files-diff',
-                        'Could not load the file diff.',
-                        widget.actions.loadSessionDiff,
-                      )
-                    : null,
-                icon: const Icon(Icons.refresh),
-                label: Text(diff == null ? 'Load diff' : 'Reload diff'),
+              onApply: (review) => _runAction(
+                'review-apply-${review.reviewId}',
+                'Could not apply the review.',
+                () => widget.actions.applyReview(review.reviewId),
               ),
-            ],
+            ),
           ),
-        ),
-        const Divider(height: _T4Size.divider),
-        Expanded(
-          child: diff == null
-              ? const _DeveloperUnavailable(
-                  icon: Icons.difference_outlined,
-                  title: 'Diff not loaded',
-                  message: 'Load the selected file diff to begin review.',
-                )
-              : diff.trim().isEmpty
-              ? const _DeveloperUnavailable(
-                  icon: Icons.check_circle_outline,
-                  title: 'No changes',
-                  message: 'The selected file has no changes to review.',
-                )
-              : _CodeViewer(
-                  text: diff,
-                  semanticsLabel: 'Diff for $selectedPath',
+          const Divider(height: _T4Size.divider),
+        ],
+        if (selectedPath == null || selectedPath.isEmpty)
+          Expanded(
+            child: _DeveloperUnavailable(
+              icon: Icons.find_in_page_outlined,
+              title: reviews.isEmpty
+                  ? 'Choose a file first'
+                  : 'No file diff selected',
+              message: 'Select a file in Files to inspect its current diff.',
+              action: TextButton.icon(
+                onPressed: () => _tabs.animateTo(1),
+                icon: const Icon(Icons.folder_open_outlined),
+                label: const Text('Open files'),
+              ),
+            ),
+          )
+        else if (!canLoadDiff)
+          const Expanded(
+            child: _DeveloperUnavailable(
+              icon: Icons.lock_outline,
+              title: 'File diff unavailable',
+              message: 'The paired host did not grant files.diff access.',
+            ),
+          )
+        else ...[
+          Padding(
+            padding: const EdgeInsets.all(_T4Space.md),
+            child: Wrap(
+              spacing: _T4Space.sm,
+              runSpacing: _T4Space.xs,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Icon(
+                  Icons.description_outlined,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
-        ),
+                Text(
+                  selectedPath,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                FilledButton.tonalIcon(
+                  onPressed: _connected && !_busy
+                      ? () => _runAction(
+                          'files-diff',
+                          'Could not load the file diff.',
+                          widget.actions.loadSessionDiff,
+                        )
+                      : null,
+                  icon: const Icon(Icons.refresh),
+                  label: Text(diff == null ? 'Load diff' : 'Reload diff'),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: _T4Size.divider),
+          Expanded(
+            child: diff == null
+                ? const _DeveloperUnavailable(
+                    icon: Icons.difference_outlined,
+                    title: 'Diff not loaded',
+                    message: 'Load the selected file diff to begin review.',
+                  )
+                : diff.trim().isEmpty
+                ? const _DeveloperUnavailable(
+                    icon: Icons.check_circle_outline,
+                    title: 'No changes',
+                    message: 'The selected file has no changes to review.',
+                  )
+                : _CodeViewer(
+                    text: diff,
+                    semanticsLabel: 'Diff for $selectedPath',
+                  ),
+          ),
+        ],
       ],
     );
   }
@@ -455,6 +604,7 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
   Widget _buildPreview() {
     final canRead = _hasCapability('preview.read');
     final canControl = _hasCapability('preview.control');
+    final canInput = _hasCapability('preview.input');
     if (!_connected && widget.state.previews.isEmpty) {
       return const _DeveloperUnavailable(
         icon: Icons.cloud_off_outlined,
@@ -462,12 +612,12 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
         message: 'Connect to a host to open a protocol-rendered preview.',
       );
     }
-    if (!canRead && !canControl) {
+    if (!canRead && !canControl && !canInput) {
       return const _DeveloperUnavailable(
         icon: Icons.lock_outline,
         title: 'Preview is unavailable',
         message:
-            'The paired host did not grant preview.read or preview.control.',
+            'The paired host did not grant preview.read, preview.control, or preview.input.',
       );
     }
 
@@ -499,7 +649,7 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
                   message:
                       'Enter a URL above. T4 will display only captured image bytes returned by the host protocol.',
                 )
-              : _buildActivePreview(preview, canRead, canControl),
+              : _buildActivePreview(preview, canRead, canControl, canInput),
         ),
       ],
     );
@@ -509,6 +659,7 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
     PreviewWorkspaceState preview,
     bool canRead,
     bool canControl,
+    bool canInput,
   ) {
     final controlsEnabled = _connected && canControl && !_busy;
     return Column(
@@ -519,8 +670,14 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
           focusNode: _navigationUrlFocus,
           controlsEnabled: controlsEnabled,
           captureEnabled: _connected && canRead && !_busy,
+          interactionEnabled: _connected && (canInput || canControl) && !_busy,
           onNavigate: () => _navigatePreview(preview),
           onAction: (action) => _previewAction(preview, action),
+          onInteract: () => _openPreviewInteraction(
+            preview,
+            allowInput: canInput,
+            allowHandoff: canControl,
+          ),
           onCapture: () => _runAction(
             'preview-capture',
             'Could not capture the preview.',
@@ -855,6 +1012,114 @@ final class _ActivityRow extends StatelessWidget {
   }
 }
 
+final class _ReviewQueue extends StatelessWidget {
+  const _ReviewQueue({
+    required this.reviews,
+    required this.busy,
+    required this.canRead,
+    required this.canApply,
+    required this.onRefresh,
+    required this.onApply,
+  });
+
+  final List<ReviewWorkspaceItem> reviews;
+  final bool busy;
+  final bool canRead;
+  final bool canApply;
+  final ValueChanged<ReviewWorkspaceItem> onRefresh;
+  final ValueChanged<ReviewWorkspaceItem> onApply;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      padding: const EdgeInsets.all(_T4Space.sm),
+      itemCount: reviews.length,
+      separatorBuilder: (_, _) => const SizedBox(height: _T4Space.xs),
+      itemBuilder: (context, index) {
+        final review = reviews[index];
+        final complete =
+            review.status == 'applied' || review.status == 'discarded';
+        final finding = review.findings
+            .map(_reviewFindingLabel)
+            .where((label) => label.isNotEmpty)
+            .firstOrNull;
+        return Card(
+          margin: EdgeInsets.zero,
+          child: Padding(
+            padding: const EdgeInsets.all(_T4Space.sm),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  complete
+                      ? Icons.task_alt_outlined
+                      : Icons.rate_review_outlined,
+                  color: complete
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: _T4Space.sm),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        review.path ?? review.reviewId,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      Text(
+                        '${review.status} · ${review.findings.length} ${review.findings.length == 1 ? 'finding' : 'findings'}',
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      if (finding != null)
+                        Text(
+                          finding,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: _T4Space.sm),
+                Column(
+                  children: [
+                    IconButton(
+                      tooltip: 'Refresh review',
+                      onPressed: canRead && !busy
+                          ? () => onRefresh(review)
+                          : null,
+                      icon: const Icon(Icons.refresh),
+                    ),
+                    IconButton.filledTonal(
+                      tooltip: complete ? 'Review complete' : 'Apply review',
+                      onPressed: canApply && !busy && !complete
+                          ? () => onApply(review)
+                          : null,
+                      icon: const Icon(Icons.done_all),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+String _reviewFindingLabel(Map<String, Object?> finding) {
+  for (final key in const ['message', 'summary', 'title', 'description']) {
+    final value = finding[key];
+    if (value is String && value.trim().isNotEmpty) return value.trim();
+  }
+  return '';
+}
+
 final class _FileBrowser extends StatelessWidget {
   const _FileBrowser({
     required this.directoryPath,
@@ -981,11 +1246,23 @@ final class _SourceViewer extends StatelessWidget {
     required this.path,
     required this.content,
     required this.loading,
+    required this.controller,
+    required this.editable,
+    required this.dirty,
+    required this.onChanged,
+    this.onSave,
+    this.onDiscard,
   });
 
   final String? path;
   final String? content;
   final bool loading;
+  final TextEditingController controller;
+  final bool editable;
+  final bool dirty;
+  final ValueChanged<String> onChanged;
+  final VoidCallback? onSave;
+  final VoidCallback? onDiscard;
 
   @override
   Widget build(BuildContext context) {
@@ -1013,22 +1290,54 @@ final class _SourceViewer extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.all(_T4Space.md),
-          child: Text(
-            path!,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.titleSmall,
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  path!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              if (dirty)
+                TextButton(onPressed: onDiscard, child: const Text('Discard')),
+              FilledButton.tonalIcon(
+                onPressed: onSave,
+                icon: const Icon(Icons.save_outlined),
+                label: Text(dirty ? 'Save' : 'Saved'),
+              ),
+            ],
           ),
         ),
         const Divider(height: _T4Size.divider),
         Expanded(
-          child: content!.isEmpty
-              ? const _DeveloperUnavailable(
-                  icon: Icons.insert_drive_file_outlined,
-                  title: 'Empty file',
-                  message: 'This file contains no text.',
-                )
-              : _CodeViewer(text: content!, semanticsLabel: 'Source for $path'),
+          child: ColoredBox(
+            color: Theme.of(context).colorScheme.surfaceContainerLowest,
+            child: Semantics(
+              label: 'Source editor for $path',
+              textField: true,
+              child: TextField(
+                controller: controller,
+                enabled: editable,
+                readOnly: !editable,
+                expands: true,
+                minLines: null,
+                maxLines: null,
+                textAlignVertical: TextAlignVertical.top,
+                keyboardType: TextInputType.multiline,
+                onChanged: onChanged,
+                decoration: const InputDecoration(
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.all(_T4Space.md),
+                ),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontFamily: 'monospace',
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+            ),
+          ),
         ),
       ],
     );
@@ -1164,8 +1473,10 @@ final class _PreviewNavigationBar extends StatelessWidget {
     required this.focusNode,
     required this.controlsEnabled,
     required this.captureEnabled,
+    required this.interactionEnabled,
     required this.onNavigate,
     required this.onAction,
+    required this.onInteract,
     required this.onCapture,
   });
 
@@ -1174,8 +1485,10 @@ final class _PreviewNavigationBar extends StatelessWidget {
   final FocusNode focusNode;
   final bool controlsEnabled;
   final bool captureEnabled;
+  final bool interactionEnabled;
   final Future<void> Function() onNavigate;
   final ValueChanged<String> onAction;
+  final VoidCallback onInteract;
   final VoidCallback onCapture;
 
   @override
@@ -1230,21 +1543,172 @@ final class _PreviewNavigationBar extends StatelessWidget {
             ],
           ),
           const SizedBox(height: _T4Space.xs),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
+          Wrap(
+            alignment: WrapAlignment.end,
+            spacing: _T4Space.xs,
             children: [
+              TextButton.icon(
+                onPressed: interactionEnabled ? onInteract : null,
+                icon: const Icon(Icons.touch_app_outlined),
+                label: const Text('Interact'),
+              ),
               TextButton.icon(
                 onPressed: captureEnabled ? onCapture : null,
                 icon: const Icon(Icons.camera_alt_outlined),
                 label: const Text('Capture'),
               ),
-              const SizedBox(width: _T4Space.xs),
               TextButton.icon(
                 onPressed: controlsEnabled ? () => onAction('close') : null,
                 icon: const Icon(Icons.close),
                 label: const Text('Close'),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+final class _PreviewInteractionRequest {
+  const _PreviewInteractionRequest({required this.action, required this.args});
+
+  final String action;
+  final Map<String, Object?> args;
+}
+
+final class _PreviewInteractionSheet extends StatefulWidget {
+  const _PreviewInteractionSheet({
+    required this.allowInput,
+    required this.allowHandoff,
+  });
+
+  final bool allowInput;
+  final bool allowHandoff;
+
+  @override
+  State<_PreviewInteractionSheet> createState() =>
+      _PreviewInteractionSheetState();
+}
+
+final class _PreviewInteractionSheetState
+    extends State<_PreviewInteractionSheet> {
+  static const _templates = <String, String>{
+    'click': '{"selector":"button"}',
+    'fill': '{"selector":"input","text":"value"}',
+    'type': '{"selector":"input","text":"value"}',
+    'select': '{"selector":"select","value":"option"}',
+    'press': '{"key":"Enter"}',
+    'scroll': '{"deltaX":0,"deltaY":480}',
+    'upload': '{"selector":"input[type=file]","path":"relative/file.txt"}',
+    'handoff': '{"message":"Complete this step","mode":"manual"}',
+  };
+
+  late final List<String> _actions;
+  late String _action;
+  late final TextEditingController _argumentsController;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _actions = <String>[
+      if (widget.allowInput) ...const [
+        'click',
+        'fill',
+        'type',
+        'select',
+        'press',
+        'scroll',
+        'upload',
+      ],
+      if (widget.allowHandoff) 'handoff',
+    ];
+    _action = _actions.first;
+    _argumentsController = TextEditingController(text: _templates[_action]);
+  }
+
+  @override
+  void dispose() {
+    _argumentsController.dispose();
+    super.dispose();
+  }
+
+  void _selectAction(String? action) {
+    if (action == null) return;
+    setState(() {
+      _action = action;
+      _argumentsController.text = _templates[action] ?? '{}';
+      _error = null;
+    });
+  }
+
+  void _submit() {
+    try {
+      final decoded = jsonDecode(_argumentsController.text);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Arguments must be a JSON object.');
+      }
+      Navigator.pop(
+        context,
+        _PreviewInteractionRequest(
+          action: _action,
+          args: Map<String, Object?>.from(decoded),
+        ),
+      );
+    } on FormatException catch (error) {
+      setState(() => _error = error.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(
+        _T4Space.md,
+        _T4Space.md,
+        _T4Space.md,
+        MediaQuery.viewInsetsOf(context).bottom + _T4Space.md,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Preview interaction',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: _T4Space.md),
+          DropdownButtonFormField<String>(
+            initialValue: _action,
+            decoration: const InputDecoration(labelText: 'Action'),
+            items: [
+              for (final action in _actions)
+                DropdownMenuItem(value: action, child: Text(action)),
+            ],
+            onChanged: _selectAction,
+          ),
+          const SizedBox(height: _T4Space.md),
+          TextField(
+            controller: _argumentsController,
+            minLines: 5,
+            maxLines: 10,
+            autocorrect: false,
+            enableSuggestions: false,
+            decoration: InputDecoration(
+              labelText: 'Arguments (JSON)',
+              alignLabelWithHint: true,
+              errorText: _error,
+            ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(fontFamily: 'monospace'),
+          ),
+          const SizedBox(height: _T4Space.md),
+          FilledButton.icon(
+            onPressed: _submit,
+            icon: const Icon(Icons.play_arrow),
+            label: Text('Run $_action'),
           ),
         ],
       ),

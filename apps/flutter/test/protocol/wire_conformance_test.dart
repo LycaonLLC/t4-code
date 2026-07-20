@@ -247,6 +247,119 @@ void main() {
       },
     );
 
+    test('usage and broker command results decode to strict typed models', () {
+      final responseFixture = _namedCase(
+        corpus,
+        'inbound',
+        'successful-response',
+      );
+      final usageWire = _cloneMap(responseFixture['wire']);
+      usageWire['command'] = 'usage.read';
+      usageWire['result'] = <String, Object?>{
+        'generatedAt': 1720000000000,
+        'reports': <Object?>[
+          <String, Object?>{
+            'provider': 'openai',
+            'fetchedAt': 1720000000000,
+            'limits': <Object?>[
+              <String, Object?>{
+                'id': 'requests',
+                'label': 'Requests',
+                'scope': <String, Object?>{'provider': 'openai'},
+                'amount': <String, Object?>{
+                  'used': 4,
+                  'limit': 10,
+                  'unit': 'requests',
+                },
+                'status': 'ok',
+              },
+            ],
+            'notes': <Object?>[],
+          },
+        ],
+        'accountsWithoutUsage': <Object?>[],
+        'capacity': <String, Object?>{
+          'openai': <Object?>[
+            <String, Object?>{
+              'window': 'team',
+              'accounts': 2,
+              'usedAccounts': 1.5,
+              'remainingAccounts': 0.5,
+            },
+          ],
+        },
+      };
+      final usage = WireDecoder.decode(jsonEncode(usageWire)) as ResponseFrame;
+
+      expect(usage.usageReadResult?.reports.single.provider, 'openai');
+      expect(
+        usage.usageReadResult?.reports.single.limits.single.amount.limit,
+        10,
+      );
+      expect(
+        usage.usageReadResult?.capacity['openai']?.single.usedAccounts,
+        1.5,
+      );
+
+      final brokerWire = _cloneMap(responseFixture['wire']);
+      brokerWire['command'] = 'broker.status';
+      brokerWire['result'] = <String, Object?>{
+        'state': 'connected',
+        'endpoint': 'https://broker.example.test',
+        'generation': 3,
+      };
+      final broker =
+          WireDecoder.decode(jsonEncode(brokerWire)) as ResponseFrame;
+
+      expect(broker.brokerStatusResult?.state, BrokerState.connected);
+      expect(broker.brokerStatusResult?.generation, 3);
+    });
+
+    test('usage and broker results reject unsafe additive data', () {
+      final responseFixture = _namedCase(
+        corpus,
+        'inbound',
+        'successful-response',
+      );
+      final malformedUsage = _cloneMap(responseFixture['wire']);
+      malformedUsage['command'] = 'usage.read';
+      malformedUsage['result'] = <String, Object?>{
+        'generatedAt': 1,
+        'reports': <Object?>[],
+        'accountsWithoutUsage': <Object?>[],
+        'capacity': <String, Object?>{},
+        'token': 'secret',
+      };
+      expect(
+        () => WireDecoder.decode(jsonEncode(malformedUsage)),
+        throwsA(isA<WireFormatException>()),
+      );
+
+      final malformedBroker = _cloneMap(responseFixture['wire']);
+      malformedBroker['command'] = 'broker.status';
+      malformedBroker['result'] = <String, Object?>{
+        'state': 'connected',
+        'endpoint': 'https://user:secret@broker.example.test',
+        'generation': 1,
+      };
+      expect(
+        () => WireDecoder.decode(jsonEncode(malformedBroker)),
+        throwsA(isA<WireFormatException>()),
+      );
+
+      final malformedLocalBroker = _cloneMap(responseFixture['wire']);
+      malformedLocalBroker['command'] = 'broker.status';
+      malformedLocalBroker['result'] = <String, Object?>{
+        'state': 'local',
+        'endpoint': 'https://broker.example.test',
+        'generation': 1,
+      };
+      expect(
+        () => WireDecoder.decode(jsonEncode(malformedLocalBroker)),
+        throwsA(isA<WireFormatException>()),
+      );
+    });
+
     test('ping is client-only and rejected by server dispatch', () {
       final fixture = _namedCase(corpus, 'outbound', 'heartbeat-ping');
       expect(
@@ -610,6 +723,115 @@ void main() {
       final malformed = _cloneMap(source)..['totalCount'] = 0;
       expect(
         () => WireDecoder.decodeSessionListResult(malformed),
+        throwsA(isA<WireFormatException>()),
+      );
+    });
+
+    test(
+      'transcript search response is decoded into bounded typed results',
+      () {
+        final responseWire =
+            _cloneMap(
+                _namedCase(corpus, 'inbound', 'successful-response')['wire'],
+              )
+              ..['command'] = 'transcript.search'
+              ..['result'] = <String, Object?>{
+                'items': <Object?>[
+                  <String, Object?>{
+                    'sessionId': 'session-1',
+                    'projectId': 'project-1',
+                    'sessionTitle': 'Search fixture',
+                    'anchorId': 'entry-1',
+                    'role': 'assistant',
+                    'timestamp': '2026-07-19T12:00:00.000Z',
+                    'snippet': 'fixed the parser',
+                    'highlights': <Object?>[
+                      <String, Object?>{'start': 0, 'end': 5},
+                    ],
+                  },
+                ],
+                'incomplete': false,
+                'index': <String, Object?>{
+                  'state': 'ready',
+                  'indexedSessions': 4,
+                  'knownSessions': 4,
+                  'generation': 'generation-1',
+                },
+              };
+
+        final response =
+            WireDecoder.decode(jsonEncode(responseWire)) as ResponseFrame;
+        final result = response.transcriptSearchResult;
+
+        expect(result, isNotNull);
+        expect(result?.items.single.sessionTitle, 'Search fixture');
+        expect(result?.items.single.role, TranscriptSearchRole.assistant);
+        expect(result?.items.single.highlights.single.end, 5);
+        expect(result?.index.state, TranscriptSearchIndexState.ready);
+        expect(
+          () => result?.items.add(result.items.single),
+          throwsUnsupportedError,
+        );
+
+        final malformed = _cloneMap(responseWire);
+        final malformedResult = _cloneMap(malformed['result']);
+        final malformedItems = _asList(malformedResult['items']);
+        final malformedItem = _cloneMap(malformedItems.single);
+        malformedItem['highlights'] = <Object?>[
+          <String, Object?>{'start': 0, 'end': 100},
+        ];
+        malformedResult['items'] = <Object?>[malformedItem];
+        malformed['result'] = malformedResult;
+        expect(
+          () => WireDecoder.decode(jsonEncode(malformed)),
+          throwsA(isA<WireFormatException>()),
+        );
+      },
+    );
+
+    test('transcript context response validates its anchor row', () {
+      final responseWire =
+          _cloneMap(
+              _namedCase(corpus, 'inbound', 'successful-response')['wire'],
+            )
+            ..['command'] = 'transcript.context'
+            ..['sessionId'] = 'session-1'
+            ..['result'] = <String, Object?>{
+              'anchorId': 'entry-2',
+              'rows': <Object?>[
+                <String, Object?>{
+                  'anchorId': 'entry-1',
+                  'role': 'user',
+                  'timestamp': '2026-07-19T11:59:00.000Z',
+                  'text': 'Please fix the parser.',
+                },
+                <String, Object?>{
+                  'anchorId': 'entry-2',
+                  'role': 'assistant',
+                  'timestamp': '2026-07-19T12:00:00.000Z',
+                  'text': 'Fixed the parser.',
+                },
+              ],
+              'anchorIndex': 1,
+              'hasBefore': true,
+              'hasAfter': false,
+              'generation': 'generation-1',
+            };
+
+      final response =
+          WireDecoder.decode(jsonEncode(responseWire)) as ResponseFrame;
+      final context = response.transcriptContextResult;
+
+      expect(context?.rows, hasLength(2));
+      expect(context?.rows[context.anchorIndex].anchorId, 'entry-2');
+      expect(context?.hasBefore, isTrue);
+
+      final malformed = _cloneMap(responseWire);
+      final malformedResult = _cloneMap(malformed['result'])
+        ..['anchorIndex'] = 0;
+      malformed['result'] = malformedResult;
+      expect(
+        () => WireDecoder.decode(jsonEncode(malformed)),
         throwsA(isA<WireFormatException>()),
       );
     });

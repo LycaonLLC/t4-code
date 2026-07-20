@@ -138,7 +138,13 @@ final class _AttentionPaneState extends State<_AttentionPane>
                 emptyLabel: 'Nothing needs your response.',
               ),
               _attentionList(updates, emptyLabel: 'No recent session updates.'),
-              _AgentActivityList(activities: widget.state.agentActivities),
+              _AgentActivityList(
+                activities: widget.state.agentActivities,
+                actions: widget.actions,
+                canControl:
+                    widget.state.connectionPhase == ConnectionPhase.ready &&
+                    widget.state.grantedCapabilities.contains('agents.control'),
+              ),
             ],
           ),
         ),
@@ -404,37 +410,186 @@ final class _AttentionCard extends StatelessWidget {
   };
 }
 
-final class _AgentActivityList extends StatelessWidget {
-  const _AgentActivityList({required this.activities});
+final class _AgentActivityList extends StatefulWidget {
+  const _AgentActivityList({
+    required this.activities,
+    required this.actions,
+    required this.canControl,
+  });
 
   final List<AgentActivity> activities;
+  final T4Actions actions;
+  final bool canControl;
+
+  @override
+  State<_AgentActivityList> createState() => _AgentActivityListState();
+}
+
+final class _AgentActivityListState extends State<_AgentActivityList> {
+  final Set<String> _cancelling = <String>{};
+
+  Future<void> _cancel(AgentActivity activity) async {
+    if (_cancelling.contains(activity.agentId)) return;
+    try {
+      final approved = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Stop background agent?'),
+          content: Text(
+            '${activity.label} will be asked to stop. Work already completed is kept.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Keep running'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Stop agent'),
+            ),
+          ],
+        ),
+      );
+      if (approved != true || !mounted) return;
+      _cancelling.add(activity.agentId);
+      setState(() {});
+      await widget.actions.cancelAgent(activity.agentId);
+    } on Object catch (error) {
+      if (!mounted) return;
+      final message = error.toString().replaceFirst('Bad state: ', '');
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(message)));
+    } finally {
+      if (mounted) setState(() => _cancelling.remove(activity.agentId));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (activities.isEmpty) {
+    if (widget.activities.isEmpty) {
       return const _AttentionEmpty(label: 'No background agent activity.');
     }
+    final rows = _agentHierarchy(widget.activities);
     return ListView.separated(
       padding: const EdgeInsets.all(_T4Space.lg),
-      itemCount: activities.length,
+      itemCount: rows.length,
       separatorBuilder: (_, _) => const Divider(height: _T4Space.lg),
       itemBuilder: (context, index) {
-        final activity = activities[index];
-        return ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.hub_outlined),
-          title: Text(activity.label),
-          subtitle: Text(activity.status),
-          trailing: activity.progress == null
-              ? null
-              : SizedBox(
-                  width: 72,
-                  child: LinearProgressIndicator(value: activity.progress),
-                ),
+        final row = rows[index];
+        final activity = row.activity;
+        final terminal = const {
+          'completed',
+          'failed',
+          'cancelled',
+        }.contains(activity.status);
+        final detail = <String>[
+          activity.status,
+          ?activity.model,
+          ?activity.currentTool,
+        ].join(' · ');
+        return Padding(
+          padding: EdgeInsets.only(left: row.depth * _T4Space.lg),
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              row.depth == 0
+                  ? Icons.hub_outlined
+                  : Icons.subdirectory_arrow_right,
+            ),
+            title: Text(activity.label),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(detail),
+                if (activity.description case final description?)
+                  Text(
+                    description,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                if (activity.evidence case final evidence?)
+                  Text(
+                    evidence,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                if (activity.progress case final progress?)
+                  Padding(
+                    padding: const EdgeInsets.only(top: _T4Space.xs),
+                    child: LinearProgressIndicator(value: progress),
+                  ),
+              ],
+            ),
+            trailing: terminal
+                ? Icon(
+                    activity.status == 'completed'
+                        ? Icons.check_circle_outline
+                        : Icons.stop_circle_outlined,
+                  )
+                : IconButton(
+                    onPressed:
+                        widget.canControl &&
+                            !_cancelling.contains(activity.agentId)
+                        ? () => unawaited(_cancel(activity))
+                        : null,
+                    tooltip: widget.canControl
+                        ? 'Stop ${activity.label}'
+                        : 'Agent control unavailable',
+                    icon: _cancelling.contains(activity.agentId)
+                        ? const SizedBox.square(
+                            dimension: _T4Size.indicator,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.stop_circle_outlined),
+                  ),
+          ),
         );
       },
     );
   }
+}
+
+List<({AgentActivity activity, double depth})> _agentHierarchy(
+  List<AgentActivity> activities,
+) {
+  final byId = {for (final activity in activities) activity.agentId: activity};
+  final children = <String, List<AgentActivity>>{};
+  final roots = <AgentActivity>[];
+  for (final activity in activities) {
+    final parentId = activity.parentAgentId;
+    if (parentId == null || !byId.containsKey(parentId)) {
+      roots.add(activity);
+    } else {
+      children.putIfAbsent(parentId, () => <AgentActivity>[]).add(activity);
+    }
+  }
+  int recentFirst(AgentActivity left, AgentActivity right) =>
+      right.updatedAt.compareTo(left.updatedAt);
+  roots.sort(recentFirst);
+  for (final values in children.values) {
+    values.sort(recentFirst);
+  }
+  final rows = <({AgentActivity activity, double depth})>[];
+  final visited = <String>{};
+  void append(AgentActivity activity, int depth) {
+    if (!visited.add(activity.agentId)) return;
+    rows.add((activity: activity, depth: depth.clamp(0, 4).toDouble()));
+    for (final child in children[activity.agentId] ?? const <AgentActivity>[]) {
+      append(child, depth + 1);
+    }
+  }
+
+  for (final root in roots) {
+    append(root, 0);
+  }
+  for (final activity in activities) {
+    append(activity, 0);
+  }
+  return rows;
 }
 
 final class _AttentionEmpty extends StatelessWidget {
