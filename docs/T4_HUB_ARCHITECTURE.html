@@ -402,10 +402,137 @@
     <h2 id="product-goal">Product goal</h2>
     <p>T4 Code is a remote client for an easy-to-install, highly available agent platform:</p>
     <figure>
-      <img
-        src="assets/t4-hub-product-flow.svg"
-        alt="T4 Code desktop and mobile clients connect over Tailscale to T4 Hub. T4 Hub directs the T4 Operator in k3s, which runs pinned stock OMP sessions using shared CephFS projects and worktrees."
-      />
+      <svg
+        id="product-diagram"
+        xmlns="http://www.w3.org/2000/svg"
+        role="img"
+        aria-labelledby="product-title product-description"
+        viewBox="0 0 900 820"
+      >
+        <title id="product-title">T4 Hub product flow</title>
+        <desc id="product-description">
+          T4 Code desktop and mobile clients connect over Tailscale to T4 Hub. T4 Hub records
+          durable commands and desired state, directs the T4 Operator in k3s, launches pinned stock
+          OMP runtime pods, and gives them access to shared CephFS projects, worktrees, and
+          services.
+        </desc>
+        <defs>
+          <marker
+            id="product-arrow"
+            markerWidth="10"
+            markerHeight="10"
+            refX="9"
+            refY="3"
+            orient="auto"
+            markerUnits="strokeWidth"
+          >
+            <path d="M0,0 L0,6 L9,3 z" fill="#475569" />
+          </marker>
+          <style>
+            #product-diagram text {
+              font-family:
+                system-ui,
+                -apple-system,
+                BlinkMacSystemFont,
+                "Segoe UI",
+                sans-serif;
+              fill: #172033;
+            }
+            #product-diagram .box {
+              fill: #fff;
+              stroke-width: 2.5;
+              rx: 14;
+            }
+            #product-diagram .client {
+              fill: #eef2ff;
+              stroke: #6366f1;
+            }
+            #product-diagram .network {
+              fill: #ecfeff;
+              stroke: #0891b2;
+            }
+            #product-diagram .hub {
+              fill: #eff6ff;
+              stroke: #2563eb;
+            }
+            #product-diagram .cluster {
+              fill: #f0fdf4;
+              stroke: #16a34a;
+            }
+            #product-diagram .runtime {
+              fill: #fefce8;
+              stroke: #ca8a04;
+            }
+            #product-diagram .storage {
+              fill: #fff7ed;
+              stroke: #ea580c;
+            }
+            #product-diagram .title {
+              font-size: 23px;
+              font-weight: 700;
+              text-anchor: middle;
+            }
+            #product-diagram .subtitle {
+              font-size: 15px;
+              fill: #64748b;
+              text-anchor: middle;
+            }
+            #product-diagram .edge {
+              fill: none;
+              stroke: #475569;
+              stroke-width: 2.5;
+              marker-end: url(#product-arrow);
+            }
+            #product-diagram .label {
+              font-size: 14px;
+              fill: #475569;
+              text-anchor: start;
+            }
+          </style>
+        </defs>
+        <rect width="900" height="820" fill="#fff" />
+
+        <rect class="box client" x="210" y="30" width="480" height="82" />
+        <text class="title" x="450" y="63">T4 Code</text>
+        <text class="subtitle" x="450" y="89">desktop or mobile remote client</text>
+
+        <rect class="box network" x="275" y="160" width="350" height="82" />
+        <text class="title" x="450" y="193">Tailscale</text>
+        <text class="subtitle" x="450" y="219">private authenticated connection</text>
+
+        <rect class="box hub" x="185" y="290" width="530" height="92" />
+        <text class="title" x="450" y="326">T4 Hub control plane</text>
+        <text class="subtitle" x="450" y="354">
+          durable commands, desired state, and product events
+        </text>
+
+        <rect class="box cluster" x="185" y="440" width="530" height="92" />
+        <text class="title" x="450" y="476">k3s cluster and T4 Operator</text>
+        <text class="subtitle" x="450" y="504">
+          reconciles one managed runtime pod per OMP session
+        </text>
+
+        <rect class="box runtime" x="235" y="590" width="430" height="82" />
+        <text class="title" x="450" y="623">Pinned stock OMP runtime</text>
+        <text class="subtitle" x="450" y="649">unmodified OMP owned by its session pod</text>
+
+        <rect class="box storage" x="185" y="720" width="530" height="82" />
+        <text class="title" x="450" y="753">Shared CephFS project</text>
+        <text class="subtitle" x="450" y="779">
+          repositories, OMP worktrees, and project services
+        </text>
+
+        <path class="edge" d="M450 112 V160" />
+        <path class="edge" d="M450 242 V290" />
+        <path class="edge" d="M450 382 V440" />
+        <path class="edge" d="M450 532 V590" />
+        <path class="edge" d="M450 672 V720" />
+
+        <text class="label" x="470" y="142">Hub Wire</text>
+        <text class="label" x="470" y="422">desired state</text>
+        <text class="label" x="470" y="572">Runtime Wire</text>
+        <text class="label" x="470" y="702">POSIX RWX</text>
+      </svg>
       <figcaption>
         T4 Code remains a remote client while T4 Hub owns durable orchestration.
       </figcaption>
@@ -516,10 +643,219 @@
     </ol>
     <h2 id="system-topology">System topology</h2>
     <figure>
-      <img
-        src="assets/t4-hub-system-topology.svg"
-        alt="T4 Code mobile and desktop clients connect over Tailscale to the T4 Hub control plane, which uses PostgreSQL, durable events, CI/CD integration, and the T4 Operator to coordinate OMP runtime pods sharing CephFS in a k3s cluster. MinIO stores durable objects and Grafana provides observability."
-      />
+      <svg
+        id="topology-diagram"
+        xmlns="http://www.w3.org/2000/svg"
+        role="img"
+        aria-labelledby="title description"
+        viewBox="0 0 1280 760"
+      >
+        <title id="title">T4 Hub system topology</title>
+        <desc id="description">
+          Desktop and mobile T4 Code clients connect through Tailscale to the T4 Hub control plane.
+          The Hub persists state in PostgreSQL, coordinates durable events and CI/CD, and uses the
+          T4 Operator to manage OMP session runtimes in a k3s cluster. Runtime pods share CephFS,
+          while MinIO stores durable objects and Grafana provides observability.
+        </desc>
+        <defs>
+          <marker
+            id="arrow"
+            markerWidth="10"
+            markerHeight="10"
+            refX="9"
+            refY="3"
+            orient="auto"
+            markerUnits="strokeWidth"
+          >
+            <path d="M0,0 L0,6 L9,3 z" fill="#475569" />
+          </marker>
+          <style>
+            #topology-diagram text {
+              font-family:
+                system-ui,
+                -apple-system,
+                BlinkMacSystemFont,
+                "Segoe UI",
+                sans-serif;
+              fill: #172033;
+            }
+            #topology-diagram .group {
+              fill: #f8fafc;
+              stroke: #94a3b8;
+              stroke-width: 2;
+              rx: 18;
+            }
+            #topology-diagram .group-title {
+              font-size: 24px;
+              font-weight: 700;
+            }
+            #topology-diagram .group-subtitle {
+              font-size: 15px;
+              fill: #64748b;
+            }
+            #topology-diagram .node {
+              fill: #ffffff;
+              stroke: #64748b;
+              stroke-width: 2;
+              rx: 12;
+            }
+            #topology-diagram .client {
+              fill: #eef2ff;
+              stroke: #6366f1;
+            }
+            #topology-diagram .network {
+              fill: #ecfeff;
+              stroke: #0891b2;
+            }
+            #topology-diagram .control {
+              fill: #eff6ff;
+              stroke: #2563eb;
+            }
+            #topology-diagram .runtime {
+              fill: #f0fdf4;
+              stroke: #16a34a;
+            }
+            #topology-diagram .storage {
+              fill: #fff7ed;
+              stroke: #ea580c;
+            }
+            #topology-diagram .telemetry {
+              fill: #faf5ff;
+              stroke: #9333ea;
+            }
+            #topology-diagram .node-title {
+              font-size: 18px;
+              font-weight: 700;
+              text-anchor: middle;
+            }
+            #topology-diagram .node-subtitle {
+              font-size: 13px;
+              fill: #64748b;
+              text-anchor: middle;
+            }
+            #topology-diagram .edge {
+              fill: none;
+              stroke: #475569;
+              stroke-width: 2.25;
+              marker-end: url(#arrow);
+            }
+            #topology-diagram .edge-dashed {
+              fill: none;
+              stroke: #64748b;
+              stroke-width: 2;
+              stroke-dasharray: 7 6;
+              marker-end: url(#arrow);
+            }
+            #topology-diagram .edge-label {
+              font-size: 13px;
+              fill: #475569;
+              text-anchor: middle;
+              paint-order: stroke;
+              stroke: #ffffff;
+              stroke-width: 5px;
+              stroke-linejoin: round;
+            }
+          </style>
+        </defs>
+
+        <rect width="1280" height="760" fill="#ffffff" />
+
+        <rect class="group" x="420" y="35" width="360" height="680" />
+        <text class="group-title" x="450" y="75">T4 Hub</text>
+        <text class="group-subtitle" x="450" y="100">HA control plane</text>
+
+        <rect class="group" x="825" y="35" width="425" height="680" />
+        <text class="group-title" x="855" y="75">k3s execution cluster</text>
+        <text class="group-subtitle" x="855" y="100">
+          T4 Nodes, session runtimes, and shared services
+        </text>
+
+        <rect class="node client" x="30" y="190" width="185" height="78" />
+        <text class="node-title" x="122.5" y="222">T4 Code</text>
+        <text class="node-subtitle" x="122.5" y="246">mobile client</text>
+
+        <rect class="node client" x="30" y="310" width="185" height="78" />
+        <text class="node-title" x="122.5" y="342">T4 Code</text>
+        <text class="node-subtitle" x="122.5" y="366">desktop client</text>
+
+        <rect class="node network" x="245" y="250" width="145" height="78" />
+        <text class="node-title" x="317.5" y="282">Tailscale</text>
+        <text class="node-subtitle" x="317.5" y="306">private ingress</text>
+
+        <rect class="node control" x="470" y="135" width="260" height="82" />
+        <text class="node-title" x="600" y="168">T4 API replicas</text>
+        <text class="node-subtitle" x="600" y="193">Hub Wire and authentication</text>
+
+        <rect class="node control" x="470" y="270" width="125" height="82" />
+        <text class="node-title" x="532.5" y="302">PostgreSQL</text>
+        <text class="node-subtitle" x="532.5" y="327">durable state</text>
+
+        <rect class="node control" x="605" y="270" width="125" height="82" />
+        <text class="node-title" x="667.5" y="302">Events</text>
+        <text class="node-subtitle" x="667.5" y="327">commands + cursors</text>
+
+        <rect class="node control" x="470" y="405" width="125" height="82" />
+        <text class="node-title" x="532.5" y="437">T4 Operator</text>
+        <text class="node-subtitle" x="532.5" y="462">reconciliation</text>
+
+        <rect class="node control" x="605" y="405" width="125" height="82" />
+        <text class="node-title" x="667.5" y="437">CI/CD</text>
+        <text class="node-subtitle" x="667.5" y="462">GitHub integration</text>
+
+        <rect class="node runtime" x="865" y="135" width="170" height="82" />
+        <text class="node-title" x="950" y="168">OMP runtime A</text>
+        <text class="node-subtitle" x="950" y="193">managed session pod</text>
+
+        <rect class="node runtime" x="865" y="270" width="170" height="82" />
+        <text class="node-title" x="950" y="303">OMP runtime B</text>
+        <text class="node-subtitle" x="950" y="328">managed session pod</text>
+
+        <rect class="node runtime" x="865" y="405" width="170" height="82" />
+        <text class="node-title" x="950" y="438">OMP runtime C</text>
+        <text class="node-subtitle" x="950" y="463">managed session pod</text>
+
+        <rect class="node storage" x="1075" y="185" width="135" height="82" />
+        <text class="node-title" x="1142.5" y="218">CephFS</text>
+        <text class="node-subtitle" x="1142.5" y="243">shared projects</text>
+
+        <rect class="node storage" x="1075" y="330" width="135" height="82" />
+        <text class="node-title" x="1142.5" y="363">MinIO</text>
+        <text class="node-subtitle" x="1142.5" y="388">durable objects</text>
+
+        <rect class="node telemetry" x="1075" y="475" width="135" height="82" />
+        <text class="node-title" x="1142.5" y="508">Grafana</text>
+        <text class="node-subtitle" x="1142.5" y="533">LGTM stack</text>
+
+        <path class="edge" d="M215 229 H245 V270" />
+        <path class="edge" d="M215 349 H245 V308" />
+        <path class="edge" d="M390 289 H430 V176 H470" />
+        <text class="edge-label" x="430" y="271">Hub Wire</text>
+
+        <path class="edge" d="M555 217 V270" />
+        <path class="edge" d="M645 217 V270" />
+        <path class="edge" d="M525 352 V405" />
+        <path class="edge" d="M675 352 V405" />
+
+        <path class="edge" d="M595 446 H810 V176 H865" />
+        <path class="edge" d="M595 446 H810 V311 H865" />
+        <path class="edge" d="M595 446 H810 V446 H865" />
+        <text class="edge-label" x="788" y="431">desired state</text>
+
+        <path class="edge-dashed" d="M730 311 H790 V176 H865" />
+        <path class="edge-dashed" d="M730 311 H790 V311 H865" />
+        <path class="edge-dashed" d="M730 311 H790 V446 H865" />
+        <text class="edge-label" x="790" y="297">Runtime Wire</text>
+
+        <path class="edge" d="M1035 176 H1055 V226 H1075" />
+        <path class="edge" d="M1035 311 H1055 V226 H1075" />
+        <path class="edge" d="M1035 446 H1055 V226 H1075" />
+
+        <path class="edge-dashed" d="M730 330 H1045 V371 H1075" />
+        <path class="edge-dashed" d="M1075 516 H1045 V391 H1075" />
+
+        <text class="edge-label" x="1048" y="210">RWX</text>
+        <text class="edge-label" x="990" y="357">artifacts</text>
+      </svg>
       <figcaption>
         T4 Hub is the durable authority; k3s runtimes are replaceable workers sharing CephFS.
       </figcaption>
@@ -618,10 +954,142 @@
     </p>
     <h2 id="session-and-command-flow">Session and command flow</h2>
     <figure>
-      <img
-        src="assets/t4-hub-command-flow.svg"
-        alt="A T4 command moves from the client through Hub validation and durable PostgreSQL recording to an epoch-fenced session owner and stock OMP, then returns through durable outcomes and product events to the client cursor."
-      />
+      <svg
+        id="command-diagram"
+        xmlns="http://www.w3.org/2000/svg"
+        role="img"
+        aria-labelledby="command-title command-description"
+        viewBox="0 0 1080 700"
+      >
+        <title id="command-title">Durable T4 command flow</title>
+        <desc id="command-description">
+          T4 Code submits a command ID. T4 Hub authenticates the request, PostgreSQL records it
+          durably, the current session owner claims it using an owner epoch, the runtime invokes
+          stock OMP, records the outcome, appends transcript and progress events, and advances the
+          client cursor.
+        </desc>
+        <defs>
+          <marker
+            id="command-arrow"
+            markerWidth="10"
+            markerHeight="10"
+            refX="9"
+            refY="3"
+            orient="auto"
+            markerUnits="strokeWidth"
+          >
+            <path d="M0,0 L0,6 L9,3 z" fill="#475569" />
+          </marker>
+          <style>
+            #command-diagram text {
+              font-family:
+                system-ui,
+                -apple-system,
+                BlinkMacSystemFont,
+                "Segoe UI",
+                sans-serif;
+              fill: #172033;
+            }
+            #command-diagram .box {
+              fill: #fff;
+              stroke: #64748b;
+              stroke-width: 2.25;
+              rx: 13;
+            }
+            #command-diagram .client {
+              fill: #eef2ff;
+              stroke: #6366f1;
+            }
+            #command-diagram .hub {
+              fill: #eff6ff;
+              stroke: #2563eb;
+            }
+            #command-diagram .database {
+              fill: #fdf4ff;
+              stroke: #a21caf;
+            }
+            #command-diagram .runtime {
+              fill: #f0fdf4;
+              stroke: #16a34a;
+            }
+            #command-diagram .event {
+              fill: #fff7ed;
+              stroke: #ea580c;
+            }
+            #command-diagram .title {
+              font-size: 20px;
+              font-weight: 700;
+              text-anchor: middle;
+            }
+            #command-diagram .subtitle {
+              font-size: 14px;
+              fill: #64748b;
+              text-anchor: middle;
+            }
+            #command-diagram .step {
+              font-size: 15px;
+              font-weight: 700;
+              fill: #475569;
+              text-anchor: middle;
+            }
+            #command-diagram .edge {
+              fill: none;
+              stroke: #475569;
+              stroke-width: 2.4;
+              marker-end: url(#command-arrow);
+            }
+          </style>
+        </defs>
+        <rect width="1080" height="700" fill="#fff" />
+
+        <rect class="box client" x="55" y="70" width="250" height="94" />
+        <text class="step" x="82" y="97">1</text>
+        <text class="title" x="180" y="119">T4 Code</text>
+        <text class="subtitle" x="180" y="144">submit commandId</text>
+
+        <rect class="box hub" x="415" y="70" width="250" height="94" />
+        <text class="step" x="442" y="97">2</text>
+        <text class="title" x="540" y="119">T4 Hub</text>
+        <text class="subtitle" x="540" y="144">authenticate + validate</text>
+
+        <rect class="box database" x="775" y="70" width="250" height="94" />
+        <text class="step" x="802" y="97">3</text>
+        <text class="title" x="900" y="119">PostgreSQL</text>
+        <text class="subtitle" x="900" y="144">record command durably</text>
+
+        <rect class="box runtime" x="775" y="300" width="250" height="94" />
+        <text class="step" x="802" y="327">4</text>
+        <text class="title" x="900" y="349">Session owner</text>
+        <text class="subtitle" x="900" y="374">claim with ownerEpoch</text>
+
+        <rect class="box runtime" x="415" y="300" width="250" height="94" />
+        <text class="step" x="442" y="327">5</text>
+        <text class="title" x="540" y="349">Stock OMP</text>
+        <text class="subtitle" x="540" y="374">execute through RPC</text>
+
+        <rect class="box event" x="55" y="300" width="250" height="94" />
+        <text class="step" x="82" y="327">6</text>
+        <text class="title" x="180" y="349">Durable outcome</text>
+        <text class="subtitle" x="180" y="374">accepted, rejected, or failed</text>
+
+        <rect class="box event" x="235" y="535" width="250" height="94" />
+        <text class="step" x="262" y="562">7</text>
+        <text class="title" x="360" y="584">Product events</text>
+        <text class="subtitle" x="360" y="609">append transcript + progress</text>
+
+        <rect class="box client" x="595" y="535" width="250" height="94" />
+        <text class="step" x="622" y="562">8</text>
+        <text class="title" x="720" y="584">T4 Code</text>
+        <text class="subtitle" x="720" y="609">receive and advance cursor</text>
+
+        <path class="edge" d="M305 117 H415" />
+        <path class="edge" d="M665 117 H775" />
+        <path class="edge" d="M900 164 V300" />
+        <path class="edge" d="M775 347 H665" />
+        <path class="edge" d="M415 347 H305" />
+        <path class="edge" d="M180 394 V470 H360 V535" />
+        <path class="edge" d="M485 582 H595" />
+      </svg>
       <figcaption>
         Commands become durable before dispatch; clients resume from authoritative event cursors.
       </figcaption>
@@ -865,10 +1333,154 @@
     <h2 id="guided-installation">Guided installation</h2>
     <h3 id="first-hub">First Hub</h3>
     <figure>
-      <img
-        src="assets/t4-hub-install-flow.svg"
-        alt="The guided installation starts in T4 Code, selects a Linux Hub, discovers it through Tailscale, runs the signed T4 Node bootstrap, performs preflight, installs the signed k3s release, bootstraps platform services, runs an end-to-end health check, and pairs the client."
-      />
+      <svg
+        id="install-diagram"
+        xmlns="http://www.w3.org/2000/svg"
+        role="img"
+        aria-labelledby="install-title install-description"
+        viewBox="0 0 1100 760"
+      >
+        <title id="install-title">Guided T4 Hub installation flow</title>
+        <desc id="install-description">
+          The user installs T4 Code, chooses a local or remote Linux Hub, identifies the machine
+          through Tailscale, runs the signed T4 Node installer, exchanges a one-time enrollment
+          code, passes hardware and network preflight, installs the signed k3s release bundle,
+          bootstraps platform services, runs an end-to-end health check, and pairs T4 Code.
+        </desc>
+        <defs>
+          <marker
+            id="install-arrow"
+            markerWidth="10"
+            markerHeight="10"
+            refX="9"
+            refY="3"
+            orient="auto"
+            markerUnits="strokeWidth"
+          >
+            <path d="M0,0 L0,6 L9,3 z" fill="#475569" />
+          </marker>
+          <style>
+            #install-diagram text {
+              font-family:
+                system-ui,
+                -apple-system,
+                BlinkMacSystemFont,
+                "Segoe UI",
+                sans-serif;
+              fill: #172033;
+            }
+            #install-diagram .box {
+              fill: #fff;
+              stroke: #64748b;
+              stroke-width: 2.2;
+              rx: 13;
+            }
+            #install-diagram .client {
+              fill: #eef2ff;
+              stroke: #6366f1;
+            }
+            #install-diagram .network {
+              fill: #ecfeff;
+              stroke: #0891b2;
+            }
+            #install-diagram .node {
+              fill: #eff6ff;
+              stroke: #2563eb;
+            }
+            #install-diagram .platform {
+              fill: #f0fdf4;
+              stroke: #16a34a;
+            }
+            #install-diagram .verify {
+              fill: #fff7ed;
+              stroke: #ea580c;
+            }
+            #install-diagram .title {
+              font-size: 18px;
+              font-weight: 700;
+              text-anchor: middle;
+            }
+            #install-diagram .subtitle {
+              font-size: 13px;
+              fill: #64748b;
+              text-anchor: middle;
+            }
+            #install-diagram .step {
+              font-size: 14px;
+              font-weight: 700;
+              fill: #475569;
+              text-anchor: middle;
+            }
+            #install-diagram .edge {
+              fill: none;
+              stroke: #475569;
+              stroke-width: 2.4;
+              marker-end: url(#install-arrow);
+            }
+          </style>
+        </defs>
+        <rect width="1100" height="760" fill="#fff" />
+
+        <rect class="box client" x="40" y="55" width="280" height="88" />
+        <text class="step" x="68" y="82">1</text>
+        <text class="title" x="180" y="103">Install T4 Code</text>
+        <text class="subtitle" x="180" y="127">desktop setup experience</text>
+
+        <rect class="box client" x="410" y="55" width="280" height="88" />
+        <text class="step" x="438" y="82">2</text>
+        <text class="title" x="550" y="103">Choose Hub profile</text>
+        <text class="subtitle" x="550" y="127">local Linux or remote Linux</text>
+
+        <rect class="box network" x="780" y="55" width="280" height="88" />
+        <text class="step" x="808" y="82">3</text>
+        <text class="title" x="920" y="103">Identify through Tailscale</text>
+        <text class="subtitle" x="920" y="127">private machine discovery</text>
+
+        <rect class="box node" x="780" y="255" width="280" height="88" />
+        <text class="step" x="808" y="282">4</text>
+        <text class="title" x="920" y="303">Run signed T4 Node</text>
+        <text class="subtitle" x="920" y="327">bootstrap on Linux</text>
+
+        <rect class="box network" x="410" y="255" width="280" height="88" />
+        <text class="step" x="438" y="282">5</text>
+        <text class="title" x="550" y="303">Exchange enrollment code</text>
+        <text class="subtitle" x="550" y="327">short-lived and single-use</text>
+
+        <rect class="box verify" x="40" y="255" width="280" height="88" />
+        <text class="step" x="68" y="282">6</text>
+        <text class="title" x="180" y="303">Run preflight</text>
+        <text class="subtitle" x="180" y="327">CPU, memory, disk, OS, network, time</text>
+
+        <rect class="box platform" x="40" y="455" width="280" height="88" />
+        <text class="step" x="68" y="482">7</text>
+        <text class="title" x="180" y="503">Install signed release</text>
+        <text class="subtitle" x="180" y="527">k3s and pinned OCI bundle</text>
+
+        <rect class="box platform" x="410" y="455" width="280" height="88" />
+        <text class="step" x="438" y="482">8</text>
+        <text class="title" x="550" y="503">Bootstrap services</text>
+        <text class="subtitle" x="550" y="527">PostgreSQL, CephFS, MinIO, Grafana</text>
+
+        <rect class="box verify" x="780" y="455" width="280" height="88" />
+        <text class="step" x="808" y="482">9</text>
+        <text class="title" x="920" y="503">End-to-end health check</text>
+        <text class="subtitle" x="920" y="527">real session and recovery path</text>
+
+        <rect class="box client" x="410" y="650" width="280" height="88" />
+        <text class="step" x="438" y="677">10</text>
+        <text class="title" x="550" y="698">Pair T4 Code</text>
+        <text class="subtitle" x="550" y="722">Hub ready for client use</text>
+
+        <path class="edge" d="M320 99 H410" />
+        <path class="edge" d="M690 99 H780" />
+        <path class="edge" d="M920 143 V255" />
+        <path class="edge" d="M780 299 H690" />
+        <path class="edge" d="M410 299 H320" />
+        <path class="edge" d="M180 343 V455" />
+        <path class="edge" d="M320 499 H410" />
+        <path class="edge" d="M690 499 H780" />
+        <path class="edge" d="M920 543 V600 H550 V650" />
+      </svg>
       <figcaption>
         The guided flow hides Kubernetes and storage administration without bypassing verification.
       </figcaption>
