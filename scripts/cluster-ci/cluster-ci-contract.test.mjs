@@ -593,7 +593,7 @@ test("SPDX, Trivy, and BuildKit content bind every image identity field", () => 
   const trivy = {
     ArtifactName: reference,
     ArtifactType: "container_image",
-    Metadata: { ImageID: DIGEST, RepoDigests: [reference] },
+    Metadata: { ImageID: `sha256:${"b".repeat(64)}`, RepoDigests: [reference] },
     Results: [{ Target: "debian", Class: "os-pkgs", Type: "debian", Vulnerabilities: [] }],
   };
   assert.deepEqual(vulnerabilityCounts(trivy, { repository, digest: DIGEST, reference }), { critical: 0, high: 0 });
@@ -603,6 +603,18 @@ test("SPDX, Trivy, and BuildKit content bind every image identity field", () => 
   );
   assert.throws(
     () => vulnerabilityCounts({ ...trivy, ArtifactName: "wrong" }, { repository, digest: DIGEST, reference }),
+    /artifact\/results identity/u,
+  );
+  const wrongTrivyIndexDigest = structuredClone(trivy);
+  wrongTrivyIndexDigest.Metadata.RepoDigests = [`${repository}@sha256:${"c".repeat(64)}`];
+  assert.throws(
+    () => vulnerabilityCounts(wrongTrivyIndexDigest, { repository, digest: DIGEST, reference }),
+    /artifact\/results identity/u,
+  );
+  const malformedTrivyChildId = structuredClone(trivy);
+  malformedTrivyChildId.Metadata.ImageID = "mutable-child";
+  assert.throws(
+    () => vulnerabilityCounts(malformedTrivyChildId, { repository, digest: DIGEST, reference }),
     /artifact\/results identity/u,
   );
 

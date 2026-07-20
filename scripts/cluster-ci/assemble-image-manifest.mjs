@@ -121,7 +121,8 @@ export function vulnerabilityCounts(report, { repository, digest, reference }) {
     !report.Metadata ||
     !Array.isArray(report.Metadata.RepoDigests) ||
     !report.Metadata.RepoDigests.includes(`${repository}@${digest}`) ||
-    !(report.Metadata.ImageID === digest || report.Metadata.ImageID?.endsWith(`@${digest}`)) ||
+    typeof report.Metadata.ImageID !== "string" ||
+    !/^sha256:[0-9a-f]{64}$/u.test(report.Metadata.ImageID) ||
     !Array.isArray(report.Results) ||
     report.Results.length < 1 ||
     report.Results.length > 4096

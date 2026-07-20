@@ -1324,7 +1324,7 @@ $JQ -n \
         allowedOrigin: $gateway_origin,
         port: $gateway_port,
         appSocket: $gateway_socket,
-        label: $gateway_label,
+        "label": $gateway_label,
         deploymentIdentity: $deployment_identity,
         nodeExecutable: $gateway_node_executable,
         runtimeSourceRoot: $runtime_root,

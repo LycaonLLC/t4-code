@@ -719,7 +719,7 @@ SH
           allowedOrigin:$allowedOrigin,
           port:$port,
           appSocket:$appSocket,
-          label:$label,
+          "label":$label,
           deploymentIdentity:$deploymentIdentity
         } + (if $profileRoutes == null then {} else {
           profileRoutes:$profileRoutes,
@@ -982,7 +982,7 @@ jq -n \
     allowedOrigin: $allowedOrigin,
     port: $port,
     appSocket: $appSocket,
-    label: $label,
+    "label": $label,
     nodeExecutable: $nodeExecutable,
     gatewayScript: $gatewayScript,
     webRoot: $webRoot,
@@ -1060,7 +1060,7 @@ jq -n \
       allowedOrigin: $gateway_origin,
       port: $gateway_port,
       appSocket: $gateway_socket,
-      label: $gateway_label,
+      "label": $gateway_label,
         nodeExecutable: $node_executable,
         deploymentIdentity: $deployment_identity,
       artifacts: {
