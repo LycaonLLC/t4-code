@@ -11,16 +11,16 @@ t4-cluster
 {{- end -}}
 
 {{- define "t4-cluster.labels" -}}
-app.kubernetes.io/name: {{ include "t4-cluster.name" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
-app.kubernetes.io/part-of: t4-cluster
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
+app.kubernetes.io/name: {{ include "t4-cluster.name" . | quote }}
+app.kubernetes.io/instance: {{ .Release.Name | quote }}
+app.kubernetes.io/part-of: "t4-cluster"
+app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | quote }}
 {{- end -}}
 
 {{- define "t4-cluster.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "t4-cluster.name" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/name: {{ include "t4-cluster.name" . | quote }}
+app.kubernetes.io/instance: {{ .Release.Name | quote }}
 {{- end -}}
 
 {{- define "t4-cluster.image" -}}

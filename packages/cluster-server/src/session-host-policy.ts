@@ -13,6 +13,7 @@ import type {
 import type { RemoteConnection } from "@t4-code/host-service";
 
 const SESSION_NAME = /^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/u;
+const AUDIENCE = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/u;
 const INTERNAL_TOKEN_PLACEHOLDER = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const MAX_PROJECTED_TOKEN_BYTES = 16_384;
 interface ConnectionGrant { capabilities: Set<string>; features: Set<string>; }
@@ -96,6 +97,7 @@ export interface SessionHostConfig {
 	readonly kubernetesTokenPath: string;
 	readonly kubernetesCaPath: string;
 	readonly kubernetesNamespacePath: string;
+	readonly kubernetesApiAudience: string;
 	readonly serverServiceAccountName: string;
 	readonly sessionName: string;
 	readonly ompExecutable: string;
@@ -113,6 +115,10 @@ function dns(value: string, name: string): string {
 }
 function absolutePath(value: string, name: string): string {
 	if (!isAbsolute(value)) throw new Error(`${name} must be absolute`);
+	return value;
+}
+function audience(value: string): string {
+	if (value.length > 253 || !AUDIENCE.test(value)) throw new Error("T4_KUBERNETES_API_AUDIENCE is invalid");
 	return value;
 }
 export function sessionHostConfigFromEnv(env: Readonly<Record<string, string | undefined>>): SessionHostConfig {
@@ -133,6 +139,7 @@ export function sessionHostConfigFromEnv(env: Readonly<Record<string, string | u
 		kubernetesTokenPath: absolutePath(env.T4_KUBERNETES_TOKEN_PATH ?? "/var/run/secrets/kubernetes.io/serviceaccount/token", "T4_KUBERNETES_TOKEN_PATH"),
 		kubernetesCaPath: absolutePath(env.T4_KUBERNETES_CA_PATH ?? "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt", "T4_KUBERNETES_CA_PATH"),
 		kubernetesNamespacePath: absolutePath(env.T4_KUBERNETES_NAMESPACE_PATH ?? "/var/run/secrets/kubernetes.io/serviceaccount/namespace", "T4_KUBERNETES_NAMESPACE_PATH"),
+		kubernetesApiAudience: audience(env.T4_KUBERNETES_API_AUDIENCE ?? "https://kubernetes.default.svc"),
 		serverServiceAccountName,
 		sessionName,
 		ompExecutable,

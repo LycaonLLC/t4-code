@@ -203,6 +203,19 @@ func (r *WorkspaceReconciler) reconcileDelete(ctx context.Context, workspace *cl
 	pvcKey := types.NamespacedName{Namespace: workspace.Namespace, Name: WorkspacePVCName(workspace)}
 	var pvc corev1.PersistentVolumeClaim
 	err := r.Get(ctx, pvcKey, &pvc)
+	if err == nil && !workspaceOwnsPVC(workspace, &pvc) {
+		before := workspace.Status
+		if workspace.Status.Conditions != nil {
+			before.Conditions = append([]metav1.Condition(nil), workspace.Status.Conditions...)
+		}
+		meta.SetStatusCondition(&workspace.Status.Conditions, condition("Ready", metav1.ConditionFalse, "CleanupOwnershipConflict", "deterministic workspace PVC does not belong to this workspace", workspace.Generation))
+		if !reflect.DeepEqual(before, workspace.Status) {
+			if err := r.Status().Update(ctx, workspace); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
 	if workspace.Spec.RetentionPolicy == clusterv1alpha1.RetentionPolicyRetain {
 		if err == nil {
 			before := pvc.DeepCopy()

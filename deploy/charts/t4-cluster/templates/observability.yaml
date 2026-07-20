@@ -2,7 +2,7 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ include "t4-cluster.fullname" . }}-server
+  name: {{ printf "%s-server" (include "t4-cluster.fullname" .) | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
     {{- with .Values.observability.serviceMonitor.labels }}
@@ -10,20 +10,21 @@ metadata:
     {{- end }}
 spec:
   namespaceSelector:
-    matchNames: [{{ .Release.Namespace }}]
+    matchNames: [{{ .Release.Namespace | quote }}]
   selector:
     matchLabels:
       {{- include "t4-cluster.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: server
+      app.kubernetes.io/part-of: "t4-cluster"
   endpoints:
     - port: metrics
       path: /metrics
-      interval: {{ .Values.observability.serviceMonitor.interval }}
+      interval: {{ .Values.observability.serviceMonitor.interval | quote }}
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ include "t4-cluster.fullname" . }}-controller
+  name: {{ printf "%s-controller" (include "t4-cluster.fullname" .) | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
     {{- with .Values.observability.serviceMonitor.labels }}
@@ -31,22 +32,23 @@ metadata:
     {{- end }}
 spec:
   namespaceSelector:
-    matchNames: [{{ .Release.Namespace }}]
+    matchNames: [{{ .Release.Namespace | quote }}]
   selector:
     matchLabels:
       {{- include "t4-cluster.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: controller
+      app.kubernetes.io/part-of: "t4-cluster"
   endpoints:
     - port: metrics
       path: /metrics
-      interval: {{ .Values.observability.serviceMonitor.interval }}
+      interval: {{ .Values.observability.serviceMonitor.interval | quote }}
 {{- end }}
 {{- if and .Values.enabled .Values.observability.prometheusRule.enabled }}
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
-  name: {{ include "t4-cluster.fullname" . }}
+  name: {{ include "t4-cluster.fullname" . | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
     {{- with .Values.observability.prometheusRule.labels }}

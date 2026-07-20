@@ -3,6 +3,7 @@ import { isAbsolute } from "node:path";
 import { isIP } from "node:net";
 
 const DNS_LABEL = /^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/u;
+const AUDIENCE = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/u;
 export interface ClusterServerConfig {
 	readonly namespace: string;
 	readonly podName: string;
@@ -13,6 +14,7 @@ export interface ClusterServerConfig {
 	readonly kubernetesBaseUrl: string;
 	readonly kubernetesTokenPath: string;
 	readonly kubernetesCaPath: string;
+	readonly kubernetesApiAudience: string;
 	readonly identityTokenPath: string;
 	readonly serverServiceAccountName: string;
 	readonly trustedProxyAddresses: readonly string[];
@@ -32,6 +34,10 @@ function required(env: Readonly<Record<string, string | undefined>>, name: strin
 }
 function dns(value: string, name: string): string {
 	if (!DNS_LABEL.test(value)) throw new Error(`${name} is invalid`);
+	return value;
+}
+function audience(value: string, name: string): string {
+	if (value.length > 253 || !AUDIENCE.test(value)) throw new Error(`${name} is invalid`);
 	return value;
 }
 function port(value: string | undefined, fallback: number, name: string): number {
@@ -81,7 +87,7 @@ function canonicalCidr(value: string): string {
 	const family = isIP(address);
 	const prefix = Number(pieces[1]);
 	const width = family === 4 ? 32 : family === 6 ? 128 : 0;
-	if (prefix > width) throw new Error("T4_CLUSTER_TRUSTED_PROXY_CIDRS is invalid");
+	if (prefix < 1 || prefix > width) throw new Error("T4_CLUSTER_TRUSTED_PROXY_CIDRS is invalid");
 	const canonicalAddress = family === 4
 		? address.split(".").map(Number).join(".")
 		: new URL(`http://[${address}]/`).hostname.slice(1, -1);
@@ -132,6 +138,7 @@ export function clusterServerConfigFromEnv(env: Readonly<Record<string, string |
 		kubernetesBaseUrl: `https://${serviceHost}:${servicePort}`,
 		kubernetesTokenPath: absolutePath(env.T4_KUBERNETES_TOKEN_PATH ?? "/var/run/secrets/kubernetes.io/serviceaccount/token", "T4_KUBERNETES_TOKEN_PATH"),
 		kubernetesCaPath: absolutePath(env.T4_KUBERNETES_CA_PATH ?? "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt", "T4_KUBERNETES_CA_PATH"),
+		kubernetesApiAudience: audience(env.T4_KUBERNETES_API_AUDIENCE ?? "https://kubernetes.default.svc", "T4_KUBERNETES_API_AUDIENCE"),
 		identityTokenPath,
 		serverServiceAccountName,
 		...(woodpeckerConfigured ? {

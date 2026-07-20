@@ -87,6 +87,7 @@ describe("one-session pod host authority", () => {
 		expect(sessionHostConfigFromEnv({
 			KUBERNETES_SERVICE_HOST: "10.96.0.1",
 			KUBERNETES_SERVICE_PORT_HTTPS: "443",
+			T4_KUBERNETES_API_AUDIENCE: "kubernetes.custom.example",
 			T4_CLUSTER_SERVER_SERVICE_ACCOUNT: "release-t4-cluster-server",
 			T4_SESSION_NAME: "session-one",
 			T4_OMP_EXECUTABLE: "/opt/t4/bin/omp",
@@ -97,6 +98,7 @@ describe("one-session pod host authority", () => {
 			kubernetesTokenPath: "/var/run/secrets/kubernetes.io/serviceaccount/token",
 			kubernetesCaPath: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
 			kubernetesNamespacePath: "/var/run/secrets/kubernetes.io/serviceaccount/namespace",
+			kubernetesApiAudience: "kubernetes.custom.example",
 			serverServiceAccountName: "release-t4-cluster-server",
 			sessionName: "session-one",
 			ompExecutable: "/opt/t4/bin/omp",
@@ -104,5 +106,6 @@ describe("one-session pod host authority", () => {
 			port: 8787,
 		});
 		expect(() => sessionHostConfigFromEnv({ KUBERNETES_SERVICE_HOST: "10.96.0.1", T4_CLUSTER_SERVER_SERVICE_ACCOUNT: "server", T4_SESSION_NAME: "bad/name" })).toThrow("T4_SESSION_NAME");
+		expect(() => sessionHostConfigFromEnv({ KUBERNETES_SERVICE_HOST: "10.96.0.1", T4_CLUSTER_SERVER_SERVICE_ACCOUNT: "server", T4_SESSION_NAME: "session", T4_SESSION_STATE_ROOT: "/workspace/.t4/sessions/session", T4_KUBERNETES_API_AUDIENCE: "/invalid" })).toThrow("T4_KUBERNETES_API_AUDIENCE");
 	});
 });

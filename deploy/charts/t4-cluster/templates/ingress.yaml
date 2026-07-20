@@ -2,7 +2,7 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "t4-cluster.fullname" . }}
+  name: {{ include "t4-cluster.fullname" . | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
@@ -10,13 +10,13 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  {{- with .Values.ingress.className }}
-  ingressClassName: {{ . }}
-  {{- end }}
-  {{- if .Values.ingress.tls.secretName }}
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- if .Values.ingress.tls.enabled }}
   tls:
     - hosts: [{{ .Values.ingress.host | quote }}]
-      secretName: {{ .Values.ingress.tls.secretName }}
+      {{- with .Values.ingress.tls.secretName }}
+      secretName: {{ . | quote }}
+      {{- end }}
   {{- end }}
   rules:
     - host: {{ .Values.ingress.host | quote }}
@@ -26,7 +26,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ include "t4-cluster.fullname" . }}-server
+                name: {{ printf "%s-server" (include "t4-cluster.fullname" .) | quote }}
                 port:
                   name: websocket
 {{- end }}

@@ -126,6 +126,18 @@ func TestCRDSchemasAreStructuralBoundedAndValidated(t *testing.T) {
 			t.Fatalf("%s status lacks observedGeneration", crd.Name)
 		}
 		assertBoundedSchema(t, crd.Name+".spec", root.Properties["spec"])
+		if crd.Name != "t4clusterhosts.cluster.t4.dev" {
+			hostRef := root.Properties["spec"].Properties["hostRef"]
+			immutable := false
+			for _, validation := range hostRef.XValidations {
+				if validation.Rule == "self == oldSelf" {
+					immutable = true
+				}
+			}
+			if !immutable {
+				t.Fatalf("%s hostRef is mutable", crd.Name)
+			}
+		}
 	}
 }
 

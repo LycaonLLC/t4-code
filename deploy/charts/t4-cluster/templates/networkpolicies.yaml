@@ -2,7 +2,7 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "t4-cluster.fullname" . }}-default-deny
+  name: {{ printf "%s-default-deny" (include "t4-cluster.fullname" .) | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 spec:
@@ -14,7 +14,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "t4-cluster.fullname" . }}-dns
+  name: {{ printf "%s-dns" (include "t4-cluster.fullname" .) | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 spec:
@@ -25,11 +25,9 @@ spec:
   egress:
     - to:
         - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: kube-system
+            {{- toYaml .Values.networkPolicy.dns.namespaceSelector | nindent 12 }}
           podSelector:
-            matchLabels:
-              k8s-app: kube-dns
+            {{- toYaml .Values.networkPolicy.dns.podSelector | nindent 12 }}
       ports:
         - {protocol: UDP, port: 53}
         - {protocol: TCP, port: 53}
@@ -37,7 +35,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "t4-cluster.fullname" . }}-controller-api
+  name: {{ printf "%s-controller-api" (include "t4-cluster.fullname" .) | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 spec:
@@ -58,7 +56,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "t4-cluster.fullname" . }}-server-egress
+  name: {{ printf "%s-server-egress" (include "t4-cluster.fullname" .) | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 spec:
@@ -92,7 +90,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "t4-cluster.fullname" . }}-session-host
+  name: {{ printf "%s-session-host" (include "t4-cluster.fullname" .) | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 spec:
@@ -127,7 +125,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "t4-cluster.fullname" . }}-gateway-ingress
+  name: {{ printf "%s-gateway-ingress" (include "t4-cluster.fullname" .) | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 spec:
@@ -136,7 +134,7 @@ spec:
       {{- include "t4-cluster.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: server
   policyTypes: [Ingress]
-  {{- if or (not (empty .Values.networkPolicy.gatewayIngress.namespaceSelector)) (not (empty .Values.networkPolicy.gatewayIngress.podSelector)) }}
+  {{- if and (not (empty .Values.networkPolicy.gatewayIngress.namespaceSelector)) (not (empty .Values.networkPolicy.gatewayIngress.podSelector)) }}
   ingress:
     - from:
         - namespaceSelector:
@@ -152,15 +150,18 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "t4-cluster.fullname" . }}-observability
+  name: {{ printf "%s-observability" (include "t4-cluster.fullname" .) | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 spec:
   podSelector:
+    matchLabels:
+      {{- include "t4-cluster.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/part-of: "t4-cluster"
     matchExpressions:
       - {key: app.kubernetes.io/component, operator: In, values: [controller, server]}
   policyTypes: [Ingress]
-  {{- if or (not (empty .Values.networkPolicy.observability.namespaceSelector)) (not (empty .Values.networkPolicy.observability.podSelector)) }}
+  {{- if and (not (empty .Values.networkPolicy.observability.namespaceSelector)) (not (empty .Values.networkPolicy.observability.podSelector)) }}
   ingress:
     - from:
         - namespaceSelector:

@@ -209,7 +209,7 @@ func TestSessionWaitsForBoundRWXThenCreatesExactlyOnePodAndService(t *testing.T)
 	c := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&clusterv1alpha1.T4Workspace{}, &clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).
 		WithObjects(testHost(), workspace, pvc, session).Build()
-	r := &controllers.SessionReconciler{Client: c, Scheme: scheme, RuntimeImage: "registry.example/t4/session@sha256:0123456789abcdef"}
+	r := &controllers.SessionReconciler{Client: c, Scheme: scheme, RuntimeImage: "registry.example/t4/session@sha256:0123456789abcdef", KubernetesAPIAudience: "kubernetes.custom.example"}
 	reconcileMany(t, 2, func() error {
 		_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
 		return err
@@ -262,6 +262,15 @@ func TestSessionWaitsForBoundRWXThenCreatesExactlyOnePodAndService(t *testing.T)
 	if serverIdentity != controllers.DefaultServerServiceAccount {
 		t.Fatalf("expected server ServiceAccount = %q", serverIdentity)
 	}
+	apiAudience := ""
+	for _, env := range pod.Spec.Containers[0].Env {
+		if env.Name == "T4_KUBERNETES_API_AUDIENCE" {
+			apiAudience = env.Value
+		}
+	}
+	if apiAudience != r.KubernetesAPIAudience {
+		t.Fatalf("reviewer API audience environment = %q", apiAudience)
+	}
 	if !hasMount(pod.Spec.Containers[0].VolumeMounts, "kubernetes-api-access", "/var/run/secrets/kubernetes.io/serviceaccount") {
 		t.Fatal("explicit Kubernetes reviewer projection is not mounted")
 	}
@@ -275,7 +284,7 @@ func TestSessionWaitsForBoundRWXThenCreatesExactlyOnePodAndService(t *testing.T)
 		t.Fatalf("Kubernetes reviewer projection = %#v", projection)
 	}
 	serviceToken := projection.Sources[0].ServiceAccountToken
-	if serviceToken == nil || serviceToken.Audience != controllers.KubernetesAPIAudience || serviceToken.ExpirationSeconds == nil || *serviceToken.ExpirationSeconds != controllers.SessionReviewerTokenExpirationSeconds || serviceToken.Path != "token" {
+	if serviceToken == nil || serviceToken.Audience != r.KubernetesAPIAudience || serviceToken.ExpirationSeconds == nil || *serviceToken.ExpirationSeconds != controllers.SessionReviewerTokenExpirationSeconds || serviceToken.Path != "token" {
 		t.Fatalf("reviewer token projection = %#v", serviceToken)
 	}
 	clusterCA := projection.Sources[1].ConfigMap
@@ -368,13 +377,199 @@ func TestSessionRecreatesPodWhenImmutableDesiredStateChanges(t *testing.T) {
 	}
 }
 
+func TestSessionRecreatesExternallyExposedOwnedService(t *testing.T) {
+	scheme := testScheme(t)
+	workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+	workspace.Status.PVCName = "workspace-a-data"
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
+		Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+		Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+	}
+	session := testSession()
+	session.UID = "session-uid"
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).
+		WithObjects(testHost(), workspace, pvc, session).Build()
+	r := &controllers.SessionReconciler{Client: c, Scheme: scheme, RuntimeImage: "registry.example/session@sha256:deadbeef"}
+	reconcileMany(t, 2, func() error {
+		_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
+		return err
+	})
+	serviceKey := types.NamespacedName{Namespace: "team", Name: controllers.SessionServiceName(session)}
+	var service corev1.Service
+	if err := c.Get(context.Background(), serviceKey, &service); err != nil {
+		t.Fatal(err)
+	}
+	service.Spec.Type = corev1.ServiceTypeNodePort
+	service.Spec.ExternalIPs = []string{"192.0.2.8"}
+	service.Spec.Ports[0].NodePort = 32080
+	if err := c.Update(context.Background(), &service); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(context.Background(), serviceKey, &service); !apierrors.IsNotFound(err) {
+		t.Fatalf("externally exposed Service was not deleted for safe recreation: %v", err)
+	}
+	reconcileMany(t, 2, func() error {
+		_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
+		return err
+	})
+	if err := c.Get(context.Background(), serviceKey, &service); err != nil {
+		t.Fatal(err)
+	}
+	if service.Spec.Type != corev1.ServiceTypeClusterIP || len(service.Spec.ExternalIPs) != 0 || service.Spec.Ports[0].NodePort != 0 {
+		t.Fatalf("recreated Service retains external exposure: %#v", service.Spec)
+	}
+}
+
+func TestSessionRestoresRequiredPodSelectorLabelsBeforeAvailability(t *testing.T) {
+	scheme := testScheme(t)
+	workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+	workspace.Status.PVCName = "workspace-a-data"
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
+		Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+		Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+	}
+	session := testSession()
+	session.UID = "session-uid"
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).
+		WithObjects(testHost(), workspace, pvc, session).Build()
+	r := &controllers.SessionReconciler{Client: c, Scheme: scheme, RuntimeImage: "registry.example/session@sha256:deadbeef"}
+	reconcileMany(t, 2, func() error {
+		_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
+		return err
+	})
+	podKey := types.NamespacedName{Namespace: "team", Name: controllers.SessionPodName(session)}
+	var pod corev1.Pod
+	if err := c.Get(context.Background(), podKey, &pod); err != nil {
+		t.Fatal(err)
+	}
+	delete(pod.Labels, "cluster.t4.dev/session")
+	if err := c.Update(context.Background(), &pod); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(context.Background(), podKey, &pod); err != nil {
+		t.Fatal(err)
+	}
+	if pod.Labels["cluster.t4.dev/session"] != controllers.SessionPodName(session) {
+		t.Fatalf("required selector labels were not restored: %#v", pod.Labels)
+	}
+	var got clusterv1alpha1.T4Session
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(session), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.Phase == clusterv1alpha1.InfrastructureRunning {
+		t.Fatal("session became available in the same reconcile that repaired endpoint labels")
+	}
+}
+
+func TestWorkspaceDeletionRefusesForeignDeterministicPVC(t *testing.T) {
+	for _, policy := range []clusterv1alpha1.RetentionPolicy{clusterv1alpha1.RetentionPolicyRetain, clusterv1alpha1.RetentionPolicyDelete} {
+		for _, mismatch := range []string{"uid-annotation", "controller-owner"} {
+			t.Run(string(policy)+"/"+mismatch, func(t *testing.T) {
+				scheme := testScheme(t)
+				workspace := testWorkspace(policy)
+				workspace.UID = "workspace-uid"
+				workspace.Finalizers = []string{clusterv1alpha1.WorkspaceFinalizer}
+				pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{
+					Name: controllers.WorkspacePVCName(workspace), Namespace: workspace.Namespace,
+					Annotations: map[string]string{clusterv1alpha1.WorkspaceUIDAnnotation: string(workspace.UID)},
+				}}
+				if mismatch == "uid-annotation" {
+					pvc.Annotations[clusterv1alpha1.WorkspaceUIDAnnotation] = "foreign-workspace-uid"
+				} else {
+					pvc.OwnerReferences = []metav1.OwnerReference{{
+						APIVersion: clusterv1alpha1.GroupVersion.String(), Kind: "T4Workspace", Name: "foreign", UID: "foreign-workspace-uid", Controller: ptr(true),
+					}}
+				}
+				expectedOwnerCount := len(pvc.OwnerReferences)
+				c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Workspace{}).WithObjects(workspace, pvc).Build()
+				if err := c.Delete(context.Background(), workspace); err != nil {
+					t.Fatal(err)
+				}
+				r := &controllers.WorkspaceReconciler{Client: c, Scheme: scheme}
+				if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workspace)}); err != nil {
+					t.Fatal(err)
+				}
+				var untouched corev1.PersistentVolumeClaim
+				if err := c.Get(context.Background(), client.ObjectKeyFromObject(pvc), &untouched); err != nil {
+					t.Fatalf("foreign deterministic PVC was deleted: %v", err)
+				}
+				if untouched.Annotations[clusterv1alpha1.RetainedPVCAnnotation] != "" || len(untouched.OwnerReferences) != expectedOwnerCount {
+					t.Fatalf("foreign deterministic PVC was mutated: %#v", untouched.ObjectMeta)
+				}
+				var waiting clusterv1alpha1.T4Workspace
+				if err := c.Get(context.Background(), client.ObjectKeyFromObject(workspace), &waiting); err != nil {
+					t.Fatalf("workspace finalizer was removed on conflict: %v", err)
+				}
+				condition := findCondition(waiting.Status.Conditions, "Ready")
+				if !contains(waiting.Finalizers, clusterv1alpha1.WorkspaceFinalizer) || condition == nil || condition.Reason != "CleanupOwnershipConflict" {
+					t.Fatalf("workspace cleanup conflict not retained: %#v", waiting)
+				}
+			})
+		}
+	}
+}
+
+func TestSessionDeletionRefusesForeignDeterministicResources(t *testing.T) {
+	for _, foreignKind := range []string{"Pod", "Service"} {
+		t.Run(foreignKind, func(t *testing.T) {
+			scheme := testScheme(t)
+			session := testSession()
+			session.UID = "session-uid"
+			session.Finalizers = []string{clusterv1alpha1.SessionFinalizer}
+			controller := true
+			ownerReferences := []metav1.OwnerReference{{
+				APIVersion: clusterv1alpha1.GroupVersion.String(), Kind: "T4Session", Name: session.Name, UID: session.UID, Controller: &controller,
+			}}
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: controllers.SessionPodName(session), Namespace: session.Namespace, OwnerReferences: ownerReferences}}
+			service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: controllers.SessionServiceName(session), Namespace: session.Namespace, OwnerReferences: ownerReferences}}
+			if foreignKind == "Pod" {
+				pod.OwnerReferences = nil
+			} else {
+				service.OwnerReferences = nil
+			}
+			c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Session{}).WithObjects(session, pod, service).Build()
+			if err := c.Delete(context.Background(), session); err != nil {
+				t.Fatal(err)
+			}
+			r := &controllers.SessionReconciler{Client: c, Scheme: scheme}
+			if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
+				t.Fatal(err)
+			}
+			assertObjectCounts(t, c, 1, 1)
+			var waiting clusterv1alpha1.T4Session
+			if err := c.Get(context.Background(), client.ObjectKeyFromObject(session), &waiting); err != nil {
+				t.Fatalf("session finalizer was removed on cleanup conflict: %v", err)
+			}
+			condition := findCondition(waiting.Status.Conditions, "Available")
+			if !contains(waiting.Finalizers, clusterv1alpha1.SessionFinalizer) || condition == nil || condition.Reason != "CleanupOwnershipConflict" {
+				t.Fatalf("session cleanup conflict not retained: %#v", waiting)
+			}
+		})
+	}
+}
+
+
 func TestSessionDeletionCleansResourcesBeforeFinalizer(t *testing.T) {
 	scheme := testScheme(t)
 	session := testSession()
 	session.UID = "session-uid"
 	session.Finalizers = []string{clusterv1alpha1.SessionFinalizer}
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: controllers.SessionPodName(session), Namespace: "team"}}
-	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: controllers.SessionServiceName(session), Namespace: "team"}}
+	controller := true
+	ownerReferences := []metav1.OwnerReference{{
+		APIVersion: clusterv1alpha1.GroupVersion.String(), Kind: "T4Session", Name: session.Name, UID: session.UID, Controller: &controller,
+	}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: controllers.SessionPodName(session), Namespace: "team", OwnerReferences: ownerReferences}}
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: controllers.SessionServiceName(session), Namespace: "team", OwnerReferences: ownerReferences}}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Session{}).WithObjects(session, pod, service).Build()
 	if err := c.Delete(context.Background(), session); err != nil {
 		t.Fatal(err)

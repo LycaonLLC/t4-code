@@ -27,7 +27,7 @@ import (
 const (
 	DefaultSessionServiceAccount                = "t4-cluster-session"
 	DefaultServerServiceAccount                 = "t4-cluster-server"
-	KubernetesAPIAudience                       = "https://kubernetes.default.svc"
+	DefaultKubernetesAPIAudience                = "https://kubernetes.default.svc"
 	SessionReviewerTokenExpirationSeconds int64 = 3600
 )
 
@@ -37,6 +37,7 @@ type SessionReconciler struct {
 	RuntimeImage              string
 	SessionServiceAccountName string
 	ServerServiceAccountName  string
+	KubernetesAPIAudience      string
 	ExcludedNodeNames         []string
 	Resources                 corev1.ResourceRequirements
 	SharedMemorySize          apiresource.Quantity
@@ -122,6 +123,14 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		return ctrl.Result{}, err
 	} else if !metav1.IsControlledBy(&service, &session) {
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, "Available", "ServiceOwnershipConflict", "deterministic session Service is not controlled by this session")
+	} else if !serviceExposureIsInternal(&service) {
+		if err := r.Delete(ctx, &service); err != nil && !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, err
+		}
+		if err := r.updateSessionPending(ctx, &session, podName, serviceName, "ServiceExposureChanged", "session Service is being recreated with ClusterIP-only exposure"); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: time.Second}, nil
 	} else if !reflect.DeepEqual(service.Spec.Selector, desiredService.Spec.Selector) || !reflect.DeepEqual(service.Spec.Ports, desiredService.Spec.Ports) || !reflect.DeepEqual(service.Labels, desiredService.Labels) {
 		service.Spec.Selector = desiredService.Spec.Selector
 		service.Spec.Ports = desiredService.Spec.Ports
@@ -148,6 +157,20 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		return ctrl.Result{}, err
 	} else if !metav1.IsControlledBy(&pod, &session) {
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, "Available", "PodOwnershipConflict", "deterministic session Pod is not controlled by this session")
+	} else if !labelsContain(pod.Labels, desiredPod.Labels) {
+		if pod.Labels == nil {
+			pod.Labels = map[string]string{}
+		}
+		for key, value := range desiredPod.Labels {
+			pod.Labels[key] = value
+		}
+		if err := r.Update(ctx, &pod); err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.updateSessionPending(ctx, &session, podName, serviceName, "PodLabelsChanged", "session Pod selector labels are being restored"); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: time.Second}, nil
 	} else if pod.Annotations[clusterv1alpha1.SessionPodSpecHashAnnotation] != desiredPod.Annotations[clusterv1alpha1.SessionPodSpecHashAnnotation] {
 		if err := r.Delete(ctx, &pod); err != nil && !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
@@ -216,6 +239,10 @@ func (r *SessionReconciler) desiredPod(session *clusterv1alpha1.T4Session, pvcNa
 	if serverServiceAccount == "" {
 		serverServiceAccount = DefaultServerServiceAccount
 	}
+	kubernetesAPIAudience := r.KubernetesAPIAudience
+	if kubernetesAPIAudience == "" {
+		kubernetesAPIAudience = DefaultKubernetesAPIAudience
+	}
 	excluded := r.ExcludedNodeNames
 	if len(excluded) == 0 {
 		excluded = []string{"k3s-worker-02"}
@@ -229,6 +256,7 @@ func (r *SessionReconciler) desiredPod(session *clusterv1alpha1.T4Session, pvcNa
 			{Name: "T4_KUBERNETES_TOKEN_PATH", Value: "/var/run/secrets/kubernetes.io/serviceaccount/token"},
 			{Name: "T4_KUBERNETES_CA_PATH", Value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"},
 			{Name: "T4_KUBERNETES_NAMESPACE_PATH", Value: "/var/run/secrets/kubernetes.io/serviceaccount/namespace"},
+			{Name: "T4_KUBERNETES_API_AUDIENCE", Value: kubernetesAPIAudience},
 			{Name: "T4_SESSION_NAME", Value: session.Name},
 			{Name: "T4_WORKSPACE_ROOT", Value: "/workspace"},
 			{Name: "T4_SESSION_STATE_ROOT", Value: "/workspace/.t4/sessions/" + stateID},
@@ -261,7 +289,7 @@ func (r *SessionReconciler) desiredPod(session *clusterv1alpha1.T4Session, pvcNa
 		{Name: "kubernetes-api-access", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
 			DefaultMode: ptr(int32(0440)),
 			Sources: []corev1.VolumeProjection{
-				{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Audience: KubernetesAPIAudience, ExpirationSeconds: ptr(SessionReviewerTokenExpirationSeconds), Path: "token"}},
+				{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Audience: kubernetesAPIAudience, ExpirationSeconds: ptr(SessionReviewerTokenExpirationSeconds), Path: "token"}},
 				{ConfigMap: &corev1.ConfigMapProjection{LocalObjectReference: corev1.LocalObjectReference{Name: "kube-root-ca.crt"}, Items: []corev1.KeyToPath{{Key: "ca.crt", Path: "ca.crt"}}}},
 				{DownwardAPI: &corev1.DownwardAPIProjection{Items: []corev1.DownwardAPIVolumeFile{{Path: "namespace", FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "metadata.namespace"}}}}},
 			},
@@ -325,24 +353,42 @@ func (r *SessionReconciler) reconcileDelete(ctx context.Context, session *cluste
 			return ctrl.Result{}, err
 		}
 	}
-	remaining := false
-	for _, object := range []client.Object{
+	objects := []client.Object{
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: SessionPodName(session), Namespace: session.Namespace}},
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: SessionServiceName(session), Namespace: session.Namespace}},
-	} {
+	}
+	existing := make([]client.Object, 0, len(objects))
+	for _, object := range objects {
 		err := r.Get(ctx, client.ObjectKeyFromObject(object), object)
-		if err == nil {
-			remaining = true
-			if object.GetDeletionTimestamp().IsZero() {
-				if err := r.Delete(ctx, object); err != nil && !apierrors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !metav1.IsControlledBy(object, session) {
+			before := session.Status
+			if session.Status.Conditions != nil {
+				before.Conditions = append([]metav1.Condition(nil), session.Status.Conditions...)
+			}
+			meta.SetStatusCondition(&session.Status.Conditions, condition("Available", metav1.ConditionFalse, "CleanupOwnershipConflict", fmt.Sprintf("deterministic %T is not controlled by this session", object), session.Generation))
+			if !reflect.DeepEqual(before, session.Status) {
+				if err := r.Status().Update(ctx, session); err != nil {
 					return ctrl.Result{}, err
 				}
 			}
-		} else if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, err
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+		existing = append(existing, object)
+	}
+	for _, object := range existing {
+		if object.GetDeletionTimestamp().IsZero() {
+			if err := r.Delete(ctx, object); err != nil && !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, err
+			}
 		}
 	}
-	if remaining {
+	if len(existing) > 0 {
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 	controllerutil.RemoveFinalizer(session, clusterv1alpha1.SessionFinalizer)
@@ -361,6 +407,29 @@ func (r *SessionReconciler) updateSessionFailure(ctx context.Context, session *c
 		return nil
 	}
 	return r.Status().Update(ctx, session)
+}
+
+func serviceExposureIsInternal(service *corev1.Service) bool {
+	if service.Spec.Type != corev1.ServiceTypeClusterIP || service.Spec.ClusterIP == corev1.ClusterIPNone || service.Spec.ExternalName != "" ||
+		len(service.Spec.ExternalIPs) != 0 || service.Spec.LoadBalancerIP != "" || len(service.Spec.LoadBalancerSourceRanges) != 0 ||
+		service.Spec.LoadBalancerClass != nil || service.Spec.HealthCheckNodePort != 0 || service.Spec.AllocateLoadBalancerNodePorts != nil {
+		return false
+	}
+	for _, port := range service.Spec.Ports {
+		if port.NodePort != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func labelsContain(actual, required map[string]string) bool {
+	for key, value := range required {
+		if actual[key] != value {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *SessionReconciler) SetupWithManager(manager ctrl.Manager) error {

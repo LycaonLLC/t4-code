@@ -47,10 +47,20 @@ images:
     repository: registry.example/t4-session-runtime
     digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
     pullPolicy: IfNotPresent
+kubernetes:
+  # Set this to an audience accepted by this cluster's API server.
+  apiAudience: https://kubernetes.default.svc
 networkPolicy:
   kubernetesApiCIDRs: [192.0.2.10/32]
   modelRouteCIDRs: [198.51.100.20/32]
   ciProviderCIDRs: [203.0.113.30/32]
+  dns:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
   gatewayIngress:
     namespaceSelector:
       matchLabels:
@@ -69,7 +79,7 @@ session:
   nodeExclude: [k3s-worker-02]
 ```
 
-The sample CIDRs and labels are documentation values, not usable defaults. Keep the chart backend-neutral and set destinations to the actual cluster endpoints. Empty destination lists and selectors deny those flows.
+The sample destination CIDRs and gateway/observability labels are documentation values, not usable defaults. Keep the chart backend-neutral and set destinations and integration sources to the actual cluster endpoints. Empty destination lists and paired integration selectors deny those flows.
 
 Install or enable with immutable digests:
 
@@ -79,7 +89,11 @@ helm upgrade --install t4-cluster deploy/charts/t4-cluster --namespace t4-system
 
 The controller always has two replicas and uses a Kubernetes Lease named from `t4-cluster-operator.cluster.t4.dev`; one replica reconciles at a time. The server defaults to three stateless replicas and supports a minimum of two. Its Deployment uses `maxUnavailable: 0`, a `minAvailable: 2` PDB, topology spread, anti-affinity, readiness draining, and an explicit `k3s-worker-02` exclusion. Session pods also exclude that node by default. Additional cluster-specific exclusions belong in deployment values, not this portable chart.
 
-The chart creates dedicated server and session ServiceAccounts instead of a shared credential Secret. Each server pod receives a 10-minute projected token with the fixed `t4-cluster-internal` audience and presents it only in the existing `omp-app/1` upstream authentication field when dialing a session host. Session pods use `automountServiceAccountToken: false`; their only Kubernetes identity mount is an explicit short-lived API-audience token plus the cluster CA and namespace. The session ServiceAccount may only create `authentication.k8s.io/tokenreviews`, and the host accepts a connection only when TokenReview confirms the expected server ServiceAccount username and audience.
+The chart creates dedicated controller, server, and session ServiceAccounts instead of a shared credential Secret. Controller and server pods disable automatic token mounting and receive explicit short-lived Kubernetes API projections. Each server pod also receives a separate 10-minute projected token with the fixed `t4-cluster-internal` audience and presents it only in the existing `omp-app/1` upstream authentication field when dialing a session host. Session pods use `automountServiceAccountToken: false`; their only Kubernetes identity mount is an explicit short-lived API-audience token plus the cluster CA and namespace. The session ServiceAccount may only create `authentication.k8s.io/tokenreviews`, and the host accepts a connection only when TokenReview confirms the expected server ServiceAccount username and audience.
+
+The Kubernetes API audience is configurable because managed clusters can reject the conventional `https://kubernetes.default.svc` audience. The same value is used for the controller API token, server API token, and session-host TokenReview credential. The internal server identity audience remains the fixed `t4-cluster-internal` boundary. DNS selectors default to the conventional `kube-system`/`k8s-app: kube-dns` pair and can be replaced together for clusters using a different DNS deployment.
+
+When chart-managed ingress is enabled, a host, ingress class, and TLS stanza are mandatory. For `ingressClassName: tailscale`, the chart renders the TLS host without a Secret reference so the Tailscale operator can provision and manage the certificate. Other ingress classes must reference an administrator-managed TLS Secret.
 
 ## API configuration
 
@@ -97,7 +111,7 @@ The optional initial prompt is referenced by Secret name and key `prompt`; the S
 
 ## Images and runtime
 
-`cluster/images/controller/Dockerfile`, `cluster/images/cluster-server/Dockerfile`, and `cluster/images/session-runtime/Dockerfile` use digest-pinned build bases. Published chart values also require image digests.
+`cluster/images/controller/Dockerfile`, `cluster/images/cluster-server/Dockerfile`, and `cluster/images/session-runtime/Dockerfile` use digest-pinned multi-platform build bases. BuildKit selects the requested target platform; the Dockerfiles do not hardcode or label an architecture that was not built. Debian packages are resolved through a dated snapshot. Published chart values still require per-image immutable digests.
 
 The session runtime verifies and builds the exact OMP tag `t4code-17.0.5-appserver-10` at commit `8476f4451ed95c5d5401785d279a93d3c659fac4`. It preserves `t4-omp-authority/1`, starts the existing T4 session-host entrypoint, and provides Xvfb, a minimal window manager, and Chromium without privileged mode or host display access. The shared claim is mounted at `/workspace`; authority and browser state live in controller-selected per-session subdirectories. `/dev/shm` is an explicit memory-backed volume. Browser Preview remains the existing GUI stream and control surface.
 
@@ -105,7 +119,14 @@ Session pods do not receive an automatically mounted ServiceAccount token. The e
 
 ## Upgrade and rollback
 
-CRD changes must remain structural and additive. Helm installs files under `crds/` on first install but does not upgrade or delete them. Before `helm upgrade`, an administrator should review and server-side apply the newer CRDs, then upgrade the chart with the new immutable image digests. Wait for the server Deployment to retain at least two ready replicas and for the controller Lease holder to reconcile the new generation.
+CRD changes must remain structural and additive. Helm installs files under `crds/` on first install but does not upgrade or delete them. Before every `helm upgrade`, an administrator must review and apply each newer CRD independently, wait for API discovery to serve the updated schemas, and only then upgrade workloads with the new immutable image digests:
+
+```sh
+kubectl apply --server-side -f deploy/charts/t4-cluster/crds/
+kubectl wait --for=condition=Established crd/t4clusterhosts.cluster.t4.dev crd/t4workspaces.cluster.t4.dev crd/t4sessions.cluster.t4.dev
+```
+
+Do not rely on `helm upgrade` to change CRDs. If a CRD pre-upgrade apply fails validation, stop the upgrade and keep the currently deployed controller/server images; do not force-replace the CRD or remove stored versions.
 
 ```sh
 helm upgrade t4-cluster deploy/charts/t4-cluster --namespace t4-system --values operator-values.yaml

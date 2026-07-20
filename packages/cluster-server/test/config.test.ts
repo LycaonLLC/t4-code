@@ -23,8 +23,11 @@ describe("cluster server configuration", () => {
 			serverServiceAccountName: "release-t4-cluster-server",
 			kubernetesTokenPath: "/var/run/secrets/kubernetes.io/serviceaccount/token",
 			kubernetesCaPath: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+			kubernetesApiAudience: "https://kubernetes.default.svc",
 		});
 		expect(() => clusterServerConfigFromEnv({ ...BASE_ENV, T4_CLUSTER_IDENTITY_TOKEN_FILE: "relative/token" })).toThrow("absolute");
+		expect(clusterServerConfigFromEnv({ ...BASE_ENV, T4_KUBERNETES_API_AUDIENCE: "kubernetes.custom.example" }).kubernetesApiAudience).toBe("kubernetes.custom.example");
+		expect(() => clusterServerConfigFromEnv({ ...BASE_ENV, T4_KUBERNETES_API_AUDIENCE: "/invalid" })).toThrow("T4_KUBERNETES_API_AUDIENCE");
 	});
 
 	it("reads only a bounded regular projected identity file", async () => {
@@ -77,6 +80,8 @@ describe("trusted cluster gateway proxy sources", () => {
 	it("rejects CIDRs with host bits or non-canonical notation", () => {
 		expect(() => clusterServerConfigFromEnv({ ...BASE_ENV, T4_CLUSTER_TRUSTED_PROXY_CIDRS: "10.42.1.7/16" })).toThrow();
 		expect(() => clusterServerConfigFromEnv({ ...BASE_ENV, T4_CLUSTER_TRUSTED_PROXY_CIDRS: "fd7a:115c:a1e0:0::/48" })).toThrow();
+		expect(() => clusterServerConfigFromEnv({ ...BASE_ENV, T4_CLUSTER_TRUSTED_PROXY_CIDRS: "0.0.0.0/0" })).toThrow();
+		expect(() => clusterServerConfigFromEnv({ ...BASE_ENV, T4_CLUSTER_TRUSTED_PROXY_CIDRS: "::/0" })).toThrow();
 	});
 
 	it("bounds the trusted CIDR list", () => {

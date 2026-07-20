@@ -1,21 +1,21 @@
 # syntax=docker/dockerfile:1.7
-ARG BUN_IMAGE=docker.io/oven/bun:1.3.14-debian@sha256:9dba1a1b43ce28c9d7931bfc4eb00feb63b0114720a0277a8f939ae4dfc9db6f
-
-FROM ${BUN_IMAGE} AS bun-runtime
 
 FROM docker.io/library/rust:1.86-slim-bookworm@sha256:57d415bbd61ce11e2d5f73de068103c7bd9f3188dc132c97cef4a8f62989e944 AS omp-build
-ARG OMP_TAG=t4code-17.0.5-appserver-10
-ARG OMP_COMMIT=8476f4451ed95c5d5401785d279a93d3c659fac4
-RUN apt-get update \
+RUN rm -f /etc/apt/sources.list.d/* \
+    && printf '%s\n' \
+       'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20250721T000000Z bookworm main' \
+       'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20250721T000000Z bookworm-security main' \
+       > /etc/apt/sources.list \
+    && apt-get -o Acquire::Check-Valid-Until=false update \
     && apt-get install -y --no-install-recommends ca-certificates git pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=bun-runtime /usr/local/bin/bun /usr/local/bin/bun
+COPY --from=docker.io/oven/bun:1.3.14-debian@sha256:9dba1a1b43ce28c9d7931bfc4eb00feb63b0114720a0277a8f939ae4dfc9db6f /usr/local/bin/bun /usr/local/bin/bun
 WORKDIR /opt/omp
 RUN git init \
     && git remote add origin https://github.com/lyc-aon/oh-my-pi.git \
-    && git fetch --depth=1 origin "refs/tags/${OMP_TAG}" \
-    && test "$(git rev-parse FETCH_HEAD)" = "${OMP_COMMIT}" \
-    && git checkout --detach "${OMP_COMMIT}"
+    && git fetch --depth=1 origin "refs/tags/t4code-17.0.5-appserver-10" \
+    && test "$(git rev-parse FETCH_HEAD)" = "8476f4451ed95c5d5401785d279a93d3c659fac4" \
+    && git checkout --detach "8476f4451ed95c5d5401785d279a93d3c659fac4"
 RUN bun install --frozen-lockfile --ignore-scripts \
     && bun --cwd=packages/natives run build \
     && bun --cwd=packages/coding-agent run gen:tool-views \
@@ -28,9 +28,14 @@ COPY . /opt/t4
 RUN corepack enable \
     && pnpm install --frozen-lockfile --ignore-scripts
 
-FROM ${BUN_IMAGE}
+FROM docker.io/oven/bun:1.3.14-debian@sha256:9dba1a1b43ce28c9d7931bfc4eb00feb63b0114720a0277a8f939ae4dfc9db6f
 USER root
-RUN apt-get update \
+RUN rm -f /etc/apt/sources.list.d/* \
+    && printf '%s\n' \
+       'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20250721T000000Z bookworm main' \
+       'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20250721T000000Z bookworm-security main' \
+       > /etc/apt/sources.list \
+    && apt-get -o Acquire::Check-Valid-Until=false update \
     && apt-get install -y --no-install-recommends \
        bash ca-certificates chromium fluxbox git openssh-client python3 ripgrep tini xvfb \
     && rm -rf /var/lib/apt/lists/* \

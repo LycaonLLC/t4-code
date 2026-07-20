@@ -9,6 +9,10 @@ clusterHost:
     maxWorkspaces: 256
     resyncSeconds: 60
 
+kubernetes:
+  # Audience accepted by this cluster's API server for projected API credentials.
+  apiAudience: https://kubernetes.default.svc
+
 images:
   controller:
     repository: ghcr.io/lycaonllc/t4-cluster-operator
@@ -83,6 +87,8 @@ ingress:
   host: ""
   annotations: {}
   tls:
+    enabled: true
+    # Leave empty for the Tailscale ingress class; its operator provisions TLS.
     secretName: ""
 
 networkPolicy:
@@ -91,6 +97,13 @@ networkPolicy:
   kubernetesApiCIDRs: []
   modelRouteCIDRs: []
   ciProviderCIDRs: []
+  dns:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
   gatewayIngress:
     # Empty selectors fail closed. Set both to the ingress controller identity.
     namespaceSelector: {}

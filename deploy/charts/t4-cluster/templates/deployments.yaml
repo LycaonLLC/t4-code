@@ -2,7 +2,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "t4-cluster.fullname" . }}-controller
+  name: {{ printf "%s-controller" (include "t4-cluster.fullname" .) | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
     app.kubernetes.io/component: controller
@@ -11,7 +11,7 @@ spec:
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: 1
+      maxUnavailable: 0
       maxSurge: 1
   selector:
     matchLabels:
@@ -24,8 +24,8 @@ spec:
         app.kubernetes.io/component: controller
         app.kubernetes.io/part-of: t4-cluster
     spec:
-      serviceAccountName: {{ include "t4-cluster.fullname" . }}-controller
-      automountServiceAccountToken: true
+      serviceAccountName: {{ printf "%s-controller" (include "t4-cluster.fullname" .) | quote }}
+      automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
       securityContext:
         runAsNonRoot: true
@@ -45,7 +45,7 @@ spec:
               - matchExpressions:
                   - key: kubernetes.io/hostname
                     operator: NotIn
-                    values: [k3s-worker-02]
+                    values: ["k3s-worker-02"]
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
             - weight: 100
@@ -65,18 +65,20 @@ spec:
               app.kubernetes.io/component: controller
       containers:
         - name: controller
-          image: {{ include "t4-cluster.image" .Values.images.controller }}
-          imagePullPolicy: {{ .Values.images.controller.pullPolicy }}
-          args: [--zap-log-level=info]
+          image: {{ include "t4-cluster.image" .Values.images.controller | quote }}
+          imagePullPolicy: {{ .Values.images.controller.pullPolicy | quote }}
+          args: ["--zap-log-level=info"]
           env:
             - name: POD_NAMESPACE
               valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
             - name: T4_SESSION_RUNTIME_IMAGE
-              value: {{ include "t4-cluster.image" .Values.images.sessionRuntime }}
+              value: {{ include "t4-cluster.image" .Values.images.sessionRuntime | quote }}
             - name: T4_SESSION_SERVICE_ACCOUNT
-              value: {{ include "t4-cluster.fullname" . }}-session
+              value: {{ printf "%s-session" (include "t4-cluster.fullname" .) | quote }}
             - name: T4_CLUSTER_SERVER_SERVICE_ACCOUNT
-              value: {{ include "t4-cluster.fullname" . }}-server
+              value: {{ printf "%s-server" (include "t4-cluster.fullname" .) | quote }}
+            - name: T4_KUBERNETES_API_AUDIENCE
+              value: {{ .Values.kubernetes.apiAudience | quote }}
             - name: T4_SESSION_EXCLUDED_NODES
               value: {{ join "," .Values.session.nodeExclude | quote }}
             - name: T4_SESSION_REQUEST_CPU
@@ -120,15 +122,31 @@ spec:
           volumeMounts:
             - name: temporary
               mountPath: /tmp
+            - name: kubernetes-api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
       volumes:
         - name: temporary
           emptyDir:
             sizeLimit: 128Mi
+        - name: kubernetes-api-access
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken:
+                  audience: {{ .Values.kubernetes.apiAudience | quote }}
+                  expirationSeconds: 3600
+                  path: token
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "t4-cluster.fullname" . }}-server
+  name: {{ printf "%s-server" (include "t4-cluster.fullname" .) | quote }}
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
     app.kubernetes.io/component: server
@@ -154,7 +172,7 @@ spec:
         app.kubernetes.io/component: server
         app.kubernetes.io/part-of: t4-cluster
     spec:
-      serviceAccountName: {{ include "t4-cluster.fullname" . }}-server
+      serviceAccountName: {{ printf "%s-server" (include "t4-cluster.fullname" .) | quote }}
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: {{ .Values.server.terminationGracePeriodSeconds }}
       securityContext:
@@ -175,7 +193,7 @@ spec:
               - matchExpressions:
                   - key: kubernetes.io/hostname
                     operator: NotIn
-                    values: [k3s-worker-02]
+                    values: ["k3s-worker-02"]
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
             - weight: 100
@@ -195,8 +213,8 @@ spec:
               app.kubernetes.io/component: server
       containers:
         - name: server
-          image: {{ include "t4-cluster.image" .Values.images.server }}
-          imagePullPolicy: {{ .Values.images.server.pullPolicy }}
+          image: {{ include "t4-cluster.image" .Values.images.server | quote }}
+          imagePullPolicy: {{ .Values.images.server.pullPolicy | quote }}
           env:
             - name: T4_CLUSTER_SERVER_PORT
               value: "8080"
@@ -207,11 +225,13 @@ spec:
             - name: T4_CLUSTER_TRUSTED_PROXY_CIDRS
               value: {{ join "," .Values.server.trustedProxyCIDRs | quote }}
             - name: T4_CLUSTER_HOST_NAME
-              value: {{ .Values.clusterHost.name }}
+              value: {{ .Values.clusterHost.name | quote }}
             - name: T4_CLUSTER_IDENTITY_TOKEN_FILE
               value: /var/run/secrets/t4-cluster-identity/token
             - name: T4_CLUSTER_SERVER_SERVICE_ACCOUNT
-              value: {{ include "t4-cluster.fullname" . }}-server
+              value: {{ printf "%s-server" (include "t4-cluster.fullname" .) | quote }}
+            - name: T4_KUBERNETES_API_AUDIENCE
+              value: {{ .Values.kubernetes.apiAudience | quote }}
             - name: T4_KUBERNETES_TOKEN_PATH
               value: /var/run/secrets/kubernetes.io/serviceaccount/token
             - name: T4_KUBERNETES_CA_PATH
@@ -226,8 +246,8 @@ spec:
             - name: T4_WOODPECKER_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.woodpecker.existingSecret }}
-                  key: {{ .Values.woodpecker.tokenKey }}
+                  name: {{ .Values.woodpecker.existingSecret | quote }}
+                  key: {{ .Values.woodpecker.tokenKey | quote }}
             {{- else if .Values.woodpecker.serviceAccountAudience }}
             - name: T4_WOODPECKER_TOKEN_FILE
               value: /var/run/secrets/t4-ci/token
@@ -236,18 +256,18 @@ spec:
             - name: T4_WOODPECKER_BASE_URL
               valueFrom:
                 configMapKeyRef:
-                  name: {{ .Values.woodpecker.configMap }}
-                  key: {{ .Values.woodpecker.baseURLKey }}
+                  name: {{ .Values.woodpecker.configMap | quote }}
+                  key: {{ .Values.woodpecker.baseURLKey | quote }}
             - name: T4_WOODPECKER_WEB_BASE_URL
               valueFrom:
                 configMapKeyRef:
-                  name: {{ .Values.woodpecker.configMap }}
-                  key: {{ .Values.woodpecker.webBaseURLKey }}
+                  name: {{ .Values.woodpecker.configMap | quote }}
+                  key: {{ .Values.woodpecker.webBaseURLKey | quote }}
             - name: T4_WOODPECKER_REPOSITORIES
               valueFrom:
                 configMapKeyRef:
-                  name: {{ .Values.woodpecker.configMap }}
-                  key: {{ .Values.woodpecker.repositoriesKey }}
+                  name: {{ .Values.woodpecker.configMap | quote }}
+                  key: {{ .Values.woodpecker.repositoriesKey | quote }}
             {{- end }}
           ports:
             - name: websocket
@@ -299,7 +319,7 @@ spec:
             defaultMode: 0440
             sources:
               - serviceAccountToken:
-                  audience: t4-cluster-internal
+                  audience: "t4-cluster-internal"
                   expirationSeconds: 600
                   path: token
         - name: kubernetes-api-access
@@ -307,7 +327,7 @@ spec:
             defaultMode: 0440
             sources:
               - serviceAccountToken:
-                  audience: https://kubernetes.default.svc
+                  audience: {{ .Values.kubernetes.apiAudience | quote }}
                   expirationSeconds: 3600
                   path: token
               - configMap:

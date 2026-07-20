@@ -49,6 +49,9 @@ spec:
                   minLength: 1
                   maxLength: 253
                   pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: hostRef is immutable
                 workspaceRef:
                   type: string
                   minLength: 1

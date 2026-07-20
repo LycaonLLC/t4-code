@@ -81,6 +81,7 @@ func main() {
 		RuntimeImage:              os.Getenv("T4_SESSION_RUNTIME_IMAGE"),
 		SessionServiceAccountName: sessionServiceAccount,
 		ServerServiceAccountName:  serverServiceAccount,
+		KubernetesAPIAudience:      envOr("T4_KUBERNETES_API_AUDIENCE", controllers.DefaultKubernetesAPIAudience),
 		ExcludedNodeNames:         excludedNodes,
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
