@@ -19,6 +19,7 @@ import {
   validateClusterSnapshot,
   validateDefaultOffRender,
 } from "./readonly-cluster-proof.mjs";
+import { HARBOR_REGISTRY_ALIASES, normalizeRegistryAuth } from "./normalize-registry-auth.mjs";
 
 const COMMIT = "0123456789abcdef0123456789abcdef01234567";
 const DIGEST = `sha256:${"a".repeat(64)}`;
@@ -212,6 +213,15 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   assert.ok(steps["cluster-server-tests"].commands.includes("pnpm --filter @t4-code/cluster-server test"));
   assert.ok(steps["cluster-operator-tests"].commands.includes("go test ./..."));
   assert.ok(steps["cluster-chart-tests"].commands.includes("helm lint deploy/charts/t4-cluster"));
+  assert.equal(JSON.stringify(pipeline).includes("from_secret"), false);
+  assert.deepEqual(steps["harbor-auth"].depends_on, ["cluster-chart-tests", "android-debug"]);
+  assert.equal(
+    steps["harbor-auth"].backend_options.kubernetes.serviceAccountName,
+    "woodpecker-dev-verifier",
+  );
+  assert.deepEqual(steps["build-controller"].depends_on, ["harbor-auth"]);
+  assert.deepEqual(steps["live-cluster-observations"].depends_on, ["cleanup-image-registry-auth"]);
+  assert.deepEqual(steps["publish-live-proof"].depends_on, ["harbor-auth-live-proof"]);
 
   const orderedBuilds = ["build-controller", "build-cluster-server", "build-session-runtime"];
   for (const [index, name] of orderedBuilds.entries()) {
@@ -223,6 +233,26 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   assert.match(steps["build-controller"].commands[0], /t4-cluster-operator/u);
   assert.match(steps["build-cluster-server"].commands[0], /t4-cluster-server/u);
   assert.match(steps["build-session-runtime"].commands[0], /t4-session-runtime/u);
+
+  for (const script of ["build-image.sh", "capture-image-evidence.sh", "publish-artifact.sh"]) {
+    const source = await readFile(resolve(repoRoot, "scripts/cluster-ci", script), "utf8");
+    assert.doesNotMatch(source, /HARBOR_(?:USERNAME|PASSWORD)/u);
+    assert.match(source, /DOCKER_CONFIG/u);
+  }
+});
+
+test("registry auth is restricted to the fixed internal and tailnet Harbor aliases", () => {
+  const auth = "dXNlcjpwYXNz";
+  const normalized = normalizeRegistryAuth({
+    auths: {
+      "harbor.tailb18de3.ts.net": { auth },
+      "unrelated.example": { auth: "dW53YW50ZWQ6Y3JlZGVudGlhbA==" },
+    },
+  });
+  assert.deepEqual(Object.keys(normalized.auths), HARBOR_REGISTRY_ALIASES);
+  assert.ok(Object.values(normalized.auths).every((entry) => entry.auth === auth));
+  assert.equal("unrelated.example" in normalized.auths, false);
+  assert.throws(() => normalizeRegistryAuth({ auths: {} }), /no bounded registry authentication entry/u);
 });
 
 test("proof schema is strict and enumerates every bounded evidence domain", async () => {

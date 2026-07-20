@@ -24,8 +24,9 @@ esac
 : "${CI_COMMIT_SHA:?CI_COMMIT_SHA is required}"
 : "${HARBOR_REGISTRY:?HARBOR_REGISTRY is required}"
 : "${HARBOR_PROJECT:?HARBOR_PROJECT is required}"
-: "${HARBOR_USERNAME:?HARBOR_USERNAME is required}"
-: "${HARBOR_PASSWORD:?HARBOR_PASSWORD is required}"
+auth_dir=${T4_REGISTRY_AUTH_DIR:-${CI_WORKSPACE:-$PWD}/.cluster-ci/registry-auth}
+test -r "$auth_dir/config.json"
+export DOCKER_CONFIG="$auth_dir"
 
 artifact_dir="artifacts/cluster-proof/images"
 digest=$(cat "$artifact_dir/$component.digest")
@@ -40,16 +41,12 @@ reference="$HARBOR_REGISTRY/$HARBOR_PROJECT/$repository_suffix@$digest"
 
 case "$mode" in
   sbom)
-    export SYFT_REGISTRY_AUTH_USERNAME="$HARBOR_USERNAME"
-    export SYFT_REGISTRY_AUTH_PASSWORD="$HARBOR_PASSWORD"
     export SYFT_REGISTRY_INSECURE_SKIP_TLS_VERIFY=true
     export SYFT_REGISTRY_INSECURE_USE_HTTP=true
     syft "registry:$reference" -o "spdx-json=$artifact_dir/$component.spdx.json"
     test -s "$artifact_dir/$component.spdx.json"
     ;;
   vulnerability)
-    export TRIVY_USERNAME="$HARBOR_USERNAME"
-    export TRIVY_PASSWORD="$HARBOR_PASSWORD"
     export TRIVY_INSECURE=true
     trivy image \
       --format json \
@@ -61,13 +58,7 @@ case "$mode" in
     test -s "$artifact_dir/$component.trivy.json"
     ;;
   provenance)
-    auth_dir=$(mktemp -d)
-    trap 'rm -rf "$auth_dir"' EXIT HUP INT TERM
-    mkdir -p "$auth_dir/docker"
-    auth=$(printf '%s' "$HARBOR_USERNAME:$HARBOR_PASSWORD" | base64 | tr -d '\n')
-    printf '{"auths":{"%s":{"auth":"%s"}}}\n' "$HARBOR_REGISTRY" "$auth" > "$auth_dir/docker/config.json"
-    unset auth
-    export DOCKER_CONFIG="$auth_dir/docker"
+    export COSIGN_DOCKER_MEDIA_TYPES=1
     export COSIGN_ALLOW_INSECURE_REGISTRY=1
     cosign download attestation "$reference" > "$artifact_dir/$component.provenance.jsonl"
     test -s "$artifact_dir/$component.provenance.jsonl"

@@ -234,8 +234,30 @@ steps:
             memory: 512Mi
             ephemeral-storage: 512Mi
 
+  harbor-auth:
+    depends_on: [cluster-chart-tests, android-debug]
+    image: harbor.tailb18de3.ts.net/linkedin-bot/woodpecker-buildkit-deploy-tools@sha256:7936be1edac8ce3c225b148cff0e89b1446fc88185d72379398617f7279ad8cc
+    commands:
+      - sh scripts/cluster-ci/load-registry-auth.sh
+    when:
+      - event: push
+        branch: main
+      - event: manual
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-dev-verifier
+        resources:
+          requests:
+            cpu: "0"
+            memory: 128Mi
+            ephemeral-storage: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 512Mi
+
   build-controller:
-    depends_on: [cluster-chart-tests]
+    depends_on: [harbor-auth]
     image: mirror.gcr.io/moby/buildkit:v0.30.0-rootless
     environment:
       BUILDKIT_ADDR: tcp://woodpecker-buildkitd.linkedin-ci.svc.cluster.local:1234
@@ -566,10 +588,6 @@ steps:
     environment:
       HARBOR_REGISTRY: harbor.linkedin-registry.svc.cluster.local
       HARBOR_PROJECT: linkedin-bot
-      HARBOR_USERNAME:
-        from_secret: t4_harbor_username
-      HARBOR_PASSWORD:
-        from_secret: t4_harbor_password
     commands:
       - scripts/cluster-ci/publish-artifact.sh images
     when:
@@ -589,8 +607,30 @@ steps:
             memory: 512Mi
             ephemeral-storage: 1Gi
 
-  live-cluster-observations:
+  cleanup-image-registry-auth:
     depends_on: [publish-image-evidence]
+    image: mirror.gcr.io/library/busybox:1.37.0-musl
+    commands:
+      - rm -rf .cluster-ci/registry-auth
+    when:
+      - event: push
+        branch: main
+      - event: manual
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 16Mi
+            ephemeral-storage: 16Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+            ephemeral-storage: 64Mi
+
+  live-cluster-observations:
+    depends_on: [cleanup-image-registry-auth]
     image: harbor.tailb18de3.ts.net/linkedin-bot/woodpecker-buildkit-deploy-tools@sha256:7936be1edac8ce3c225b148cff0e89b1446fc88185d72379398617f7279ad8cc
     environment:
       T4_CLUSTER_NAMESPACE: t4-development
@@ -641,9 +681,6 @@ steps:
   live-proof-assembly:
     depends_on: [live-ui-proof]
     image: mirror.gcr.io/library/node:24.13.1-bookworm
-    environment:
-      T4_OBSERVABILITY_MANIFEST_URL:
-        from_secret: t4_observability_manifest_url
     commands:
       - node scripts/cluster-ci/assemble-proof.mjs
       - node scripts/cluster-ci/validate-proof.mjs artifacts/cluster-proof/manifest.json
@@ -663,16 +700,33 @@ steps:
             memory: 1Gi
             ephemeral-storage: 1Gi
 
-  publish-live-proof:
+  harbor-auth-live-proof:
     depends_on: [live-proof-assembly]
+    image: harbor.tailb18de3.ts.net/linkedin-bot/woodpecker-buildkit-deploy-tools@sha256:7936be1edac8ce3c225b148cff0e89b1446fc88185d72379398617f7279ad8cc
+    commands:
+      - sh scripts/cluster-ci/load-registry-auth.sh
+    when:
+      - event: manual
+        evaluate: 'T4_CLUSTER_PROOF_ENABLED == "true"'
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-dev-verifier
+        resources:
+          requests:
+            cpu: "0"
+            memory: 128Mi
+            ephemeral-storage: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 512Mi
+
+  publish-live-proof:
+    depends_on: [harbor-auth-live-proof]
     image: ghcr.io/oras-project/oras:v1.3.0
     environment:
       HARBOR_REGISTRY: harbor.linkedin-registry.svc.cluster.local
       HARBOR_PROJECT: linkedin-bot
-      HARBOR_USERNAME:
-        from_secret: t4_harbor_username
-      HARBOR_PASSWORD:
-        from_secret: t4_harbor_password
     commands:
       - scripts/cluster-ci/publish-artifact.sh proof
     when:
@@ -690,6 +744,27 @@ steps:
             cpu: 500m
             memory: 512Mi
             ephemeral-storage: 1Gi
+
+  cleanup-live-registry-auth:
+    depends_on: [publish-live-proof]
+    image: mirror.gcr.io/library/busybox:1.37.0-musl
+    commands:
+      - rm -rf .cluster-ci/registry-auth
+    when:
+      - event: manual
+        evaluate: 'T4_CLUSTER_PROOF_ENABLED == "true"'
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 16Mi
+            ephemeral-storage: 16Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+            ephemeral-storage: 64Mi
 
   verify:
     depends_on:
