@@ -1,0 +1,1106 @@
+<!doctype html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="generator" content="pandoc" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+    <title>T4 Hub architecture</title>
+    <style>
+      html {
+        color: #1a1a1a;
+        background-color: #fdfdfd;
+      }
+      body {
+        margin: 0 auto;
+        max-width: 72rem;
+        padding: 3rem clamp(1rem, 5vw, 4rem);
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        line-height: 1.55;
+        hyphens: none;
+        overflow-wrap: normal;
+        text-rendering: optimizeLegibility;
+        font-kerning: normal;
+      }
+      @media (max-width: 600px) {
+        body {
+          font-size: 0.9em;
+          padding: 12px;
+        }
+        h1 {
+          font-size: 1.8em;
+        }
+      }
+      @media print {
+        html {
+          background-color: white;
+        }
+        body {
+          background-color: transparent;
+          color: black;
+          font-size: 12pt;
+        }
+        p,
+        h2,
+        h3 {
+          orphans: 3;
+          widows: 3;
+        }
+        h2,
+        h3,
+        h4 {
+          page-break-after: avoid;
+        }
+      }
+      p {
+        margin: 1em 0;
+      }
+      a {
+        color: #1a1a1a;
+      }
+      a:visited {
+        color: #1a1a1a;
+      }
+      img {
+        max-width: 100%;
+      }
+      svg {
+        height: auto;
+        max-width: 100%;
+      }
+      h1,
+      h2,
+      h3,
+      h4,
+      h5,
+      h6 {
+        margin-top: 1.4em;
+      }
+      h5,
+      h6 {
+        font-size: 1em;
+        font-style: italic;
+      }
+      h6 {
+        font-weight: normal;
+      }
+      ol,
+      ul {
+        padding-left: 1.7em;
+        margin-top: 1em;
+      }
+      li > ol,
+      li > ul {
+        margin-top: 0;
+      }
+      blockquote {
+        margin: 1em 0 1em 1.7em;
+        padding-left: 1em;
+        border-left: 2px solid #e6e6e6;
+        color: #606060;
+      }
+      code {
+        font-family: Menlo, Monaco, Consolas, "Lucida Console", monospace;
+        font-size: 85%;
+        margin: 0;
+        hyphens: manual;
+      }
+      pre {
+        margin: 1em 0;
+        overflow: auto;
+      }
+      pre code {
+        padding: 0;
+        overflow: visible;
+        overflow-wrap: normal;
+      }
+      .sourceCode {
+        background-color: transparent;
+        overflow: visible;
+      }
+      hr {
+        border: none;
+        border-top: 1px solid #1a1a1a;
+        height: 1px;
+        margin: 1em 0;
+      }
+      table {
+        margin: 1em 0;
+        border-collapse: collapse;
+        width: 100%;
+        overflow-x: auto;
+        display: block;
+        font-variant-numeric: lining-nums tabular-nums;
+      }
+      table caption {
+        margin-bottom: 0.75em;
+      }
+      tbody {
+        margin-top: 0.5em;
+        border-top: 1px solid #1a1a1a;
+        border-bottom: 1px solid #1a1a1a;
+      }
+      th,
+      td {
+        padding: 0.5rem 0.75rem;
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        border-top: 1px solid #1a1a1a;
+      }
+      @media (min-width: 700px) {
+        th:first-child,
+        td:first-child {
+          width: 18%;
+          min-width: 10rem;
+        }
+      }
+      header {
+        margin-bottom: 4em;
+        text-align: center;
+      }
+      #TOC li {
+        list-style: none;
+      }
+      #TOC ul {
+        padding-left: 1.3em;
+      }
+      #TOC > ul {
+        padding-left: 0;
+      }
+      #TOC a:not(:hover) {
+        text-decoration: none;
+      }
+      code {
+        white-space: pre-wrap;
+      }
+      span.smallcaps {
+        font-variant: small-caps;
+      }
+      div.columns {
+        display: flex;
+        gap: min(4vw, 1.5em);
+      }
+      div.column {
+        flex: auto;
+        overflow-x: auto;
+      }
+      div.hanging-indent {
+        margin-left: 1.5em;
+        text-indent: -1.5em;
+      }
+      /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+      ul.task-list[class] {
+        list-style: none;
+      }
+      ul.task-list li input[type="checkbox"] {
+        font-size: inherit;
+        width: 0.8em;
+        margin: 0 0.8em 0.2em -1.6em;
+        vertical-align: middle;
+      }
+      .display.math {
+        display: block;
+        text-align: center;
+        margin: 0.5rem auto;
+      }
+    </style>
+  </head>
+  <body>
+    <header id="title-block-header">
+      <h1 class="title">T4 Hub architecture</h1>
+    </header>
+    <nav id="TOC" role="doc-toc">
+      <ul>
+        <li><a href="#status" id="toc-status">Status</a></li>
+        <li><a href="#product-goal" id="toc-product-goal">Product goal</a></li>
+        <li><a href="#product-names" id="toc-product-names">Product names</a></li>
+        <li>
+          <a href="#architectural-invariants" id="toc-architectural-invariants"
+            >Architectural invariants</a
+          >
+        </li>
+        <li>
+          <a href="#system-topology" id="toc-system-topology">System topology</a>
+          <ul>
+            <li><a href="#t4-hub-placement" id="toc-t4-hub-placement">T4 Hub placement</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="#protocol-boundaries" id="toc-protocol-boundaries">Protocol boundaries</a>
+          <ul>
+            <li><a href="#hub-wire" id="toc-hub-wire">Hub Wire</a></li>
+            <li><a href="#runtime-wire" id="toc-runtime-wire">Runtime Wire</a></li>
+            <li><a href="#omp-boundary" id="toc-omp-boundary">OMP boundary</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="#current-code-disposition" id="toc-current-code-disposition"
+            >Current-code disposition</a
+          >
+          <ul>
+            <li>
+              <a href="#retained-and-evolved" id="toc-retained-and-evolved">Retained and evolved</a>
+            </li>
+            <li>
+              <a href="#replaced-after-proof" id="toc-replaced-after-proof">Replaced after proof</a>
+            </li>
+          </ul>
+        </li>
+        <li>
+          <a href="#session-and-command-flow" id="toc-session-and-command-flow"
+            >Session and command flow</a
+          >
+          <ul>
+            <li><a href="#session-recovery" id="toc-session-recovery">Session recovery</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="#shared-project-filesystem" id="toc-shared-project-filesystem"
+            >Shared project filesystem</a
+          >
+        </li>
+        <li><a href="#technology-stack" id="toc-technology-stack">Technology stack</a></li>
+        <li>
+          <a href="#deployment-profiles" id="toc-deployment-profiles">Deployment profiles</a>
+          <ul>
+            <li><a href="#local-single-node" id="toc-local-single-node">Local single-node</a></li>
+            <li>
+              <a href="#remote-single-node" id="toc-remote-single-node">Remote single-node</a>
+            </li>
+            <li>
+              <a href="#highly-available-cluster" id="toc-highly-available-cluster"
+                >Highly available cluster</a
+              >
+            </li>
+            <li>
+              <a href="#advanced-installation" id="toc-advanced-installation"
+                >Advanced installation</a
+              >
+            </li>
+          </ul>
+        </li>
+        <li>
+          <a href="#guided-installation" id="toc-guided-installation">Guided installation</a>
+          <ul>
+            <li><a href="#first-hub" id="toc-first-hub">First Hub</a></li>
+            <li><a href="#cluster-expansion" id="toc-cluster-expansion">Cluster expansion</a></li>
+            <li><a href="#configuration-ux" id="toc-configuration-ux">Configuration UX</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="#cicd-and-product-progress" id="toc-cicd-and-product-progress"
+            >CI/CD and product progress</a
+          >
+        </li>
+        <li><a href="#observability" id="toc-observability">Observability</a></li>
+        <li><a href="#security-boundaries" id="toc-security-boundaries">Security boundaries</a></li>
+        <li>
+          <a href="#delivery-strategy" id="toc-delivery-strategy">Delivery strategy</a>
+          <ul>
+            <li>
+              <a href="#foundation-contract" id="toc-foundation-contract">Foundation contract</a>
+            </li>
+            <li>
+              <a
+                href="#first-production-shaped-vertical-slice"
+                id="toc-first-production-shaped-vertical-slice"
+                >First production-shaped vertical slice</a
+              >
+            </li>
+            <li>
+              <a href="#cephfs-qualification" id="toc-cephfs-qualification">CephFS qualification</a>
+            </li>
+            <li><a href="#ha-expansion" id="toc-ha-expansion">HA expansion</a></li>
+            <li><a href="#cicd-integration" id="toc-cicd-integration">CI/CD integration</a></li>
+            <li><a href="#guided-installer" id="toc-guided-installer">Guided installer</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="#reliability-and-release-gates" id="toc-reliability-and-release-gates"
+            >Reliability and release gates</a
+          >
+          <ul>
+            <li>
+              <a href="#command-and-ownership" id="toc-command-and-ownership"
+                >Command and ownership</a
+              >
+            </li>
+            <li><a href="#workspace" id="toc-workspace">Workspace</a></li>
+            <li><a href="#control-plane" id="toc-control-plane">Control plane</a></li>
+            <li><a href="#client" id="toc-client">Client</a></li>
+            <li>
+              <a href="#installation-and-lifecycle" id="toc-installation-and-lifecycle"
+                >Installation and lifecycle</a
+              >
+            </li>
+          </ul>
+        </li>
+        <li><a href="#initial-non-goals" id="toc-initial-non-goals">Initial non-goals</a></li>
+        <li>
+          <a href="#open-decisions-requiring-proof" id="toc-open-decisions-requiring-proof"
+            >Open decisions requiring proof</a
+          >
+        </li>
+      </ul>
+    </nav>
+    <h2 id="status">Status</h2>
+    <p>
+      This document defines the accepted direction for the managed T4 Code platform on
+      <code>feat/t4-hub</code>. It replaces the long-term assumption that T4 remotely controls an
+      arbitrary OMP process installed on a user's desktop.
+    </p>
+    <p>
+      The current Flutter client is the product and interaction baseline. The current local host
+      service, host wire protocol, OMP fork launcher, and private OMP authority adapter remain
+      temporary compatibility and test references until the managed path passes its replacement
+      gates. They are then removed rather than retained as a second production authority.
+    </p>
+    <h2 id="product-goal">Product goal</h2>
+    <p>T4 Code is a remote client for an easy-to-install, highly available agent platform:</p>
+    <pre class="text"><code>T4 Code desktop or mobile
+        |
+        | authenticated Hub Wire over Tailscale
+        v
+T4 Hub control plane
+        |
+        | durable commands and desired state
+        v
+k3s cluster and T4 Operator
+        |
+        | one managed runtime pod per OMP session
+        v
+Pinned stock OMP runtime
+        |
+        | shared POSIX project filesystem
+        v
+Repositories, worktrees, and project services</code></pre>
+    <p>
+      T4 Hub integrates source control and CI/CD activity into the same durable session history and
+      presents progress in the Flutter GUI. A user can begin with one Linux machine and expand the
+      same installation to a three-or-more-node HA cluster.
+    </p>
+    <h2 id="product-names">Product names</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Responsibility</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>T4 Code</strong></td>
+          <td>
+            Flutter desktop, mobile, and web client. It is a remote client even when the Hub is
+            nearby.
+          </td>
+        </tr>
+        <tr>
+          <td><strong>T4 Hub</strong></td>
+          <td>
+            Logical control plane: API, authentication, durable state, scheduling intent, CI/CD
+            integrations, updates, and cluster health. In HA mode it is distributed, not installed
+            on one special computer.
+          </td>
+        </tr>
+        <tr>
+          <td><strong>T4 Node</strong></td>
+          <td>
+            A Linux machine enrolled into the k3s cluster to provide control-plane, storage, or
+            execution capacity.
+          </td>
+        </tr>
+        <tr>
+          <td><strong>T4 Operator</strong></td>
+          <td>
+            Kubernetes controller that reconciles durable T4 session intent into runtime pods and
+            related resources.
+          </td>
+        </tr>
+        <tr>
+          <td><strong>T4 Session Runtime</strong></td>
+          <td>
+            Internal OCI image containing the T4 runtime adapter and a pinned, unmodified official
+            OMP release.
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Users interact with T4 Code, T4 Hub, and T4 Node. Kubernetes, containerd, PostgreSQL
+      replication, storage placement, and telemetry topology are implementation details managed by
+      the installer.
+    </p>
+    <h2 id="architectural-invariants">Architectural invariants</h2>
+    <ol type="1">
+      <li>
+        PostgreSQL is authoritative for projects, sessions, commands, ownership epochs, approvals,
+        progress events, and CI/CD associations.
+      </li>
+      <li>
+        Kubernetes reconciles execution resources; Kubernetes objects are not the product event
+        database.
+      </li>
+      <li>
+        T4 creates every managed OMP session and therefore knows its legitimate owner from creation.
+      </li>
+      <li>Each accepted command is durable and idempotent before a runtime receives it.</li>
+      <li>
+        Each session has one current owner epoch. A stale runtime cannot claim commands or publish
+        accepted state after ownership transfers.
+      </li>
+      <li>
+        Runtime pods are disposable. Sessions, worktrees, commands, and user-visible history survive
+        pod replacement.
+      </li>
+      <li>
+        All runtimes for a project mount the same networked POSIX filesystem at the same absolute
+        path.
+      </li>
+      <li>
+        OMP owns repositories, Git worktrees, and its agent behavior inside the managed runtime. T4
+        does not invent a competing worktree model.
+      </li>
+      <li>
+        T4 Code speaks only the versioned Hub protocol. It never depends on Kubernetes resources or
+        direct pod connections.
+      </li>
+      <li>
+        Development, single-node, and HA installations use the same images, migrations, protocol,
+        and release chart. Profiles alter topology rather than behavior.
+      </li>
+      <li>
+        No deployment is described as HA until it has at least three suitable failure domains and
+        passes automated recovery checks.
+      </li>
+      <li>
+        Product progress is durable application state. Grafana telemetry supplements it but never
+        replaces it.
+      </li>
+    </ol>
+    <h2 id="system-topology">System topology</h2>
+    <pre class="mermaid"><code>flowchart TB
+    MOBILE[T4 Code mobile]
+    DESKTOP[T4 Code desktop]
+    TAILSCALE[Tailscale]
+
+    subgraph HUB[T4 Hub]
+        API[T4 API replicas]
+        DB[(PostgreSQL)]
+        OP[T4 Operator]
+        CICD[CI/CD integration]
+        EVENTS[Durable command and event service]
+    end
+
+    subgraph CLUSTER[k3s execution cluster]
+        R1[T4 Session Runtime A]
+        R2[T4 Session Runtime B]
+        R3[T4 Session Runtime C]
+        FS[(Shared project filesystem)]
+        OBJECTS[(MinIO)]
+        GRAFANA[Grafana LGTM stack]
+    end
+
+    MOBILE --&gt; TAILSCALE
+    DESKTOP --&gt; TAILSCALE
+    TAILSCALE --&gt; API
+    API --&gt; DB
+    API --&gt; EVENTS
+    API --&gt; OP
+    API --&gt; CICD
+    OP --&gt; R1
+    OP --&gt; R2
+    OP --&gt; R3
+    R1 --&gt; FS
+    R2 --&gt; FS
+    R3 --&gt; FS
+    EVENTS --&gt; R1
+    EVENTS --&gt; R2
+    EVENTS --&gt; R3
+    EVENTS --&gt; OBJECTS
+    GRAFANA --&gt; OBJECTS</code></pre>
+    <h3 id="t4-hub-placement">T4 Hub placement</h3>
+    <p>
+      In a single-node installation, the one Linux machine is both T4 Hub and T4 Node. In an HA
+      installation, Hub API, database, operator, storage, and telemetry replicas are distributed
+      across the cluster. Clients use one stable Tailnet service address and do not select a
+      control-plane replica.
+    </p>
+    <p>
+      A Linux machine may be a dedicated mini PC, home or office server, NAS-hosted VM, cloud VM, or
+      Linux workstation. macOS and Windows run T4 Code as remote clients. A managed local Linux VM
+      may be added later, but the initial server and node implementation remains Linux-only.
+    </p>
+    <h2 id="protocol-boundaries">Protocol boundaries</h2>
+    <p>
+      The managed architecture does not preserve the current local
+      <code>@t4-code/host-wire</code> contract wholesale.
+    </p>
+    <h3 id="hub-wire">Hub Wire</h3>
+    <p>
+      <code>@t4-code/hub-wire</code> is the external, versioned T4 Code-to-Hub contract. It covers:
+    </p>
+    <ul>
+      <li>pairing, authentication, devices, and capabilities;</li>
+      <li>projects, workspaces, repositories, and sessions;</li>
+      <li>prompt, steer, follow-up, cancellation, and attention responses;</li>
+      <li>bounded transcript, file, artifact, and image access;</li>
+      <li>durable progress cursors and reconnection;</li>
+      <li>cluster and node health;</li>
+      <li>CI/CD runs, checks, reviews, artifacts, and deployment approvals;</li>
+      <li>backup, update, and compatibility status.</li>
+    </ul>
+    <p>
+      The current protocol's bounded decoding, branded identifiers, additive evolution, command
+      idempotency, paging, and payload limits should be migrated when their semantics remain
+      correct. Local host discovery, external session attachment, local transcript observation, and
+      competing process ownership must not leak into Hub Wire.
+    </p>
+    <h3 id="runtime-wire">Runtime Wire</h3>
+    <p>
+      <code>@t4-code/runtime-wire</code> is the internal Hub-to-session-runtime contract. It covers:
+    </p>
+    <ul>
+      <li>runtime registration and compatibility;</li>
+      <li>session identity, runtime image digest, and owner epoch;</li>
+      <li>durable command claiming and outcomes;</li>
+      <li>OMP prompt, steer, follow-up, cancellation, and approval operations;</li>
+      <li>ordered transcript and progress publication;</li>
+      <li>heartbeat, lease renewal, recovery checkpoint, completion, and failure.</li>
+    </ul>
+    <p>
+      A runtime may only claim work or publish authoritative outcomes for its current epoch. Losing
+      the lease makes it terminate or become inert immediately.
+    </p>
+    <h3 id="omp-boundary">OMP boundary</h3>
+    <p>
+      The T4 Session Runtime launches a pinned official OMP release and adapts its supported
+      appserver or RPC interface to Runtime Wire. T4 owns the containing runtime and starts the OMP
+      session, so there is no second desktop process competing for ownership.
+    </p>
+    <p>
+      If an official OMP release lacks a required public capability, T4 should propose the narrow
+      capability upstream. A broad patched desktop OMP distribution is not part of the target
+      architecture.
+    </p>
+    <h2 id="current-code-disposition">Current-code disposition</h2>
+    <h3 id="retained-and-evolved">Retained and evolved</h3>
+    <ul>
+      <li>
+        The shared Flutter client, adaptive GUI, secure Hub directory, session UX, transcript
+        rendering, composer, attention inbox, developer surfaces, and lifecycle behavior.
+      </li>
+      <li>Observable user workflows and deterministic fixtures that remain valid.</li>
+      <li>Bounded protocol and projection techniques.</li>
+      <li>
+        Capability negotiation, command IDs, paging cursors, payload limits, and fail-closed
+        decoding where their meanings survive.
+      </li>
+    </ul>
+    <h3 id="replaced-after-proof">Replaced after proof</h3>
+    <ul>
+      <li>Local OMP discovery and process probing.</li>
+      <li>External-session observation and attachment as the primary managed path.</li>
+      <li>RPC-child spawning on an arbitrary desktop host.</li>
+      <li>Local JSONL transcript discovery and compatibility projection.</li>
+      <li>Competing-process lock inspection and takeover behavior.</li>
+      <li>The current OMP fork launcher and private authority adapter.</li>
+      <li>Host-specific workspace authority and local appserver deployment.</li>
+    </ul>
+    <p>
+      Replacement is gated. The current backend is not deleted until the managed path completes the
+      real session, recovery, storage, client, and rollback gates defined below.
+    </p>
+    <h2 id="session-and-command-flow">Session and command flow</h2>
+    <pre class="text"><code>T4 Code submits command with commandId
+  -&gt; T4 Hub authenticates and validates it
+  -&gt; PostgreSQL records the command durably
+  -&gt; current session owner claims it with ownerEpoch
+  -&gt; T4 runtime adapter invokes stock OMP
+  -&gt; runtime records accepted, rejected, or failed outcome
+  -&gt; transcript and progress events are durably appended
+  -&gt; T4 Code receives events and advances its cursor</code></pre>
+    <p>
+      A lost client connection cannot lose an accepted command. Retrying the same command ID cannot
+      execute it twice. A client can always distinguish pending, accepted, rejected, completed,
+      failed, and unknown-after-invariant-violation states.
+    </p>
+    <h3 id="session-recovery">Session recovery</h3>
+    <p>When a runtime pod fails:</p>
+    <ol type="1">
+      <li>Its lease expires or the controller revokes it.</li>
+      <li>T4 advances the owner epoch.</li>
+      <li>The old runtime is fenced and terminated.</li>
+      <li>
+        The operator creates a replacement runtime using the same pinned image and worktree path.
+      </li>
+      <li>The replacement mounts the shared project filesystem.</li>
+      <li>It restores the durable session checkpoint and resumes command/event cursors.</li>
+      <li>
+        The GUI moves from <code>Recovering</code> to <code>Ready</code> only after continuity is
+        verified.
+      </li>
+    </ol>
+    <h2 id="shared-project-filesystem">Shared project filesystem</h2>
+    <p>All eligible execution nodes mount the same project filesystem at a stable path:</p>
+    <pre class="text"><code>/workspace/projects/&lt;project-id&gt;/
+├── repo/
+├── worktrees/
+├── shared/
+└── .t4/</code></pre>
+    <p>
+      OMP manages repositories and worktrees on this filesystem. Multiple sessions may use distinct
+      OMP-managed worktrees concurrently while seeing the same project environment.
+      Repository-global mutations must retain OMP/Git locking semantics and pass the storage
+      conformance suite.
+    </p>
+    <p>
+      The live filesystem requires POSIX behavior, RWX mounting, atomic rename, exclusive file
+      creation, symlinks, reliable permissions, recovery after node loss, snapshots, and acceptable
+      metadata performance.
+    </p>
+    <p>
+      Rook-managed CephFS is the selected live shared filesystem. T4 provisions one CephFS subvolume
+      or equivalent isolation boundary per project and mounts it through the Ceph CSI driver as RWX
+      storage. Ceph placement must use explicit nodes and devices; the installer never consumes an
+      unapproved disk automatically.
+    </p>
+    <p>
+      A single-node profile runs one nonredundant Ceph monitor, manager, metadata service, and
+      size-one data/metadata pools. The GUI labels this state as unprotected and requires the user
+      to select suitable Ceph storage. When two additional storage nodes join, T4 distributes
+      monitors, enables a standby metadata service, changes pool placement to the host failure
+      domain, raises replication to three, waits for backfill, and reports HA only after Ceph
+      returns healthy.
+    </p>
+    <p>
+      CephFS remains subject to a representative conformance suite covering real OMP worktree
+      concurrency, large repositories, package trees, pod and node failure, expansion from one to
+      three nodes, metadata-service failover, pool backfill, snapshot, restore, and
+      <code>git fsck</code> integrity. This validates the selected implementation rather than
+      reopening the provider decision.
+    </p>
+    <p>
+      MinIO is object storage rather than the live POSIX filesystem. It stores artifacts, uploads,
+      transcript and log chunks, filesystem backups, database backups, and observability objects.
+    </p>
+    <h2 id="technology-stack">Technology stack</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Layer</th>
+          <th>Selected technology</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Client</td>
+          <td>Flutter for macOS, Windows, Linux, Android, iOS, and Web where appropriate</td>
+        </tr>
+        <tr>
+          <td>Private network</td>
+          <td>
+            Tailscale and the Tailscale Kubernetes Operator; Headscale remains a possible
+            self-hosted control-plane option subject to compatibility proof
+          </td>
+        </tr>
+        <tr>
+          <td>Cluster</td>
+          <td>k3s using standard Kubernetes APIs</td>
+        </tr>
+        <tr>
+          <td>Container runtime</td>
+          <td>containerd</td>
+        </tr>
+        <tr>
+          <td>Build artifact</td>
+          <td>OCI images built without requiring Docker or Docker Desktop</td>
+        </tr>
+        <tr>
+          <td>Control API</td>
+          <td>
+            T4 Hub service, preserving existing implementation-language conventions until profiling
+            or correctness requires a change
+          </td>
+        </tr>
+        <tr>
+          <td>Reconciler</td>
+          <td>T4 Kubernetes Operator</td>
+        </tr>
+        <tr>
+          <td>Agent runtime</td>
+          <td>T4 runtime adapter plus a pinned official OMP release</td>
+        </tr>
+        <tr>
+          <td>Product database</td>
+          <td>PostgreSQL managed by CloudNativePG in HA mode</td>
+        </tr>
+        <tr>
+          <td>Shared filesystem</td>
+          <td>Rook-managed CephFS exposed through the Ceph CSI driver as RWX project storage</td>
+        </tr>
+        <tr>
+          <td>Object storage</td>
+          <td>MinIO Community Edition</td>
+        </tr>
+        <tr>
+          <td>Source workflow</td>
+          <td>Git and OMP-managed Git worktrees</td>
+        </tr>
+        <tr>
+          <td>CI/CD</td>
+          <td>
+            GitHub App, webhooks, Checks/Actions APIs, and self-hosted runners where appropriate
+          </td>
+        </tr>
+        <tr>
+          <td>Dashboards</td>
+          <td>Grafana OSS</td>
+        </tr>
+        <tr>
+          <td>Telemetry collection</td>
+          <td>Grafana Alloy</td>
+        </tr>
+        <tr>
+          <td>Metrics</td>
+          <td>Grafana Mimir</td>
+        </tr>
+        <tr>
+          <td>Logs</td>
+          <td>Grafana Loki</td>
+        </tr>
+        <tr>
+          <td>Traces</td>
+          <td>Grafana Tempo</td>
+        </tr>
+        <tr>
+          <td>Instrumentation</td>
+          <td>OpenTelemetry</td>
+        </tr>
+        <tr>
+          <td>Secrets</td>
+          <td>
+            External Secrets with OpenBao or SOPS; avoid making current Vault BUSL releases a
+            required dependency
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      The self-hosted software stack can operate without software license fees, subject to the
+      applicable open-source and source-available licenses. Tailscale's hosted control plane, GitHub
+      plans, hardware, bandwidth, store accounts, and operational support may incur costs. AGPL
+      components must remain license-compliant, especially if modified or redistributed.
+    </p>
+    <h2 id="deployment-profiles">Deployment profiles</h2>
+    <p>
+      T4 Code presents a guided deployment configurator. Users choose availability goals and
+      machines; they do not manually place databases, storage services, or operator replicas.
+    </p>
+    <h3 id="local-single-node">Local single-node</h3>
+    <p>One Linux computer runs T4 Hub, one T4 Node, and all session runtimes.</p>
+    <p><strong>Benefits</strong></p>
+    <ul>
+      <li>No additional machine.</li>
+      <li>Simplest supported installation.</li>
+      <li>Same k3s, protocol, operator, and runtime architecture as larger deployments.</li>
+    </ul>
+    <p><strong>Limitations</strong></p>
+    <ul>
+      <li>Stops when the computer sleeps, shuts down, or fails.</li>
+      <li>No hardware redundancy.</li>
+      <li>Agent work competes with desktop workloads.</li>
+      <li>External backup is strongly recommended.</li>
+    </ul>
+    <h3 id="remote-single-node">Remote single-node</h3>
+    <p>
+      One always-on Linux computer or VM runs T4 Hub and T4 Node. Desktop and mobile clients connect
+      over Tailscale.
+    </p>
+    <p><strong>Benefits</strong></p>
+    <ul>
+      <li>Recommended personal configuration.</li>
+      <li>Work continues while client devices are off.</li>
+      <li>Can expand into the intended cluster topology.</li>
+    </ul>
+    <p><strong>Limitations</strong></p>
+    <ul>
+      <li>Still one failure domain.</li>
+      <li>Unavailable during host maintenance or failure.</li>
+    </ul>
+    <h3 id="highly-available-cluster">Highly available cluster</h3>
+    <p>
+      At least three suitable Linux machines run k3s with embedded-etcd quorum, distributed Hub
+      replicas, PostgreSQL replicas, replicated storage, and schedulable runtime capacity.
+    </p>
+    <p><strong>Benefits</strong></p>
+    <ul>
+      <li>Survives a tested single-node failure.</li>
+      <li>Adds execution capacity and replicated state.</li>
+      <li>Supports teams and continuous workloads.</li>
+    </ul>
+    <p><strong>Limitations</strong></p>
+    <ul>
+      <li>Requires at least three failure domains.</li>
+      <li>Needs greater disk, memory, and network capacity.</li>
+      <li>Replication does not replace backups.</li>
+    </ul>
+    <p>
+      Two nodes may add capacity but are not labeled HA because they cannot preserve quorum after an
+      arbitrary partition.
+    </p>
+    <h3 id="advanced-installation">Advanced installation</h3>
+    <p>
+      An explicit advanced path may support an existing k3s cluster, dedicated
+      control/storage/worker roles, external PostgreSQL or object storage, custom storage classes,
+      and specialized runner pools. Unsupported combinations must be rejected rather than accepted
+      optimistically.
+    </p>
+    <h2 id="guided-installation">Guided installation</h2>
+    <h3 id="first-hub">First Hub</h3>
+    <pre class="text"><code>Install T4 Code
+  -&gt; choose local Linux or remote Linux Hub
+  -&gt; discover or identify the machine through Tailscale
+  -&gt; run the signed T4 Node installer
+  -&gt; exchange a short-lived, single-use enrollment code
+  -&gt; validate CPU, memory, disk, OS, network, and time
+  -&gt; install k3s and the signed T4 release bundle
+  -&gt; bootstrap PostgreSQL, storage, MinIO, and Grafana
+  -&gt; run an end-to-end session health check
+  -&gt; pair T4 Code</code></pre>
+    <p>
+      Users do not run <code>kubectl</code>, edit Helm values, manage database credentials, or place
+      replicas manually.
+    </p>
+    <h3 id="cluster-expansion">Cluster expansion</h3>
+    <p>
+      The GUI exposes <code>Make highly available</code> or <code>Add node</code>. T4 enrolls
+      additional Linux machines, expands embedded-etcd quorum, creates PostgreSQL and storage
+      replicas, expands or migrates MinIO safely, adds Hub replicas, rebalances workloads, and runs
+      failure checks before reporting HA.
+    </p>
+    <p>
+      The client endpoint, project identifiers, session history, worktree paths, and credentials
+      remain stable during expansion.
+    </p>
+    <h3 id="configuration-ux">Configuration UX</h3>
+    <p>The configurator shows a topology preview and plain-language consequences:</p>
+    <pre class="text"><code>Availability: Single-node
+Database copies: 1
+Workspace copies: 1
+External backup: Not configured
+Recommendation: Add two Linux nodes for high availability.</code></pre>
+    <p>
+      Ordinary users choose among versioned, tested profiles. Arbitrary independent replica counts
+      and service placements remain an advanced operator concern.
+    </p>
+    <h2 id="cicd-and-product-progress">CI/CD and product progress</h2>
+    <p>
+      A GitHub App integrates repository authorization, webhooks, branches, pull requests, checks,
+      workflow state, reviews, artifacts, deployment environments, and approvals.
+    </p>
+    <p>OMP and integrations emit typed product events such as:</p>
+    <pre class="text"><code>session.created
+runtime.started
+message.accepted
+tool.started
+files.changed
+commit.created
+tests.started
+tests.completed
+pull_request.opened
+ci.check.updated
+approval.requested
+deployment.completed
+session.recovered</code></pre>
+    <p>
+      These events are persisted and shown in T4 Code. The GUI does not infer authoritative progress
+      by scraping terminal text or querying Grafana.
+    </p>
+    <h2 id="observability">Observability</h2>
+    <p>The self-hosted Grafana LGTM stack is:</p>
+    <ul>
+      <li>Grafana for dashboards and alerts;</li>
+      <li>Grafana Alloy for collection;</li>
+      <li>Grafana Mimir for metrics;</li>
+      <li>Grafana Loki for logs;</li>
+      <li>Grafana Tempo for traces;</li>
+      <li>OpenTelemetry for T4 instrumentation;</li>
+      <li>MinIO as object storage for Mimir, Loki, and Tempo.</li>
+    </ul>
+    <p>
+      No Prometheus server is required. Alloy may scrape Prometheus-format metrics exposed by
+      Kubernetes and its components.
+    </p>
+    <p>
+      Single-node installations use compact, bounded-retention deployments. HA installations may use
+      distributed deployments. Observability failure cannot prevent session execution or alter
+      durable product state.
+    </p>
+    <h2 id="security-boundaries">Security boundaries</h2>
+    <ul>
+      <li>Hub APIs are Tailnet-only by default.</li>
+      <li>Device pairing produces scoped credentials and capabilities.</li>
+      <li>
+        Node enrollment uses short-lived, single-use credentials and establishes durable mTLS
+        identity.
+      </li>
+      <li>Runtime pods receive only project- and session-scoped authority.</li>
+      <li>No runtime pod receives unrestricted Kubernetes API credentials.</li>
+      <li>
+        Repository code is treated as untrusted: workloads require resource limits, network policy,
+        controlled egress, and stronger sandboxing where the threat model requires it.
+      </li>
+      <li>
+        Secrets use workload identity or short-lived delivery and never enter transcripts, logs,
+        images, support bundles, or repository files.
+      </li>
+      <li>Support bundles are bounded and redacted by construction.</li>
+      <li>
+        Every release includes signed OCI images, an SBOM, checksums, schema compatibility, and a
+        supported-version manifest.
+      </li>
+    </ul>
+    <h2 id="delivery-strategy">Delivery strategy</h2>
+    <p>
+      Work proceeds on <code>feat/t4-hub</code>, branched from the verified Flutter collaboration
+      baseline. <code>feat/flutter-rewrite</code> remains the stable client branch. The new branch
+      must not turn the current host service into a disguised cluster control plane.
+    </p>
+    <h3 id="foundation-contract">Foundation contract</h3>
+    <p>
+      Define Hub Wire, Runtime Wire, the session state machine, PostgreSQL ownership, owner-epoch
+      fencing, stable filesystem paths, runtime compatibility, and the versioned deployment profile
+      format.
+    </p>
+    <h3 id="first-production-shaped-vertical-slice">First production-shaped vertical slice</h3>
+    <p>Prove one complete path using real components:</p>
+    <ol type="1">
+      <li>T4 Code connects to a compact single-node k3s deployment.</li>
+      <li>T4 Hub persists a project, session, and prompt in PostgreSQL.</li>
+      <li>T4 Operator starts a real T4 Session Runtime.</li>
+      <li>The runtime launches pinned stock OMP.</li>
+      <li>OMP changes a file in its shared-filesystem worktree.</li>
+      <li>T4 Code renders durable progress.</li>
+      <li>Deleting the runtime pod triggers bounded recovery against the same worktree.</li>
+      <li>Reconnection does not duplicate the prompt or lose transcript continuity.</li>
+    </ol>
+    <p>
+      Development, CI, single-node, and HA profiles use one versioned release chart. A developer
+      profile may use a managed Linux VM running real k3s; Docker, Docker Desktop, k3d, and a
+      separate Docker Compose architecture are not required.
+    </p>
+    <h3 id="cephfs-qualification">CephFS qualification</h3>
+    <p>
+      Prove the packaged Rook/CephFS topology in single-node and HA profiles. Qualification includes
+      explicit device enrollment, CSI mounting, OMP worktree concurrency, metadata-service failover,
+      expansion from size-one pools to host-distributed size-three pools, backfill observability,
+      snapshots, restore, and Git integrity. T4 Code and Hub Wire remain independent of
+      Ceph-specific administration even though the packaged platform standardizes on CephFS.
+    </p>
+    <h3 id="ha-expansion">HA expansion</h3>
+    <p>
+      Prove three-node k3s quorum, Hub API replication, operator leader replacement, CloudNativePG
+      failover, object and filesystem replication, and stable Tailnet routing.
+    </p>
+    <h3 id="cicd-integration">CI/CD integration</h3>
+    <p>
+      Add GitHub and self-hosted runner integration only after command durability and workspace
+      recovery work independently.
+    </p>
+    <h3 id="guided-installer">Guided installer</h3>
+    <p>
+      Package T4 Hub and T4 Node installation, expansion, backup, update, rollback, and support
+      collection behind the Flutter setup UI. Installer automation uses the same signed release
+      bundle exercised by CI.
+    </p>
+    <h2 id="reliability-and-release-gates">Reliability and release gates</h2>
+    <p>
+      A milestone is not complete from compilation or a healthy Kubernetes dashboard. It must prove
+      its observable behavior and failure semantics.
+    </p>
+    <h3 id="command-and-ownership">Command and ownership</h3>
+    <ul>
+      <li>A retried command ID executes at most once.</li>
+      <li>A client can recover the durable outcome after transport loss.</li>
+      <li>A stale owner cannot claim commands or publish authoritative outcomes.</li>
+      <li>Losing the current owner results in one bounded replacement, not competing runtimes.</li>
+    </ul>
+    <h3 id="workspace">Workspace</h3>
+    <ul>
+      <li>Concurrent real OMP worktrees preserve repository integrity.</li>
+      <li>Pod and node loss do not lose committed or uncommitted work.</li>
+      <li>Expansion from one node to three does not change paths or project identity.</li>
+      <li>Snapshot restoration reproduces database and filesystem generations consistently.</li>
+      <li>Representative destructive tests finish with successful Git integrity checks.</li>
+    </ul>
+    <h3 id="control-plane">Control plane</h3>
+    <ul>
+      <li>API replica loss does not interrupt durable commands.</li>
+      <li>Operator leader loss does not duplicate resources.</li>
+      <li>PostgreSQL primary loss preserves committed state.</li>
+      <li>Tailnet reconnect resumes from cursors rather than replaying unbounded history.</li>
+      <li>
+        MinIO or Grafana impairment degrades explicit features without corrupting product state.
+      </li>
+    </ul>
+    <h3 id="client">Client</h3>
+    <ul>
+      <li>
+        Physical desktop and mobile clients create, operate, recover, and inspect a real managed
+        session.
+      </li>
+      <li>
+        Compact and wide layouts show creating, ready, running, waiting, recovering, failed, and
+        completed states.
+      </li>
+      <li>Background/resume and network switching preserve command and transcript continuity.</li>
+    </ul>
+    <h3 id="installation-and-lifecycle">Installation and lifecycle</h3>
+    <ul>
+      <li>A non-expert can install a single remote Linux Hub without Kubernetes knowledge.</li>
+      <li>
+        Adding two validated nodes converts it to HA only after replication and failure checks pass.
+      </li>
+      <li>
+        Upgrade runs preflight, database backup, filesystem snapshot, signed-image verification,
+        migration, canary, and health gates.
+      </li>
+      <li>Failed upgrades stop safely and expose a tested recovery or rollback path.</li>
+      <li>Backup restoration is exercised, not inferred from successful backup creation.</li>
+    </ul>
+    <h2 id="initial-non-goals">Initial non-goals</h2>
+    <ul>
+      <li>Native macOS or Windows Hub implementations.</li>
+      <li>Docker or Docker Desktop as a user prerequisite.</li>
+      <li>
+        Attaching arbitrary externally owned desktop OMP sessions to the managed control plane.
+      </li>
+      <li>Multiple ordinary-user storage-provider choices.</li>
+      <li>Active-active cross-cluster filesystem failover.</li>
+      <li>Making Grafana the user-facing product event database.</li>
+      <li>Removing the current backend before replacement evidence and rollback gates exist.</li>
+    </ul>
+    <h2 id="open-decisions-requiring-proof">Open decisions requiring proof</h2>
+    <ul>
+      <li>
+        The exact official OMP interface sufficient for the runtime adapter and any narrow upstream
+        additions it needs.
+      </li>
+      <li>Resource floors for compact and HA deployment profiles.</li>
+      <li>
+        Tailnet hosted-service plan requirements and whether Headscale meets the supported
+        deployment contract.
+      </li>
+      <li>The supported external macOS, Windows, and GPU runner model.</li>
+      <li>Retention defaults for Mimir, Loki, Tempo, transcripts, artifacts, and backups.</li>
+    </ul>
+  </body>
+</html>
