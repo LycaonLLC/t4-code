@@ -88,6 +88,7 @@ import {
 	decodeTranscriptSearchArguments,
 	decodeTranscriptSearchResult,
 } from "./transcript-search.js";
+import { decodeTranscriptPageArguments, decodeTranscriptPageResult } from "./transcript-page.js";
 import { decodeUsageReadResult } from "./usage.js";
 export type RevisionOwner = "none" | "session" | "authority";
 export interface CommandDescriptor {
@@ -163,6 +164,13 @@ export const COMMAND_DESCRIPTORS: Readonly<Record<string, CommandDescriptor>> = 
 		confirmation: "none",
 	},
 	"transcript.context": {
+		capability: "sessions.read",
+		scope: "session",
+		revision: "none",
+		revisionOwner: "none",
+		confirmation: "none",
+	},
+	"transcript.page": {
 		capability: "sessions.read",
 		scope: "session",
 		revision: "none",
@@ -1590,6 +1598,7 @@ export const COMMAND_ARGUMENT_DECODERS: Readonly<Record<string, (value: unknown)
 	"session.list": args,
 	"transcript.search": value => decodeTranscriptSearchArguments(value) as unknown as CommandArguments,
 	"transcript.context": value => decodeTranscriptContextArguments(value) as unknown as CommandArguments,
+	"transcript.page": value => decodeTranscriptPageArguments(value) as unknown as CommandArguments,
 	"project.reveal": value => {
 		const x = strictArgs(value, ["projectId"]);
 		projectId(x.projectId, "args.projectId");
@@ -1862,6 +1871,7 @@ export const COMMAND_RESULT_DECODERS: Readonly<Record<string, (value: unknown) =
 	"session.list": decodeSessions,
 	"transcript.search": value => decodeTranscriptSearchResult(value) as unknown as CommandResult,
 	"transcript.context": value => decodeTranscriptContextResult(value) as unknown as CommandResult,
+	"transcript.page": value => decodeTranscriptPageResult(value) as unknown as CommandResult,
 	"project.reveal": value => boolField(value, "revealed"),
 	"session.create": decodeCreate,
 	"session.attach": decodeAttach,

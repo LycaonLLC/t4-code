@@ -77,6 +77,7 @@ describe("app-wire authority", () => {
 			"ping.json",
 			"transcript-search-request.json",
 			"transcript-context-request.json",
+			"transcript-page-request.json",
 		]);
 		for (const name of files) {
 			const value = await fixture(name);
@@ -1141,6 +1142,7 @@ describe("app-wire authority", () => {
 			"session.list": "none",
 			"transcript.search": "none",
 			"transcript.context": "none",
+			"transcript.page": "none",
 			"project.reveal": "none",
 			"session.create": "none",
 			"session.attach": "none",

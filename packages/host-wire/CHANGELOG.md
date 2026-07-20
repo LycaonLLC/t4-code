@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add negotiated, bounded `transcript.page` backward pagination for attached session history.
+
 - Add negotiated runtime-adapter discovery, path-free runtime selection for session creation, and server-authorized workspace lifecycle commands.
 
 - Add the local-only `project.reveal` desktop command without exposing absolute folder paths to clients.

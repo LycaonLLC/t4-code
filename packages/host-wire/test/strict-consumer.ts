@@ -12,6 +12,7 @@ import {
 	type ResultFrame,
 	requestId,
 	type TranscriptContextResult,
+	type TranscriptPageResult,
 	type TranscriptSearchResult,
 } from "../src/index.js";
 
@@ -40,13 +41,16 @@ void COMMAND_DESCRIPTORS["session.create"];
 void COMMAND_DESCRIPTORS["usage.read"];
 void COMMAND_DESCRIPTORS["transcript.search"];
 void COMMAND_DESCRIPTORS["transcript.context"];
+void COMMAND_DESCRIPTORS["transcript.page"];
 void COMMAND_DESCRIPTORS["preview.capture.read"];
 void COMMAND_DESCRIPTORS["preview.handoff"];
 declare const searchResult: TranscriptSearchResult;
 declare const contextResult: TranscriptContextResult;
+declare const pageResult: TranscriptPageResult;
 declare const preview: PreviewSnapshot;
 declare const captureId: PreviewCaptureId;
 void searchResult.index.generation;
 void contextResult.rows[contextResult.anchorIndex];
+void pageResult.entries[0]?.id;
 void preview.availableActions?.includes("handoff");
 void captureId;

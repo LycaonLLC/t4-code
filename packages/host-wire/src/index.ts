@@ -22,6 +22,7 @@ export * from "./session-index.js";
 export * from "./session-state.js";
 export * from "./snapshot.js";
 export * from "./terminal.js";
+export * from "./transcript-page.js";
 export * from "./transcript-search.js";
 export * from "./usage.js";
 export * from "./user-terminals.js";
