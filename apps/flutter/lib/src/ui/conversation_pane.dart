@@ -453,6 +453,9 @@ final class _TranscriptMessageView extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final isUser = message.role == MessageRole.user;
     final isAuxiliary = message.role == MessageRole.system;
+    final label = message.kind == TranscriptKind.compaction
+        ? 'Earlier chat summary'
+        : message.role.label;
     final background = isUser
         ? scheme.surfaceContainerHigh
         : isAuxiliary
@@ -465,8 +468,7 @@ final class _TranscriptMessageView extends StatelessWidget {
         constraints: const BoxConstraints(maxWidth: _T4Layout.contentMaxWidth),
         child: Semantics(
           container: true,
-          label:
-              '${message.role.label} message${message.streaming ? ', streaming' : ''}',
+          label: '$label message${message.streaming ? ', streaming' : ''}',
           child: DecoratedBox(
             decoration: BoxDecoration(
               color: background,
@@ -483,7 +485,7 @@ final class _TranscriptMessageView extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    message.role.label.toUpperCase(),
+                    label.toUpperCase(),
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
                       color: scheme.onSurfaceVariant,
                     ),

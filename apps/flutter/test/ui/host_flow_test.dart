@@ -33,7 +33,7 @@ void main() {
     await tester.pump();
   }
 
-  T4ViewState keyboardTranscriptState() {
+  T4ViewState keyboardTranscriptState({List<TranscriptMessage>? messages}) {
     final profile = HostProfile.parseTailnetAddress(
       'https://alpha.tailnet-name.ts.net',
     );
@@ -54,14 +54,16 @@ void main() {
           status: 'idle',
         ),
       ],
-      messages: List<TranscriptMessage>.generate(
-        24,
-        (index) => TranscriptMessage(
-          id: 'message-$index',
-          role: index.isEven ? MessageRole.user : MessageRole.assistant,
-          text: 'Transcript message ${index + 1}',
-        ),
-      ),
+      messages:
+          messages ??
+          List<TranscriptMessage>.generate(
+            24,
+            (index) => TranscriptMessage(
+              id: 'message-$index',
+              role: index.isEven ? MessageRole.user : MessageRole.assistant,
+              text: 'Transcript message ${index + 1}',
+            ),
+          ),
     );
   }
 
@@ -115,6 +117,29 @@ void main() {
       expect(semantic.brand, const Color(0xffe83174));
       expect(semantic.statusDone, const Color(0xff00d492));
     });
+  });
+
+  testWidgets('labels compaction entries as earlier chat summaries', (
+    tester,
+  ) async {
+    await pumpApp(
+      tester,
+      state: keyboardTranscriptState(
+        messages: const <TranscriptMessage>[
+          TranscriptMessage(
+            id: 'compaction',
+            role: MessageRole.system,
+            kind: TranscriptKind.compaction,
+            text: 'Recovered compacted history',
+          ),
+        ],
+      ),
+      actions: _FakeActions(),
+      size: compactPhone,
+    );
+
+    expect(find.text('EARLIER CHAT SUMMARY'), findsOneWidget);
+    expect(find.text('SYSTEM'), findsNothing);
   });
 
   group('host onboarding', () {
