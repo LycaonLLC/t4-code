@@ -401,23 +401,15 @@
     </p>
     <h2 id="product-goal">Product goal</h2>
     <p>T4 Code is a remote client for an easy-to-install, highly available agent platform:</p>
-    <pre class="text"><code>T4 Code desktop or mobile
-        |
-        | authenticated Hub Wire over Tailscale
-        v
-T4 Hub control plane
-        |
-        | durable commands and desired state
-        v
-k3s cluster and T4 Operator
-        |
-        | one managed runtime pod per OMP session
-        v
-Pinned stock OMP runtime
-        |
-        | shared POSIX project filesystem
-        v
-Repositories, worktrees, and project services</code></pre>
+    <figure>
+      <img
+        src="assets/t4-hub-product-flow.svg"
+        alt="T4 Code desktop and mobile clients connect over Tailscale to T4 Hub. T4 Hub directs the T4 Operator in k3s, which runs pinned stock OMP sessions using shared CephFS projects and worktrees."
+      />
+      <figcaption>
+        T4 Code remains a remote client while T4 Hub owns durable orchestration.
+      </figcaption>
+    </figure>
     <p>
       T4 Hub integrates source control and CI/CD activity into the same durable session history and
       presents progress in the Flutter GUI. A user can begin with one Linux machine and expand the
@@ -625,14 +617,15 @@ Repositories, worktrees, and project services</code></pre>
       real session, recovery, storage, client, and rollback gates defined below.
     </p>
     <h2 id="session-and-command-flow">Session and command flow</h2>
-    <pre class="text"><code>T4 Code submits command with commandId
-  -&gt; T4 Hub authenticates and validates it
-  -&gt; PostgreSQL records the command durably
-  -&gt; current session owner claims it with ownerEpoch
-  -&gt; T4 runtime adapter invokes stock OMP
-  -&gt; runtime records accepted, rejected, or failed outcome
-  -&gt; transcript and progress events are durably appended
-  -&gt; T4 Code receives events and advances its cursor</code></pre>
+    <figure>
+      <img
+        src="assets/t4-hub-command-flow.svg"
+        alt="A T4 command moves from the client through Hub validation and durable PostgreSQL recording to an epoch-fenced session owner and stock OMP, then returns through durable outcomes and product events to the client cursor."
+      />
+      <figcaption>
+        Commands become durable before dispatch; clients resume from authoritative event cursors.
+      </figcaption>
+    </figure>
     <p>
       A lost client connection cannot lose an accepted command. Retrying the same command ID cannot
       execute it twice. A client can always distinguish pending, accepted, rejected, completed,
@@ -871,16 +864,15 @@ Repositories, worktrees, and project services</code></pre>
     </p>
     <h2 id="guided-installation">Guided installation</h2>
     <h3 id="first-hub">First Hub</h3>
-    <pre class="text"><code>Install T4 Code
-  -&gt; choose local Linux or remote Linux Hub
-  -&gt; discover or identify the machine through Tailscale
-  -&gt; run the signed T4 Node installer
-  -&gt; exchange a short-lived, single-use enrollment code
-  -&gt; validate CPU, memory, disk, OS, network, and time
-  -&gt; install k3s and the signed T4 release bundle
-  -&gt; bootstrap PostgreSQL, storage, MinIO, and Grafana
-  -&gt; run an end-to-end session health check
-  -&gt; pair T4 Code</code></pre>
+    <figure>
+      <img
+        src="assets/t4-hub-install-flow.svg"
+        alt="The guided installation starts in T4 Code, selects a Linux Hub, discovers it through Tailscale, runs the signed T4 Node bootstrap, performs preflight, installs the signed k3s release, bootstraps platform services, runs an end-to-end health check, and pairs the client."
+      />
+      <figcaption>
+        The guided flow hides Kubernetes and storage administration without bypassing verification.
+      </figcaption>
+    </figure>
     <p>
       Users do not run <code>kubectl</code>, edit Helm values, manage database credentials, or place
       replicas manually.

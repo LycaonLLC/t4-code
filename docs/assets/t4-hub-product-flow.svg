@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="product-title product-description" viewBox="0 0 900 820">
+  <title id="product-title">T4 Hub product flow</title>
+  <desc id="product-description">T4 Code desktop and mobile clients connect over Tailscale to T4 Hub. T4 Hub records durable commands and desired state, directs the T4 Operator in k3s, launches pinned stock OMP runtime pods, and gives them access to shared CephFS projects, worktrees, and services.</desc>
+  <defs>
+    <marker id="product-arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#475569" />
+    </marker>
+    <style>
+      text { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172033; }
+      .box { fill: #fff; stroke-width: 2.5; rx: 14; }
+      .client { fill: #eef2ff; stroke: #6366f1; }
+      .network { fill: #ecfeff; stroke: #0891b2; }
+      .hub { fill: #eff6ff; stroke: #2563eb; }
+      .cluster { fill: #f0fdf4; stroke: #16a34a; }
+      .runtime { fill: #fefce8; stroke: #ca8a04; }
+      .storage { fill: #fff7ed; stroke: #ea580c; }
+      .title { font-size: 23px; font-weight: 700; text-anchor: middle; }
+      .subtitle { font-size: 15px; fill: #64748b; text-anchor: middle; }
+      .edge { fill: none; stroke: #475569; stroke-width: 2.5; marker-end: url(#product-arrow); }
+      .label { font-size: 14px; fill: #475569; text-anchor: start; }
+    </style>
+  </defs>
+  <rect width="900" height="820" fill="#fff" />
+
+  <rect class="box client" x="210" y="30" width="480" height="82" />
+  <text class="title" x="450" y="63">T4 Code</text>
+  <text class="subtitle" x="450" y="89">desktop or mobile remote client</text>
+
+  <rect class="box network" x="275" y="160" width="350" height="82" />
+  <text class="title" x="450" y="193">Tailscale</text>
+  <text class="subtitle" x="450" y="219">private authenticated connection</text>
+
+  <rect class="box hub" x="185" y="290" width="530" height="92" />
+  <text class="title" x="450" y="326">T4 Hub control plane</text>
+  <text class="subtitle" x="450" y="354">durable commands, desired state, and product events</text>
+
+  <rect class="box cluster" x="185" y="440" width="530" height="92" />
+  <text class="title" x="450" y="476">k3s cluster and T4 Operator</text>
+  <text class="subtitle" x="450" y="504">reconciles one managed runtime pod per OMP session</text>
+
+  <rect class="box runtime" x="235" y="590" width="430" height="82" />
+  <text class="title" x="450" y="623">Pinned stock OMP runtime</text>
+  <text class="subtitle" x="450" y="649">unmodified OMP owned by its session pod</text>
+
+  <rect class="box storage" x="185" y="720" width="530" height="82" />
+  <text class="title" x="450" y="753">Shared CephFS project</text>
+  <text class="subtitle" x="450" y="779">repositories, OMP worktrees, and project services</text>
+
+  <path class="edge" d="M450 112 V160" />
+  <path class="edge" d="M450 242 V290" />
+  <path class="edge" d="M450 382 V440" />
+  <path class="edge" d="M450 532 V590" />
+  <path class="edge" d="M450 672 V720" />
+
+  <text class="label" x="470" y="142">Hub Wire</text>
+  <text class="label" x="470" y="422">desired state</text>
+  <text class="label" x="470" y="572">Runtime Wire</text>
+  <text class="label" x="470" y="702">POSIX RWX</text>
+</svg>
