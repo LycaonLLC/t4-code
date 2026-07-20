@@ -92,6 +92,16 @@ OMP authority: `packages/coding-agent/src/session/agent-session.ts`, `session-ma
 
 OMP authority: `task/executor.ts`, `task/types.ts`, `async/job-manager.ts`, `irc/bus.ts`, tool implementations, and task tests.
 
+Agent View is the flagship global operations surface, not a secondary pane. Session-local panes retain focused transcript and control detail; the global view owns fleet-wide discovery, triage, hierarchy, and routing into the exact selected agent.
+
+### Agent operations roadmap
+
+| Horizon | Product outcome | Acceptance evidence |
+|---|---|---|
+| Current control center | Compact session/agent/running/attention summary; task/model/tool/path search; active/attention/finished filters; parent-preserving hierarchy; direct session and selected-agent inspection; cancel under runtime authority | At most 100 agent cards mounted per page; deterministic 10,000-agent hierarchy and pagination coverage; keyboard labels and touch-sized controls |
+| Operational depth | Explicit host/profile/model/tool dimensions, saved filters, batch health, stall thresholds, steer and wake parity, and clearer lifecycle/audit feedback | Every command carries target, capability, confirmation, and outcome identity; failures remain attributable to one agent and session |
+| Fleet coordination | Confirmed bulk actions, multi-host capacity and queue views, resumable operator workspaces, and durable command history | Bulk scope is previewable and reversible where possible; disconnect/reconnect preserves selection, filters, command outcomes, and runtime authority |
+
 | Capability | Desktop contract | Right-pane behavior | Priority |
 |---|---|---|---|
 | Task spawn and batch | Render assignment, role/model, parent tool call, start order | Tree node appears before first progress event | Launch |
