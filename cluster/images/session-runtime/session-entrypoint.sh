@@ -42,7 +42,7 @@ if [[ "${T4_OMP_ALLOW_UNAUTHENTICATED}" == "false" ]]; then
   unset credential_value
 fi
 
-export HOME="${T4_AUTHORITY_STATE_DIR}/home"
+export HOME="${T4_SESSION_STATE_ROOT}/home"
 export PI_CODING_AGENT_DIR="${HOME}/.omp/agent"
 mkdir -p "${T4_AUTHORITY_STATE_DIR}" "${T4_BROWSER_STATE_DIR}" /run/t4 /tmp/t4
 install -d -m 0700 "${HOME}" "${PI_CODING_AGENT_DIR}"

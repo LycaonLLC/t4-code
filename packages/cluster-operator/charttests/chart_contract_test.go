@@ -442,7 +442,7 @@ func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 		"T4_OMP_ALLOW_UNAUTHENTICATED",
 		"T4_OMP_CREDENTIAL_KEY",
 		`if [[ "${T4_OMP_ALLOW_UNAUTHENTICATED}" == "false" ]]`,
-		`export HOME="${T4_AUTHORITY_STATE_DIR}/home"`,
+		`export HOME="${T4_SESSION_STATE_ROOT}/home"`,
 		`export PI_CODING_AGENT_DIR="${HOME}/.omp/agent"`,
 		`install -m 0600 "${models_source}"`,
 		`install -m 0600 "${settings_source}"`,
