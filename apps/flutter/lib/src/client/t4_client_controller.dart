@@ -46,6 +46,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   bool _transcriptPageLoading = false;
   bool _transcriptPageHasMore = false;
   String? _transcriptPageError;
+  String? _transcriptRecoverySessionId;
   final Map<String, _PendingCommand> _pendingCommands =
       <String, _PendingCommand>{};
   final Map<String, _PendingCommand> _pendingSessionOperations =
@@ -742,8 +743,6 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _authenticationPhase = AuthenticationPhase.unknown;
     _grantedCapabilities = const <String>{};
     _grantedFeatures = const <String>{};
-    _catalogItems = const <CatalogItem>[];
-    _clearSettingsProjection();
     _errorMessage = null;
     _publish();
 
@@ -2538,13 +2537,15 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
               _grantedFeatures.contains('settings.metadata');
           if (canReadCatalog || canReadSettings) {
             _settingsBootstrapGeneration = _connectionGeneration;
-            if (canReadCatalog && canReadSettings) {
+            final needsCatalog = canReadCatalog && _catalogFrame == null;
+            final needsSettings = canReadSettings && _settingsFrame == null;
+            if (needsCatalog && needsSettings) {
               _beginSettingsRefresh();
             } else {
-              if (canReadCatalog) {
+              if (needsCatalog) {
                 _sendHostProduct('catalog.get');
               }
-              if (canReadSettings) {
+              if (needsSettings) {
                 _sendHostProduct('settings.read');
               }
             }
@@ -2631,9 +2632,12 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         _publish();
       case GapFrame():
         if (frame.hostId == _hostId && frame.sessionId == _selectedSessionId) {
+          _transcriptRecoverySessionId = frame.sessionId;
+          _savedCursors.remove(frame.sessionId);
           _phase = ConnectionPhase.synchronizing;
           _errorMessage = 'Recovering transcript continuity…';
           _publish();
+          _sendAttach(frame.sessionId);
         }
       default:
         break;
@@ -3425,6 +3429,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
 
   void _applySnapshot(SnapshotFrame frame) {
     if (_selectedSessionId != frame.sessionId) return;
+    _transcriptRecoverySessionId = null;
     final liveIds = frame.entries.map((entry) => entry.id).toSet();
     final firstOverlap = _pagedTranscriptEntries.indexWhere(
       (entry) => liveIds.contains(entry.id),
@@ -3810,6 +3815,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     }
     if (frame.command == 'session.attach' &&
         pending.sessionId == _selectedSessionId &&
+        _transcriptRecoverySessionId != pending.sessionId &&
         (_messages.isNotEmpty ||
             _savedCursors.containsKey(_selectedSessionId))) {
       _phase = ConnectionPhase.ready;
@@ -3906,6 +3912,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _transcriptPageLoading = false;
     _transcriptPageHasMore = false;
     _transcriptPageError = null;
+    _transcriptRecoverySessionId = null;
   }
 
   bool get _transcriptPageSupported =>

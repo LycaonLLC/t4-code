@@ -636,6 +636,97 @@ void main() {
     },
   );
 
+  test(
+    'gap recovery requests a cursorless snapshot before returning ready',
+    () async {
+      final profile = _profile('alpha');
+      final directory = _MemoryDirectoryStore(
+        directory: const HostDirectory.empty().upsert(profile),
+      );
+      final connector = _FakeConnector();
+      final controller = _controller(
+        directory,
+        _MemoryCredentialStore(),
+        connector,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      final channel = connector.channels.single;
+
+      channel.emit(_welcome('host-alpha'));
+      await _flush();
+      final list = channel.sentJson.last;
+      channel.emit(
+        _response(
+          list,
+          command: 'session.list',
+          result: _sessionListResult('host-alpha'),
+        ),
+      );
+      await _flush();
+      final initialAttach = channel.sentJson.singleWhere(
+        (frame) => frame['command'] == 'session.attach',
+      );
+      channel.emit(
+        _response(
+          initialAttach,
+          command: 'session.attach',
+          result: const <String, Object?>{},
+        ),
+      );
+      channel.emit(
+        _snapshot('host-alpha', 'session-alpha', revision: 'revision-initial'),
+      );
+      await _flush();
+      expect(controller.state.connectionPhase, ConnectionPhase.ready);
+
+      channel.emit(<String, Object?>{
+        'v': 'omp-app/1',
+        'type': 'gap',
+        'hostId': 'host-alpha',
+        'sessionId': 'session-alpha',
+        'from': <String, Object?>{'epoch': 'transcript', 'seq': 1},
+        'to': <String, Object?>{'epoch': 'transcript', 'seq': 5},
+        'reason': 'rebase_budget_exceeded',
+      });
+      await _flush();
+
+      final recoveryAttach = channel.sentJson.lastWhere(
+        (frame) =>
+            frame['command'] == 'session.attach' &&
+            frame['requestId'] != initialAttach['requestId'],
+      );
+      expect(recoveryAttach['args'], isEmpty);
+      expect(controller.state.connectionPhase, ConnectionPhase.synchronizing);
+      expect(
+        controller.state.errorMessage,
+        'Recovering transcript continuity…',
+      );
+
+      channel.emit(
+        _response(
+          recoveryAttach,
+          command: 'session.attach',
+          result: const <String, Object?>{},
+        ),
+      );
+      await _flush();
+      expect(controller.state.connectionPhase, ConnectionPhase.synchronizing);
+      channel.emit(<String, Object?>{
+        ..._snapshot(
+          'host-alpha',
+          'session-alpha',
+          revision: 'revision-recovered',
+        ),
+        'cursor': <String, Object?>{'epoch': 'transcript', 'seq': 5},
+      });
+      await _flush();
+
+      expect(controller.state.connectionPhase, ConnectionPhase.ready);
+      expect(controller.state.errorMessage, isNull);
+    },
+  );
+
   test('returning to a session requests its complete transcript', () async {
     final profile = _profile('alpha');
     final directory = _MemoryDirectoryStore(
@@ -2113,6 +2204,68 @@ void main() {
     await expectation;
     expect(controller.state.settings.loading, isFalse);
     expect(controller.state.settings.error, contains('timed out'));
+  });
+
+  test('background resume reuses the loaded settings projection', () async {
+    final profile = _profile('settings-resume');
+    final connector = _FakeConnector();
+    final controller = _controller(
+      _MemoryDirectoryStore(
+        directory: const HostDirectory.empty().upsert(profile),
+      ),
+      _MemoryCredentialStore(),
+      connector,
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    final initialChannel = connector.channels.single;
+    const capabilities = <String>[
+      'sessions.read',
+      'catalog.read',
+      'config.read',
+    ];
+    const features = <String>['catalog.metadata', 'settings.metadata'];
+    initialChannel.emit(
+      _welcome(
+        'host-settings-resume',
+        capabilities: capabilities,
+        features: features,
+      ),
+    );
+    await _flush();
+    initialChannel.emit(<String, Object?>{
+      'v': 'omp-app/1',
+      'type': 'sessions',
+      'hostId': 'host-settings-resume',
+      ..._sessionListResultFor('host-settings-resume', const <String>[]),
+    });
+    initialChannel.emit(_settingsCatalog(hostId: 'host-settings-resume'));
+    initialChannel.emit(_settingsValues(hostId: 'host-settings-resume'));
+    await _flush();
+    expect(controller.state.settings.entries, isNotEmpty);
+    expect(controller.state.settings.loading, isFalse);
+
+    await controller.handleLifecyclePhase(T4LifecyclePhase.background);
+    await controller.handleLifecyclePhase(T4LifecyclePhase.resumed);
+    final resumedChannel = connector.channels.last;
+    resumedChannel.emit(
+      _welcome(
+        'host-settings-resume',
+        capabilities: capabilities,
+        features: features,
+      ),
+    );
+    await _flush();
+
+    expect(
+      resumedChannel.sentJson.where(
+        (frame) =>
+            frame['command'] == 'catalog.get' ||
+            frame['command'] == 'settings.read',
+      ),
+      isEmpty,
+    );
+    expect(controller.state.settings.loading, isFalse);
   });
 
   test(
