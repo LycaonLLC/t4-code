@@ -461,6 +461,34 @@ test("preview commands require negotiated preview.control and preview capability
 	policy.close();
 });
 
+test("transcript pages require both the negotiated read feature and sessions.read", () => {
+	const registry = new Registry();
+	const policy = new TailscaleRemotePolicy({ registry, supportedFeatures: ["transcript.page"] });
+	const missingFeature = connection("page-missing-feature", { count: 0 });
+	policy.authenticate(missingFeature, hello("page-missing-feature", ["sessions.read"], []));
+	const page = command("page", "transcript.page", "session", { limit: 10 });
+	expect(
+		policy.authorize(missingFeature, page, {
+			connectionId: missingFeature.connectionId,
+			peer: missingFeature.peer,
+		}),
+	).toBe(false);
+
+	const ready = connection("page-ready", { count: 0 });
+	policy.authenticate(ready, hello("page-ready", ["sessions.read"], ["transcript.page"]));
+	expect(policy.authorize(ready, page, { connectionId: ready.connectionId, peer: ready.peer })).toBe(true);
+
+	const missingCapability = connection("page-missing-capability", { count: 0 });
+	policy.authenticate(missingCapability, hello("page-missing-capability", [], ["transcript.page"]));
+	expect(
+		policy.authorize(missingCapability, page, {
+			connectionId: missingCapability.connectionId,
+			peer: missingCapability.peer,
+		}),
+	).toBe(false);
+	policy.close();
+});
+
 test("terminal input needs terminal.io even when term.input is granted", () => {
 	const registry = new Registry();
 	const policy = new TailscaleRemotePolicy({ registry, supportedFeatures: ["controller.lease"] });

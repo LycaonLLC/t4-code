@@ -37,6 +37,7 @@ import {
 	type SessionStateResult,
 	sessionId,
 	type TranscriptContextArguments,
+	type TranscriptPageArguments,
 	type TranscriptSearchArguments,
 	type UsageReadResult,
 	utf8ByteLength,
@@ -107,6 +108,7 @@ import {
 	TranscriptEventTranslator,
 } from "./transcript-events.ts";
 import { TranscriptImageError, TranscriptImageReader } from "./transcript-image-reader.ts";
+import { TranscriptPageError } from "./transcript-page-reader.ts";
 import { TranscriptSearchError } from "./transcript-search-index.ts";
 import type {
 	AppserverDrainBusy,
@@ -146,6 +148,7 @@ const ARCHIVED_SESSION_COMMANDS = new Set([
 	"files.diff",
 	"review.read",
 	"transcript.context",
+	"transcript.page",
 ]);
 const SESSION_LIFECYCLE_COMMANDS = new Set(["session.close", "session.archive", "session.restore", "session.delete"]);
 const IMAGE_UPLOAD_COMMANDS = new Set(["session.image.begin", "session.image.chunk", "session.image.discard"]);
@@ -174,6 +177,7 @@ const OBSERVER_READ_COMMANDS = new Set([
 	"preview.capture.read",
 	"preview.policy.check",
 	"transcript.context",
+	"transcript.page",
 ]);
 const SUBAGENT_TRANSCRIPT_RPC_BYTES = 384 * 1024;
 const REMOTE_OUTBOUND_TRANSFORM_TIMEOUT_MS = 10_000;
@@ -669,6 +673,7 @@ export function appserverSupportedFeatures(
 		| "operationsAuthority"
 		| "projectRevealer"
 		| "projectRootForProject"
+		| "discovery"
 		| "supportedFeatures"
 		| "transcriptImageRoot"
 		| "transcriptSearchAuthority"
@@ -695,6 +700,7 @@ export function appserverSupportedFeatures(
 	if (options.workspaceAuthority && options.projectRootForProject && options.workspaceTargetPathForProject)
 		implementedFeatures.add("workspace.lifecycle");
 	if (options.transcriptImageRoot) implementedFeatures.add("transcript.images");
+	if (options.discovery?.page) implementedFeatures.add("transcript.page");
 	if (options.transcriptSearchAuthority) implementedFeatures.add("transcript.search");
 	if (!includeRemotePolicy && options.projectRootForProject && options.projectRevealer)
 		implementedFeatures.add("project.reveal");
@@ -936,6 +942,7 @@ export class LocalAppserver implements AppserverHandle {
 	}
 	hasDesktopCatalogCommandHandler(command: string): boolean {
 		if (command === "usage.read") return this.#usageAuthority !== undefined;
+		if (command === "transcript.page") return this.#discovery.page !== undefined;
 		if (command === "transcript.search" || command === "transcript.context")
 			return this.#transcriptSearch !== undefined;
 		if (this.#operations?.hasCommand(command)) return true;
@@ -1405,16 +1412,17 @@ export class LocalAppserver implements AppserverHandle {
 					};
 				}
 			}
-			try {
-				await this.loadSession(command.sessionId);
-			} catch {
-				return {
-					frame: response(this.hostId, command, false, undefined, {
-						code: "session_load_failed",
-						message: "session transcript could not be loaded",
-					}),
-				};
-			}
+			if (command.command !== "transcript.page")
+				try {
+					await this.loadSession(command.sessionId);
+				} catch {
+					return {
+						frame: response(this.hostId, command, false, undefined, {
+							code: "session_load_failed",
+							message: "session transcript could not be loaded",
+						}),
+					};
+				}
 		}
 		const projection = command.sessionId ? this.#projections.get(command.sessionId) : undefined;
 		// Attach output is connection-scoped and rebuilt on every delivery. A
@@ -1431,6 +1439,7 @@ export class LocalAppserver implements AppserverHandle {
 		// retain their response bodies in the completed-command cache.
 		const bypassOutcomeCache =
 			command.command === "session.image.read" ||
+			command.command === "transcript.page" ||
 			command.command === "transcript.search" ||
 			command.command === "transcript.context";
 		const acceptedLifecycle = this.#messageLifecyclesByCommandId.get(command.commandId);
@@ -1575,7 +1584,25 @@ export class LocalAppserver implements AppserverHandle {
 			// leave a late upload behind for a dead connection.
 			const registered = this.#handlers.has(command.command) ? await this.#handlers.dispatch(command) : undefined;
 			if (registered) outcome = registered;
-			else if (command.command === "transcript.search") {
+			else if (command.command === "transcript.page") {
+				if (!this.#discovery.page)
+					outcome = {
+						frame: response(this.hostId, command, false, undefined, {
+							code: "unsupported",
+							message: "transcript paging is unavailable",
+						}),
+					};
+				else {
+					const args = decodeCommandArguments(
+						command.command,
+						command.args,
+					) as unknown as TranscriptPageArguments;
+					const record = this.#records.get(command.sessionId!);
+					if (!record) throw new TranscriptPageError("transcript_page_unavailable");
+					const result = await this.#discovery.page(record, args);
+					outcome = { frame: response(this.hostId, command, true, result) };
+				}
+			} else if (command.command === "transcript.search") {
 				if (!this.#transcriptSearch)
 					outcome = {
 						frame: response(this.hostId, command, false, undefined, {
@@ -2058,6 +2085,7 @@ export class LocalAppserver implements AppserverHandle {
 				error instanceof ImageUploadError || error instanceof TranscriptImageError ? error : undefined;
 			const externalRuntimeError = error instanceof ExternalRuntimeCommandError ? error : undefined;
 			const transcriptSearchError = error instanceof TranscriptSearchError ? error : undefined;
+			const transcriptPageError = error instanceof TranscriptPageError ? error : undefined;
 			const operation =
 				this.#operations &&
 				ws &&
@@ -2070,7 +2098,9 @@ export class LocalAppserver implements AppserverHandle {
 					"session.list",
 					"host.list",
 				].includes(command.command);
-			const code = transcriptSearchError
+			const code = transcriptPageError
+				? transcriptPageError.code
+				: transcriptSearchError
 				? transcriptSearchError.code
 				: externalRuntimeError
 					? "unsupported"
@@ -2088,7 +2118,13 @@ export class LocalAppserver implements AppserverHandle {
 			outcome = {
 				frame: response(this.hostId, command, false, undefined, {
 					code,
-					message: transcriptSearchError
+					message: transcriptPageError
+						? transcriptPageError.code === "transcript_cursor_stale"
+							? "transcript page cursor is stale"
+							: transcriptPageError.code === "transcript_cursor_invalid"
+								? "transcript page cursor is invalid"
+								: "transcript paging is unavailable"
+						: transcriptSearchError
 						? transcriptSearchError.code === "transcript_anchor_not_found"
 							? "transcript entry no longer exists"
 							: transcriptSearchError.code === "transcript_cursor_stale"
@@ -2098,7 +2134,7 @@ export class LocalAppserver implements AppserverHandle {
 							imageError?.message ??
 							(operation ? "operation failed" : "command failed")),
 				}),
-				unknown: !operation && !imageError && !externalRuntimeError && !transcriptSearchError,
+				unknown: !operation && !imageError && !externalRuntimeError && !transcriptSearchError && !transcriptPageError,
 			};
 		} finally {
 			if (ws) this.#abortControllers.get(ws)?.delete(controller);

@@ -15,6 +15,8 @@ import type {
 	SessionRef,
 	TranscriptContextArguments,
 	TranscriptContextResult,
+	TranscriptPageArguments,
+	TranscriptPageResult,
 	TranscriptSearchArguments,
 	TranscriptSearchIndexStatus,
 	TranscriptSearchResult,
@@ -129,6 +131,8 @@ export interface SessionDiscovery {
 	list(): Promise<SessionRecord[]>;
 	/** Load the bounded transcript snapshot for one lazily discovered session. */
 	load?(session: SessionRecord): Promise<SessionRecord>;
+	/** Read one bounded chronological page backward from the authoritative JSONL file. */
+	page?(session: SessionRecord, args: TranscriptPageArguments): Promise<TranscriptPageResult>;
 }
 export interface ChildHandle {
 	stdin: { write(data: string): Promise<void> | void };

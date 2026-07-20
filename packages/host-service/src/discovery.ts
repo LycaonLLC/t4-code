@@ -27,6 +27,7 @@ import {
 	turnId,
 } from "@t4-code/host-wire";
 import { boundSnapshotEntries, uniqueEntryId } from "./snapshot-limits.ts";
+import { TranscriptPageReader } from "./transcript-page-reader.ts";
 import type { FileSystem, SessionDiscovery, SessionRecord } from "./types.ts";
 import { type XdevWriteCall, xdevExecutionMatches, xdevResultEnvelope, xdevWriteCall } from "./xdev-envelope.ts";
 
@@ -1379,13 +1380,24 @@ function isEncodedProjectDirectory(path: string): boolean {
 export class FileSessionDiscovery implements SessionDiscovery {
 	private readonly index = new Map<string, FileIndexEntry>();
 	private rootMisses = 0;
+	readonly page?: SessionDiscovery["page"];
 
 	constructor(
 		private readonly root: string,
 		private readonly fs: DiscoveryFileSystem = realFs,
 		private readonly host: HostId = hostId("discovery"),
 		private readonly lazyEntries = false,
-	) {}
+	) {
+		if (fs.readFileSlice && fs.readFileRange) {
+			const pageReader = new TranscriptPageReader(host, {
+				stat: path => fs.stat(path),
+				readFileSlice: (path, maxBytes) => fs.readFileSlice!(path, maxBytes),
+				readFileRange: (path, offset, maxBytes, expectedIdentity) =>
+					fs.readFileRange!(path, offset, maxBytes, expectedIdentity),
+			});
+			this.page = (session, args) => pageReader.page(session, args);
+		}
+	}
 	private async parse(path: string, size: number, metadataOnly: boolean): Promise<SessionRecord> {
 		if (size > MAX_TRANSCRIPT_BYTES) {
 			const readSlice = this.fs.readFileSlice;
