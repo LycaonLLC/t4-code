@@ -54,6 +54,12 @@ describe("activeFileRefQuery", () => {
     expect(activeFileRefQuery("@a/b-c_d.ts", 11)).toEqual({ query: "a/b-c_d.ts", start: 0 });
     expect(activeFileRefQuery("@a(b)", 4)).toBeNull();
   });
+
+  it("rejects paths that can leave the project", () => {
+    expect(activeFileRefQuery("@../secret", 10)).toBeNull();
+    expect(activeFileRefQuery("@src/../../secret", 17)).toBeNull();
+    expect(activeFileRefQuery("@/etc/passwd", 12)).toBeNull();
+  });
 });
 
 describe("flattenFileIndex", () => {
@@ -123,8 +129,8 @@ describe("rankFileRefs", () => {
 describe("buildFileRefInsert", () => {
   it("replaces the query span with a file path and a closing space", () => {
     expect(buildFileRefInsert("use @ap please", 7, 4, entry("src/app.ts"))).toEqual({
-      nextText: "use @src/app.ts  please",
-      nextCaret: 16,
+      nextText: "use @src/app.ts please",
+      nextCaret: 15,
     });
   });
 
@@ -154,5 +160,9 @@ describe("fileRefTokensInDraft", () => {
     expect(fileRefTokensInDraft("everything under @src/ broke", known)).toEqual([
       { path: "src", start: 17, end: 22 },
     ]);
+  });
+
+  it("does not turn an email-like token into a file chip", () => {
+    expect(fileRefTokensInDraft("send dev@src/app.ts a note", known)).toEqual([]);
   });
 });

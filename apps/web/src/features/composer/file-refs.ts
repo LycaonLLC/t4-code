@@ -28,6 +28,18 @@ export interface FileRefToken {
 /** Characters a path token may contain; anything else closes the menu. */
 const TOKEN_CHARS = /^[\w./-]*$/;
 
+function isSafeFileRefQuery(value: string): boolean {
+  if (value === "") return true;
+  if (value.startsWith("/") || value.startsWith("~")) return false;
+  const segments = value.split("/");
+  return segments.every(
+    (segment, index) =>
+      segment !== "." &&
+      segment !== ".." &&
+      (segment.length > 0 || index === segments.length - 1),
+  );
+}
+
 /**
  * The active file-reference query, when the caret sits inside an "@token".
  * The "@" must start a whitespace-delimited token, so "name@host" never
@@ -40,7 +52,7 @@ export function activeFileRefQuery(text: string, caret: number): FileRefQuery | 
   const before = at === 0 ? undefined : head[at - 1];
   if (before !== undefined && !/\s/.test(before)) return null;
   const query = head.slice(at + 1);
-  if (!TOKEN_CHARS.test(query)) return null;
+  if (!TOKEN_CHARS.test(query) || !isSafeFileRefQuery(query)) return null;
   return { query, start: at };
 }
 
@@ -114,7 +126,9 @@ export function buildFileRefInsert(
   start: number,
   entry: FileRefEntry,
 ): { readonly nextText: string; readonly nextCaret: number } {
-  const insert = `@${entry.path}${entry.isDir ? "/" : " "}`;
+  const suffix = text.slice(caret);
+  const close = entry.isDir ? "/" : /^\s/u.test(suffix) ? "" : " ";
+  const insert = `@${entry.path}${close}`;
   return {
     nextText: text.slice(0, start) + insert + text.slice(caret),
     nextCaret: start + insert.length,
@@ -131,14 +145,16 @@ export function fileRefTokensInDraft(
   knownPaths: { readonly has: (key: string) => boolean },
 ): FileRefToken[] {
   const tokens: FileRefToken[] = [];
-  for (const match of text.matchAll(/@([\w./-]+)/g)) {
-    const raw = match[1];
+  for (const match of text.matchAll(/(^|\s)@([\w./-]+)/g)) {
+    const prefix = match[1] ?? "";
+    const raw = match[2];
     if (raw === undefined) continue;
     // Directory accepts leave a trailing slash; it belongs to the span,
     // not to the lookup key.
     const path = raw.replace(/\/+$/, "");
     if (path === "" || !knownPaths.has(path)) continue;
-    tokens.push({ path, start: match.index, end: match.index + 1 + raw.length });
+    const start = match.index + prefix.length;
+    tokens.push({ path, start, end: start + 1 + raw.length });
   }
   return tokens;
 }

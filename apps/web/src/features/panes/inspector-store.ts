@@ -15,6 +15,7 @@ import {
   upsertAgent,
 } from "./agent-tree.ts";
 import { appendActivity } from "./activity-log.ts";
+import { isSafeRelativePath } from "./live-projection.ts";
 import {
   ALL_ACTIONS_AVAILABLE,
   type ActivityEntry,
@@ -164,6 +165,10 @@ const INITIAL_FILES: FilesViewState = {
   offline: false,
 };
 
+function isLoadableDirectoryPath(path: string): boolean {
+  return path === "" || isSafeRelativePath(path);
+}
+
 export interface CreateInspectorStoreOptions {
   readonly sampleMode: boolean;
   readonly controller: (api: InspectorStoreApi) => InspectorController;
@@ -274,6 +279,7 @@ export function createInspectorStore(options: CreateInspectorStoreOptions): Insp
     discardReviewFile: (path) => controller?.performReview("discard", path),
     setFilesQuery: (query) => set((state) => ({ files: { ...state.files, query } })),
     setFileExpanded: (path, expanded) => {
+      if (!isLoadableDirectoryPath(path)) return;
       set((state) => ({
         files: {
           ...state.files,
@@ -292,6 +298,7 @@ export function createInspectorStore(options: CreateInspectorStoreOptions): Insp
       }
     },
     requestDir: (path) => {
+      if (!isLoadableDirectoryPath(path)) return;
       if (get().files.childrenByPath[path] !== undefined) return;
       set((state) => ({
         files: {

@@ -1,50 +1,50 @@
 {
- "batch": "f2-transcript-20260711",
- "sourceCommit": "f61fa9499d96fee825492aba204593c37b27e0cb",
- "adaptationCommit": "02c952c7fa6b8bc37f56bdd29f1f9c101a82bb5d",
- "license": "MIT; T3 Tools Inc. 2026; licenses/T3-CODE-MIT.txt",
- "records": [
-  {
-   "sourcePath": "apps/web/src/components/chat/MessagesTimeline.tsx",
-   "sourceBlobSha": "1a4dc6b689558a9f8d834c12d7ecb2bb64e0d7c8",
-   "targetPath": "apps/web/src/features/transcript/TranscriptTimeline.tsx",
-   "classification": "adapted",
-   "checksum": "sha256:83148bec99a0d57d47a5f239d0b2dc904b8696315ef6d0e7149d773234a12c7f"
-  },
-  {
-   "sourcePath": "apps/web/src/components/chat/MessagesTimeline.tsx",
-   "sourceBlobSha": "1a4dc6b689558a9f8d834c12d7ecb2bb64e0d7c8",
-   "targetPath": "apps/web/src/features/transcript/rows.ts",
-   "classification": "adapted",
-   "checksum": "sha256:ad49a8e51f40f370791736de6821e0fccdc0bb11ec0019ea66506341a72a824c"
-  },
-  {
-   "sourcePath": "apps/web/src/components/chat/MessagesTimeline.tsx",
-   "sourceBlobSha": "1a4dc6b689558a9f8d834c12d7ecb2bb64e0d7c8",
-   "targetPath": "apps/web/src/features/transcript/TranscriptRows.tsx",
-   "classification": "adapted",
-   "checksum": "sha256:d7f12e24d0676103335297493206dad40555aa170fe7d2e896a13800fcb906e3"
-  },
-  {
-   "sourcePath": "packages/shared/src/searchRanking.ts;apps/web/src/components/chat/composerSlashCommandSearch.ts",
-   "sourceBlobSha": "b2fb2e223d3b7b85f993b48558222f708c4c6b54;c4919b1924515d1611c33a01bc6029f50605c749",
-   "targetPath": "apps/web/src/features/composer/slash.ts + apps/web/src/features/composer/match.ts",
-   "classification": "adapted",
-   "checksum": "sha256:833f8ebd576e4e37db527b8a5dac4c8dfbe31d85295b796c1ea26b3bbcd4acc5;sha256:de8963354251eba7321b17b62e9b6de1aa550b5e3ad6be5f2bc9c9635697aefc"
-  },
-  {
-   "sourcePath": "apps/web/src/components/chat/ContextWindowMeter.tsx",
-   "sourceBlobSha": "8c0ec932d453dfe3534e15d4e93d928e9ec16997",
-   "targetPath": "apps/web/src/features/composer/ContextMeter.tsx",
-   "classification": "adapted",
-   "checksum": "sha256:f6239e9c58b0232d9acb500bc4623274c8e9175239624d0a8f6c6c26d88b284f"
-  },
-  {
-   "sourcePath": "apps/web/src/composerDraftStore.ts",
-   "sourceBlobSha": "fdb8bfe7b183480b7b71f2213d907cc211be0e64",
-   "targetPath": "apps/web/src/features/composer/composer-store.ts",
-   "classification": "adapted",
-   "checksum": "sha256:10797b73bb749811230ad227c0c1d3414edfe150207690e94220db93046ad2fc"
-  }
- ]
+  "batch": "f2-transcript-20260711",
+  "sourceCommit": "f61fa9499d96fee825492aba204593c37b27e0cb",
+  "adaptationCommit": "02c952c7fa6b8bc37f56bdd29f1f9c101a82bb5d",
+  "license": "MIT; T3 Tools Inc. 2026; licenses/T3-CODE-MIT.txt",
+  "records": [
+    {
+      "sourcePath": "apps/web/src/components/chat/MessagesTimeline.tsx",
+      "sourceBlobSha": "1a4dc6b689558a9f8d834c12d7ecb2bb64e0d7c8",
+      "targetPath": "apps/web/src/features/transcript/TranscriptTimeline.tsx",
+      "classification": "adapted",
+      "checksum": "sha256:83148bec99a0d57d47a5f239d0b2dc904b8696315ef6d0e7149d773234a12c7f"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/MessagesTimeline.tsx",
+      "sourceBlobSha": "1a4dc6b689558a9f8d834c12d7ecb2bb64e0d7c8",
+      "targetPath": "apps/web/src/features/transcript/rows.ts",
+      "classification": "adapted",
+      "checksum": "sha256:ad49a8e51f40f370791736de6821e0fccdc0bb11ec0019ea66506341a72a824c"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/MessagesTimeline.tsx",
+      "sourceBlobSha": "1a4dc6b689558a9f8d834c12d7ecb2bb64e0d7c8",
+      "targetPath": "apps/web/src/features/transcript/TranscriptRows.tsx",
+      "classification": "adapted",
+      "checksum": "sha256:d7f12e24d0676103335297493206dad40555aa170fe7d2e896a13800fcb906e3"
+    },
+    {
+      "sourcePath": "packages/shared/src/searchRanking.ts;apps/web/src/components/chat/composerSlashCommandSearch.ts",
+      "sourceBlobSha": "b2fb2e223d3b7b85f993b48558222f708c4c6b54;c4919b1924515d1611c33a01bc6029f50605c749",
+      "targetPath": "apps/web/src/features/composer/slash.ts + apps/web/src/features/composer/match.ts",
+      "classification": "adapted",
+      "checksum": "sha256:833f8ebd576e4e37db527b8a5dac4c8dfbe31d85295b796c1ea26b3bbcd4acc5;sha256:de8963354251eba7321b17b62e9b6de1aa550b5e3ad6be5f2bc9c9635697aefc"
+    },
+    {
+      "sourcePath": "apps/web/src/components/chat/ContextWindowMeter.tsx",
+      "sourceBlobSha": "8c0ec932d453dfe3534e15d4e93d928e9ec16997",
+      "targetPath": "apps/web/src/features/composer/ContextMeter.tsx",
+      "classification": "adapted",
+      "checksum": "sha256:f6239e9c58b0232d9acb500bc4623274c8e9175239624d0a8f6c6c26d88b284f"
+    },
+    {
+      "sourcePath": "apps/web/src/composerDraftStore.ts",
+      "sourceBlobSha": "fdb8bfe7b183480b7b71f2213d907cc211be0e64",
+      "targetPath": "apps/web/src/features/composer/composer-store.ts",
+      "classification": "adapted",
+      "checksum": "sha256:10797b73bb749811230ad227c0c1d3414edfe150207690e94220db93046ad2fc"
+    }
+  ]
 }
