@@ -31,6 +31,7 @@ import type {
 	RemotePeerIdentity,
 } from "./remote/types.ts";
 import type { RuntimeAdapterRegistry } from "./runtime-adapter.ts";
+import type { RpcChildInvocation } from "./rpc-child.ts";
 import type { WorkspaceAuthority } from "./workspace-authority.ts";
 
 export interface ConnectionTransport {
@@ -249,6 +250,8 @@ export interface AppserverOptions {
 	ompVersion?: string;
 	ompBuild?: string;
 	childFactory?: RpcChildFactory;
+	/** OMP RPC executable used when the host owns the generic child factory. */
+	rpcChildInvocation?: RpcChildInvocation;
 	appserverVersion?: string;
 	appserverBuild?: string;
 	supportedFeatures?: readonly string[];

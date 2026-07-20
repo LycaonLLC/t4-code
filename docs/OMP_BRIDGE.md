@@ -7,11 +7,13 @@ T4 desktop or mobile
         |
         | omp-app/1
         v
-@t4-code/host-service
+t4-host (T4 executable)
         |
-        | validated OMP JSON RPC bridge
-        v
-OMP session authority
+        +-- omp bridge --stdio
+        |      sessions, locks, settings, operations, catalog
+        |
+        `-- omp --mode rpc --session <path>
+               one live worker for each active session
 ```
 
 ## T4-owned responsibilities
@@ -30,8 +32,26 @@ OMP session authority
 - OMP settings, model registry, usage, and credentials
 - turning OMP-native events into the validated bridge stream
 
-The bridge must fail closed when an operation is unavailable or ownership is unclear. The migrated host temporarily retains a read-only, bounded OMP JSONL compatibility projector. It may project the exact tested format, but it must not mutate OMP state, infer locks, or invent ownership. The target thin bridge replaces that projector with an OMP-published catalog and event stream.
+The bridge is a versioned, length-bounded line protocol over standard input and output. It validates every message and fails closed when an operation is unavailable or ownership is unclear. The migrated host temporarily retains a read-only, bounded OMP JSONL projector for transcript search. It may project the exact tested format, but it must not mutate OMP state, infer locks, or invent ownership. A later bridge method can replace that final read-only projector with an OMP-published catalog and event stream.
 
-## Migration state
+## Direct replacement rollout
 
-The source has moved, but the currently verified OMP integration binary still embeds the legacy host implementation. Until the thin OMP adapter consumes the T4-owned packages, T4 keeps the exact runtime tag and hash in the compatibility matrix. This is a compatibility transition, not a claim that the fork has already disappeared.
+There are no live users to migrate, so this is a replacement rather than a period where two host implementations run side by side.
+
+| Phase                  | What happens                                                                                                                    | Proof before moving on                                                        |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Build the bridge       | OMP exposes `omp bridge --stdio`; T4 validates the protocol and owns the network host.                                          | Contract, cancellation, restart, and malformed-message tests pass.            |
+| Build the host         | T4 packages the standalone `t4-host` executable and invokes the same OMP binary for the bridge and session workers.             | Compiled T4 and OMP binaries pass a real Unix-socket session smoke test.      |
+| Replace the service    | The existing service label is rewritten to launch `t4-host`. A healthy legacy OMP appserver is not accepted as the final owner. | Desktop lifecycle and service-manager tests prove the definition is replaced. |
+| Publish together       | Release the small OMP bridge build, pin its tag and hashes in T4, then ship T4 with both executables.                           | Packaging, signing, provenance, full CI, and release inspection pass.         |
+| Remove transition code | Delete code that exists only to run or preserve the old OMP-hosted appserver.                                                   | No public `omp appserver serve` or `ompd` launcher remains.                   |
+
+We intentionally skip dual-running hosts, mixed-version client support, live-session transfer, and an in-process runtime rollback system. Rollback remains a Git/release choice: install the previous known-good pair of T4 and OMP artifacts.
+
+The simplified rollout does not weaken the hard boundaries. We retain strict protocol versioning, fail-closed lock behavior, secret redaction, process isolation, restart/reconnect tests, signed host packaging, exact artifact provenance, and protection for existing local development session files.
+
+## Current branch state
+
+The thin bridge and standalone host are implemented and pass a compiled-binary end-to-end smoke test. OMP's public legacy launchers are removed on the matching fork branch. The checked-in compatibility matrix still names the previous released OMP artifact until the new bridge build has a real tag and published hashes; release metadata must never point at an unpublished artifact.
+
+This reduces the fork to the OMP-specific authority adapter and protocol glue, but does not remove the fork entirely. T4 still pins the exact Lycaon OMP source and binary because the bridge is not part of ordinary upstream OMP.

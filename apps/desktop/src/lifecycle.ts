@@ -9,10 +9,26 @@ import type { RemoteTargetRegistry } from "./remote-runtime/registry.ts";
 import { createDesktopWindow, type DesktopWindowHandle } from "./window.ts";
 import { DesktopIpcRegistry, runtimeError, type IpcRuntime } from "./ipc.ts";
 import { BrowserRuntime, type BrowserRuntimeOptions } from "./browser-runtime.ts";
-import { ElectronCursorStore, ElectronRemoteTargetStore, ElectronCredentialCiphertextStore, ElectronLocalProfileStore, ElectronProjectionCacheStore, electronSafeStorage, loadDeviceIdentity, type DeviceIdentity } from "./stores.ts";
+import {
+  ElectronCursorStore,
+  ElectronRemoteTargetStore,
+  ElectronCredentialCiphertextStore,
+  ElectronLocalProfileStore,
+  ElectronProjectionCacheStore,
+  electronSafeStorage,
+  loadDeviceIdentity,
+  type DeviceIdentity,
+} from "./stores.ts";
 import { VersionedRemoteTargetRegistry, DeviceCredentialStore } from "./remote-runtime/index.ts";
 import { LocalTargetManager, type TargetManagerOptions } from "./target-manager.ts";
-import { createAppserverServiceManager, discoverOmpExecutable, OmpAppserverCompatibilityError, probeOmpAppserver, NodeServiceFileSystem } from "./service.ts";
+import {
+  createAppserverServiceManager,
+  discoverOmpExecutable,
+  discoverT4HostExecutable,
+  OmpAppserverCompatibilityError,
+  probeOmpAppserver,
+  NodeServiceFileSystem,
+} from "./service.ts";
 import { createDesktopSpeechService, type DesktopSpeechService } from "./speech.ts";
 import { createElectronUpdateController } from "./electron-update-controller.ts";
 import { installApplicationMenu, type ApplicationMenuOptions } from "./menu.ts";
@@ -31,15 +47,17 @@ export function appserverLogsDirectory(
   profileId = "default",
 ): string {
   const profile = decodeLocalProfileId(profileId);
-  const base = platform === "darwin"
-    ? join(homeDirectory, "Library", "Logs", "T4 Code", "appserver")
-    : (() => {
-        const configuredStateRoot = environment.XDG_STATE_HOME;
-        const stateRoot = configuredStateRoot?.startsWith("/") === true
-          ? configuredStateRoot
-          : join(homeDirectory, ".local", "state");
-        return join(stateRoot, "t4-code", "appserver");
-      })();
+  const base =
+    platform === "darwin"
+      ? join(homeDirectory, "Library", "Logs", "T4 Code", "appserver")
+      : (() => {
+          const configuredStateRoot = environment.XDG_STATE_HOME;
+          const stateRoot =
+            configuredStateRoot?.startsWith("/") === true
+              ? configuredStateRoot
+              : join(homeDirectory, ".local", "state");
+          return join(stateRoot, "t4-code", "appserver");
+        })();
   return profile === "default" ? base : join(base, "profiles", profile);
 }
 
@@ -56,10 +74,15 @@ export interface DesktopLifecycleOptions {
   readonly createLocalProfileRegistry?: () => LocalProfileRegistry;
   readonly createProjectionCache?: () => ProjectionCacheRuntime;
   readonly discoverExecutable?: () => Promise<string | undefined>;
+  readonly discoverHostExecutable?: () => Promise<string | undefined>;
   readonly probeAppserver?: (executable: string) => Promise<boolean>;
-  readonly createServiceManager?: (options: Parameters<typeof createAppserverServiceManager>[0]) => ServiceManager;
+  readonly createServiceManager?: (
+    options: Parameters<typeof createAppserverServiceManager>[0],
+  ) => ServiceManager;
   readonly createTargetManager?: (options: TargetManagerOptions) => LocalTargetManager;
-  readonly createSpeechService?: (options: { readonly discoverExecutable: () => Promise<string | undefined> }) => DesktopSpeechService;
+  readonly createSpeechService?: (options: {
+    readonly discoverExecutable: () => Promise<string | undefined>;
+  }) => DesktopSpeechService;
   readonly createUpdateController?: () => DesktopUpdateController;
   readonly installMenu?: (options: ApplicationMenuOptions) => void;
 }
@@ -85,8 +108,13 @@ export class DesktopLifecycle {
   private readonly localProfileRegistryFactory: () => LocalProfileRegistry;
   private readonly projectionCacheFactory: () => ProjectionCacheRuntime;
   private readonly executableFactory: () => Promise<string | undefined>;
-  private readonly serviceFactory: (options: Parameters<typeof createAppserverServiceManager>[0]) => ServiceManager;
-  private readonly speechServiceFactory: (options: { readonly discoverExecutable: () => Promise<string | undefined> }) => DesktopSpeechService;
+  private readonly hostExecutableFactory: () => Promise<string | undefined>;
+  private readonly serviceFactory: (
+    options: Parameters<typeof createAppserverServiceManager>[0],
+  ) => ServiceManager;
+  private readonly speechServiceFactory: (options: {
+    readonly discoverExecutable: () => Promise<string | undefined>;
+  }) => DesktopSpeechService;
   private readonly appserverProbe: (executable: string) => Promise<boolean>;
   private readonly targetManagerFactory: (options: TargetManagerOptions) => LocalTargetManager;
   private readonly updateControllerFactory: () => DesktopUpdateController;
@@ -103,6 +131,7 @@ export class DesktopLifecycle {
   private readonly serviceManagers = new Map<string, ServiceManager>();
   private serviceAvailabilityIssue: ServiceAvailabilityIssue | undefined;
   private serviceExecutablePromise: Promise<string | undefined> | undefined;
+  private hostExecutablePromise: Promise<string | undefined> | undefined;
   private serviceRecoveryPromise: Promise<ServiceManager | undefined> | undefined;
   private readonly serviceRecoveryPromises = new Map<string, Promise<ServiceManager | undefined>>();
   private readonly serviceAvailabilityIssues = new Map<string, ServiceAvailabilityIssue>();
@@ -120,34 +149,63 @@ export class DesktopLifecycle {
 
   constructor(options: DesktopLifecycleOptions = {}) {
     this.electronApp = options.app ?? app;
-    this.browserRuntimeFactory = options.createBrowserRuntime ?? ((runtimeOptions) => new BrowserRuntime(runtimeOptions));
+    this.browserRuntimeFactory =
+      options.createBrowserRuntime ?? ((runtimeOptions) => new BrowserRuntime(runtimeOptions));
     this.allWindows = options.getAllWindows ?? (() => BrowserWindow.getAllWindows());
     this.windowFactory = options.createWindow ?? createDesktopWindow;
     this.ipcFactory = options.createIpcRegistry ?? ((runtime) => new DesktopIpcRegistry(runtime));
     this.identityFactory = options.loadIdentity ?? (() => loadDeviceIdentity());
     this.cursorStoreFactory = options.createCursorStore ?? (() => new ElectronCursorStore());
-    this.remoteRegistryFactory = options.createRemoteRegistry ?? (() => new VersionedRemoteTargetRegistry(new ElectronRemoteTargetStore()));
-    this.credentialsFactory = options.createCredentials ?? (() => {
-      if (!electronSafeStorage.isEncryptionAvailable()) return undefined;
-      try { return new DeviceCredentialStore(new ElectronCredentialCiphertextStore(), electronSafeStorage); } catch { return undefined; }
-    });
-    this.localProfileRegistryFactory = options.createLocalProfileRegistry ?? (
-      () => new LocalProfileRegistry(new ElectronLocalProfileStore())
-    );
-    this.projectionCacheFactory = options.createProjectionCache ?? (() => new ElectronProjectionCacheStore());
-    this.executableFactory = options.discoverExecutable ?? (async () => {
-      if (this.electronApp.isPackaged && process.platform === "darwin" && process.arch === "arm64") {
-        return installBundledOmpRuntime({
-          resourcesPath: process.resourcesPath,
-          applicationSupportPath: this.electronApp.getPath("userData"),
-        });
-      }
-      return discoverOmpExecutable();
-    });
+    this.remoteRegistryFactory =
+      options.createRemoteRegistry ??
+      (() => new VersionedRemoteTargetRegistry(new ElectronRemoteTargetStore()));
+    this.credentialsFactory =
+      options.createCredentials ??
+      (() => {
+        if (!electronSafeStorage.isEncryptionAvailable()) return undefined;
+        try {
+          return new DeviceCredentialStore(
+            new ElectronCredentialCiphertextStore(),
+            electronSafeStorage,
+          );
+        } catch {
+          return undefined;
+        }
+      });
+    this.localProfileRegistryFactory =
+      options.createLocalProfileRegistry ??
+      (() => new LocalProfileRegistry(new ElectronLocalProfileStore()));
+    this.projectionCacheFactory =
+      options.createProjectionCache ?? (() => new ElectronProjectionCacheStore());
+    this.executableFactory =
+      options.discoverExecutable ??
+      (async () => {
+        if (
+          this.electronApp.isPackaged &&
+          process.platform === "darwin" &&
+          process.arch === "arm64"
+        ) {
+          return installBundledOmpRuntime({
+            resourcesPath: process.resourcesPath,
+            applicationSupportPath: this.electronApp.getPath("userData"),
+          });
+        }
+        return discoverOmpExecutable();
+      });
+    this.hostExecutableFactory =
+      options.discoverHostExecutable ??
+      (() =>
+        discoverT4HostExecutable(
+          this.electronApp.isPackaged
+            ? { packagedExecutable: join(process.resourcesPath, "runtime", "t4-host") }
+            : {},
+        ));
     this.appserverProbe = options.probeAppserver ?? ((executable) => probeOmpAppserver(executable));
     this.serviceFactory = options.createServiceManager ?? createAppserverServiceManager;
-    this.targetManagerFactory = options.createTargetManager ?? ((managerOptions) => new LocalTargetManager(managerOptions));
-    this.speechServiceFactory = options.createSpeechService ?? ((speechOptions) => createDesktopSpeechService(speechOptions));
+    this.targetManagerFactory =
+      options.createTargetManager ?? ((managerOptions) => new LocalTargetManager(managerOptions));
+    this.speechServiceFactory =
+      options.createSpeechService ?? ((speechOptions) => createDesktopSpeechService(speechOptions));
     this.updateControllerFactory = options.createUpdateController ?? createElectronUpdateController;
     this.menuInstaller = options.installMenu ?? installApplicationMenu;
   }
@@ -172,8 +230,13 @@ export class DesktopLifecycle {
     const ingest = (value: string): void => {
       const parsed = parsePairDeepLink(value);
       if (parsed === null) return;
-      const pending: PendingPair = { hostHint: parsed.hostHint, code: parsed.code, issuedAt: parsed.issuedAt };
-      if (this.rendererLoaded && this.mainWindow !== undefined && !this.mainWindow.isDestroyed()) this.ipc?.emitPairLink(pending);
+      const pending: PendingPair = {
+        hostHint: parsed.hostHint,
+        code: parsed.code,
+        issuedAt: parsed.issuedAt,
+      };
+      if (this.rendererLoaded && this.mainWindow !== undefined && !this.mainWindow.isDestroyed())
+        this.ipc?.emitPairLink(pending);
       else this.pendingPairs.push(pending);
     };
     for (const argument of process.argv) ingest(argument);
@@ -268,10 +331,19 @@ export class DesktopLifecycle {
     const recoveries = [...this.serviceRecoveryPromises.values()];
     await Promise.all([
       manager?.close() ?? Promise.resolve(),
-      recovery?.then(() => undefined, () => undefined) ?? Promise.resolve(),
-      ...recoveries.map((value) => value.then(() => undefined, () => undefined)),
+      recovery?.then(
+        () => undefined,
+        () => undefined,
+      ) ?? Promise.resolve(),
+      ...recoveries.map((value) =>
+        value.then(
+          () => undefined,
+          () => undefined,
+        ),
+      ),
     ]);
-    if (this.beforeQuitHandler !== undefined) this.electronApp.removeListener("before-quit", this.beforeQuitHandler);
+    if (this.beforeQuitHandler !== undefined)
+      this.electronApp.removeListener("before-quit", this.beforeQuitHandler);
     this.beforeQuitHandler = undefined;
     if (this.ipc === ipc) {
       ipc?.uninstall();
@@ -297,10 +369,13 @@ export class DesktopLifecycle {
       this.assertServiceRecoveryActive();
       inspection = await manager.inspect();
       this.assertServiceRecoveryActive();
-      const ready = inspection.service === "running" && await this.appserverProbe(executable);
+      const ready = inspection.service === "running" && (await this.appserverProbe(executable));
       this.assertServiceRecoveryActive();
       if (ready) return;
-      if (Date.now() >= deadline) throw new Error(`appserver service did not become ready (${inspection.diagnostics.slice(0, 512)})`);
+      if (Date.now() >= deadline)
+        throw new Error(
+          `appserver service did not become ready (${inspection.diagnostics.slice(0, 512)})`,
+        );
       const delay = Promise.withResolvers<void>();
       setTimeout(delay.resolve, 100);
       await delay.promise;
@@ -315,13 +390,12 @@ export class DesktopLifecycle {
   private acquireServiceManager(profileId = "default"): Promise<ServiceManager | undefined> {
     const profile = decodeLocalProfileId(profileId);
     if (this.stopping) return Promise.resolve(undefined);
-    const current = profile === "default"
-      ? this.serviceManager
-      : this.serviceManagers.get(profile);
+    const current = profile === "default" ? this.serviceManager : this.serviceManagers.get(profile);
     if (current !== undefined) return Promise.resolve(current);
-    const activeRecovery = profile === "default"
-      ? this.serviceRecoveryPromise
-      : this.serviceRecoveryPromises.get(profile);
+    const activeRecovery =
+      profile === "default"
+        ? this.serviceRecoveryPromise
+        : this.serviceRecoveryPromises.get(profile);
     if (activeRecovery !== undefined) return activeRecovery;
     const recovery = this.recoverServiceManager(profile);
     if (profile === "default") this.serviceRecoveryPromise = recovery;
@@ -340,8 +414,12 @@ export class DesktopLifecycle {
   private async recoverServiceManager(profileId = "default"): Promise<ServiceManager | undefined> {
     if (this.stopping) return undefined;
     let executable: string | undefined;
+    let hostExecutable: string | undefined;
     try {
-      executable = await this.discoverServiceExecutable();
+      [executable, hostExecutable] = await Promise.all([
+        this.discoverServiceExecutable(),
+        this.discoverHostServiceExecutable(),
+      ]);
       this.assertServiceRecoveryActive();
     } catch (error) {
       if (this.stopping || error instanceof ServiceRecoveryCancelledError) return undefined;
@@ -357,13 +435,23 @@ export class DesktopLifecycle {
       else this.serviceAvailabilityIssues.set(profileId, issue);
       return undefined;
     }
+    if (hostExecutable === undefined) {
+      const issue: ServiceAvailabilityIssue = {
+        code: "service_unavailable",
+        message:
+          "The T4 host executable was not found. Repair or reinstall T4 Code, then choose Check again.",
+      };
+      if (profileId === "default") this.serviceAvailabilityIssue = issue;
+      else this.serviceAvailabilityIssues.set(profileId, issue);
+      return undefined;
+    }
     try {
       const candidate = this.serviceFactory({
         profileId,
         homeDirectory: homedir(),
         logsDirectory: appserverLogsDirectory(homedir(), process.platform, process.env, profileId),
-        executable,
-        argv: executable.endsWith("/ompd") ? [] : ["appserver", "serve"],
+        executable: hostExecutable,
+        argv: ["serve", "--omp", executable, "--profile", profileId],
         fs: new NodeServiceFileSystem(),
       });
       this.assertServiceRecoveryActive();
@@ -372,12 +460,10 @@ export class DesktopLifecycle {
         this.serviceAvailabilityIssues.delete(profileId);
         return candidate;
       }
-      // A healthy appserver may have been launched outside T4 Code. Use it
-      // as-is; service installation/startup is only a cold-start fallback.
       try {
-        const alreadyReady = await this.appserverProbe(executable).catch(() => false);
-        this.assertServiceRecoveryActive();
-        if (!alreadyReady) await this.ensureServiceReady(candidate, executable);
+        // Always reconcile the service definition before accepting the local
+        // socket. A running legacy OMP host must be replaced by t4-host.
+        await this.ensureServiceReady(candidate, executable);
       } catch (error) {
         if (this.stopping || error instanceof ServiceRecoveryCancelledError) return undefined;
         // Creation succeeded, so keep the manager available for authoritative
@@ -412,17 +498,31 @@ export class DesktopLifecycle {
     return discovery;
   }
 
+  private discoverHostServiceExecutable(): Promise<string | undefined> {
+    if (this.hostExecutablePromise !== undefined) return this.hostExecutablePromise;
+    const discovery = Promise.resolve().then(() => this.hostExecutableFactory());
+    this.hostExecutablePromise = discovery;
+    const clearDiscovery = (): void => {
+      if (this.hostExecutablePromise === discovery) this.hostExecutablePromise = undefined;
+    };
+    void discovery.then(clearDiscovery, clearDiscovery);
+    return discovery;
+  }
+
   private assertServiceRecoveryActive(): void {
     if (this.stopping) throw new ServiceRecoveryCancelledError();
   }
 
   private recordServiceFailure(error: unknown, profileId = "default"): void {
-    const issue: ServiceAvailabilityIssue = error instanceof OmpAppserverCompatibilityError
-      ? { code: "omp_incompatible", message: error.message }
-      : {
-          code: "service_unavailable",
-          message: runtimeError(error, "local").message || "The local OMP service is unavailable. Choose Check again to retry.",
-        };
+    const issue: ServiceAvailabilityIssue =
+      error instanceof OmpAppserverCompatibilityError
+        ? { code: "omp_incompatible", message: error.message }
+        : {
+            code: "service_unavailable",
+            message:
+              runtimeError(error, "local").message ||
+              "The local OMP service is unavailable. Choose Check again to retry.",
+          };
     if (profileId === "default") {
       this.startupServiceError = error;
       this.serviceAvailabilityIssue = issue;

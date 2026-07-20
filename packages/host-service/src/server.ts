@@ -884,7 +884,7 @@ export class LocalAppserver implements AppserverHandle {
 			? new TranscriptImageReader({ root: options.transcriptImageRoot })
 			: undefined;
 		this.#lockStatus = options.lockStatus ?? (() => "missing");
-		this.#factory = options.childFactory ?? new BunRpcChildFactory(undefined, this.#imageUploads.root);
+		this.#factory = options.childFactory ?? new BunRpcChildFactory(options.rpcChildInvocation, this.#imageUploads.root);
 		this.#ringSize = options.ringSize ?? 256;
 		if (options.lockStatus && !options.lockCheck)
 			this.#lockCheck = () => {

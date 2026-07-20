@@ -49,8 +49,8 @@ class MemoryRunner implements ServiceRunner {
 }
 const spec: ServiceSpec = {
   profileId: "default",
-  executable: "/opt/omp/bin/omp",
-  argv: ["appserver", "serve"],
+  executable: "/opt/t4/bin/t4-host",
+  argv: ["serve", "--omp", "/opt/omp/bin/omp", "--profile", "default"],
   logsDirectory: "/home/alice/.omp/logs",
 };
 const options = (fs: MemoryFs, runner: MemoryRunner) => ({
@@ -60,9 +60,7 @@ const options = (fs: MemoryFs, runner: MemoryRunner) => ({
 });
 describe("extracted rendering contract", () => {
   it("accepts absolute paths and rejects control characters", () => {
-    expect(validateAbsolutePath("/home/alice/.omp/logs", "logs")).toBe(
-      "/home/alice/.omp/logs",
-    );
+    expect(validateAbsolutePath("/home/alice/.omp/logs", "logs")).toBe("/home/alice/.omp/logs");
     expect(() => validateAbsolutePath("relative", "logs")).toThrow(ServiceValidationError);
     expect(() => validateAbsolutePath("/home/alice/\u0007logs", "logs")).toThrow(
       ServiceValidationError,
@@ -75,7 +73,9 @@ describe("service-manager definitions", () => {
     const definitionPath = "/home/alice/.config/systemd/user/dev.oh-my-pi.appserver.service";
     const content = renderLinuxSystemdDefinition(spec);
     expect(definitionPath).toBe("/home/alice/.config/systemd/user/dev.oh-my-pi.appserver.service");
-    expect(content).toContain('ExecStart="/opt/omp/bin/omp" "appserver" "serve"');
+    expect(content).toContain(
+      'ExecStart="/opt/t4/bin/t4-host" "serve" "--omp" "/opt/omp/bin/omp" "--profile" "default"',
+    );
     expect(content).toContain("Wants=network-online.target");
     expect(content).toContain("OOMPolicy=continue");
     expect(content).toContain("Restart=on-failure");
@@ -88,7 +88,7 @@ describe("service-manager definitions", () => {
     const content = renderMacLaunchAgentDefinition(spec);
     expect(definitionPath).toBe("/home/alice/Library/LaunchAgents/dev.oh-my-pi.appserver.plist");
     expect(content).toContain("<key>ProgramArguments</key>");
-    expect(content).toContain("<string>appserver</string>");
+    expect(content).toContain("<string>--omp</string>");
     expect(content).toContain("<string>serve</string>");
     expect(content).toContain("<key>Umask</key><integer>63</integer>");
     expect(content).toContain("<key>OMP_PROFILE</key>");
@@ -144,6 +144,7 @@ describe("service-manager definitions", () => {
       profileId: "claude-fable",
       logsDirectory: "/home/alice/.omp/logs/claude-fable",
       environment: { OMP_PROFILE: "claude-fable" },
+      argv: ["serve", "--omp", "/opt/omp/bin/omp", "--profile", "claude-fable"],
     };
     const linux = new LinuxSystemdUserManager(named, options(new MemoryFs(), new MemoryRunner()));
     const mac = new MacLaunchAgentManager(named, {
@@ -158,12 +159,8 @@ describe("service-manager definitions", () => {
     expect(mac.definitionPath).toBe(
       "/home/alice/Library/LaunchAgents/dev.oh-my-pi.appserver.profile.claude-fable.plist",
     );
-    expect(renderLinuxSystemdDefinition(named)).toContain(
-      'Environment="OMP_PROFILE=claude-fable"',
-    );
-    expect(renderMacLaunchAgentDefinition(named)).toContain(
-      "<key>OMP_PROFILE</key>",
-    );
+    expect(renderLinuxSystemdDefinition(named)).toContain('Environment="OMP_PROFILE=claude-fable"');
+    expect(renderMacLaunchAgentDefinition(named)).toContain("<key>OMP_PROFILE</key>");
   });
 });
 
@@ -224,9 +221,24 @@ describe("service-manager lifecycle", () => {
     runner.results = [{ exitCode: 0, stdout: "active", stderr: "" }];
     await manager.install();
     expect(runner.calls).toContainEqual(["systemctl", "--user", "daemon-reload"]);
-    expect(runner.calls).toContainEqual(["systemctl", "--user", "enable", "dev.oh-my-pi.appserver"]);
-    expect(runner.calls).toContainEqual(["systemctl", "--user", "restart", "dev.oh-my-pi.appserver"]);
-    expect(runner.calls).not.toContainEqual(["systemctl", "--user", "stop", "dev.oh-my-pi.appserver"]);
+    expect(runner.calls).toContainEqual([
+      "systemctl",
+      "--user",
+      "enable",
+      "dev.oh-my-pi.appserver",
+    ]);
+    expect(runner.calls).toContainEqual([
+      "systemctl",
+      "--user",
+      "restart",
+      "dev.oh-my-pi.appserver",
+    ]);
+    expect(runner.calls).not.toContainEqual([
+      "systemctl",
+      "--user",
+      "stop",
+      "dev.oh-my-pi.appserver",
+    ]);
   });
   it("restores an existing definition on command failure and keeps it on uninstall failure", async () => {
     const fs = new MemoryFs();
@@ -371,16 +383,39 @@ describe("service-manager lifecycle", () => {
     expect(
       () =>
         new LinuxSystemdUserManager(
-          { ...spec, argv: ["appserver", "serve", canary] },
+          { ...spec, argv: [...spec.argv, canary] },
           options(new MemoryFs(), new MemoryRunner()),
         ),
     ).toThrow(ServiceValidationError);
     expect(
       () =>
         new LinuxSystemdUserManager(
-          { ...spec, executable: "/opt/omp/bin/ompd", argv: [canary] },
+          { ...spec, executable: "/opt/omp/bin/omp", argv: ["appserver", "serve"] },
           options(new MemoryFs(), new MemoryRunner()),
         ),
     ).toThrow(ServiceValidationError);
+    expect(
+      () =>
+        new LinuxSystemdUserManager(
+          {
+            ...spec,
+            executable: "/Applications/T4 Code.app/Contents/Resources/runtime/t4-host",
+            argv: ["serve", "--omp", "/opt/omp/bin/omp", "--profile", "other"],
+          },
+          options(new MemoryFs(), new MemoryRunner()),
+        ),
+    ).toThrow(ServiceValidationError);
+  });
+  it("renders the standalone T4 host with an explicit OMP bridge executable and profile", () => {
+    const hostSpec: ServiceSpec = {
+      ...spec,
+      executable: "/Applications/T4 Code.app/Contents/Resources/runtime/t4-host",
+      argv: ["serve", "--omp", "/opt/omp/bin/omp", "--profile", "default"],
+    };
+    const content = renderLinuxSystemdDefinition(hostSpec);
+    expect(content).toContain(
+      'ExecStart="/Applications/T4 Code.app/Contents/Resources/runtime/t4-host" "serve" "--omp" "/opt/omp/bin/omp" "--profile" "default"',
+    );
+    expect(content).toContain("Description=T4 Code host (default)");
   });
 });

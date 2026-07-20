@@ -63,6 +63,7 @@ export function runPreflight(repoRoot = resolve(import.meta.dirname, "..")) {
   const electronDist = join(desktopRoot, "dist-electron");
   const webDist = join(repoRoot, "apps", "web", "dist");
   const preloadEntry = join(electronDist, "preload.cjs");
+  const hostExecutable = join(repoRoot, "packages", "host-daemon", "dist", "t4-host");
   const errors = [];
 
   if (process.env.T4_REQUIRE_BUNDLED_OMP === "1") {
@@ -83,7 +84,7 @@ export function runPreflight(repoRoot = resolve(import.meta.dirname, "..")) {
     }
   }
 
-  for (const required of [join(electronDist, "main.cjs"), preloadEntry, join(webDist, "index.html")]) {
+  for (const required of [join(electronDist, "main.cjs"), preloadEntry, join(webDist, "index.html"), hostExecutable]) {
     if (!existsSync(required) || !lstatSync(required).isFile() || lstatSync(required).size === 0) {
       errors.push(`missing built entry: ${relative(repoRoot, required)}`);
     }
@@ -124,6 +125,7 @@ export function runPreflight(repoRoot = resolve(import.meta.dirname, "..")) {
     preloadEntry: join(electronDist, "preload.cjs"),
     webIndex: join(webDist, "index.html"),
     runtimeExternalDependencies: [...runtimeExternalDependencies],
+    hostExecutable,
   };
 }
 

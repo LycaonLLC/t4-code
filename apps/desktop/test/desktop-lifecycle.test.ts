@@ -6,14 +6,36 @@ import type { ProcessRunner, ProcessSpec } from "@t4-code/remote";
 import {
   createSafeServiceEnvironment,
   discoverOmpExecutable,
+  discoverT4HostExecutable,
   NodeServiceRunner,
   OmpAppserverCompatibilityError,
   probeOmpAppserver,
 } from "../src/service.ts";
 
 describe("desktop lifecycle boundaries", () => {
+  it("discovers only an executable standalone T4 host path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "t4-host-discovery-"));
+    const executable = join(root, "t4-host");
+    await writeFile(executable, "");
+    await chmod(executable, 0o755);
+    expect(
+      await discoverT4HostExecutable({
+        environment: { T4_HOST_EXECUTABLE: executable, PATH: "" },
+        homeDirectory: root,
+      }),
+    ).toBe(executable);
+    expect(
+      await discoverT4HostExecutable({
+        environment: { T4_HOST_EXECUTABLE: join(root, "wrong-name"), PATH: "" },
+        homeDirectory: root,
+      }),
+    ).toBeUndefined();
+  });
   it("only discovers bounded executable candidates and honors explicit environment", async () => {
-    const executable = await discoverOmpExecutable({ environment: { OMP_EXECUTABLE: "/not/a/real/omp", PATH: "" }, homeDirectory: "/not/a/home" });
+    const executable = await discoverOmpExecutable({
+      environment: { OMP_EXECUTABLE: "/not/a/real/omp", PATH: "" },
+      homeDirectory: "/not/a/home",
+    });
     expect(executable).toBe(undefined);
   });
   it("uses explicit executable before PATH and ignores renderer URL as a service candidate", async () => {
@@ -41,8 +63,24 @@ describe("desktop lifecycle boundaries", () => {
         }),
       }),
     };
-    expect(await discoverOmpExecutable({ environment: { OMP_EXECUTABLE: explicit, PATH: pathDir, OMP_DESKTOP_RENDERER_URL: "http://127.0.0.1:5173/" }, homeDirectory: root, runner: probeRunner })).toBe(explicit);
-    expect(await discoverOmpExecutable({ environment: { PATH: "", OMP_DESKTOP_RENDERER_URL: explicit }, homeDirectory: root, runner: probeRunner })).toBeUndefined();
+    expect(
+      await discoverOmpExecutable({
+        environment: {
+          OMP_EXECUTABLE: explicit,
+          PATH: pathDir,
+          OMP_DESKTOP_RENDERER_URL: "http://127.0.0.1:5173/",
+        },
+        homeDirectory: root,
+        runner: probeRunner,
+      }),
+    ).toBe(explicit);
+    expect(
+      await discoverOmpExecutable({
+        environment: { PATH: "", OMP_DESKTOP_RENDERER_URL: explicit },
+        homeDirectory: root,
+        runner: probeRunner,
+      }),
+    ).toBeUndefined();
   });
   it("rejects an executable that does not implement appserver status", async () => {
     const root = await mkdtemp(join(tmpdir(), "t4-desktop-"));
@@ -52,10 +90,23 @@ describe("desktop lifecycle boundaries", () => {
     const runner: ProcessRunner = {
       spawn: async () => ({
         kill: () => {},
-        result: Promise.resolve({ exitCode: 0, signal: null, stdout: "normal agent help", stderr: "", stdoutTruncated: false, stderrTruncated: false }),
+        result: Promise.resolve({
+          exitCode: 0,
+          signal: null,
+          stdout: "normal agent help",
+          stderr: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        }),
       }),
     };
-    expect(await discoverOmpExecutable({ environment: { OMP_EXECUTABLE: executable }, homeDirectory: root, runner })).toBeUndefined();
+    expect(
+      await discoverOmpExecutable({
+        environment: { OMP_EXECUTABLE: executable },
+        homeDirectory: root,
+        runner,
+      }),
+    ).toBeUndefined();
   });
   it("reports old OMP builds that reject the required JSON status flag", async () => {
     const root = await mkdtemp(join(tmpdir(), "t4-desktop-"));
@@ -86,7 +137,8 @@ describe("desktop lifecycle boundaries", () => {
       runner,
     }).catch((cause: unknown) => cause);
     expect(error instanceof OmpAppserverCompatibilityError).toBe(true);
-    if (!(error instanceof OmpAppserverCompatibilityError)) throw new Error("expected compatibility error");
+    if (!(error instanceof OmpAppserverCompatibilityError))
+      throw new Error("expected compatibility error");
     expect(error.code).toBe("omp_appserver_status_json_required");
     expect(error.message.includes("requires `omp appserver status --json`")).toBe(true);
     expect(calls).toBe(1);
@@ -117,15 +169,17 @@ describe("desktop lifecycle boundaries", () => {
       },
     };
 
-    expect(await probeOmpAppserver(executable, {
-      profileId: "fable-swarm",
-      environment: {
-        HOME: "/home/test",
-        PATH: "/usr/bin:/bin",
-        ANTHROPIC_API_KEY: "must-not-inherit",
-      },
-      runner,
-    })).toBe(true);
+    expect(
+      await probeOmpAppserver(executable, {
+        profileId: "fable-swarm",
+        environment: {
+          HOME: "/home/test",
+          PATH: "/usr/bin:/bin",
+          ANTHROPIC_API_KEY: "must-not-inherit",
+        },
+        runner,
+      }),
+    ).toBe(true);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.args).toEqual(["appserver", "status", "--json"]);
     expect(calls[0]?.env).toEqual({
@@ -142,25 +196,77 @@ describe("desktop lifecycle boundaries", () => {
     const malformed: ProcessRunner = {
       spawn: async () => ({
         kill: () => {},
-        result: Promise.resolve({ exitCode: 0, signal: null, stdout: "{", stderr: "", stdoutTruncated: false, stderrTruncated: false }),
+        result: Promise.resolve({
+          exitCode: 0,
+          signal: null,
+          stdout: "{",
+          stderr: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        }),
       }),
     };
-    expect(await discoverOmpExecutable({ environment: { OMP_EXECUTABLE: executable }, homeDirectory: root, runner: malformed })).toBeUndefined();
+    expect(
+      await discoverOmpExecutable({
+        environment: { OMP_EXECUTABLE: executable },
+        homeDirectory: root,
+        runner: malformed,
+      }),
+    ).toBeUndefined();
     const oversized: ProcessRunner = {
       spawn: async () => ({
         kill: () => {},
-        result: Promise.resolve({ exitCode: 0, signal: null, stdout: "x".repeat(17 * 1024), stderr: "", stdoutTruncated: false, stderrTruncated: false }),
+        result: Promise.resolve({
+          exitCode: 0,
+          signal: null,
+          stdout: "x".repeat(17 * 1024),
+          stderr: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        }),
       }),
     };
-    expect(await discoverOmpExecutable({ environment: { OMP_EXECUTABLE: executable }, homeDirectory: root, runner: oversized })).toBeUndefined();
+    expect(
+      await discoverOmpExecutable({
+        environment: { OMP_EXECUTABLE: executable },
+        homeDirectory: root,
+        runner: oversized,
+      }),
+    ).toBeUndefined();
     const timedOut: ProcessRunner = {
       spawn: async (_spec, signal) => {
-        const result = Promise.withResolvers<{ exitCode: number | null; signal: null; stdout: string; stderr: string; stdoutTruncated: boolean; stderrTruncated: boolean }>();
-        signal?.addEventListener("abort", () => result.resolve({ exitCode: null, signal: null, stdout: "", stderr: "", stdoutTruncated: false, stderrTruncated: false }), { once: true });
+        const result = Promise.withResolvers<{
+          exitCode: number | null;
+          signal: null;
+          stdout: string;
+          stderr: string;
+          stdoutTruncated: boolean;
+          stderrTruncated: boolean;
+        }>();
+        signal?.addEventListener(
+          "abort",
+          () =>
+            result.resolve({
+              exitCode: null,
+              signal: null,
+              stdout: "",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            }),
+          { once: true },
+        );
         return { kill: () => {}, result: result.promise };
       },
     };
-    expect(await discoverOmpExecutable({ environment: { OMP_EXECUTABLE: executable }, homeDirectory: root, runner: timedOut, timeoutMs: 10 })).toBeUndefined();
+    expect(
+      await discoverOmpExecutable({
+        environment: { OMP_EXECUTABLE: executable },
+        homeDirectory: root,
+        runner: timedOut,
+        timeoutMs: 10,
+      }),
+    ).toBeUndefined();
   });
   it("does not execute ompd candidates that have no status CLI", async () => {
     const root = await mkdtemp(join(tmpdir(), "t4-desktop-"));
@@ -171,10 +277,26 @@ describe("desktop lifecycle boundaries", () => {
     const runner: ProcessRunner = {
       spawn: async () => {
         calls += 1;
-        return { kill: () => {}, result: Promise.resolve({ exitCode: 0, signal: null, stdout: "{}", stderr: "", stdoutTruncated: false, stderrTruncated: false }) };
+        return {
+          kill: () => {},
+          result: Promise.resolve({
+            exitCode: 0,
+            signal: null,
+            stdout: "{}",
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          }),
+        };
       },
     };
-    expect(await discoverOmpExecutable({ environment: { OMP_EXECUTABLE: executable }, homeDirectory: root, runner })).toBeUndefined();
+    expect(
+      await discoverOmpExecutable({
+        environment: { OMP_EXECUTABLE: executable },
+        homeDirectory: root,
+        runner,
+      }),
+    ).toBeUndefined();
     expect(calls).toBe(0);
   });
   it("passes only desktop service environment keys and keeps argv shell-free", async () => {

@@ -1,4 +1,4 @@
-import type { DeviceCapability, ProjectId, SessionId, UsageReadResult } from "@t4-code/host-wire";
+import type { ProjectId, SessionId, UsageReadResult } from "@t4-code/host-wire";
 import { isAbsolute } from "node:path";
 import {
 	decodeOmpAuthorityBridgeServerFrame,

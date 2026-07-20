@@ -49,7 +49,11 @@ export class OmpAppserverCompatibilityError extends Error {
       "Installed OMP is incompatible with this T4 Code build. T4 Code requires `omp appserver status --json`. Update OMP, then choose Check again.",
     );
     this.name = "OmpAppserverCompatibilityError";
-    Object.defineProperty(this, "stack", { value: undefined, enumerable: false, configurable: true });
+    Object.defineProperty(this, "stack", {
+      value: undefined,
+      enumerable: false,
+      configurable: true,
+    });
   }
 }
 
@@ -61,8 +65,16 @@ export interface OmpExecutableDiscoveryOptions {
   readonly maxOutputBytes?: number;
 }
 
-export interface OmpAppserverProbeOptions
-  extends Omit<OmpExecutableDiscoveryOptions, "homeDirectory"> {
+export interface T4HostExecutableDiscoveryOptions {
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly homeDirectory?: string;
+  readonly packagedExecutable?: string;
+}
+
+export interface OmpAppserverProbeOptions extends Omit<
+  OmpExecutableDiscoveryOptions,
+  "homeDirectory"
+> {
   readonly profileId?: string;
 }
 
@@ -81,7 +93,9 @@ function isAppserverStatus(value: unknown): boolean {
       value.health.epoch.length > 0
     );
   }
-  return value.reason === "unreachable" || value.reason === "malformed" || value.reason === "failed";
+  return (
+    value.reason === "unreachable" || value.reason === "malformed" || value.reason === "failed"
+  );
 }
 
 type AppserverProbeState = "running" | "stopped" | "incompatible" | false;
@@ -120,10 +134,7 @@ async function probesAppserverStatus(
       /flag provided but not defined\s*:\s*-json\b/iu.test(diagnosticOutput)
     )
       return "incompatible";
-    if (
-      (result.exitCode !== 0 && result.exitCode !== 1) ||
-      result.stderr.trim().length > 0
-    )
+    if ((result.exitCode !== 0 && result.exitCode !== 1) || result.stderr.trim().length > 0)
       return false;
     let parsed: unknown;
     try {
@@ -147,7 +158,8 @@ export async function discoverOmpExecutable(
   const timeoutMs = options.timeoutMs ?? APP_SERVER_PROBE_TIMEOUT_MS;
   const maxOutputBytes = options.maxOutputBytes ?? APP_SERVER_PROBE_MAX_OUTPUT_BYTES;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10_000) return undefined;
-  if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 1 || maxOutputBytes > 64 * 1024) return undefined;
+  if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 1 || maxOutputBytes > 64 * 1024)
+    return undefined;
   const candidates: string[] = [];
   const explicit = environment.OMP_EXECUTABLE;
   if (explicit !== undefined && explicit.length > 0) candidates.push(explicit);
@@ -180,11 +192,54 @@ export async function discoverOmpExecutable(
     } catch {
       continue;
     }
-    const state = await probesAppserverStatus(candidate, environment, runner, timeoutMs, maxOutputBytes);
+    const state = await probesAppserverStatus(
+      candidate,
+      environment,
+      runner,
+      timeoutMs,
+      maxOutputBytes,
+    );
     if (state === "running" || state === "stopped") return candidate;
     if (state === "incompatible") incompatible = true;
   }
   if (incompatible) throw new OmpAppserverCompatibilityError();
+  return undefined;
+}
+
+export async function discoverT4HostExecutable(
+  options: T4HostExecutableDiscoveryOptions = {},
+): Promise<string | undefined> {
+  const environment = options.environment ?? process.env;
+  const home = options.homeDirectory ?? homedir();
+  const candidates = [
+    options.packagedExecutable,
+    environment.T4_HOST_EXECUTABLE,
+    ...(environment.PATH ?? "")
+      .split(":")
+      .filter(Boolean)
+      .slice(0, 64)
+      .map((entry) => join(entry, "t4-host")),
+    join(home, ".local", "bin", "t4-host"),
+    join(home, "bin", "t4-host"),
+    "/usr/local/bin/t4-host",
+    "/usr/bin/t4-host",
+  ];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    if (
+      !candidate ||
+      seen.has(candidate) ||
+      !candidate.startsWith("/") ||
+      candidate.includes("\0") ||
+      !candidate.endsWith("/t4-host")
+    )
+      continue;
+    seen.add(candidate);
+    try {
+      await access(candidate, fsConstants.X_OK);
+      return candidate;
+    } catch {}
+  }
   return undefined;
 }
 
@@ -203,21 +258,20 @@ export async function probeOmpAppserver(
     return false;
   }
   return (
-    await probesAppserverStatus(
+    (await probesAppserverStatus(
       executable,
       environment,
       runner,
       timeoutMs,
       maxOutputBytes,
       options.profileId,
-    )
-  ) === "running";
+    )) === "running"
+  );
 }
 export interface NodeServiceRunnerOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly runner?: ProcessRunner;
 }
-
 
 export class NodeServiceRunner implements ServiceRunner {
   private readonly runner: ProcessRunner;

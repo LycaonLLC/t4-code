@@ -9,10 +9,13 @@ const READINESS_TIMEOUT_MS = 30_000;
 const SHUTDOWN_GRACE_MS = 5_000;
 const SHUTDOWN_KILL_WAIT_MS = 1_000;
 const rootDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const hostExecutable = resolve(rootDirectory, "packages", "host-daemon", "dist", "t4-host");
 const pnpmEntrypoint = process.env.npm_execpath;
 
 if (!pnpmEntrypoint) {
-  throw new Error("pnpm dev must provide npm_execpath so the current pnpm executable can be reused.");
+  throw new Error(
+    "pnpm dev must provide npm_execpath so the current pnpm executable can be reused.",
+  );
 }
 
 const requestedRendererPort = parseRequestedPort(process.env.T4_DEV_RENDERER_PORT);
@@ -37,17 +40,22 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 }
 
 async function main() {
-  const build = startPnpm("desktop build", ["--filter", "@t4-code/desktop", "build"]);
-  const buildResult = await build.completed;
-  managedProcesses.delete(build);
+  for (const [label, args] of [
+    ["desktop build", ["--filter", "@t4-code/desktop", "build"]],
+    ["host build", ["build:host"]],
+  ]) {
+    const build = startPnpm(label, args);
+    const buildResult = await build.completed;
+    managedProcesses.delete(build);
 
-  if (shuttingDown) {
-    await shutdownPromise;
-    return;
-  }
+    if (shuttingDown) {
+      await shutdownPromise;
+      return;
+    }
 
-  if (!completedSuccessfully(buildResult)) {
-    throw new Error(`Desktop build ${describeCompletion(buildResult)}.`);
+    if (!completedSuccessfully(buildResult)) {
+      throw new Error(`${label} ${describeCompletion(buildResult)}.`);
+    }
   }
 
   let reservation = await reservePort(requestedRendererPort);
@@ -92,10 +100,18 @@ async function main() {
       return;
     }
 
-    const desktopEnvironment = { ...process.env, OMP_DESKTOP_RENDERER_URL: rendererUrl };
+    const desktopEnvironment = {
+      ...process.env,
+      OMP_DESKTOP_RENDERER_URL: rendererUrl,
+      T4_HOST_EXECUTABLE: hostExecutable,
+    };
     delete desktopEnvironment.ELECTRON_RUN_AS_NODE;
 
-    const desktop = startPnpm("desktop dev process", ["--filter", "@t4-code/desktop", "dev"], desktopEnvironment);
+    const desktop = startPnpm(
+      "desktop dev process",
+      ["--filter", "@t4-code/desktop", "dev"],
+      desktopEnvironment,
+    );
     supervise(desktop);
 
     await shutdownStarted;
@@ -147,7 +163,9 @@ function supervise(processRecord) {
       return;
     }
 
-    console.error(`[dev] ${processRecord.label} ${describeCompletion(result)}; stopping dev processes.`);
+    console.error(
+      `[dev] ${processRecord.label} ${describeCompletion(result)}; stopping dev processes.`,
+    );
     void shutdown({ unexpected: true });
   });
 }
@@ -235,7 +253,9 @@ async function waitForRenderer(rendererUrl) {
   }
 
   const detail = lastError instanceof Error ? ` (${lastError.message})` : "";
-  throw new Error(`Timed out waiting ${READINESS_TIMEOUT_MS}ms for the renderer at ${rendererUrl}${detail}.`);
+  throw new Error(
+    `Timed out waiting ${READINESS_TIMEOUT_MS}ms for the renderer at ${rendererUrl}${detail}.`,
+  );
 }
 
 function portFromUrl(rendererUrl) {

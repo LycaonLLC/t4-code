@@ -1,7 +1,4 @@
-import {
-  ServiceValidationError,
-  type ServiceSpec,
-} from "./contracts.ts";
+import { ServiceValidationError, type ServiceSpec } from "./contracts.ts";
 
 const MAX_PATH = 4096;
 const MAX_ARG = 2048;
@@ -71,13 +68,20 @@ export function validateSpec(spec: ServiceSpec): ServiceSpec {
   if (!Array.isArray(spec.argv) || spec.argv.length > MAX_ARGS) invalid("Invalid argv.");
   const argv = spec.argv.map((value, index) => validateText(value, `argv[${index}]`, MAX_ARG));
   const executableName = executable.slice(executable.lastIndexOf("/") + 1);
-  if (executableName === "omp") {
-    if (argv.length !== 2 || argv[0] !== "appserver" || argv[1] !== "serve")
-      invalid("Unsupported omp appserver argv.");
-  } else if (executableName === "ompd") {
-    if (argv.length !== 0) invalid("Unsupported ompd argv.");
+  if (executableName === "t4-host") {
+    if (
+      (argv.length !== 5 && argv.length !== 7) ||
+      argv[0] !== "serve" ||
+      argv[1] !== "--omp" ||
+      !argv[2]?.startsWith("/") ||
+      !argv[2].endsWith("/omp") ||
+      argv[3] !== "--profile" ||
+      argv[4] !== profileId ||
+      (argv.length === 7 && (argv[5] !== "--state-root" || !argv[6]?.startsWith("/")))
+    )
+      invalid("Unsupported T4 host argv.");
   } else {
-    invalid("Executable must be omp or ompd.");
+    invalid("Executable must be t4-host.");
   }
   const logsDirectory = validateAbsolutePath(spec.logsDirectory, "logs directory");
   const environment: Record<string, string> = {};
@@ -133,7 +137,7 @@ export function renderSystemd(spec: ServiceSpec, _label: string): string {
     .join("\n");
   return [
     "[Unit]",
-    `Description=Oh My Pi appserver (${spec.profileId})`,
+    `Description=T4 Code host (${spec.profileId})`,
     "Wants=network-online.target",
     "After=network-online.target",
     "",

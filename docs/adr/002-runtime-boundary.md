@@ -1,5 +1,5 @@
 # ADR-002: OMP runtime boundary
 
-- Status: Accepted
-- Decision: OMP owns `packages/app-wire/**` and `packages/appserver/**`; OMP is runtime authority. `ompd` launches exactly one `omp --mode rpc` child per live session. Desktop has no appserver or adapter package and consumes the checked-in protocol artifact.
+- Status: Superseded by ADR-013
+- Historical decision: OMP owned `packages/app-wire/**` and `packages/appserver/**`; `ompd` launched one `omp --mode rpc` child per live session. ADR-013 moves the generic host and wire ownership to T4. OMP now supplies the narrow authority bridge and remains responsible for OMP session state and workers.
 - Consequence: process-global OMP state remains isolated; child failure affects only its session.
