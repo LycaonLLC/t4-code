@@ -1,7 +1,7 @@
 // Export contract: the header names the session and says how complete the
 // view was; every row kind serializes; unknown entries are preserved, never
 // dropped; the transient working row is omitted; Markdown caps long tool
-// output while JSON carries rows verbatim; filenames are filesystem-safe.
+// output while JSON preserves durable rows; filenames are filesystem-safe.
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -142,6 +142,22 @@ describe("transcriptRowsToMarkdown", () => {
     expect(out.length).toBeLessThan(big.length);
   });
 
+  it("uses a longer Markdown fence when tool data contains backticks", () => {
+    const out = transcriptRowsToMarkdown(
+      [
+        {
+          id: "g1",
+          kind: "tool-group",
+          calls: [toolCall({ args: { command: "printf '```'" } })],
+          running: false,
+        },
+      ],
+      meta(),
+    );
+    expect(out).toContain("````json\n");
+    expect(out).toContain("\n````");
+  });
+
   it("serializes every notice kind", () => {
     const notices: Extract<TranscriptRow, { kind: "notice" }>["notice"][] = [
       { kind: "error", id: "n1", message: "boom", retryable: true, at: "t" },
@@ -200,6 +216,17 @@ describe("transcriptRowsToJson", () => {
     expect(parsed.meta.sessionTitle).toBe("Pin protocol fixtures");
     expect(parsed.rows).toHaveLength(2);
     expect(parsed.rows[1].calls[0].result.output).toHaveLength(big.length);
+  });
+
+  it("omits the transient working row", () => {
+    const parsed = JSON.parse(
+      transcriptRowsToJson(
+        [{ id: "w1", kind: "working", startedAt: null, activity: "working" }],
+        meta({ turnActive: true }),
+      ),
+    );
+    expect(parsed.rows).toEqual([]);
+    expect(parsed.meta.turnActive).toBe(true);
   });
 });
 

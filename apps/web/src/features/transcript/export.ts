@@ -2,7 +2,7 @@
 // downloadable artifact. What you see is what you export — the same rows
 // the screen shows, in the same order, with a provenance header that says
 // exactly how complete the view was at export time. Markdown caps long tool
-// output for readability; JSON carries the rows verbatim.
+// output for readability; both formats omit the transient working indicator.
 import type { CollaborationMessage } from "./collaboration-messages.ts";
 import type { TranscriptNotice } from "./projection.ts";
 import type { TranscriptRow, TranscriptToolCall } from "./rows.ts";
@@ -45,6 +45,16 @@ function boundedBlock(value: unknown): string {
   return `${text.slice(0, EXPORT_TOOL_OUTPUT_MAX_CHARS)}\n… truncated for export`;
 }
 
+function fencedJson(value: unknown): string {
+  const content = boundedBlock(value);
+  let longestBacktickRun = 0;
+  for (const match of content.matchAll(/`+/g)) {
+    longestBacktickRun = Math.max(longestBacktickRun, match[0].length);
+  }
+  const fence = "`".repeat(Math.max(3, longestBacktickRun + 1));
+  return `${fence}json\n${content}\n${fence}`;
+}
+
 function toolCallStatus(call: TranscriptToolCall): string {
   if (call.state === "ok") return "ok";
   if (call.state === "error") return "error";
@@ -54,13 +64,13 @@ function toolCallStatus(call: TranscriptToolCall): string {
 function toolCallToMarkdown(call: TranscriptToolCall): string {
   const parts = [`### ${call.title} (\`${call.tool}\`) — ${toolCallStatus(call)}`];
   if (Object.keys(call.args).length > 0) {
-    parts.push(`Arguments:\n\n\`\`\`json\n${boundedBlock(call.args)}\n\`\`\``);
+    parts.push(`Arguments:\n\n${fencedJson(call.args)}`);
   }
   for (const line of call.progress) {
     parts.push(`> ${line}`);
   }
   if (call.result !== null) {
-    parts.push(`Result:\n\n\`\`\`json\n${boundedBlock(call.result)}\n\`\`\``);
+    parts.push(`Result:\n\n${fencedJson(call.result)}`);
   }
   if (call.images.length > 0) {
     parts.push(`_${call.images.length} image(s) attached_`);
@@ -161,14 +171,19 @@ export interface ExportContent {
 }
 
 /**
- * The same rows as structured JSON for tooling. Rows are plain serializable
- * data; nothing is capped or reformatted.
+ * The same durable rows as structured JSON for tooling. Rows are plain
+ * serializable data; nothing is capped or reformatted. The transient working
+ * indicator is represented by meta.turnActive instead of a synthetic row.
  */
 export function transcriptRowsToJson(
   rows: readonly TranscriptRow[],
   meta: ExportMeta,
 ): string {
-  const document: TranscriptExportDocument = { version: 1, meta, rows };
+  const document: TranscriptExportDocument = {
+    version: 1,
+    meta,
+    rows: rows.filter((row) => row.kind !== "working"),
+  };
   return `${JSON.stringify(document, null, 2)}\n`;
 }
 
