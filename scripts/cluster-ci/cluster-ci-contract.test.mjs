@@ -210,9 +210,23 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
     steps["android-debug"].commands.includes("pnpm --filter @t4-code/mobile check:android:debug"),
   );
   assert.ok(steps["cluster-ci-contracts"].commands.includes("pnpm test:cluster:ci"));
-  assert.ok(steps["cluster-server-tests"].commands.includes("pnpm --filter @t4-code/cluster-server test"));
-  assert.ok(steps["cluster-operator-tests"].commands.includes("go test ./..."));
-  assert.ok(steps["cluster-chart-tests"].commands.includes("helm lint deploy/charts/t4-cluster"));
+  assert.ok(
+    steps["cluster-operator-tests"].commands.includes("go test ./api/... ./controllers/... ./cmd/..."),
+  );
+  assert.ok(
+    steps["cluster-operator-tests"].commands.some((command) =>
+      command.includes("go test -c ./charttests"),
+    ),
+  );
+  assert.ok(
+    steps["cluster-chart-tests"].commands.includes("helm lint ../../../deploy/charts/t4-cluster"),
+  );
+  assert.ok(
+    steps["cluster-chart-tests"].commands.some((command) => command.endsWith("chart-contract.test")),
+  );
+  assert.ok(
+    steps["cluster-server-tests"].commands.includes("pnpm --filter @t4-code/cluster-server test"),
+  );
   assert.equal(JSON.stringify(pipeline).includes("from_secret"), false);
   assert.deepEqual(steps["harbor-auth"].depends_on, ["cluster-chart-tests", "android-debug"]);
   assert.equal(
