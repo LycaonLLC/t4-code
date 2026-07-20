@@ -232,6 +232,78 @@ void main() {
     },
   );
 
+  test('returning to a session requests its complete transcript', () async {
+    final profile = _profile('alpha');
+    final directory = _MemoryDirectoryStore(
+      directory: const HostDirectory.empty().upsert(profile),
+    );
+    final connector = _FakeConnector();
+    final controller = _controller(
+      directory,
+      _MemoryCredentialStore(),
+      connector,
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    final channel = connector.channels.single;
+
+    channel.emit(_welcome('host-alpha'));
+    await _flush();
+    channel.emit(<String, Object?>{
+      'v': 'omp-app/1',
+      'type': 'sessions',
+      'hostId': 'host-alpha',
+      ..._sessionListResultFor('host-alpha', const <String>[
+        'session-alpha',
+        'session-beta',
+      ]),
+    });
+    await _flush();
+    final firstSessionId = controller.state.selectedSessionId!;
+    final secondSessionId = controller.state.sessions
+        .firstWhere((session) => session.sessionId != firstSessionId)
+        .sessionId;
+    final firstAttach = channel.sentJson.last;
+    channel.emit(
+      _response(
+        firstAttach,
+        command: 'session.attach',
+        result: const <String, Object?>{},
+      ),
+    );
+    channel.emit(
+      _snapshot('host-alpha', firstSessionId, revision: 'revision-first'),
+    );
+    await _flush();
+
+    await controller.selectSession(secondSessionId);
+    expect(controller.state.selectedSessionId, secondSessionId);
+    final secondAttach = channel.sentJson.last;
+    channel.emit(
+      _response(
+        secondAttach,
+        command: 'session.attach',
+        result: const <String, Object?>{},
+      ),
+    );
+    channel.emit(
+      _snapshot('host-alpha', secondSessionId, revision: 'revision-second'),
+    );
+    await _flush();
+    expect(controller.state.selectedSessionId, secondSessionId);
+    expect(
+      controller.state.sessions.map((session) => session.sessionId),
+      contains(firstSessionId),
+    );
+    await controller.selectSession(firstSessionId);
+    expect(controller.state.selectedSessionId, firstSessionId);
+
+    final attach = channel.sentJson.last;
+    expect(attach, containsPair('command', 'session.attach'));
+    expect(attach, containsPair('sessionId', firstSessionId));
+    expect(attach['args'], isEmpty);
+  });
+
   test(
     'switching hosts clears projections without deleting credentials',
     () async {

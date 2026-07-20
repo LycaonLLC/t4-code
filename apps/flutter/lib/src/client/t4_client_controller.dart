@@ -980,7 +980,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _phase = ConnectionPhase.synchronizing;
     _errorMessage = null;
     _publish();
-    _sendAttach(sessionId, cursor: _savedCursors[sessionId]);
+    _sendAttach(sessionId);
   }
 
   @override
@@ -2587,6 +2587,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   }
 
   void _applySessionRefs(List<SessionRef> sessions) {
+    final previousSelectedSessionId = _selectedSessionId;
     _sessions = sessions.map(_summaryFromRef).toList(growable: false)
       ..sort(_compareSessions);
     _attentionBySession
@@ -2615,8 +2616,13 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       _publish();
       return;
     }
+    final selectionChanged = selected != previousSelectedSessionId;
+    if (selectionChanged) _messages.clear();
     _publish();
-    _sendAttach(selected, cursor: _savedCursors[selected]);
+    _sendAttach(
+      selected,
+      cursor: selectionChanged ? null : _savedCursors[selected],
+    );
   }
 
   SessionSummary _summaryFromRef(SessionRef session) {
@@ -2914,10 +2920,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     }
     _phase = ConnectionPhase.synchronizing;
     _publish();
-    _sendAttach(
-      replacement.sessionId,
-      cursor: _savedCursors[replacement.sessionId],
-    );
+    _sendAttach(replacement.sessionId);
   }
 
   void _applyConfirmation(ConfirmationFrame frame) {
