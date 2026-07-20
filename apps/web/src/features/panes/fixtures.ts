@@ -16,6 +16,7 @@ import {
   resolvePreview,
   resolveFileWriteOutcome,
   resolveReviewOutcome,
+  resolveTurnReview,
 } from "./inspector-store.ts";
 import { classifySessionEvent } from "./activity-log.ts";
 import type {
@@ -762,6 +763,10 @@ function seedForSession(sessionId: string): Partial<InspectorState> {
         selectedPath: STREAM_REVIEW_FILES[0]?.path ?? null,
         view: "unified",
         wrap: false,
+        source: "legacy",
+        turnId: null,
+        loading: false,
+        error: null,
         viewedByPath: { "packages/client/test/replay-fence.test.ts": true },
         draftAnchor: null,
       },
@@ -778,6 +783,10 @@ function seedForSession(sessionId: string): Partial<InspectorState> {
       selectedPath: null,
       view: "unified",
       wrap: false,
+      source: "legacy",
+      turnId: null,
+      loading: false,
+      error: null,
       viewedByPath: {},
       draftAnchor: null,
     },
@@ -852,6 +861,14 @@ function fixtureController(api: InspectorStoreApi, clock: () => number): Inspect
         ),
       );
     },
+    loadTurnReview(turnId) {
+      queueMicrotask(() => {
+        resolveTurnReview(api, turnId, {
+          files: STREAM_REVIEW_FILES,
+          revision: "fixture-turn-review",
+        });
+      });
+    },
     loadDir(path) {
       queueMicrotask(() => {
         if (api.getState().files.offline) {
@@ -870,11 +887,11 @@ function fixtureController(api: InspectorStoreApi, clock: () => number): Inspect
         const edited = editedFiles.get(path);
         const preview =
           edited === undefined
-            ? FILE_PREVIEWS[path] ?? {
+            ? (FILE_PREVIEWS[path] ?? {
                 kind: "diagnostic" as const,
                 path,
                 message: "The host has no readable content at this path.",
-              }
+              })
             : { kind: "code" as const, path, text: edited, truncated: false };
         resolvePreview(api, preview, preview.kind === "code" ? FIXTURE_FILE_REVISION : null);
       });

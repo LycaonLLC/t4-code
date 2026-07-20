@@ -3,8 +3,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  beginTurnReviewAction,
   createInspectorStore,
+  rejectTurnReviewAction,
   resolveReviewOutcome,
+  resolveTurnReview,
+  resolveTurnReviewOutcome,
   type InspectorStoreApi,
 } from "../src/features/panes/inspector-store.ts";
 import type { ReviewFile } from "../src/features/panes/model.ts";
@@ -26,7 +30,12 @@ const PATCH = `@@ -10,4 +10,5 @@ header
 describe("unified patch parsing", () => {
   it("tracks old/new line numbers through hunks", () => {
     const rows = parseUnifiedPatch(PATCH);
-    expect(rows[0]).toEqual({ kind: "hunk", oldLine: null, newLine: null, text: "@@ -10,4 +10,5 @@ header" });
+    expect(rows[0]).toEqual({
+      kind: "hunk",
+      oldLine: null,
+      newLine: null,
+      text: "@@ -10,4 +10,5 @@ header",
+    });
     expect(rows[1]).toEqual({ kind: "context", oldLine: 10, newLine: 10, text: "context one" });
     expect(rows[2]).toEqual({ kind: "del", oldLine: 11, newLine: null, text: "removed line" });
     expect(rows[3]).toEqual({ kind: "add", oldLine: null, newLine: 11, text: "added line" });
@@ -156,10 +165,90 @@ describe("review store flow", () => {
   it("binary, huge, and missing files carry no patch to render", () => {
     const binary = reviewFile({ path: "img.png", kind: "binary", patch: null, sizeBytes: 42 });
     const huge = reviewFile({ path: "gen.ts", kind: "huge", patch: null, sizeBytes: 2_000_000 });
-    const missing = reviewFile({ path: "gone.ts", kind: "missing", patch: null, status: "deleted" });
+    const missing = reviewFile({
+      path: "gone.ts",
+      kind: "missing",
+      patch: null,
+      status: "deleted",
+    });
     const { api } = storeWithFiles([binary, huge, missing]);
     for (const file of api.getState().review.files) {
       expect(file.patch).toBeNull();
     }
+  });
+
+  it("serializes turn decisions and ignores late responses from another turn", () => {
+    const { api } = storeWithFiles([reviewFile({ path: "a.ts" }), reviewFile({ path: "b.ts" })]);
+    api.setState((state) => ({
+      review: {
+        ...state.review,
+        source: "turn",
+        turnId: "turn-1",
+        revision: "revision-1",
+        pendingAction: null,
+      },
+    }));
+    const first = { turnId: "turn-1", path: "a.ts", action: "apply" } as const;
+    expect(beginTurnReviewAction(api, first)).toBe("revision-1");
+    expect(
+      beginTurnReviewAction(api, {
+        turnId: "turn-1",
+        path: "b.ts",
+        action: "discard",
+      }),
+    ).toBeNull();
+
+    api.setState((state) => ({
+      review: {
+        ...state.review,
+        turnId: "turn-2",
+        revision: "revision-2",
+        pendingAction: null,
+      },
+    }));
+    resolveTurnReviewOutcome(api, first, {
+      applyState: "applied",
+      resultingRevision: "revision-stale",
+    });
+    expect(api.getState().review.files[0]?.applyState).toBe("pending");
+    expect(api.getState().review.revision).toBe("revision-2");
+
+    const current = { turnId: "turn-2", path: "a.ts", action: "discard" } as const;
+    expect(beginTurnReviewAction(api, current)).toBe("revision-2");
+    resolveTurnReviewOutcome(api, current, {
+      applyState: "discarded",
+      resultingRevision: "revision-3",
+    });
+    expect(api.getState().review.files[0]?.applyState).toBe("discarded");
+    expect(api.getState().review.revision).toBe("revision-3");
+    expect(api.getState().review.pendingAction).toBeNull();
+
+    const failed = { turnId: "turn-2", path: "b.ts", action: "apply" } as const;
+    expect(beginTurnReviewAction(api, failed)).toBe("revision-3");
+    rejectTurnReviewAction(api, failed, "Host rejected the action.");
+    expect(api.getState().review.pendingAction).toBeNull();
+    expect(api.getState().review.error).toBe("Host rejected the action.");
+  });
+
+  it("does not let a late patch load rewind an applied state or revision", () => {
+    const { api } = storeWithFiles([reviewFile({ path: "a.ts", applyState: "applied" })]);
+    api.setState((state) => ({
+      review: {
+        ...state.review,
+        source: "turn",
+        turnId: "turn-1",
+        revision: "revision-2",
+      },
+    }));
+    resolveTurnReview(api, "turn-1", {
+      files: [reviewFile({ path: "a.ts", patch: "@@ loaded @@" })],
+      revision: "revision-1",
+    });
+    expect(api.getState().review.files[0]).toMatchObject({
+      path: "a.ts",
+      patch: "@@ loaded @@",
+      applyState: "applied",
+    });
+    expect(api.getState().review.revision).toBe("revision-2");
   });
 });

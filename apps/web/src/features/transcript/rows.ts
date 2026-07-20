@@ -15,6 +15,11 @@ import {
 } from "./collaboration-messages.ts";
 import { transcriptImagesFromEntry, type TranscriptImageReference } from "./image-metadata.ts";
 import {
+  transcriptArtifactsFromEntry,
+  type TranscriptArtifactReference,
+} from "./artifact-metadata.ts";
+import { decodeTurnReviewSnapshot } from "../panes/turn-review.ts";
+import {
   type ApprovalRequest,
   type AskRequest,
   type DurableEntry,
@@ -44,6 +49,8 @@ export type TranscriptRow =
       readonly reasoning: string;
       readonly images: readonly TranscriptImageReference[];
       readonly imageIssue: string | null;
+      readonly artifacts?: readonly TranscriptArtifactReference[];
+      readonly artifactIssue?: string | null;
       /** Live rows stream in place; settled rows come from durable entries. */
       readonly live: boolean;
       readonly startedAt: string;
@@ -75,6 +82,14 @@ export type TranscriptRow =
     }
   | {
       readonly id: string;
+      readonly kind: "turn-review";
+      readonly turnId: string;
+      readonly changes: number;
+      readonly additions: number;
+      readonly deletions: number;
+    }
+  | {
+      readonly id: string;
       readonly kind: "working";
       /** Null until a sequenced transcript event supplies a real start time. */
       readonly startedAt: string | null;
@@ -84,6 +99,8 @@ export type TranscriptRow =
 export interface TranscriptToolCall extends ToolCall {
   readonly images: readonly TranscriptImageReference[];
   readonly imageIssue: string | null;
+  readonly artifacts?: readonly TranscriptArtifactReference[];
+  readonly artifactIssue?: string | null;
 }
 
 export interface AttentionState {
@@ -117,6 +134,7 @@ function textOf(data: Record<string, unknown>, key: string): string {
 function toolCallFromEntry(entry: DurableEntry): TranscriptToolCall {
   const data = entry.data;
   const transcriptImages = transcriptImagesFromEntry(entry);
+  const transcriptArtifacts = transcriptArtifactsFromEntry(entry);
   return {
     callId: entry.id,
     tool: textOf(data, "tool") || "tool",
@@ -129,6 +147,8 @@ function toolCallFromEntry(entry: DurableEntry): TranscriptToolCall {
     endedAt: entry.timestamp,
     images: transcriptImages.images,
     imageIssue: transcriptImages.issue,
+    artifacts: transcriptArtifacts.artifacts,
+    artifactIssue: transcriptArtifacts.issue,
   };
 }
 
@@ -150,6 +170,29 @@ function rowsFromEntries(entries: readonly DurableEntry[]): TranscriptRow[] {
   };
 
   for (const entry of entries) {
+    if (entry.kind === "turn-review") {
+      flushTools();
+      try {
+        const review = decodeTurnReviewSnapshot(entry.data);
+        rows.push({
+          id: entry.id,
+          kind: "turn-review",
+          turnId: review.turnId,
+          changes: review.changes.length,
+          additions: review.changes.reduce((total, change) => total + change.additions, 0),
+          deletions: review.changes.reduce((total, change) => total + change.deletions, 0),
+        });
+      } catch {
+        rows.push({
+          id: entry.id,
+          kind: "unknown-entry",
+          entryKind: entry.kind,
+          data: entry.data,
+          timestamp: entry.timestamp,
+        });
+      }
+      continue;
+    }
     switch (entry.kind) {
       case "message": {
         flushTools();
@@ -165,6 +208,7 @@ function rowsFromEntries(entries: readonly DurableEntry[]): TranscriptRow[] {
         }
         const role = textOf(entry.data, "role") === "user" ? "user" : "assistant";
         const transcriptImages = transcriptImagesFromEntry(entry);
+        const transcriptArtifacts = transcriptArtifactsFromEntry(entry);
         rows.push({
           id: entry.id,
           kind: "message",
@@ -173,6 +217,8 @@ function rowsFromEntries(entries: readonly DurableEntry[]): TranscriptRow[] {
           reasoning: textOf(entry.data, "reasoning"),
           images: transcriptImages.images,
           imageIssue: transcriptImages.issue,
+          artifacts: transcriptArtifacts.artifacts,
+          artifactIssue: transcriptArtifacts.issue,
           live: false,
           startedAt: entry.timestamp,
         });
@@ -260,6 +306,8 @@ function liveMessageRow(message: LiveMessage): TranscriptRow {
     reasoning: message.reasoning,
     images: [],
     imageIssue: null,
+    artifacts: [],
+    artifactIssue: null,
     live: true,
     startedAt: message.startedAt,
   };
@@ -452,6 +500,32 @@ function imageReferencesEqual(
   return true;
 }
 
+function artifactReferencesEqual(
+  left: readonly TranscriptArtifactReference[] = [],
+  right: readonly TranscriptArtifactReference[] = [],
+): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    const a = left[index];
+    const b = right[index];
+    if (
+      a === undefined ||
+      b === undefined ||
+      a.artifactId !== b.artifactId ||
+      a.kind !== b.kind ||
+      a.mediaType !== b.mediaType ||
+      a.disposition !== b.disposition ||
+      a.size !== b.size ||
+      a.sha256 !== b.sha256 ||
+      a.name !== b.name
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function toolCallsEqual(a: TranscriptToolCall, b: TranscriptToolCall): boolean {
   if (a === b) return true;
   if (
@@ -464,7 +538,9 @@ function toolCallsEqual(a: TranscriptToolCall, b: TranscriptToolCall): boolean {
     a.args !== b.args ||
     a.result !== b.result ||
     a.imageIssue !== b.imageIssue ||
+    a.artifactIssue !== b.artifactIssue ||
     !imageReferencesEqual(a.images, b.images) ||
+    !artifactReferencesEqual(a.artifacts, b.artifacts) ||
     a.progress.length !== b.progress.length
   ) {
     return false;
@@ -528,7 +604,9 @@ function rowsEqual(a: TranscriptRow, b: TranscriptRow): boolean {
         a.text === b.text &&
         a.reasoning === b.reasoning &&
         a.imageIssue === b.imageIssue &&
+        a.artifactIssue === b.artifactIssue &&
         imageReferencesEqual(a.images, b.images) &&
+        artifactReferencesEqual(a.artifacts, b.artifacts) &&
         a.live === b.live &&
         a.startedAt === b.startedAt
       );
@@ -558,6 +636,14 @@ function rowsEqual(a: TranscriptRow, b: TranscriptRow): boolean {
     }
     case "unknown-entry":
       return b.kind === "unknown-entry" && a.entryKind === b.entryKind && a.data === b.data;
+    case "turn-review":
+      return (
+        b.kind === "turn-review" &&
+        a.turnId === b.turnId &&
+        a.changes === b.changes &&
+        a.additions === b.additions &&
+        a.deletions === b.deletions
+      );
     case "working":
       return b.kind === "working" && a.startedAt === b.startedAt && a.activity === b.activity;
   }

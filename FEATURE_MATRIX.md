@@ -85,7 +85,7 @@ OMP authority: `packages/coding-agent/src/session/agent-session.ts`, `session-ma
 | Ask/approval/resolve | blocking card, keyboard navigation, submitted value, timeout/cancel | ask/client bridge/plan actions |
 | Compaction/retry/provider error | causal grouping and attempt history; no duplicate transcript rows | session events |
 | Notifications/system notices | restrained inline status; never masquerade as model output | client bridge/events |
-| Artifacts/images | preview/open/save and missing/offline state | artifact manager/internal URLs |
+| Artifacts/images | Session-retained cards with lazy preview/open/save and explicit unavailable/offline state | Implemented by `TranscriptArtifacts`, the shared transcript artifact source, and app-wire 0.7 `artifact.read` |
 | Unknown extension/MCP tool | safe generic JSON/tree renderer with raw copy; never crash stream | extension/MCP tool contract |
 
 ## 6. Subagents, tasks, jobs, IRC, and todos
@@ -113,7 +113,7 @@ Subagent event authority includes `TASK_SUBAGENT_LIFECYCLE_CHANNEL`, `TASK_SUBAG
 | Surface | T3 implementation reference | OMP data/control | Required states |
 |---|---|---|---|
 | Right-panel families | `rightPanelStore.ts`, `RightPanelTabs.tsx`, `RightPanelSheet.tsx` | protocol surface registry | Five persistent families: Agents, Activity, Review, Files, Terminal; open/close/reorder/select/restore per session; context is a composer popover/dialog and raw events are Activity filters |
-| Diff/review | `DiffPanel.tsx`, `AnnotatableCodeView.tsx`, `@pierre/diffs` | git/files/edit artifacts | unified/split, wrap, collapse, comments, binary/missing/huge diff |
+| Diff/review | `ReviewPane`, `turn-review.ts`, unified/split diff renderers | Implemented app-wire 0.7 turn snapshots plus turn-scoped `files.diff` / `review.apply` | Per-turn file attribution, lazy patch loading, independent keep/discard decisions, comments, and binary/missing/huge states |
 | File preview/editor | `files/FilePreviewPanel.tsx`, file save coordinator | read/write/LSP | loading, dirty, save conflict, diagnostics, binary/image, offline read-only |
 | Terminal drawer | `ThreadTerminalDrawer.tsx`, server terminal manager/node-pty | OMP persistent shell/appserver PTY | tabs/splits/resizing/history/input/exit/restart/reconnect/backpressure |
 | Browser/app preview | T3 preview manager/panel/webview security | OMP browser tool and app preview | Required Wave 4 focused preview workspace or secondary Electron window; navigation, inspect/click/scroll/type, screenshots, crash/reload, trusted partitions; not a sixth permanent right-pane tab |

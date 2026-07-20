@@ -41,20 +41,20 @@ export function isSafeRelativePath(value: string): boolean {
   if (/[\u0000-\u001f\u007f]/u.test(value)) return false;
   if (value.includes("\\") || value.startsWith("/") || value.startsWith("~")) return false;
   if (/^[A-Za-z]:/u.test(value)) return false;
-  return value
-    .split("/")
-    .every((part) => part.length > 0 && part !== "." && part !== "..");
+  return value.split("/").every((part) => part.length > 0 && part !== "." && part !== "..");
 }
 
 function readString(record: Readonly<Record<string, unknown>>, key: string): string | null {
   const value = record[key];
   return typeof value === "string" && value.length > 0 ? value : null;
 }
-function readNonNegativeNumber(record: Readonly<Record<string, unknown>>, key: string): number | null {
+function readNonNegativeNumber(
+  record: Readonly<Record<string, unknown>>,
+  key: string,
+): number | null {
   const value = record[key];
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
-
 
 function readSafePath(record: Readonly<Record<string, unknown>>, key: string): string | null {
   const value = readString(record, key);
@@ -126,7 +126,8 @@ export function agentNodeFromFrame(
       ? (rawContext as Readonly<Record<string, unknown>>)
       : null;
   const contextUsed = contextRecord === null ? null : readNonNegativeNumber(contextRecord, "used");
-  const contextLimit = contextRecord === null ? null : readNonNegativeNumber(contextRecord, "limit");
+  const contextLimit =
+    contextRecord === null ? null : readNonNegativeNumber(contextRecord, "limit");
   const validContext = contextUsed !== null && contextLimit !== null && contextUsed <= contextLimit;
   const parentId = readString(detail, "parentId");
   const kindValue = detail.kind;
@@ -280,6 +281,8 @@ const REVIEW_FILE_STATUSES: Readonly<Record<ReviewFileStatus, true>> = {
   modified: true,
   deleted: true,
   renamed: true,
+  copied: true,
+  untracked: true,
 };
 
 function reviewFileFrom(
@@ -312,7 +315,11 @@ function reviewFileFrom(
     patch,
     sizeBytes: typeof sizeBytes === "number" && Number.isFinite(sizeBytes) ? sizeBytes : null,
     applyState:
-      frame.status === "applied" ? "applied" : frame.status === "discarded" ? "discarded" : "pending",
+      frame.status === "applied"
+        ? "applied"
+        : frame.status === "discarded"
+          ? "discarded"
+          : "pending",
   };
 }
 
