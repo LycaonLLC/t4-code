@@ -772,9 +772,17 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       connectingChannel.sink.add(_hello(credentials));
     } on Object catch (error) {
       if (connectingChannel != null && connectingChannel != _channel) {
-        await connectingChannel.sink.close();
+        unawaited(_closeChannelQuietly(connectingChannel));
       }
       _handleTransportLoss(generation, error);
+    }
+  }
+
+  Future<void> _closeChannelQuietly(WebSocketChannel channel) async {
+    try {
+      await channel.sink.close().timeout(const Duration(seconds: 1));
+    } on Object {
+      // Failed handshakes can leave close futures unresolved.
     }
   }
 

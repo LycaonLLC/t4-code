@@ -832,6 +832,36 @@ void main() {
     },
   );
 
+  testWidgets('failed handshake close cannot stall automatic reconnect', (
+    tester,
+  ) async {
+    final readyGate = Completer<void>();
+    final connector = _FakeConnector(
+      readyGate: readyGate,
+      hangFirstClose: true,
+    );
+    final controller = _controller(
+      _MemoryDirectoryStore(
+        directory: const HostDirectory.empty().upsert(_profile('alpha')),
+      ),
+      _MemoryCredentialStore(),
+      connector,
+    );
+    addTearDown(controller.dispose);
+    final initialization = controller.initialize();
+    await tester.pump();
+    expect(connector.channels, hasLength(1));
+
+    readyGate.completeError(StateError('server unavailable'));
+    await initialization;
+    expect(controller.state.connectionPhase, ConnectionPhase.retrying);
+    await tester.pump(const Duration(milliseconds: 600));
+
+    expect(connector.channels.length, greaterThan(1));
+    await controller.disconnect();
+    await tester.pump(const Duration(seconds: 1));
+  });
+
   test('deliberate disconnect cancels an automatic reconnect', () async {
     final profile = _profile('alpha');
     final directory = _MemoryDirectoryStore(
@@ -2789,10 +2819,14 @@ final class _MemoryCredentialStore implements HostCredentialStore {
 }
 
 final class _FakeConnector {
-  _FakeConnector({List<String>? events, this.readyGate})
-    : events = events ?? <String>[];
+  _FakeConnector({
+    List<String>? events,
+    this.readyGate,
+    this.hangFirstClose = false,
+  }) : events = events ?? <String>[];
 
   final Completer<void>? readyGate;
+  final bool hangFirstClose;
   // Constructor is declared above so tests can delay a probe handshake.
 
   final List<String> events;
@@ -2806,6 +2840,7 @@ final class _FakeConnector {
       channels.length,
       events,
       readyGate: readyGate,
+      hangClose: hangFirstClose && channels.isEmpty,
     );
     channels.add(channel);
     return channel;
@@ -2813,8 +2848,12 @@ final class _FakeConnector {
 }
 
 final class _FakeWebSocketChannel implements WebSocketChannel {
-  _FakeWebSocketChannel(this.index, this.events, {this.readyGate})
-    : sink = _FakeWebSocketSink(index, events);
+  _FakeWebSocketChannel(
+    this.index,
+    this.events, {
+    this.readyGate,
+    bool hangClose = false,
+  }) : sink = _FakeWebSocketSink(index, events, hangClose: hangClose);
 
   final int index;
   final List<String> events;
@@ -2847,10 +2886,11 @@ final class _FakeWebSocketChannel implements WebSocketChannel {
 }
 
 final class _FakeWebSocketSink implements WebSocketSink {
-  _FakeWebSocketSink(this.index, this.events);
+  _FakeWebSocketSink(this.index, this.events, {this.hangClose = false});
 
   final int index;
   final List<String> events;
+  final bool hangClose;
   final List<Object?> sent = <Object?>[];
   final Completer<void> _done = Completer<void>();
 
@@ -2865,6 +2905,7 @@ final class _FakeWebSocketSink implements WebSocketSink {
   @override
   Future<void> close([int? closeCode, String? closeReason]) async {
     events.add('close:$index');
+    if (hangClose) return Completer<void>().future;
     if (!_done.isCompleted) _done.complete();
   }
 
