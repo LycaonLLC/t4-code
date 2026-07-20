@@ -135,6 +135,11 @@ function rowToMarkdown(row: TranscriptRow): string | null {
       return noticeToMarkdown(row.notice);
     case "unknown-entry":
       return `> Unrecognized entry \`${row.entryKind}\` (${row.timestamp})`;
+    case "turn-review":
+      return [
+        "### Review changes",
+        `${row.changes} ${row.changes === 1 ? "file" : "files"} · +${row.additions} −${row.deletions}`,
+      ].join("\n\n");
     case "working":
       return null;
   }
