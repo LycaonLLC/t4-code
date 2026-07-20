@@ -12,7 +12,7 @@ const repoRoot = resolve(import.meta.dirname, "../..");
 const artifactDirectory = resolve(repoRoot, "artifacts/cluster-proof/images");
 const outputPath = resolve(repoRoot, "artifacts/cluster-proof/image-publication.json");
 const CANONICAL_SOURCE_REPOSITORY = "z-peterson/t4-code";
-const CANONICAL_SOURCE_URL = "https://github.com/z-peterson/t4-code";
+const CANONICAL_SOURCE_URL = "https://github.com/usr-bin-roygbiv/t4-code";
 const HARBOR_REGISTRY = "harbor.tailb18de3.ts.net";
 const QUARANTINE_PREFIX = "quarantine";
 const suffixes = {
@@ -176,7 +176,7 @@ function trustedSourceMaterial(material, commit) {
   return (
     source.protocol === "https:" &&
     source.hostname === "github.com" &&
-    source.pathname === "/z-peterson/t4-code.git" &&
+    source.pathname === "/usr-bin-roygbiv/t4-code.git" &&
     source.hash === `#${commit}` &&
     material.digest?.sha1 === commit
   );

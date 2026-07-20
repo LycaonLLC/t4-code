@@ -228,7 +228,7 @@ func TestSessionFailsClosedWhenAnyOMPReferenceIsMissing(t *testing.T) {
 	}
 }
 
-func TestSessionRejectsHalfOrDualOMPAuthenticationModes(t *testing.T) {
+func TestSessionRejectsInvalidOMPAuthenticationAndProjectionReferences(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		mutate func(*controllers.SessionOMPConfig)
@@ -237,6 +237,8 @@ func TestSessionRejectsHalfOrDualOMPAuthenticationModes(t *testing.T) {
 		{name: "credential key without Secret", mutate: func(config *controllers.SessionOMPConfig) { config.CredentialSecretName = "" }},
 		{name: "unauthenticated plus credentials", mutate: func(config *controllers.SessionOMPConfig) { config.AllowUnauthenticated = true }},
 		{name: "invalid credential environment name", mutate: func(config *controllers.SessionOMPConfig) { config.CredentialKey = "bad-key" }},
+		{name: "runtime-owned credential environment", mutate: func(config *controllers.SessionOMPConfig) { config.CredentialKey = "OMP_PROFILE" }},
+		{name: "identical projected keys", mutate: func(config *controllers.SessionOMPConfig) { config.SettingsKey = config.ModelsKey }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			scheme := testScheme(t)

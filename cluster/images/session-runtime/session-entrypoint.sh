@@ -38,6 +38,12 @@ if [[ "${T4_OMP_ALLOW_UNAUTHENTICATED}" == "false" ]]; then
   T4_OMP_CREDENTIAL_KEY="${1:-}"
   [[ -n "${T4_OMP_CREDENTIAL_KEY}" ]] || { echo '{"component":"session-runtime","result":"invalid_config","condition":"omp_credential_key"}' >&2; exit 64; }
   [[ "${T4_OMP_CREDENTIAL_KEY}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo '{"component":"session-runtime","result":"invalid_config","condition":"omp_credential_key"}' >&2; exit 64; }
+  case "${T4_OMP_CREDENTIAL_KEY}" in
+    T4_*|OMP_*|XDG_*|LD_*|HOME|DISPLAY|PATH|BASH_ENV|ENV|SHELLOPTS|NODE_OPTIONS|BUN_OPTIONS|PI_CODING_AGENT_DIR|PI_CONFIG_DIR)
+      echo '{"component":"session-runtime","result":"invalid_config","condition":"omp_credential_key"}' >&2
+      exit 64
+      ;;
+  esac
   [[ -v "${T4_OMP_CREDENTIAL_KEY}" ]] || { echo '{"component":"session-runtime","result":"invalid_config","condition":"omp_credential"}' >&2; exit 64; }
   credential_value="${!T4_OMP_CREDENTIAL_KEY}"
   [[ -n "${credential_value}" ]] || { echo '{"component":"session-runtime","result":"invalid_config","condition":"omp_credential"}' >&2; exit 64; }

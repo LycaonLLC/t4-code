@@ -38,6 +38,18 @@ var (
 	envVarNamePattern   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
+func reservedCredentialEnvironment(name string) bool {
+	if strings.HasPrefix(name, "T4_") || strings.HasPrefix(name, "OMP_") || strings.HasPrefix(name, "XDG_") || strings.HasPrefix(name, "LD_") {
+		return true
+	}
+	switch name {
+	case "HOME", "DISPLAY", "PATH", "BASH_ENV", "ENV", "SHELLOPTS", "NODE_OPTIONS", "BUN_OPTIONS", "PI_CODING_AGENT_DIR", "PI_CONFIG_DIR":
+		return true
+	default:
+		return false
+	}
+}
+
 type SessionOMPConfig struct {
 	ConfigMapName        string
 	ModelsKey            string
@@ -103,8 +115,9 @@ func (config SessionOMPConfig) validationFailure() (string, string) {
 	if len(utilvalidation.IsDNS1123Subdomain(config.ConfigMapName)) != 0 ||
 		len(config.ModelsKey) > 253 || !configMapKeyPattern.MatchString(config.ModelsKey) ||
 		len(config.SettingsKey) > 253 || !configMapKeyPattern.MatchString(config.SettingsKey) ||
+		config.ModelsKey == config.SettingsKey ||
 		(config.CredentialSecretName != "" && len(utilvalidation.IsDNS1123Subdomain(config.CredentialSecretName)) != 0) ||
-		(config.CredentialKey != "" && (len(config.CredentialKey) > 253 || !envVarNamePattern.MatchString(config.CredentialKey))) {
+		(config.CredentialKey != "" && (len(config.CredentialKey) > 253 || !envVarNamePattern.MatchString(config.CredentialKey) || reservedCredentialEnvironment(config.CredentialKey))) {
 		return "OMPReferencesInvalid", "administrator-owned OMP configuration references are invalid"
 	}
 	return "", ""

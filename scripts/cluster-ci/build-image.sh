@@ -52,7 +52,7 @@ digest_file="$artifact_dir/$component.digest"
 
 repository="$HARBOR_REGISTRY/$HARBOR_PROJECT/quarantine/$repository_suffix"
 reference="$repository:$CI_COMMIT_SHA"
-source_context="https://github.com/z-peterson/t4-code.git#$CI_COMMIT_SHA"
+source_context="https://github.com/usr-bin-roygbiv/t4-code.git#$CI_COMMIT_SHA"
 
 buildctl --addr "$BUILDKIT_ADDR" build \
   --frontend dockerfile.v0 \
@@ -60,8 +60,8 @@ buildctl --addr "$BUILDKIT_ADDR" build \
   --opt "filename=$dockerfile" \
   --opt platform=linux/amd64,linux/arm64 \
   --opt "build-arg:SOURCE_COMMIT=$CI_COMMIT_SHA" \
-  --opt "build-arg:SOURCE_REPOSITORY=https://github.com/z-peterson/t4-code" \
-  --opt "label:org.opencontainers.image.source=https://github.com/z-peterson/t4-code" \
+  --opt "build-arg:SOURCE_REPOSITORY=https://github.com/usr-bin-roygbiv/t4-code" \
+  --opt "label:org.opencontainers.image.source=https://github.com/usr-bin-roygbiv/t4-code" \
   --opt "label:org.opencontainers.image.revision=$CI_COMMIT_SHA" \
   --output "type=image,name=$reference,push=true,compression=zstd,force-compression=true,oci-mediatypes=true" \
   --attest type=sbom \

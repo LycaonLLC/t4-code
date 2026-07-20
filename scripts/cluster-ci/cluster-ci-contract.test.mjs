@@ -351,6 +351,8 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
 
   const buildSource = await readFile(resolve(repoRoot, "scripts/cluster-ci/build-image.sh"), "utf8");
   assert.match(buildSource, /platform=linux\/amd64,linux\/arm64/u);
+  assert.match(buildSource, /https:\/\/github\.com\/usr-bin-roygbiv\/t4-code\.git/u);
+  assert.doesNotMatch(buildSource, /https:\/\/github\.com\/z-peterson\/t4-code/u);
   assert.match(buildSource, /quarantine/u);
   assert.match(buildSource, /chmod 1777 "\$artifact_dir"/u);
   assert.match(buildSource, /chmod 0444 "\$metadata" "\$digest_file"/u);
@@ -634,9 +636,9 @@ test("SPDX, Trivy, and BuildKit content bind every image identity field", () => 
     predicate: {
       builder: { id: "https://mobyproject.org/buildkit@v1" },
       buildType: "https://mobyproject.org/buildkit@v1",
-      invocation: { parameters: { source: "https://github.com/z-peterson/t4-code", commit: COMMIT } },
+      invocation: { parameters: { source: "https://github.com/usr-bin-roygbiv/t4-code", commit: COMMIT } },
       materials: [
-        { uri: `https://github.com/z-peterson/t4-code.git#${COMMIT}`, digest: { sha1: COMMIT } },
+        { uri: `https://github.com/usr-bin-roygbiv/t4-code.git#${COMMIT}`, digest: { sha1: COMMIT } },
         { uri: `pkg:docker/node@${DIGEST}`, digest: { sha256: DIGEST.slice(7) } },
       ],
     },

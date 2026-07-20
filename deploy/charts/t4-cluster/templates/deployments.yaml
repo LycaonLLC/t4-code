@@ -1,4 +1,7 @@
 {{- if .Values.enabled }}
+{{- if eq .Values.session.omp.modelsKey .Values.session.omp.settingsKey }}
+{{- fail "session.omp.modelsKey and session.omp.settingsKey must be different" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

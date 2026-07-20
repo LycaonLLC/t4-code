@@ -121,7 +121,7 @@
             "modelsKey": { "$ref": "#/definitions/optionalConfigKey" },
             "settingsKey": { "$ref": "#/definitions/optionalConfigKey" },
             "credentialSecret": { "$ref": "#/definitions/optionalDNSSubdomain" },
-            "credentialKey": { "$ref": "#/definitions/optionalEnvVarName" },
+            "credentialKey": { "$ref": "#/definitions/optionalCredentialEnvVarName" },
             "allowUnauthenticated": { "type": "boolean" }
           }
         }
@@ -275,6 +275,22 @@
       "type": "string",
       "maxLength": 253,
       "pattern": "^$|^[A-Za-z_][A-Za-z0-9_]*$"
+    },
+    "optionalCredentialEnvVarName": {
+      "allOf": [
+        { "$ref": "#/definitions/optionalEnvVarName" },
+        {
+          "not": {
+            "anyOf": [
+              { "pattern": "^T4_" },
+              { "pattern": "^OMP_" },
+              { "pattern": "^XDG_" },
+              { "pattern": "^LD_" },
+              { "enum": ["HOME", "DISPLAY", "PATH", "BASH_ENV", "ENV", "SHELLOPTS", "NODE_OPTIONS", "BUN_OPTIONS", "PI_CODING_AGENT_DIR", "PI_CONFIG_DIR"] }
+            ]
+          }
+        }
+      ]
     },
     "nonDefaultRouteCIDR": {
       "type": "string",
