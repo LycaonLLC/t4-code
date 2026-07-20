@@ -25,8 +25,8 @@ export interface FileRefToken {
   readonly end: number;
 }
 
-/** Characters a path token may contain; anything else closes the menu. */
-const TOKEN_CHARS = /^[\w./-]*$/;
+/** Path-token characters, including Unicode names and symbols such as emoji. */
+const TOKEN_CHARS = /^[\p{L}\p{M}\p{N}\p{S}_./-]*$/u;
 
 function isSafeFileRefQuery(value: string): boolean {
   if (value === "") return true;
@@ -145,7 +145,7 @@ export function fileRefTokensInDraft(
   knownPaths: { readonly has: (key: string) => boolean },
 ): FileRefToken[] {
   const tokens: FileRefToken[] = [];
-  for (const match of text.matchAll(/(^|\s)@([\w./-]+)/g)) {
+  for (const match of text.matchAll(/(^|\s)@([\p{L}\p{M}\p{N}\p{S}_./-]+)/gu)) {
     const prefix = match[1] ?? "";
     const raw = match[2];
     if (raw === undefined) continue;

@@ -55,6 +55,11 @@ describe("activeFileRefQuery", () => {
     expect(activeFileRefQuery("@a(b)", 4)).toBeNull();
   });
 
+  it("allows Unicode filenames", () => {
+    const text = "@资料/🧪.ts";
+    expect(activeFileRefQuery(text, text.length)).toEqual({ query: "资料/🧪.ts", start: 0 });
+  });
+
   it("rejects paths that can leave the project", () => {
     expect(activeFileRefQuery("@../secret", 10)).toBeNull();
     expect(activeFileRefQuery("@src/../../secret", 17)).toBeNull();
@@ -164,5 +169,11 @@ describe("fileRefTokensInDraft", () => {
 
   it("does not turn an email-like token into a file chip", () => {
     expect(fileRefTokensInDraft("send dev@src/app.ts a note", known)).toEqual([]);
+  });
+
+  it("finds a known Unicode filename", () => {
+    expect(fileRefTokensInDraft("inspect @资料/🧪.ts", new Set(["资料/🧪.ts"]))).toEqual([
+      { path: "资料/🧪.ts", start: 8, end: 17 },
+    ]);
   });
 });
