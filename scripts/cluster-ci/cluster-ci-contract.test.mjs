@@ -19,10 +19,10 @@ import {
   validateClusterSnapshot,
   validateDefaultOffRender,
 } from "./readonly-cluster-proof.mjs";
+import { grafanaHealthSummary, lokiLogSummary, prometheusSample } from "./collect-readonly-cluster.mjs";
 import { HARBOR_REGISTRY_ALIASES, normalizeRegistryAuth } from "./normalize-registry-auth.mjs";
 import { provenanceVerificationMode, verifyProvenance, verifySpdx, vulnerabilityCounts } from "./assemble-image-manifest.mjs";
-import { trustedProofUrl } from "./assemble-proof.mjs";
-import { clusterWebSocketUrl } from "./capture-redacted-frames.mjs";
+import { clusterWebSocketUrl, proofHelloFrame } from "./capture-redacted-frames.mjs";
 
 const COMMIT = "0123456789abcdef0123456789abcdef01234567";
 const DIGEST = `sha256:${"a".repeat(64)}`;
@@ -131,7 +131,7 @@ function liveClusterResponses() {
           metadata: { name: "t4-cluster-controller", generation: 4, labels: labels("controller") },
           spec: {
             replicas: 2,
-            strategy: { type: "RollingUpdate", rollingUpdate: { maxUnavailable: 1 } },
+            strategy: { type: "RollingUpdate", rollingUpdate: { maxUnavailable: 0 } },
           },
           status: { observedGeneration: 4, availableReplicas: 2 },
         },
@@ -226,7 +226,11 @@ function liveClusterResponses() {
       items: [
         {
           metadata: { name: "t4-cluster-server", labels: labels("server") },
-          spec: { ports: [{ name: "websocket", port: 8080 }, { name: "admin", port: 9090 }] },
+          spec: { ports: [{ name: "websocket", port: 8080 }] },
+        },
+        {
+          metadata: { name: "t4-cluster-metrics", labels: labels("server") },
+          spec: { ports: [{ name: "metrics", port: 9090 }] },
         },
       ],
     },
@@ -336,6 +340,7 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   assert.deepEqual(steps["cleanup-image-registry-auth"].when[0].status, ["success", "failure"]);
   assert.deepEqual(steps["cleanup-live-registry-auth"].when[0].status, ["success", "failure"]);
   assert.deepEqual(steps["live-frame-proof"].commands, ["node scripts/cluster-ci/capture-redacted-frames.mjs"]);
+  assert.equal(steps["live-frame-proof"].environment.T4_CLUSTER_BASE_URL, "https://t4-dev.tailb18de3.ts.net/");
   assert.deepEqual(steps["live-proof-assembly"].depends_on, ["live-frame-proof"]);
   const frameCaptureSource = await readFile(resolve(repoRoot, "scripts/cluster-ci/capture-redacted-frames.mjs"), "utf8");
   assert.doesNotMatch(frameCaptureSource, /client.?secret|deviceId|access.?token/iu);
@@ -523,7 +528,7 @@ test("live snapshot validation rejects stale or loosely matched cluster truth", 
   assert.throws(() => validateClusterSnapshot(staleGeneration, CLUSTER_VALIDATION), /metadata\.generation exactly/u);
 
   const wrongControllerRollout = structuredClone(responses);
-  wrongControllerRollout.deployments.items[0].spec.strategy.rollingUpdate.maxUnavailable = 0;
+  wrongControllerRollout.deployments.items[0].spec.strategy.rollingUpdate.maxUnavailable = 1;
   assert.throws(() => validateClusterSnapshot(wrongControllerRollout, CLUSTER_VALIDATION), /exact HA rollout/u);
 
   const legacyPvcField = structuredClone(responses);
@@ -561,7 +566,11 @@ test("live snapshot validation rejects stale or loosely matched cluster truth", 
 
   const wrongPortName = structuredClone(responses);
   wrongPortName.services.items[0].spec.ports[0].name = "omp-app";
-  assert.throws(() => validateClusterSnapshot(wrongPortName, CLUSTER_VALIDATION), /websocket\/admin ports/u);
+  assert.throws(() => validateClusterSnapshot(wrongPortName, CLUSTER_VALIDATION), /exact websocket port/u);
+
+  const wrongMetricsPort = structuredClone(responses);
+  wrongMetricsPort.services.items[1].spec.ports[0].port = 8080;
+  assert.throws(() => validateClusterSnapshot(wrongMetricsPort, CLUSTER_VALIDATION), /admin metrics port/u);
 });
 
 test("SPDX, Trivy, and BuildKit content bind every image identity field", () => {
@@ -643,21 +652,50 @@ test("SPDX, Trivy, and BuildKit content bind every image identity field", () => 
   assert.throws(() => verifyProvenance(envelope(statement), { repository, digest: DIGEST, commit: "f".repeat(40) }), /CI commit/u);
 });
 
-test("proof fetch and frame URLs reject every host or credential outside the exact allowlist", () => {
-  assert.equal(
-    trustedProofUrl("https://interview-responder-prometheus.tailb18de3.ts.net/evidence.json", "prometheus", ["interview-responder-prometheus.tailb18de3.ts.net"]),
-    "https://interview-responder-prometheus.tailb18de3.ts.net/evidence.json",
+test("live observability parsers retain only bounded source-safe summaries", () => {
+  assert.deepEqual(
+    prometheusSample(
+      { status: "success", data: { resultType: "vector", result: [{ value: [1_721_480_000, "3"] }] } },
+      "t4-cluster-up",
+    ),
+    { name: "t4-cluster-up", value: 3, sampledAt: "2024-07-20T12:53:20.000Z" },
   );
-  for (const value of [
-    "https://attacker.example/evidence.json",
-    "http://interview-responder-prometheus.tailb18de3.ts.net/evidence.json",
-    "https://user:password@interview-responder-prometheus.tailb18de3.ts.net/evidence.json",
-    "https://interview-responder-prometheus.tailb18de3.ts.net/evidence.json?token=value",
-  ]) {
-    assert.throws(() => trustedProofUrl(value, "prometheus", ["interview-responder-prometheus.tailb18de3.ts.net"]), /allowlist/u);
-  }
+  assert.throws(
+    () => prometheusSample({ status: "success", data: { resultType: "vector", result: [] } }, "missing"),
+    /one bounded nonnegative sample/u,
+  );
+  assert.deepEqual(
+    lokiLogSummary({
+      status: "success",
+      data: {
+        resultType: "streams",
+        result: [{ stream: { namespace: "t4-development" }, values: [["1721480000000000000", '{"level":"info","event":"reconcile"}']] }],
+      },
+    }),
+    { streamCount: 1, entryCount: 1, errorCount: 0 },
+  );
+  assert.deepEqual(
+    grafanaHealthSummary({ database: "ok", version: "12.4.2", commit: "e".repeat(40) }),
+    { database: "ok", version: "12.4.2", commit: "e".repeat(40) },
+  );
+  assert.throws(
+    () => grafanaHealthSummary({ database: "failed", version: "12.4.2", commit: "e".repeat(40) }),
+    /unhealthy/u,
+  );
+});
+
+test("frame proof uses the exact cluster origin and typed Hello capabilities", () => {
   assert.equal(clusterWebSocketUrl("https://t4-dev.tailb18de3.ts.net/").href, "wss://t4-dev.tailb18de3.ts.net/v1/ws");
   assert.throws(() => clusterWebSocketUrl("https://other.tailb18de3.ts.net/"), /credential-free HTTPS origin/u);
+  const hello = proofHelloFrame();
+  assert.deepEqual(Object.keys(hello.capabilities), ["client"]);
+  assert.deepEqual(hello.capabilities.client, [
+    "sessions.read",
+    "ci.trigger",
+    "preview.read",
+    "preview.control",
+    "preview.input",
+  ]);
 });
 
 test("default-off proof evaluates rendered resources rather than chart source text", () => {

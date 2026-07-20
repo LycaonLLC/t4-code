@@ -22,6 +22,18 @@ const REQUIRED_CAPABILITIES = Object.freeze([
   "preview.input",
 ]);
 
+export function proofHelloFrame() {
+  return {
+    v: "omp-app/1",
+    type: "hello",
+    protocol: { min: "omp-app/1", max: "omp-app/1" },
+    client: { name: "t4-cluster-proof", version: "1", build: "1", platform: "woodpecker" },
+    requestedFeatures: ["cluster.operator", "resume", "preview.control"],
+    capabilities: { client: [...REQUIRED_CAPABILITIES] },
+    savedCursors: [],
+  };
+}
+
 function requiredEnvironment(name) {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`${name} is required`);
@@ -151,17 +163,7 @@ async function capture() {
       if (!sessionResult || !workspaceResult) finish(rejectComplete, new Error(`cluster socket closed early (${code})`));
     });
     socket.once("open", () => {
-      socket.send(
-        JSON.stringify({
-          v: "omp-app/1",
-          type: "hello",
-          protocol: { min: "omp-app/1", max: "omp-app/1" },
-          client: { name: "t4-cluster-proof", version: "1", build: "1", platform: "woodpecker" },
-          requestedFeatures: ["cluster.operator", "resume", "preview.control"],
-          capabilities: REQUIRED_CAPABILITIES,
-          savedCursors: [],
-        }),
-      );
+      socket.send(JSON.stringify(proofHelloFrame()));
     });
     socket.on("message", (data, isBinary) => {
       if (isBinary || data.length > MAX_INBOUND_BYTES) return finish(rejectComplete, new Error("cluster frame was binary or oversized"));

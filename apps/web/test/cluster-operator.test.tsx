@@ -27,6 +27,7 @@ import {
 import {
   ClusterOperatorSection,
   clusterSessionMatchesWorkspace,
+  prepareClusterSessionCreation,
 } from "../src/features/targets/ClusterOperatorSection.tsx";
 import { deriveWorkspaceData } from "../src/platform/live-workspace.ts";
 
@@ -317,6 +318,13 @@ describe("cluster operator presentation", () => {
     expect(markup).toContain("CI: This host did not grant CI trigger access.");
     expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Open GUI<\/button>/u);
     expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Run CI<\/button>/u);
+    expect(markup).toContain(
+      "Woodpecker correlation is unavailable because this host did not grant CI trigger access.",
+    );
+    expect(markup).toMatch(/<fieldset[^>]*disabled=""[^>]*>/u);
+    expect(markup).toMatch(
+      /<button(?![^>]*disabled)[^>]*>Create session with GUI<\/button>/u,
+    );
     const failedSession: SessionRef = {
       ...session,
       liveState: {
@@ -372,6 +380,174 @@ describe("cluster operator presentation", () => {
         />,
       ),
     ).toBe("");
+  });
+
+  it("keeps session creation unchanged when Woodpecker correlation is empty", async () => {
+    const command = vi.fn(
+      async (..._args: Parameters<DesktopRuntimeController["command"]>) => ({
+        accepted: true,
+        result: {},
+      }),
+    );
+    const controller = {
+      command,
+      getSnapshot: () => snapshot({ enabled: true, workspace }),
+    } as unknown as DesktopRuntimeController;
+    const preparation = prepareClusterSessionCreation(workspace.id, "  Ship release  ", {
+      repositoryId: "",
+      ref: "",
+      commit: "",
+    });
+
+    expect(preparation).toEqual({
+      args: {
+        workspaceId: workspace.id,
+        title: "Ship release",
+        runtimeProfile: "default",
+        guiEnabled: true,
+      },
+      error: null,
+      invalidField: null,
+    });
+    if (preparation.args === null) throw new Error(preparation.error);
+    await createClusterSession(controller, TARGET, HOST, preparation.args);
+    expect(command).toHaveBeenCalledWith(TARGET, {
+      hostId: HOST,
+      command: "session.create",
+      args: {
+        workspaceId: workspace.id,
+        title: "Ship release",
+        runtimeProfile: "default",
+        guiEnabled: true,
+      },
+    });
+
+    const markup = renderToStaticMarkup(
+      <ClusterOperatorSection
+        controller={controller}
+        onOpenPreview={() => undefined}
+        onOpenSession={() => undefined}
+        snapshot={snapshot({ enabled: true, workspace })}
+      />,
+    );
+    expect(markup).toContain("Woodpecker correlation");
+    expect(markup).toContain("Repository ID");
+    expect(markup).toMatch(/maxlength="128"/iu);
+    expect(markup).toMatch(/maxlength="256"/iu);
+    expect(markup).toMatch(/maxlength="40"/iu);
+  });
+
+  it("transmits an exact valid Woodpecker correlation on session creation", async () => {
+    const command = vi.fn(
+      async (..._args: Parameters<DesktopRuntimeController["command"]>) => ({
+        accepted: true,
+        result: {},
+      }),
+    );
+    const controller = {
+      command,
+      getSnapshot: () => snapshot({ enabled: true, workspace }),
+    } as unknown as DesktopRuntimeController;
+    const commit = "0123456789abcdef0123456789abcdef01234567";
+    const preparation = prepareClusterSessionCreation(workspace.id, undefined, {
+      repositoryId: "t4-code",
+      ref: "refs/heads/agent/t4-cluster-operator",
+      commit,
+    });
+
+    expect(preparation).toEqual({
+      args: {
+        workspaceId: workspace.id,
+        runtimeProfile: "default",
+        guiEnabled: true,
+        ci: {
+          provider: "woodpecker",
+          repositoryId: "t4-code",
+          ref: "refs/heads/agent/t4-cluster-operator",
+          commit,
+        },
+      },
+      error: null,
+      invalidField: null,
+    });
+    if (preparation.args === null) throw new Error(preparation.error);
+    await createClusterSession(controller, TARGET, HOST, preparation.args);
+    expect(command).toHaveBeenCalledWith(TARGET, {
+      hostId: HOST,
+      command: "session.create",
+      args: {
+        workspaceId: workspace.id,
+        runtimeProfile: "default",
+        guiEnabled: true,
+        ci: {
+          provider: "woodpecker",
+          repositoryId: "t4-code",
+          ref: "refs/heads/agent/t4-cluster-operator",
+          commit,
+        },
+      },
+    });
+  });
+
+  it("rejects partial, non-exact commit, and wire-bounds failures before submission", async () => {
+    const command = vi.fn(
+      async (..._args: Parameters<DesktopRuntimeController["command"]>) => ({
+        accepted: true,
+        result: {},
+      }),
+    );
+    const controller = {
+      command,
+      getSnapshot: () => snapshot({ enabled: true, workspace }),
+    } as unknown as DesktopRuntimeController;
+    const commit = "0123456789abcdef0123456789abcdef01234567";
+    const attempts = [
+      {
+        draft: { repositoryId: "t4-code", ref: "refs/heads/main", commit: "" },
+        error:
+          "Enter repository ID, ref, and commit together, or leave all three Woodpecker correlation fields empty.",
+        invalidField: "correlation",
+      },
+      {
+        draft: { repositoryId: "t4-code", ref: "refs/heads/main", commit: commit.slice(1) },
+        error: "Woodpecker commit must be exactly 40 lowercase hexadecimal characters.",
+        invalidField: "commit",
+      },
+      {
+        draft: { repositoryId: "t4-code", ref: "refs/heads/main", commit: commit.toUpperCase() },
+        error: "Woodpecker commit must be exactly 40 lowercase hexadecimal characters.",
+        invalidField: "commit",
+      },
+      {
+        draft: { repositoryId: "t4-code", ref: "refs/heads/main", commit: `g${commit.slice(1)}` },
+        error: "Woodpecker commit must be exactly 40 lowercase hexadecimal characters.",
+        invalidField: "commit",
+      },
+      {
+        draft: { repositoryId: "a".repeat(129), ref: "refs/heads/main", commit },
+        error:
+          "Woodpecker repository ID must be 1 to 128 UTF-8 bytes, start with a letter or number, and otherwise use only letters, numbers, '.', '_', ':', '/', or '-' without '..' or '://'.",
+        invalidField: "repositoryId",
+      },
+      {
+        draft: { repositoryId: "t4-code", ref: "é".repeat(129), commit },
+        error: "Woodpecker ref must be 1 to 256 UTF-8 bytes and contain no control characters.",
+        invalidField: "ref",
+      },
+    ] as const;
+
+    for (const attempt of attempts) {
+      const preparation = prepareClusterSessionCreation(workspace.id, undefined, attempt.draft);
+      expect(preparation).toEqual({
+        args: null,
+        error: attempt.error,
+        invalidField: attempt.invalidField,
+      });
+      if (preparation.args !== null) {
+        await createClusterSession(controller, TARGET, HOST, preparation.args);
+      }
+    }
+    expect(command).not.toHaveBeenCalled();
   });
 
   it("sends only allowlisted workspace, session, and CI arguments", async () => {

@@ -13,7 +13,6 @@ import {
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 const proofRoot = resolve(repoRoot, "artifacts/cluster-proof");
-const MAX_HTTP_BYTES = 2 * 1024 * 1024;
 const MAX_LOCAL_ARTIFACTS = 32;
 const SCENARIO_ASSERTION = /^[a-z0-9][a-z0-9._-]{0,127}$/u;
 const CONTRACT_SCENARIOS = new Set([
@@ -23,41 +22,12 @@ const CONTRACT_SCENARIOS = new Set([
   "mobile-viewport",
 ]);
 const WOODPECKER_ORIGIN = "https://woodpecker-ci-dev.tailb18de3.ts.net";
-const REMOTE_OBSERVATIONS = Object.freeze({
-  prometheus: {
-    origin: "https://interview-responder-prometheus.tailb18de3.ts.net",
-    environment: "T4_PROMETHEUS_EVIDENCE_URL",
-  },
-  loki: {
-    origin: "https://interview-responder-loki.tailb18de3.ts.net",
-    environment: "T4_LOKI_EVIDENCE_URL",
-  },
-  grafana: {
-    origin: "https://grafana.tailb18de3.ts.net",
-    environment: "T4_GRAFANA_EVIDENCE_URL",
-  },
+const OBSERVATION_ORIGINS = Object.freeze({
+  prometheus: "https://interview-responder-prometheus.tailb18de3.ts.net",
+  loki: "https://interview-responder-loki.tailb18de3.ts.net",
+  grafana: "https://grafana.tailb18de3.ts.net",
 });
 
-export function trustedProofUrl(value, label, allowedHosts) {
-  let url;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new Error(`${label} must be a valid URL`);
-  }
-  if (
-    url.protocol !== "https:" ||
-    !allowedHosts.includes(url.hostname) ||
-    url.port ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash
-  ) {
-    throw new Error(`${label} must be credential-free HTTPS on its exact tailnet/internal allowlist`);
-  }
-  return url.href;
-}
 
 function requiredEnvironment(name) {
   const value = process.env[name]?.trim();
@@ -90,24 +60,6 @@ function woodpeckerIdentity() {
   };
 }
 
-async function boundedFetchJson(url, label, allowedHosts) {
-  const trustedUrl = trustedProofUrl(url, label, allowedHosts);
-  const response = await fetch(trustedUrl, {
-    headers: { Accept: "application/json", "User-Agent": "t4-cluster-proof/1" },
-    redirect: "error",
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (!response.ok) throw new Error(`${label} returned HTTP ${response.status}`);
-  const declaredLength = Number(response.headers.get("content-length") ?? 0);
-  if (declaredLength > MAX_HTTP_BYTES) throw new Error(`${label} exceeded its byte bound`);
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (bytes.length === 0 || bytes.length > MAX_HTTP_BYTES) throw new Error(`${label} was empty or exceeded its byte bound`);
-  try {
-    return JSON.parse(bytes.toString("utf8"));
-  } catch (error) {
-    throw new Error(`${label} was not valid JSON`, { cause: error });
-  }
-}
 
 function exactKeys(value, keys, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
@@ -225,9 +177,8 @@ async function observationEntries() {
   });
 
   for (const system of ["prometheus", "loki", "grafana"]) {
-    const configuration = REMOTE_OBSERVATIONS[system];
-    const evidenceUrl = requiredEnvironment(configuration.environment);
-    const payload = await boundedFetchJson(evidenceUrl, `${system} evidence`, [new URL(configuration.origin).hostname]);
+    const path = resolve(directory, `${system}.json`);
+    const payload = JSON.parse(await readFile(path, "utf8"));
     exactKeys(payload, ["schemaVersion", "sourceCommit", "system", "observedAt", "redacted", "ids", "summary"], `${system} evidence`);
     if (
       payload.schemaVersion !== "t4-cluster-observation/1" ||
@@ -242,12 +193,10 @@ async function observationEntries() {
     }
     utcTimestamp(payload.observedAt, `${system} evidence observedAt`);
     safeSummary(payload.summary, `${system} evidence summary`);
-    const path = resolve(directory, `${system}.json`);
-    await writeFile(path, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
     entries.push({
       system,
       observedAt: payload.observedAt,
-      url: configuration.origin,
+      url: OBSERVATION_ORIGINS[system],
       ids: payload.ids,
       evidence: await createFileEvidence(path, { artifactRoot: repoRoot }),
     });

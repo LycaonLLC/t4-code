@@ -706,7 +706,7 @@ SH
         --arg allowedOrigin "$origin" \
         --argjson port "$port" \
         --arg appSocket "$app_socket" \
-        --arg label "$label" \
+        --arg hostLabel "$label" \
         --arg deploymentIdentity "$deployment_identity" \
         --arg webRoot "$web_root" \
         --argjson profileRoutes "$profile_routes" \
@@ -719,7 +719,7 @@ SH
           allowedOrigin:$allowedOrigin,
           port:$port,
           appSocket:$appSocket,
-          "label":$label,
+          "label":$hostLabel,
           deploymentIdentity:$deploymentIdentity
         } + (if $profileRoutes == null then {} else {
           profileRoutes:$profileRoutes,
@@ -972,7 +972,7 @@ jq -n \
   --arg allowedOrigin "$gateway_origin" \
   --argjson port "$gateway_port" \
   --arg appSocket "$gateway_socket" \
-  --arg label "$gateway_label" \
+  --arg hostLabel "$gateway_label" \
   --arg nodeExecutable "$node_executable" \
   --arg gatewayScript "$gateway_script" \
   --arg webRoot "$web_root" \
@@ -982,7 +982,7 @@ jq -n \
     allowedOrigin: $allowedOrigin,
     port: $port,
     appSocket: $appSocket,
-    "label": $label,
+    "label": $hostLabel,
     nodeExecutable: $nodeExecutable,
     gatewayScript: $gatewayScript,
     webRoot: $webRoot,

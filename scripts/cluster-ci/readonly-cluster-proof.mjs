@@ -11,7 +11,7 @@ const FORBIDDEN_SESSION_NODES = new Set(["k3s-worker-02", "k3s-worker-03"]);
 const WORKLOAD_KINDS = new Set(["CronJob", "DaemonSet", "Deployment", "Job", "Pod", "StatefulSet"]);
 const LEASE_NAME = "t4-cluster-operator.cluster.t4.dev";
 const DEPLOYMENTS = Object.freeze([
-  { name: "t4-cluster-controller", component: "controller", container: "controller", replicas: 2, maxUnavailable: 1, minimumAvailable: 1 },
+  { name: "t4-cluster-controller", component: "controller", container: "controller", replicas: 2, maxUnavailable: 0, minimumAvailable: 1 },
   { name: "t4-cluster-server", component: "server", container: "server", replicas: 3, maxUnavailable: 0, minimumAvailable: 2 },
 ]);
 
@@ -278,8 +278,15 @@ export function validateClusterSnapshot(snapshot, { now = Date.now(), ciMapping 
   label(serverService, "app.kubernetes.io/part-of", "t4-cluster", "cluster-server Service");
   label(serverService, "app.kubernetes.io/component", "server", "cluster-server Service");
   const ports = new Map((serverService.spec?.ports ?? []).map(({ name, port }) => [name, port]));
-  if (ports.get("websocket") !== 8080 || ports.get("admin") !== 9090 || ports.size !== 2) {
-    fail("cluster-server Service does not expose the exact websocket/admin ports");
+  if (ports.get("websocket") !== 8080 || ports.size !== 1) {
+    fail("cluster-server Service does not expose the exact websocket port");
+  }
+  const metricsService = exactNamed(services, "t4-cluster-metrics", "cluster metrics Service");
+  label(metricsService, "app.kubernetes.io/part-of", "t4-cluster", "cluster metrics Service");
+  label(metricsService, "app.kubernetes.io/component", "server", "cluster metrics Service");
+  const metricsPorts = new Map((metricsService.spec?.ports ?? []).map(({ name, port }) => [name, port]));
+  if (metricsPorts.get("metrics") !== 9090 || metricsPorts.size !== 1) {
+    fail("cluster metrics Service does not expose the exact admin metrics port");
   }
   return snapshot;
 }

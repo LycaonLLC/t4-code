@@ -1,6 +1,14 @@
 import type { DesktopRuntimeController, DesktopRuntimeSnapshot } from "@t4-code/client";
-import type { SessionRef } from "@t4-code/protocol";
-import { Button, Spinner } from "@t4-code/ui";
+import {
+  AppWireError,
+  CI_TRIGGER_CAPABILITY,
+  CLUSTER_MAX_REFERENCE_BYTES,
+  CLUSTER_MAX_REPOSITORY_ID_BYTES,
+  decodeClusterSessionCreateArguments,
+  type ClusterSessionCreateArguments,
+  type SessionRef,
+} from "@t4-code/protocol";
+import { Button, cn, Spinner } from "@t4-code/ui";
 import { useMemo, useState } from "react";
 
 import { FIELD_CLASS } from "../settings/controls.tsx";
@@ -17,6 +25,105 @@ import {
 } from "./cluster-operator.ts";
 
 const CLUSTER_FIELD_CLASS = `${FIELD_CLASS} min-h-11 sm:min-h-8`;
+
+export interface ClusterSessionCiDraft {
+  readonly repositoryId: string;
+  readonly ref: string;
+  readonly commit: string;
+}
+
+type ClusterSessionCiInvalidField = keyof ClusterSessionCiDraft | "correlation";
+
+export type ClusterSessionCreationPreparation =
+  | {
+      readonly args: ClusterSessionCreateArguments;
+      readonly error: null;
+      readonly invalidField: null;
+    }
+  | {
+      readonly args: null;
+      readonly error: string;
+      readonly invalidField: ClusterSessionCiInvalidField;
+    };
+
+const EMPTY_SESSION_CI_DRAFT: ClusterSessionCiDraft = Object.freeze({
+  repositoryId: "",
+  ref: "",
+  commit: "",
+});
+const WOODPECKER_PARTIAL_REASON =
+  "Enter repository ID, ref, and commit together, or leave all three Woodpecker correlation fields empty.";
+const WOODPECKER_COMMIT_REASON =
+  "Woodpecker commit must be exactly 40 lowercase hexadecimal characters.";
+const WOODPECKER_REPOSITORY_REASON =
+  "Woodpecker repository ID must be 1 to 128 UTF-8 bytes, start with a letter or number, and otherwise use only letters, numbers, '.', '_', ':', '/', or '-' without '..' or '://'.";
+const WOODPECKER_REF_REASON =
+  "Woodpecker ref must be 1 to 256 UTF-8 bytes and contain no control characters.";
+const WOODPECKER_UNAVAILABLE_REASON =
+  "Woodpecker correlation is unavailable because this host did not grant CI trigger access.";
+
+function rejectedSessionCreation(
+  error: string,
+  invalidField: ClusterSessionCiInvalidField,
+): ClusterSessionCreationPreparation {
+  return { args: null, error, invalidField };
+}
+
+export function prepareClusterSessionCreation(
+  workspaceId: string,
+  title: string | undefined,
+  ciDraft: ClusterSessionCiDraft,
+): ClusterSessionCreationPreparation {
+  const normalizedTitle = title?.trim();
+  const args: ClusterSessionCreateArguments = {
+    workspaceId,
+    ...(normalizedTitle === undefined || normalizedTitle === "" ? {} : { title: normalizedTitle }),
+    runtimeProfile: "default",
+    guiEnabled: true,
+  };
+  const hasRepository = ciDraft.repositoryId !== "";
+  const hasRef = ciDraft.ref !== "";
+  const hasCommit = ciDraft.commit !== "";
+  if (!hasRepository && !hasRef && !hasCommit) {
+    return { args, error: null, invalidField: null };
+  }
+  if (!hasRepository || !hasRef || !hasCommit) {
+    return rejectedSessionCreation(WOODPECKER_PARTIAL_REASON, "correlation");
+  }
+
+  let ci: ClusterSessionCreateArguments["ci"];
+  try {
+    ci = decodeClusterSessionCreateArguments({
+      workspaceId: "workspace",
+      runtimeProfile: "default",
+      guiEnabled: true,
+      ci: {
+        provider: "woodpecker",
+        repositoryId: ciDraft.repositoryId,
+        ref: ciDraft.ref,
+        commit: ciDraft.commit,
+      },
+    }).ci;
+  } catch (error) {
+    if (error instanceof AppWireError && error.path === "args.ci.repositoryId") {
+      return rejectedSessionCreation(WOODPECKER_REPOSITORY_REASON, "repositoryId");
+    }
+    if (error instanceof AppWireError && error.path === "args.ci.ref") {
+      return rejectedSessionCreation(WOODPECKER_REF_REASON, "ref");
+    }
+    if (error instanceof AppWireError && error.path === "args.ci.commit") {
+      return rejectedSessionCreation(WOODPECKER_COMMIT_REASON, "commit");
+    }
+    return rejectedSessionCreation("Woodpecker correlation is invalid.", "correlation");
+  }
+  if (!/^[0-9a-f]{40}$/u.test(ciDraft.commit)) {
+    return rejectedSessionCreation(WOODPECKER_COMMIT_REASON, "commit");
+  }
+  if (ci === undefined) {
+    return rejectedSessionCreation("Woodpecker correlation is invalid.", "correlation");
+  }
+  return { args: { ...args, ci }, error: null, invalidField: null };
+}
 
 export interface ClusterOperatorSectionProps {
   readonly controller: DesktopRuntimeController;
@@ -45,6 +152,10 @@ export function ClusterOperatorSection({
   const [displayName, setDisplayName] = useState("");
   const [capacity, setCapacity] = useState("20Gi");
   const [sessionTitle, setSessionTitle] = useState<Record<string, string>>({});
+  const [sessionCi, setSessionCi] = useState<Record<string, ClusterSessionCiDraft>>({});
+  const [sessionCiErrors, setSessionCiErrors] = useState<
+    Record<string, Extract<ClusterSessionCreationPreparation, { readonly args: null }> | undefined>
+  >({});
   const [pending, setPending] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const data = deriveWorkspaceData(snapshot);
@@ -101,6 +212,23 @@ export function ClusterOperatorSection({
     } finally {
       setPending(null);
     }
+  };
+
+  const updateSessionCi = (
+    workspaceKey: string,
+    field: keyof ClusterSessionCiDraft,
+    value: string,
+  ) => {
+    setSessionCi((current) => ({
+      ...current,
+      [workspaceKey]: { ...(current[workspaceKey] ?? EMPTY_SESSION_CI_DRAFT), [field]: value },
+    }));
+    setSessionCiErrors((current) => {
+      if (current[workspaceKey] === undefined) return current;
+      const next = { ...current };
+      delete next[workspaceKey];
+      return next;
+    });
   };
 
   return (
@@ -193,6 +321,13 @@ export function ClusterOperatorSection({
               hostId,
               "manage",
             );
+            const ciDraft = sessionCi[workspaceKey] ?? EMPTY_SESSION_CI_DRAFT;
+            const ciError = sessionCiErrors[workspaceKey];
+            const ciCorrelationEnabled =
+              snapshot.hosts
+                .get(hostId)
+                ?.grantedCapabilities.includes(CI_TRIGGER_CAPABILITY) === true;
+            const ciReasonId = `cluster-session-ci-reason-${encodeURIComponent(workspaceKey)}`;
             const sessions = data.sessions.filter((session) =>
               clusterSessionMatchesWorkspace(
                 session,
@@ -223,33 +358,188 @@ export function ClusterOperatorSection({
                   {infrastructure.capacity ?? "Capacity unknown"} · {infrastructure.storageClass ?? "Storage class unknown"} · {infrastructure.accessMode} · {infrastructure.retentionPolicy}
                 </p>
                 <form
-                  className="flex flex-col gap-2 sm:flex-row"
+                  className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"
                   onSubmit={(event) => {
                     event.preventDefault();
-                    const title = sessionTitle[workspaceKey]?.trim();
+                    const hasCiDraft =
+                      ciDraft.repositoryId !== "" || ciDraft.ref !== "" || ciDraft.commit !== "";
+                    const preparation =
+                      !ciCorrelationEnabled && hasCiDraft
+                        ? rejectedSessionCreation(WOODPECKER_UNAVAILABLE_REASON, "correlation")
+                        : prepareClusterSessionCreation(
+                            infrastructure.id,
+                            sessionTitle[workspaceKey],
+                            ciDraft,
+                          );
+                    if (preparation.args === null) {
+                      setMessage(null);
+                      setSessionCiErrors((current) => ({
+                        ...current,
+                        [workspaceKey]: preparation,
+                      }));
+                      const invalidField =
+                        preparation.invalidField === "correlation"
+                          ? ciDraft.repositoryId === ""
+                            ? "ciRepositoryId"
+                            : ciDraft.ref === ""
+                              ? "ciRef"
+                              : "ciCommit"
+                          : preparation.invalidField === "repositoryId"
+                            ? "ciRepositoryId"
+                            : preparation.invalidField === "ref"
+                              ? "ciRef"
+                              : "ciCommit";
+                      const invalidInput = event.currentTarget.elements.namedItem(invalidField);
+                      if (invalidInput instanceof HTMLInputElement) invalidInput.focus();
+                      return;
+                    }
+                    setSessionCiErrors((current) => {
+                      if (current[workspaceKey] === undefined) return current;
+                      const next = { ...current };
+                      delete next[workspaceKey];
+                      return next;
+                    });
                     void act(`session:${workspaceKey}`, () =>
-                      createClusterSession(controller, workspaceTargetId, hostId, {
-                        workspaceId: infrastructure.id,
-                        ...(title === undefined || title === "" ? {} : { title }),
-                        runtimeProfile: "default",
-                        guiEnabled: true,
-                      }),
+                      createClusterSession(
+                        controller,
+                        workspaceTargetId,
+                        hostId,
+                        preparation.args,
+                      ),
                     );
                   }}
                 >
-                  <label className="min-w-0 flex-1">
+                  <label className="min-w-0">
                     <span className="sr-only">New session title for {infrastructure.displayName}</span>
                     <input
                       className={CLUSTER_FIELD_CLASS}
-                      onChange={(event) => setSessionTitle((current) => ({ ...current, [workspaceKey]: event.target.value }))}
+                      onChange={(event) =>
+                        setSessionTitle((current) => ({
+                          ...current,
+                          [workspaceKey]: event.target.value,
+                        }))
+                      }
                       placeholder="Optional session title"
                       value={sessionTitle[workspaceKey] ?? ""}
                     />
                   </label>
-                  <Button className="min-h-11" disabled={!workspaceAvailability.enabled || pending !== null} type="submit" variant="outline">
+                  <fieldset
+                    aria-describedby={ciError !== undefined || !ciCorrelationEnabled ? ciReasonId : undefined}
+                    className="min-w-0 sm:col-span-2"
+                    disabled={!ciCorrelationEnabled}
+                  >
+                    <legend className="mb-1 font-medium text-muted-foreground text-xs">
+                      Woodpecker correlation <span className="font-normal">(optional)</span>
+                    </legend>
+                    <div className="grid min-w-0 gap-2 sm:grid-cols-3">
+                      <label className="flex min-w-0 flex-col gap-1">
+                        <span className="text-muted-foreground text-xs">Repository ID</span>
+                        <input
+                          aria-describedby={ciError !== undefined ? ciReasonId : undefined}
+                          aria-invalid={
+                            ciError?.invalidField === "correlation" ||
+                            ciError?.invalidField === "repositoryId" ||
+                            undefined
+                          }
+                          autoCapitalize="none"
+                          autoComplete="off"
+                          autoCorrect="off"
+                          className={cn(
+                            CLUSTER_FIELD_CLASS,
+                            "font-mono",
+                            (ciError?.invalidField === "correlation" ||
+                              ciError?.invalidField === "repositoryId") &&
+                              "border-destructive",
+                          )}
+                          maxLength={CLUSTER_MAX_REPOSITORY_ID_BYTES}
+                          name="ciRepositoryId"
+                          onChange={(event) =>
+                            updateSessionCi(workspaceKey, "repositoryId", event.target.value)
+                          }
+                          placeholder="t4-code"
+                          spellCheck={false}
+                          value={ciDraft.repositoryId}
+                        />
+                      </label>
+                      <label className="flex min-w-0 flex-col gap-1">
+                        <span className="text-muted-foreground text-xs">Ref</span>
+                        <input
+                          aria-describedby={ciError !== undefined ? ciReasonId : undefined}
+                          aria-invalid={
+                            ciError?.invalidField === "correlation" ||
+                            ciError?.invalidField === "ref" ||
+                            undefined
+                          }
+                          autoCapitalize="none"
+                          autoComplete="off"
+                          autoCorrect="off"
+                          className={cn(
+                            CLUSTER_FIELD_CLASS,
+                            "font-mono",
+                            (ciError?.invalidField === "correlation" ||
+                              ciError?.invalidField === "ref") &&
+                              "border-destructive",
+                          )}
+                          maxLength={CLUSTER_MAX_REFERENCE_BYTES}
+                          name="ciRef"
+                          onChange={(event) => updateSessionCi(workspaceKey, "ref", event.target.value)}
+                          placeholder="refs/heads/main"
+                          spellCheck={false}
+                          value={ciDraft.ref}
+                        />
+                      </label>
+                      <label className="flex min-w-0 flex-col gap-1">
+                        <span className="text-muted-foreground text-xs">Commit</span>
+                        <input
+                          aria-describedby={ciError !== undefined ? ciReasonId : undefined}
+                          aria-invalid={
+                            ciError?.invalidField === "correlation" ||
+                            ciError?.invalidField === "commit" ||
+                            undefined
+                          }
+                          autoCapitalize="none"
+                          autoComplete="off"
+                          autoCorrect="off"
+                          className={cn(
+                            CLUSTER_FIELD_CLASS,
+                            "font-mono",
+                            (ciError?.invalidField === "correlation" ||
+                              ciError?.invalidField === "commit") &&
+                              "border-destructive",
+                          )}
+                          maxLength={40}
+                          name="ciCommit"
+                          onChange={(event) => updateSessionCi(workspaceKey, "commit", event.target.value)}
+                          placeholder="40 lowercase hex characters"
+                          spellCheck={false}
+                          value={ciDraft.commit}
+                        />
+                      </label>
+                    </div>
+                  </fieldset>
+                  <Button
+                    className="min-h-11 sm:col-start-2 sm:row-start-1"
+                    disabled={!workspaceAvailability.enabled || pending !== null}
+                    type="submit"
+                    variant="outline"
+                  >
                     {pending === `session:${workspaceKey}` && <Spinner />}
                     Create session with GUI
                   </Button>
+                  {(ciError !== undefined || !ciCorrelationEnabled) && (
+                    <p
+                      className={cn(
+                        "text-xs sm:col-span-2",
+                        ciError === undefined
+                          ? "text-warning-foreground"
+                          : "text-destructive-foreground",
+                      )}
+                      id={ciReasonId}
+                      role={ciError === undefined ? undefined : "alert"}
+                    >
+                      {ciError?.error ?? WOODPECKER_UNAVAILABLE_REASON}
+                    </p>
+                  )}
                 </form>
                 {!workspaceAvailability.enabled && (
                   <p className="text-warning-foreground text-xs">{workspaceAvailability.reason}</p>

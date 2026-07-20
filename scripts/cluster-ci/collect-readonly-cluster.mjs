@@ -17,6 +17,17 @@ const repoRoot = resolve(import.meta.dirname, "../..");
 const proofRoot = resolve(repoRoot, "artifacts/cluster-proof");
 const scenarioRoot = resolve(proofRoot, "scenarios");
 const observationRoot = resolve(proofRoot, "observations");
+const MAX_OBSERVATION_BYTES = 2 * 1024 * 1024;
+const OBSERVABILITY_SERVICES = Object.freeze({
+  prometheus: "http://prometheus-prometheus.linkedin-monitoring.svc.cluster.local:9090",
+  loki: "http://loki.linkedin-monitoring.svc.cluster.local:3100",
+  grafana: "http://prometheus-grafana.linkedin-monitoring.svc.cluster.local",
+});
+const PROMETHEUS_QUERIES = Object.freeze([
+  ["t4-cluster-up", 'sum(up{job="t4-cluster"})'],
+  ["t4-cluster-reconcile-success", 'sum(t4_cluster_reconcile_total{result="success"})'],
+  ["t4-cluster-conditions", "sum(t4_cluster_condition)"],
+]);
 
 function requiredEnvironment(name) {
   const value = process.env[name]?.trim();
@@ -82,6 +93,132 @@ async function defaultOffEvidence(namespace) {
   return result;
 }
 
+async function boundedJson(url, label, fetchImpl) {
+  const response = await fetchImpl(url, {
+    headers: { Accept: "application/json", "User-Agent": "t4-cluster-proof/1" },
+    redirect: "error",
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!response.ok) throw new Error(`${label} returned HTTP ${response.status}`);
+  const declaredLength = Number(response.headers.get("content-length") ?? 0);
+  if (declaredLength > MAX_OBSERVATION_BYTES) throw new Error(`${label} exceeded its byte bound`);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.length === 0 || bytes.length > MAX_OBSERVATION_BYTES) {
+    throw new Error(`${label} was empty or exceeded its byte bound`);
+  }
+  try {
+    return JSON.parse(bytes.toString("utf8"));
+  } catch (error) {
+    throw new Error(`${label} was not valid JSON`, { cause: error });
+  }
+}
+
+export function prometheusSample(payload, name) {
+  const result = payload?.data?.result;
+  const sample = Array.isArray(result) && result.length === 1 ? result[0]?.value : undefined;
+  const timestamp = Array.isArray(sample) ? Number(sample[0]) : Number.NaN;
+  const value = Array.isArray(sample) ? Number(sample[1]) : Number.NaN;
+  if (
+    payload?.status !== "success" ||
+    payload?.data?.resultType !== "vector" ||
+    !Array.isArray(sample) ||
+    sample.length !== 2 ||
+    !Number.isFinite(timestamp) ||
+    timestamp <= 0 ||
+    !Number.isFinite(value) ||
+    value < 0
+  ) {
+    throw new Error(`Prometheus ${name} did not return one bounded nonnegative sample`);
+  }
+  return { name, value, sampledAt: new Date(timestamp * 1000).toISOString() };
+}
+
+export function lokiLogSummary(payload) {
+  const streams = payload?.data?.result;
+  if (
+    payload?.status !== "success" ||
+    payload?.data?.resultType !== "streams" ||
+    !Array.isArray(streams) ||
+    streams.length < 1 ||
+    streams.length > 128
+  ) {
+    throw new Error("Loki did not return a bounded T4 log stream result");
+  }
+  let entryCount = 0;
+  let errorCount = 0;
+  for (const stream of streams) {
+    if (!stream?.stream || typeof stream.stream !== "object" || !Array.isArray(stream.values) || stream.values.length > 1000) {
+      throw new Error("Loki returned a malformed T4 log stream");
+    }
+    for (const entry of stream.values) {
+      if (!Array.isArray(entry) || entry.length !== 2 || !/^[0-9]{1,20}$/u.test(entry[0]) || typeof entry[1] !== "string" || entry[1].length > 65_536) {
+        throw new Error("Loki returned a malformed T4 log entry");
+      }
+      entryCount += 1;
+      try {
+        if (JSON.parse(entry[1])?.level === "error") errorCount += 1;
+      } catch {
+        if (/\"level\"\s*:\s*\"error\"/u.test(entry[1])) errorCount += 1;
+      }
+    }
+  }
+  if (entryCount < 1) throw new Error("Loki returned no current T4 log entries");
+  return { streamCount: streams.length, entryCount, errorCount };
+}
+
+export function grafanaHealthSummary(payload) {
+  if (
+    payload?.database !== "ok" ||
+    typeof payload.version !== "string" ||
+    !/^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$/u.test(payload.version) ||
+    typeof payload.commit !== "string" ||
+    !/^[0-9a-f]{40}$/u.test(payload.commit)
+  ) {
+    throw new Error("Grafana health identity is malformed or unhealthy");
+  }
+  return { database: "ok", version: payload.version, commit: payload.commit };
+}
+
+export async function collectObservabilityEvidence({ sourceCommit, namespace, fetchImpl = fetch, now = Date.now() }) {
+  if (!/^[0-9a-f]{40}$/u.test(sourceCommit)) throw new Error("observability source commit is invalid");
+  if (!/^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/u.test(namespace)) throw new Error("observability namespace is invalid");
+  const observedAt = new Date(now).toISOString();
+  const metrics = [];
+  for (const [name, query] of PROMETHEUS_QUERIES) {
+    const url = new URL("/api/v1/query", OBSERVABILITY_SERVICES.prometheus);
+    url.searchParams.set("query", query);
+    metrics.push(prometheusSample(await boundedJson(url, `Prometheus ${name}`, fetchImpl), name));
+  }
+  const lokiUrl = new URL("/loki/api/v1/query_range", OBSERVABILITY_SERVICES.loki);
+  lokiUrl.searchParams.set("query", `{namespace="${namespace}"}`);
+  lokiUrl.searchParams.set("start", String((now - 15 * 60_000) * 1_000_000));
+  lokiUrl.searchParams.set("end", String(now * 1_000_000));
+  lokiUrl.searchParams.set("limit", "256");
+  lokiUrl.searchParams.set("direction", "backward");
+  const logs = lokiLogSummary(await boundedJson(lokiUrl, "Loki T4 logs", fetchImpl));
+  if (logs.errorCount !== 0) throw new Error(`Loki found ${logs.errorCount} current T4 error event(s)`);
+  const grafana = grafanaHealthSummary(
+    await boundedJson(new URL("/api/health", OBSERVABILITY_SERVICES.grafana), "Grafana health", fetchImpl),
+  );
+  const records = [
+    { system: "prometheus", ids: metrics.map(({ name }) => name), summary: { metrics } },
+    { system: "loki", ids: [namespace], summary: logs },
+    { system: "grafana", ids: [grafana.version, grafana.commit], summary: grafana },
+  ];
+  for (const record of records) {
+    await atomicJson(resolve(observationRoot, `${record.system}.json`), {
+      schemaVersion: "t4-cluster-observation/1",
+      sourceCommit,
+      system: record.system,
+      observedAt,
+      redacted: true,
+      ids: record.ids,
+      summary: record.summary,
+    });
+  }
+  return records;
+}
+
 export async function collectClusterEvidence({ namespace, ciMapping = currentCiMapping() }) {
   await mkdir(scenarioRoot, { recursive: true });
   await mkdir(observationRoot, { recursive: true });
@@ -90,7 +227,7 @@ export async function collectClusterEvidence({ namespace, ciMapping = currentCiM
   await atomicJson(resolve(observationRoot, "kubernetes.json"), summary);
   await scenario("ha-manifest", summary.observedAt, [
     "controller.replicas-2",
-    "controller.rolling-update.max-unavailable-1",
+    "controller.rolling-update.max-unavailable-0",
     "server.replicas-3",
     "server.rolling-update.max-unavailable-0",
   ]);
@@ -115,6 +252,7 @@ export async function collectClusterEvidence({ namespace, ciMapping = currentCiM
   await scenario("feature-off", new Date().toISOString(), [
     off.clusterOperatorEnabled ? "feature-off.invalid" : "feature-off.no-workloads",
   ]);
+  await collectObservabilityEvidence({ sourceCommit: ciMapping.commit, namespace });
   return summary;
 }
 

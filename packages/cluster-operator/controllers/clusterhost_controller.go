@@ -22,11 +22,16 @@ type ClusterHostReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-func (r *ClusterHostReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
+func (r *ClusterHostReconciler) Reconcile(ctx context.Context, request ctrl.Request) (result ctrl.Result, err error) {
 	var host clusterv1alpha1.T4ClusterHost
+	found := false
+	defer func() {
+		observeReconcile(metricKindClusterHost, request.NamespacedName, host.Status.Conditions, conditionObjectPresent(&host, found, err), err)
+	}()
 	if err := r.Get(ctx, request.NamespacedName, &host); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	found = true
 	original := host.Status
 	if host.Status.Conditions != nil {
 		original.Conditions = append([]metav1.Condition(nil), host.Status.Conditions...)

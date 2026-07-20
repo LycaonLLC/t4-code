@@ -776,6 +776,8 @@ steps:
   live-frame-proof:
     depends_on: [live-cluster-observations]
     image: mirror.gcr.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7
+    environment:
+      T4_CLUSTER_BASE_URL: https://t4-dev.tailb18de3.ts.net/
     commands:
       - node scripts/cluster-ci/capture-redacted-frames.mjs
     when:

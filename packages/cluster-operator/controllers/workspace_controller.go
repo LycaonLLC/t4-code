@@ -25,11 +25,16 @@ type WorkspaceReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
+func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Request) (result ctrl.Result, err error) {
 	var workspace clusterv1alpha1.T4Workspace
+	found := false
+	defer func() {
+		observeReconcile(metricKindWorkspace, request.NamespacedName, workspace.Status.Conditions, conditionObjectPresent(&workspace, found, err), err)
+	}()
 	if err := r.Get(ctx, request.NamespacedName, &workspace); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	found = true
 	if !workspace.DeletionTimestamp.IsZero() {
 		return r.reconcileDelete(ctx, &workspace)
 	}
@@ -60,7 +65,7 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 
 	pvcName := WorkspacePVCName(&workspace)
 	var pvc corev1.PersistentVolumeClaim
-	err := r.Get(ctx, types.NamespacedName{Namespace: workspace.Namespace, Name: pvcName}, &pvc)
+	err = r.Get(ctx, types.NamespacedName{Namespace: workspace.Namespace, Name: pvcName}, &pvc)
 	if apierrors.IsNotFound(err) {
 		volumeMode := corev1.PersistentVolumeFilesystem
 		pvc = corev1.PersistentVolumeClaim{

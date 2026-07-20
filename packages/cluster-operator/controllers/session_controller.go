@@ -37,18 +37,23 @@ type SessionReconciler struct {
 	RuntimeImage              string
 	SessionServiceAccountName string
 	ServerServiceAccountName  string
-	KubernetesAPIAudience      string
+	KubernetesAPIAudience     string
 	ExcludedNodeNames         []string
 	Resources                 corev1.ResourceRequirements
 	SharedMemorySize          apiresource.Quantity
 	TemporarySize             apiresource.Quantity
 }
 
-func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
+func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request) (result ctrl.Result, err error) {
 	var session clusterv1alpha1.T4Session
+	found := false
+	defer func() {
+		observeReconcile(metricKindSession, request.NamespacedName, session.Status.Conditions, conditionObjectPresent(&session, found, err), err)
+	}()
 	if err := r.Get(ctx, request.NamespacedName, &session); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	found = true
 	if !session.DeletionTimestamp.IsZero() {
 		return r.reconcileDelete(ctx, &session)
 	}
