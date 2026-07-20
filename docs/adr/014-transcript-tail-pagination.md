@@ -1,6 +1,6 @@
 # ADR 014: Paint the transcript tail before loading older history
 
-- Status: accepted in the T4-owned host; the current legacy OMP bridge does not expose it yet.
+- Status: released through OMP integration tag `t4code-17.0.5-appserver-9`.
 
 ## The problem
 
@@ -85,8 +85,8 @@ catching up.
 
 The bounded projector backscan preserves ordinary tool call/result pairs. A tool pair separated by
 more than 512 KiB can lose its joined presentation on a page boundary without corrupting pagination.
-The current T4-owned host packages also still need the planned thin OMP launcher before this feature
-is available in the released legacy OMP bridge.
+The verified OMP launcher consumes the T4-owned host artifacts and exposes this feature behind
+negotiation. Older hosts continue to use the original attach behavior.
 
 ## Verification
 

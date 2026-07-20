@@ -52,6 +52,8 @@ The simplified rollout does not weaken the hard boundaries. We retain strict pro
 
 ## Current branch state
 
-The thin bridge and standalone host are implemented and pass a compiled-binary end-to-end smoke test. OMP's public legacy launchers are removed on the matching fork branch. The checked-in compatibility matrix still names the previous released OMP artifact until the new bridge build has a real tag and published hashes; release metadata must never point at an unpublished artifact.
+The released `appserver-9` integration consumes checksum-pinned T4 host artifacts through thin compatibility exports. The matching bridge branch advances that boundary by moving the running network host into the standalone T4 executable and removing OMP's public legacy launchers. The thin bridge and standalone host pass a compiled-binary end-to-end smoke test.
+
+The checked-in compatibility matrix correctly remains on `appserver-9` until the new bridge build has a real tag and published hashes; release metadata must never point at an unpublished artifact.
 
 This reduces the fork to the OMP-specific authority adapter and protocol glue, but does not remove the fork entirely. T4 still pins the exact Lycaon OMP source and binary because the bridge is not part of ordinary upstream OMP.

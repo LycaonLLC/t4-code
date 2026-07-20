@@ -22,7 +22,7 @@ Every release must pass the layers below. Destructive lifecycle checks use a dis
    - Use real CDP touch input at 320 pixels for model-list drag scrolling and selection. Check Send and session-management control reachability at 320, 360, and 390 pixels, including a short 390 x 500 viewport.
    - Open and close the session rail, create a session, reach the Send control, drag-scroll the model list, and select its last available model.
 
-## Legacy bridge continuity proof
+## OMP bridge continuity proof
 
 Run the deterministic compatibility gate from the T4 repository root with Node 24.13.1 and the pinned Lycaon OMP source:
 
@@ -30,11 +30,11 @@ Run the deterministic compatibility gate from the T4 repository root with Node 2
 T4_OMP_SOURCE_DIR=/path/to/lycaon-oh-my-pi pnpm test:legacy-bridge-continuity
 ```
 
-The gate intentionally launches the legacy OMP appserver from the pinned authority source, plus a real OMP TUI and multiple production T4 clients. It proves client compatibility across bounded transcript loading, live ownership refusal, concurrent profile isolation, reconnect after an in-flight transport loss, appserver restart recovery, transcript search/read-around, stale-revision rejection, recovered control, and cleanup. It does not claim that `@t4-code/host-service` is deployed; that requires the future thin OMP launcher and authority adapter.
+The gate launches the OMP appserver from the pinned authority source, plus a real OMP TUI and multiple production T4 clients. Its historical command name still says `legacy-bridge`, but the verified runtime now launches checksum-pinned T4 host artifacts through thin compatibility exports. The gate proves client compatibility across bounded transcript loading, live ownership refusal, concurrent profile isolation, reconnect after an in-flight transport loss, appserver restart recovery, transcript search/read-around, stale-revision rejection, recovered control, and cleanup.
 
 CI resolves the exact OMP authority commit from `provenance/omp-host-migration.json`, checks out the exact T4 pull-request head, runs this gate, and attaches the evidence directory to that commit's check run.
 
-Each successful run writes machine-readable evidence under `artifacts/legacy-bridge-continuity/<run>/`: `report.json`, sanitized `wire-events.ndjson`, `failure-matrix.json`, `cleanup-status.json`, and an executable `rollback.sh`. The report names the legacy host implementation, records both source commits and dirty-state fingerprints, and captures bounded snapshot sizes, failure codes, delivered cursor integrity, profile overlap, restart persistence, search/context results, and cleanup state. These artifacts are local and ignored by Git.
+Each successful run writes machine-readable evidence under the historical `artifacts/legacy-bridge-continuity/<run>/` path: `report.json`, sanitized `wire-events.ndjson`, `failure-matrix.json`, `cleanup-status.json`, and an executable `rollback.sh`. The report names the host implementation, records both source commits and dirty-state fingerprints, and captures bounded snapshot sizes, failure codes, delivered cursor integrity, profile overlap, restart persistence, search/context results, and cleanup state. These artifacts are local and ignored by Git.
 
 For a manual failure investigation, rerun with `T4_KEEP_CONTINUITY_SANDBOX=1`. The failed run retains its disposable profile and writes `report.json` plus sanitized `wire-events.ndjson`; successful runs also include `rollback.sh`, which documents the authenticated cleanup request for an explicitly test-mode appserver. Never point the gate or rollback helper at a normal OMP profile.
 
