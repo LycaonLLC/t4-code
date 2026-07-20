@@ -72,8 +72,7 @@ if (browserMode) {
   const activeId = state.activeSessionId;
   if (activeId !== null) {
     if (paneFamily !== undefined) {
-      workspaceStore.getState().togglePaneFamily(activeId, paneFamily);
-      workspaceStore.getState().setPaneOpen(activeId, true);
+      workspaceStore.getState().openSessionSurface(activeId, paneFamily);
     }
     if (bootOptions.terminalDrawer) {
       workspaceStore.getState().setTerminalDrawerOpen(activeId, true);

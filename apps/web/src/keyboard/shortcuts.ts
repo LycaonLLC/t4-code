@@ -2,6 +2,7 @@
 // a DOM. Digit handling via `event.code` follows T3 Code
 // apps/web/src/keybindings.ts (MIT, T3 Tools Inc., reference only): `key`
 // reports layout characters, `code` reports the physical digit row.
+import type { ActionInvocation } from "../actions/index.ts";
 
 export interface ShortcutEventLike {
   readonly key: string;
@@ -41,6 +42,34 @@ export function resolveShortcut(event: ShortcutEventLike): ShortcutAction | null
   const digit = event.code?.match(/^Digit([1-9])$/)?.[1] ?? key.match(/^([1-9])$/)?.[1];
   if (digit !== undefined) return { kind: "session-index", index: Number(digit) - 1 };
   return null;
+}
+
+/**
+ * Resolve the key directly to the same typed invocation Quick Open uses.
+ * Session-number shortcuts receive the current visible order from the shell.
+ */
+export function resolveShortcutInvocation(
+  event: ShortcutEventLike,
+  visibleSessionIds: () => readonly string[],
+): ActionInvocation | null {
+  const shortcut = resolveShortcut(event);
+  if (shortcut === null) return null;
+  switch (shortcut.kind) {
+    case "palette":
+      return { id: "palette.toggle", args: undefined };
+    case "toggle-rail":
+      return { id: "rail.toggle", args: undefined };
+    case "toggle-terminal":
+      return { id: "terminal.toggle", args: undefined };
+    case "toggle-focus":
+      return { id: "focus.toggle", args: undefined };
+    case "settings":
+      return { id: "settings.open", args: undefined };
+    case "session-index": {
+      const sessionId = visibleSessionIds()[shortcut.index];
+      return sessionId === undefined ? null : { id: "session.open", args: { sessionId } };
+    }
+  }
 }
 
 /** True when the event target owns typing (inputs, textareas, editors). */

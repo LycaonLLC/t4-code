@@ -60,6 +60,8 @@ import { TranscriptTimeline } from "./TranscriptTimeline.tsx";
 import type { ToolRenderHost } from "./tool-render/types.ts";
 
 export interface SessionMainProps {
+  /** Route-owned identity, passed explicitly through the whole session surface. */
+  readonly sessionId: string;
   readonly session: WorkspaceSession;
   readonly project: WorkspaceProject;
   readonly nowMs: number;
@@ -443,15 +445,20 @@ export function SessionControlBanner({
   );
 }
 
-export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: SessionMainProps) {
+export function SessionMain({
+  onOpenHostHealth,
+  session,
+  sessionId,
+  exportRowsRef,
+}: SessionMainProps) {
   const archived = session.archivedAt !== undefined;
   const navigate = useNavigate();
-  const { snapshot, runtime } = useSessionRuntime(session.id, session.freshness);
+  const { snapshot, runtime } = useSessionRuntime(sessionId, session.freshness);
   const projection = snapshot.projection;
   const desktopSnapshot = useDesktopRuntimeSnapshot();
   // The composer "@" picker rides the session's lazy file index; no
   // inspector store (fixture hosts without a factory) means no entries.
-  const inspectorApi = getInspectorStore(session.id);
+  const inspectorApi = getInspectorStore(sessionId);
   const fileChildren = useSyncExternalStore(
     useCallback(
       (onStoreChange: () => void) => inspectorApi?.subscribe(onStoreChange) ?? (() => {}),
@@ -464,12 +471,12 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
   );
   const fileEntries = useMemo(() => flattenFileIndex(fileChildren), [fileChildren]);
   const ensureFileDir = useCallback(
-    (dir: string) => getInspectorStore(session.id)?.getState().requestDir(dir),
-    [session.id],
+    (dir: string) => getInspectorStore(sessionId)?.getState().requestDir(dir),
+    [sessionId],
   );
   const liveAddress = useMemo(
-    () => (desktopSnapshot === null ? null : resolveLiveSession(desktopSnapshot, session.id)),
-    [desktopSnapshot, session.id],
+    () => (desktopSnapshot === null ? null : resolveLiveSession(desktopSnapshot, sessionId)),
+    [desktopSnapshot, sessionId],
   );
   const previews =
     desktopSnapshot === null || liveAddress === null
@@ -485,34 +492,28 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
   const toolHost = useMemo<ToolRenderHost>(
     () => ({
       hasAgent: (agentId) =>
-        getInspectorStore(session.id)?.getState().agentMap.agents[agentId] !== undefined,
+        getInspectorStore(sessionId)?.getState().agentMap.agents[agentId] !== undefined,
       openAgent: (agentId) => {
-        const inspector = getInspectorStore(session.id);
+        const inspector = getInspectorStore(sessionId);
         if (inspector?.getState().agentMap.agents[agentId] === undefined) return;
         inspector.getState().selectAgent(agentId);
-        const workspace = workspaceStore.getState();
-        const view = workspace.sessionViewById[session.id];
-        if (view?.paneFamily !== "agents") workspace.togglePaneFamily(session.id, "agents");
-        workspace.setPaneOpen(session.id, true);
+        workspaceStore.getState().openSessionSurface(sessionId, "agents");
       },
       openTurnReview: (turnId) => {
-        const inspector = getInspectorStore(session.id);
+        const inspector = getInspectorStore(sessionId);
         inspector?.getState().loadTurnReview(turnId);
-        const workspace = workspaceStore.getState();
-        const view = workspace.sessionViewById[session.id];
-        if (view?.paneFamily !== "review") workspace.togglePaneFamily(session.id, "review");
-        workspace.setPaneOpen(session.id, true);
+        workspaceStore.getState().openSessionSurface(sessionId, "review");
       },
       openPreview: () => {
-        void navigate(sessionPreviewDestination(session.id));
+        void navigate(sessionPreviewDestination(sessionId));
       },
     }),
-    [navigate, session.id],
+    [navigate, sessionId],
   );
 
   // Leaving this session surface (switch or unmount) ends any read-aloud
   // playback: speech only ever belongs to a response the user can see.
-  useEffect(() => () => getReadAloudController().stop(), [session.id]);
+  useEffect(() => () => getReadAloudController().stop(), [sessionId]);
 
   const rawRows = useMemo(
     () =>
@@ -600,10 +601,10 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      <SessionActivityAnnouncer activity={sessionActivity} key={session.id} />
+      <SessionActivityAnnouncer activity={sessionActivity} key={sessionId} />
       <SessionControlAnnouncer
         control={sessionControl}
-        key={`${session.id}:control`}
+        key={`${sessionId}:control`}
         link={snapshot.link}
         writable={!archived && snapshot.canPrompt}
       />
@@ -669,11 +670,11 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
             bottomInset={archived ? 16 : dockHeight + 16}
             history={snapshot.transcriptHistory}
             imageSource={runtime.transcriptImages}
-            key={session.id}
+            key={sessionId}
             nowMs={snapshot.nowMs}
             onLoadEarlier={runtime.loadEarlierTranscript}
             rows={rows}
-            sessionId={session.id}
+            sessionId={sessionId}
             streaming={snapshot.sessionActive}
             toolHost={toolHost}
           />
@@ -720,7 +721,7 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
               queuedFollowUps={snapshot.queuedFollowUps}
               readOnlyReason={controlPresentation?.composerReason ?? null}
               revisingPlanId={revisingPlanId}
-              sessionId={session.id}
+              sessionId={sessionId}
               slashCommands={snapshot.slashCommands}
               submitPrompt={submitPrompt}
               turnActive={snapshot.sessionActive}

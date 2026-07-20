@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveShortcut, type ShortcutEventLike } from "../src/keyboard/shortcuts.ts";
+import {
+  resolveShortcut,
+  resolveShortcutInvocation,
+  type ShortcutEventLike,
+} from "../src/keyboard/shortcuts.ts";
 
 function event(partial: Partial<ShortcutEventLike>): ShortcutEventLike {
   return {
@@ -65,5 +69,33 @@ describe("resolveShortcut", () => {
     expect(resolveShortcut(event({ key: "k", ctrlKey: true, altKey: true }))).toBeNull();
     expect(resolveShortcut(event({ key: "0", code: "Digit0", ctrlKey: true }))).toBeNull();
     expect(resolveShortcut(event({ key: "x", ctrlKey: true }))).toBeNull();
+  });
+});
+
+describe("resolveShortcutInvocation", () => {
+  it("maps shell keys to typed registry actions", () => {
+    expect(resolveShortcutInvocation(event({ key: "k", metaKey: true }), () => [])).toEqual({
+      id: "palette.toggle",
+      args: undefined,
+    });
+    expect(resolveShortcutInvocation(event({ key: ",", ctrlKey: true }), () => [])).toEqual({
+      id: "settings.open",
+      args: undefined,
+    });
+  });
+
+  it("resolves a numeric key against the current visible session order", () => {
+    expect(
+      resolveShortcutInvocation(event({ key: "2", code: "Digit2", metaKey: true }), () => [
+        "a",
+        "b",
+      ]),
+    ).toEqual({ id: "session.open", args: { sessionId: "b" } });
+    expect(
+      resolveShortcutInvocation(event({ key: "3", code: "Digit3", metaKey: true }), () => [
+        "a",
+        "b",
+      ]),
+    ).toBeNull();
   });
 });

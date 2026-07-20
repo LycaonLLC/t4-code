@@ -8,6 +8,10 @@ import { Outlet, useNavigate } from "@tanstack/react-router";
 import { X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { CORE_ACTIONS, createActionRegistry, type ActionDestination } from "../actions/index.ts";
+import { handoffTranscriptSearchQuery } from "../features/transcript-search/index.ts";
+import { TRANSCRIPT_SEARCH_ROUTE } from "../features/transcript-search/route.ts";
+import { getInspectorStore } from "../features/panes/inspector-store.ts";
 import { startDesktopRuntime, useDesktopRuntimeSnapshot } from "../platform/desktop-runtime.ts";
 import {
   ATTENTION_INBOX_FIXTURES,
@@ -15,7 +19,7 @@ import {
 } from "../features/attention/index.ts";
 import { getShellData, useShellData } from "../state/shell-data.ts";
 import { RAIL_OVERLAY_QUERY, useMediaQuery } from "../hooks/useMediaQuery.ts";
-import { isEditableTarget, resolveShortcut } from "../keyboard/shortcuts.ts";
+import { isEditableTarget, resolveShortcutInvocation } from "../keyboard/shortcuts.ts";
 import { buildProjectGroups, listVisibleSessionIds } from "../lib/session-tree.ts";
 import { rendererPlatform, useWorkspace, workspaceStore } from "../state/store-instance.ts";
 import { RAIL_COLLAPSED_WIDTH, RAIL_WIDTH, selectSessionView } from "../state/workspace-store.ts";
@@ -173,6 +177,67 @@ export function AppShell() {
     () => new Set(Object.keys(hiddenProjectIds).filter((id) => hiddenProjectIds[id] === true)),
     [hiddenProjectIds],
   );
+  const actionRegistry = useMemo(
+    () =>
+      createActionRegistry(CORE_ACTIONS, {
+        workspace: workspaceStore,
+        platform: rendererPlatform,
+        railOverlaid: () => railOverlaid,
+        shellData: getShellData,
+        inspector: getInspectorStore,
+        visibleSessionIds: () => {
+          const state = workspaceStore.getState();
+          return listVisibleSessionIds(
+            buildProjectGroups(
+              getShellData(),
+              state.projectExpandedById,
+              state.lastVisitedAtBySessionId,
+              state.sessionListView,
+              state.hiddenProjectIds,
+              {
+                filter: state.railFilter,
+                query: state.railQuery,
+                sort: state.railSort,
+                projectManualOrder: state.projectManualOrder,
+                sessionManualOrderByProjectId: state.sessionManualOrderByProjectId,
+                projectAliasById: state.projectAliasById,
+              },
+            ),
+          );
+        },
+        navigate: (destination: ActionDestination) => {
+          if (destination.kind === "session") {
+            void navigate({
+              params: { sessionId: destination.sessionId },
+              to: "/sessions/$sessionId",
+            });
+            return;
+          }
+          if (destination.kind === "transcript-search") {
+            handoffTranscriptSearchQuery(destination.query);
+            void navigate({ to: TRANSCRIPT_SEARCH_ROUTE });
+            return;
+          }
+          switch (destination.route) {
+            case "/agents":
+              void navigate({ to: "/agents" });
+              return;
+            case "/hosts":
+              void navigate({ to: "/hosts" });
+              return;
+            case "/inbox":
+              void navigate({ to: "/inbox" });
+              return;
+            case "/settings":
+              void navigate({ to: "/settings" });
+              return;
+            case "/usage":
+              void navigate({ to: "/usage" });
+          }
+        },
+      }),
+    [navigate, railOverlaid],
+  );
 
   // Desktop mode: start the runtime once. StrictMode's doubled effect and
   // HMR remounts are safe — start is idempotent on a global singleton.
@@ -202,66 +267,18 @@ export function AppShell() {
         return;
       }
 
-      const action = resolveShortcut(event);
-      if (action === null) return;
-      if (isEditableTarget(event.target) && action.kind === "session-index") return;
+      const invocation = resolveShortcutInvocation(
+        event,
+        actionRegistry.environment.visibleSessionIds,
+      );
+      if (invocation === null) return;
+      if (isEditableTarget(event.target) && invocation.id === "session.open") return;
       event.preventDefault();
-
-      const state = workspaceStore.getState();
-      if (action.kind === "palette") {
-        state.setPaletteOpen(!state.paletteOpen);
-      } else if (action.kind === "toggle-rail") {
-        if (state.focusMode) {
-          state.setFocusMode(false);
-          state.setRailCollapsed(false);
-        } else if (railOverlaid) state.setRailOverlayOpen(!state.railOverlayOpen);
-        else state.setRailCollapsed(!state.railCollapsed);
-      } else if (action.kind === "toggle-terminal") {
-        const activeId = state.activeSessionId;
-        const activeSession =
-          activeId === null
-            ? undefined
-            : getShellData().sessions.find((session) => session.id === activeId);
-        if (activeId !== null && activeSession?.archivedAt === undefined) {
-          const view = selectSessionView(state, activeId);
-          if (state.focusMode) {
-            state.setFocusMode(false);
-            state.setTerminalDrawerOpen(activeId, true);
-          } else {
-            state.setTerminalDrawerOpen(activeId, !view.terminalDrawerOpen);
-          }
-        }
-      } else if (action.kind === "toggle-focus") {
-        state.setFocusMode(!state.focusMode);
-      } else if (action.kind === "settings") {
-        void navigate({ to: "/settings" });
-      } else {
-        const visible = listVisibleSessionIds(
-          buildProjectGroups(
-            getShellData(),
-            state.projectExpandedById,
-            state.lastVisitedAtBySessionId,
-            state.sessionListView,
-            state.hiddenProjectIds,
-            {
-              filter: state.railFilter,
-              query: state.railQuery,
-              sort: state.railSort,
-              projectManualOrder: state.projectManualOrder,
-              sessionManualOrderByProjectId: state.sessionManualOrderByProjectId,
-              projectAliasById: state.projectAliasById,
-            },
-          ),
-        );
-        const sessionId = visible[action.index];
-        if (sessionId !== undefined) {
-          void navigate({ params: { sessionId }, to: "/sessions/$sessionId" });
-        }
-      }
+      actionRegistry.execute(invocation);
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [navigate, railOverlaid]);
+  }, [actionRegistry]);
 
   // Rail collapse/expand animates width via .rail-dock; the center column
   // reflows with it and keeps its own focus and scroll.
@@ -277,14 +294,7 @@ export function AppShell() {
       <Titlebar
         focusMode={focusMode}
         onExitFocus={() => workspaceStore.getState().setFocusMode(false)}
-        onToggleRail={() => {
-          const state = workspaceStore.getState();
-          if (state.focusMode) {
-            state.setFocusMode(false);
-            state.setRailCollapsed(false);
-          } else if (railOverlaid) state.setRailOverlayOpen(!state.railOverlayOpen);
-          else state.setRailCollapsed(!state.railCollapsed);
-        }}
+        onToggleRail={() => actionRegistry.execute({ id: "rail.toggle", args: undefined })}
         railToggle={railToggle}
       />
       {rendererPlatform.demo && (
@@ -396,7 +406,7 @@ export function AppShell() {
         </Sheet>
       )}
 
-      <CommandPalette groups={allCurrentGroups} />
+      <CommandPalette groups={allSessionGroups} registry={actionRegistry} />
     </div>
   );
 }

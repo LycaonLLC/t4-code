@@ -95,8 +95,7 @@ export function TerminalsPane({
     const state = api.getState();
     state.setActivityFilter("system");
     state.setActivityQuery(row.terminalId);
-    workspaceStore.getState().togglePaneFamily(sessionId, "activity");
-    workspaceStore.getState().setPaneOpen(sessionId, true);
+    workspaceStore.getState().openSessionSurface(sessionId, "activity");
   };
 
   const openInDrawer = (terminalId: string) => {

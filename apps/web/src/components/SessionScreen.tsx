@@ -59,11 +59,12 @@ import { useDesktopRuntimeSnapshot } from "../platform/desktop-runtime.ts";
 import { resolveLiveSession } from "../platform/live-workspace.ts";
 import { useShellData } from "../state/shell-data.ts";
 import {
-  type PaneFamily,
   RIGHT_PANE_WIDTH,
+  type SessionSurfaceId,
   selectSessionView,
+  selectSessionWorkspaceLayout,
 } from "../state/workspace-store.ts";
-import { PANE_FAMILY_META } from "./pane-families.tsx";
+import { SESSION_SURFACES } from "./pane-families.tsx";
 import { ResizeHandle } from "./ResizeHandle.tsx";
 
 const FRESHNESS_LABEL = {
@@ -190,7 +191,7 @@ function WorkspaceMenu({
 }: {
   sessionId: string;
   paneOpen: boolean;
-  paneFamily: PaneFamily;
+  paneFamily: SessionSurfaceId;
   terminalOpen: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -219,7 +220,7 @@ function WorkspaceMenu({
               Open on the right
             </p>
             <ul>
-              {PANE_FAMILY_META.map((meta) => {
+              {SESSION_SURFACES.map((meta) => {
                 const active = paneOpen && paneFamily === meta.id;
                 const Icon = meta.icon;
                 const label = meta.id === "terminals" ? "Agent terminals" : meta.label;
@@ -230,7 +231,7 @@ function WorkspaceMenu({
                       aria-pressed={active}
                       className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-9"
                       onClick={() => {
-                        workspaceStore.getState().togglePaneFamily(sessionId, meta.id);
+                        workspaceStore.getState().toggleSessionSurface(sessionId, meta.id);
                         setOpen(false);
                       }}
                       type="button"
@@ -292,11 +293,13 @@ function WorkspaceMenu({
 // at its final coordinates on the first frame.
 
 export function SessionScreen({
+  sessionId,
   session,
   project,
   nowMs,
   onOpenHostHealth,
 }: {
+  sessionId: string;
   session: WorkspaceSession;
   project: WorkspaceProject;
   nowMs: number;
@@ -307,11 +310,14 @@ export function SessionScreen({
   // object: its identity changes on every scroll-anchor write (each scroll
   // event while reading history) and every composer keystroke (draft), and
   // a whole-view subscription re-renders this entire surface per frame.
-  const viewPaneFamily = useWorkspace((state) => selectSessionView(state, session.id).paneFamily);
-  const viewPaneOpen = useWorkspace((state) => selectSessionView(state, session.id).paneOpen);
-  const viewPaneWidth = useWorkspace((state) => selectSessionView(state, session.id).paneWidth);
+  const viewPaneFamily = useWorkspace((state) => selectSessionView(state, sessionId).paneFamily);
+  const secondarySurfaceId = useWorkspace(
+    (state) => selectSessionWorkspaceLayout(state, sessionId).secondary,
+  );
+  const viewPaneOpen = secondarySurfaceId !== null;
+  const viewPaneWidth = useWorkspace((state) => selectSessionView(state, sessionId).paneWidth);
   const terminalDrawerOpen = useWorkspace(
-    (state) => selectSessionView(state, session.id).terminalDrawerOpen,
+    (state) => selectSessionView(state, sessionId).terminalDrawerOpen,
   );
   const focusMode = useWorkspace((state) => state.focusMode);
   const paneDocks = useMediaQuery(RIGHT_PANE_DOCK_QUERY);
@@ -350,7 +356,7 @@ export function SessionScreen({
   };
   const runtimeSnapshot = useDesktopRuntimeSnapshot();
   const previewAddress =
-    runtimeSnapshot === null ? null : resolveLiveSession(runtimeSnapshot, session.id);
+    runtimeSnapshot === null ? null : resolveLiveSession(runtimeSnapshot, sessionId);
   const previewCount = rendererPlatform.demo
     ? 1
     : previewAddress === null
@@ -364,7 +370,7 @@ export function SessionScreen({
   // scroller: number = reading anchor, null = following the tail). This
   // wrapper never scrolls and never writes the session scroll key.
 
-  const activeMeta = PANE_FAMILY_META.find((entry) => entry.id === viewPaneFamily);
+  const activeMeta = SESSION_SURFACES.find((entry) => entry.id === viewPaneFamily);
   const paneWidth = panePreviewWidth ?? viewPaneWidth;
 
   // Docked pane enter/exit: the wrapper's measured width tweens between 0
@@ -382,9 +388,9 @@ export function SessionScreen({
     const state = workspaceStore.getState();
     state.setSessionListView(archived ? "archived" : "current");
     if (!archived) return;
-    state.setPaneOpen(session.id, false);
-    state.setTerminalDrawerOpen(session.id, false);
-  }, [archived, session.id]);
+    state.closeSessionSurface(sessionId, viewPaneFamily);
+    state.setTerminalDrawerOpen(sessionId, false);
+  }, [archived, sessionId, viewPaneFamily]);
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -418,7 +424,7 @@ export function SessionScreen({
           <Link
             aria-label={`Open browser preview${previewCount === 1 ? "" : ` (${previewCount})`}`}
             className="shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            params={{ sessionId: session.id }}
+            params={{ sessionId }}
             to="/sessions/$sessionId/preview"
           >
             <Badge variant="outline">Preview{previewCount === 1 ? "" : ` · ${previewCount}`}</Badge>
@@ -428,7 +434,7 @@ export function SessionScreen({
           <Link
             aria-label="Open browser workspace"
             className="shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            params={{ sessionId: session.id }}
+            params={{ sessionId }}
             to="/sessions/$sessionId/browser"
           >
             <Badge variant="outline">Browser</Badge>
@@ -438,7 +444,7 @@ export function SessionScreen({
           <WorkspaceMenu
             paneFamily={viewPaneFamily}
             paneOpen={viewPaneOpen}
-            sessionId={session.id}
+            sessionId={sessionId}
             terminalOpen={terminalDrawerOpen}
           />
         )}
@@ -448,16 +454,17 @@ export function SessionScreen({
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="min-h-0 flex-1 overflow-hidden">
             <SessionMain
-              key={session.id}
+              key={sessionId}
               exportRowsRef={exportRowsRef}
               nowMs={nowMs}
               onOpenHostHealth={onOpenHostHealth}
               project={project}
               session={session}
+              sessionId={sessionId}
             />
           </div>
           {!archived && (
-            <TerminalDrawer open={!focusMode && terminalDrawerOpen} sessionId={session.id} />
+            <TerminalDrawer open={!focusMode && terminalDrawerOpen} sessionId={sessionId} />
           )}
         </div>
 
@@ -480,7 +487,7 @@ export function SessionScreen({
               bounds={RIGHT_PANE_WIDTH}
               edge="left"
               label={`Resize ${activeMeta.label} panel`}
-              onCommit={(width) => workspaceStore.getState().setPaneWidth(session.id, width)}
+              onCommit={(width) => workspaceStore.getState().setPaneWidth(sessionId, width)}
               onPreview={setPanePreviewWidth}
               width={paneWidth}
             />
@@ -492,14 +499,19 @@ export function SessionScreen({
               <ScrollArea className="min-h-0 flex-1">
                 <div className="pane-content-enter" key={viewPaneFamily}>
                   <PaneContent
-                    family={viewPaneFamily}
+                    sessionId={sessionId}
+                    surfaceId={viewPaneFamily}
                     trailing={
                       <Tooltip>
                         <TooltipTrigger
                           render={
                             <IconButton
                               aria-label={`Close ${activeMeta.label}`}
-                              onClick={() => workspaceStore.getState().setPaneOpen(session.id, false)}
+                              onClick={() =>
+                                workspaceStore
+                                  .getState()
+                                  .closeSessionSurface(sessionId, viewPaneFamily)
+                              }
                               size="icon-xs"
                             >
                               <X />
@@ -519,11 +531,15 @@ export function SessionScreen({
 
       {!archived && !focusMode && !paneDocks && activeMeta !== undefined && (
         <Sheet
-          onOpenChange={(open) => workspaceStore.getState().setPaneOpen(session.id, open)}
+          onOpenChange={(open) => {
+            const state = workspaceStore.getState();
+            if (open) state.openSessionSurface(sessionId, viewPaneFamily);
+            else state.closeSessionSurface(sessionId, viewPaneFamily);
+          }}
           open={viewPaneOpen}
         >
           <SheetPopup aria-label={activeMeta.label} side="right">
-            <PaneContent family={viewPaneFamily} />
+            <PaneContent sessionId={sessionId} surfaceId={viewPaneFamily} />
           </SheetPopup>
         </Sheet>
       )}

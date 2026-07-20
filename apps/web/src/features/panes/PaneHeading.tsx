@@ -4,7 +4,7 @@
 import type * as React from "react";
 import { cn } from "@t4-code/ui";
 
-import { PANE_FAMILY_META } from "../../components/pane-families.tsx";
+import { SESSION_SURFACES } from "../../components/pane-families.tsx";
 import type { PaneFamily } from "../../state/workspace-store.ts";
 
 export function PaneHeading({
@@ -20,7 +20,7 @@ export function PaneHeading({
   /** Optional trailing action rendered at the row's end (e.g. the dock close button). */
   readonly trailing?: React.ReactNode | undefined;
 }) {
-  const meta = PANE_FAMILY_META.find((entry) => entry.id === family);
+  const meta = SESSION_SURFACES.find((entry) => entry.id === family);
   if (meta === undefined) return null;
   const Icon = meta.icon;
   return (
