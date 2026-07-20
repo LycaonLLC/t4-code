@@ -49,13 +49,13 @@ test("generic host source has no private OMP source-tree dependency", () => {
   assert.deepEqual(violations, []);
 });
 
-test("compatibility metadata records the source move without overstating deployment", () => {
+test("compatibility metadata records the artifact-backed OMP bridge", () => {
   const matrix = json("compat/omp-app-matrix.json");
   const provenance = json("provenance/omp-host-migration.json");
 
   assert.deepEqual(matrix.t4Host.sourcePaths, ["packages/host-wire", "packages/host-service"]);
   assert.equal(matrix.t4Host.runtimeAuthority, "omp");
-  assert.equal(matrix.t4Host.deploymentState, "source-owned-legacy-runtime-bridge");
+  assert.equal(matrix.t4Host.deploymentState, "source-owned-artifact-runtime-bridge");
   assert.equal(matrix.t4Host.wireSchemaVersion, "0.7.0");
   assert.deepEqual(matrix.t4Host.migrationInputs, {
     repository: provenance.sourceRepository,
