@@ -11,7 +11,9 @@ import {
   NodeServiceRunner,
   OmpAppserverCompatibilityError,
   probeOmpAppserver,
+  repairAppserverService,
 } from "../src/service.ts";
+import type { ServiceManager } from "@t4-code/service-manager";
 
 const bridgeHelpResult = {
   exitCode: 0,
@@ -449,5 +451,73 @@ describe("desktop lifecycle boundaries", () => {
       XDG_RUNTIME_DIR: "/run/user/1000",
       TMPDIR: "",
     });
+  });
+
+  it("repairs a current but unregistered appserver after one transient start failure", async () => {
+    const calls: string[] = [];
+    let running = false;
+    const manager: ServiceManager = {
+      inspect: async () => {
+        calls.push("inspect");
+        return {
+          definition: "current",
+          service: running ? "running" : "stopped",
+          diagnostics: "",
+        };
+      },
+      install: async () => {
+        calls.push("install");
+        running = true;
+      },
+      start: async () => {
+        calls.push("start");
+        throw new Error("launchd was still removing the old registration");
+      },
+      stop: async () => {},
+      restart: async () => {},
+      uninstall: async () => {},
+    };
+
+    await repairAppserverService(manager, { delay: async () => {} });
+
+    expect(calls).toEqual(["inspect", "start", "inspect", "install", "inspect"]);
+  });
+
+  it("does not rewrite a healthy appserver service", async () => {
+    const calls: string[] = [];
+    const manager: ServiceManager = {
+      inspect: async () => {
+        calls.push("inspect");
+        return { definition: "current", service: "running", diagnostics: "ready" };
+      },
+      install: async () => { calls.push("install"); },
+      start: async () => { calls.push("start"); },
+      stop: async () => {},
+      restart: async () => {},
+      uninstall: async () => {},
+    };
+
+    await repairAppserverService(manager, { delay: async () => {} });
+
+    expect(calls).toEqual(["inspect"]);
+  });
+
+  it("lets an appserver that is already starting finish without restarting it", async () => {
+    const calls: string[] = [];
+    const manager: ServiceManager = {
+      inspect: async () => {
+        calls.push("inspect");
+        return { definition: "current", service: "starting", diagnostics: "launching" };
+      },
+      install: async () => { calls.push("install"); },
+      start: async () => { calls.push("start"); },
+      stop: async () => {},
+      restart: async () => {},
+      uninstall: async () => {},
+    };
+
+    await repairAppserverService(manager, { delay: async () => {} });
+
+    expect(calls).toEqual(["inspect"]);
   });
 });
