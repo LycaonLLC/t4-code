@@ -483,6 +483,8 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
           ],
         ],
       ),
+      drawerEnableOpenDragGesture: true,
+      drawerEdgeDragWidth: _T4Layout.minimumTouchTarget,
       drawer: Drawer(
         child: Column(
           children: [

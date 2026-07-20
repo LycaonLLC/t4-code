@@ -398,6 +398,30 @@ void main() {
     expect(find.byType(Drawer), findsOneWidget);
   });
 
+  testWidgets('left-edge swipe opens compact session navigation', (
+    tester,
+  ) async {
+    final profile = HostProfile.parseTailnetAddress(
+      'https://alpha.tailnet-name.ts.net',
+    );
+    await pumpApp(
+      tester,
+      state: T4ViewState(
+        connectionPhase: ConnectionPhase.ready,
+        hostDirectory: HostDirectory.empty().upsert(profile),
+        authenticationPhase: AuthenticationPhase.paired,
+      ),
+      actions: _FakeActions(),
+      size: compactPhone,
+    );
+
+    await tester.dragFrom(const Offset(36, 420), const Offset(260, 0));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Navigation'), findsOneWidget);
+    expect(find.text('Manage hosts'), findsOneWidget);
+  });
+
   testWidgets('unsigned macOS development mode is visibly identified', (
     tester,
   ) async {
