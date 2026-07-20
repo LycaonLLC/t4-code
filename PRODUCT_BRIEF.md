@@ -34,8 +34,8 @@ T3 Code at `reference/t3code` is the primary presentation, interaction, desktop-
 T4 is preparing a central Hub for users who coordinate several personal dev boxes, team machines,
 or managed worker pools. The Hub will coordinate identity, durable commands, ownership, and events;
 OMP will continue to own prompt acceptance, transcript truth, tools, and agent execution. The
-released local T4 Host path remains supported while the Hub passes the proof gates in
-[`ADR-016`](docs/adr/016-hub-collaboration-foundation.md). Shared work is tracked in
+released local T4 Host path remains supported while the Hub matures through the development
+checkpoints in [`ADR-016`](docs/adr/016-hub-collaboration-foundation.md). Shared work is tracked in
 [`docs/T4_HUB_TRACKER.md`](docs/T4_HUB_TRACKER.md).
 
 The Hub contracts are independent of the client framework and deployment scheduler. A normal remote

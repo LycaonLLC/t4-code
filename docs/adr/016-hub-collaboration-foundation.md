@@ -1,6 +1,6 @@
 # ADR-016: Establish the T4 Hub collaboration foundation
 
-- Status: accepted as a planning foundation; implementation and infrastructure choices remain pending.
+- Status: accepted as a lightweight planning foundation; implementation and infrastructure choices remain flexible.
 
 ## The problem
 
@@ -85,8 +85,9 @@ recorded -> claimed(ownerEpoch) -> dispatched -> accepted by OMP -> completed
 ```
 
 T4 does not automatically replay an indeterminate command. An at-most-once execution promise
-requires a durable command identity that official OMP recognizes. Until that seam is proven, the UI
-must report uncertainty and ask the user what to do.
+requires a durable command identity that official OMP recognizes. Early prototypes can expose and
+reset internal state freely, but an enabled user-facing flow reports uncertainty rather than
+silently replaying work.
 
 ### Deployment profiles
 
@@ -100,20 +101,27 @@ The same Hub-facing product model may support two execution profiles:
 High availability is a capability of a deployment, not a claim made by every installation. A
 single-machine setup remains useful but cannot recover while its only machine is offline.
 
-## Proof gates before implementation expands
+## Development checkpoints, not approval gates
 
-1. **Official OMP seam:** prove durable acceptance identity, event replay, cancellation, checkpoint
-   contents, and restart behavior against an unmodified pinned OMP release.
-2. **Contract freeze:** define bounded Hub Wire and Runtime Wire messages, version negotiation,
-   command states, epochs, cursors, and failure results.
-3. **Physical vertical slice:** submit one command from a real T4 client through a real Hub and Node
-   to official OMP, then reconnect and rebuild the same session view.
-4. **Ambiguous failure:** kill components before and after dispatch and prove that unknown outcomes
-   are visible and never replayed automatically.
-5. **Hard fencing:** prove that a partitioned old owner cannot continue writing before another Node
-   receives ownership.
-6. **Recovery and restore:** test Node loss, Hub loss, storage loss, backup restoration, and Git
-   integrity with measured recovery behavior.
+There are no live Hub users yet, so fast experiments, temporary breakage, schema resets, and
+incomplete code behind unavailable capabilities are expected. Workstreams can proceed in parallel
+with written assumptions and fakes. These checkpoints tell the team when separate experiments are
+ready to converge or when a behavior is ready to be enabled; they do not require everyone to stop
+until the previous item is complete.
+
+1. **Official OMP seam:** learn the real acceptance identity, event replay, cancellation, checkpoint
+   contents, and restart behavior of an unmodified pinned OMP release.
+2. **Contract draft:** keep bounded Hub Wire and Runtime Wire messages, command states, epochs,
+   cursors, and failure results in a versioned draft that can change as the OMP evidence arrives.
+3. **Physical vertical slice:** connect the smallest useful pieces early, then grow it until one
+   command travels from a real T4 client through a real Hub and Node to official OMP and survives a
+   reconnect.
+4. **Ambiguous failure:** exercise crashes before and after dispatch while implementation is still
+   cheap to change. Do not enable automatic replay of unknown outcomes.
+5. **Hard fencing:** prototype failover freely, but do not enable automatic cross-machine takeover
+   until a partitioned old owner is proven unable to keep writing.
+6. **Recovery and restore:** add Node, Hub, storage, backup, and Git-integrity fault cases as each
+   subsystem becomes real rather than waiting for one final certification phase.
 
 Kubernetes, CephFS, MinIO, and a full observability stack remain candidates for managed deployments.
 They are not selected for the standard Node profile by this ADR. Client framework migration is also
@@ -121,7 +129,8 @@ a separate decision.
 
 ## Collaborative ownership
 
-Work is divided by authority rather than by screen:
+Work is divided by authority rather than by screen. These are coordination defaults, not exclusive
+file locks:
 
 - the Hub lane owns durable product state, command and ownership state machines, and Hub Wire;
 - the Node/runtime lane owns the official OMP seam, process lifecycle, workspaces, checkpoints, and
@@ -131,8 +140,9 @@ Work is divided by authority rather than by screen:
 - the infrastructure lane packages proven behavior and does not define command or ownership
   semantics through deployment manifests.
 
-One integration owner coordinates contract schemas, root manifests, dependency lockfiles, database
-migration allocation, and final vertical-slice wiring. The shared work tracker is
+When active branches overlap on contract schemas, root manifests, dependency lockfiles, database
+migrations, or final wiring, the developers name a temporary integration owner or land the smaller
+shared change first. The shared work tracker is
 [`docs/T4_HUB_TRACKER.md`](../T4_HUB_TRACKER.md).
 
 ## Consequences
@@ -141,7 +151,7 @@ migration allocation, and final vertical-slice wiring. The shared work tracker i
   Host path before the Hub is proven.
 - Ordinary remote dev boxes stay lightweight; managed pools can add stronger scheduling and storage
   when users need them.
-- The hardest uncertainties are tested before the team invests in a distributed infrastructure
-  stack.
+- The hardest uncertainties are tested early while Hub, Node, client, and infrastructure prototypes
+  continue in parallel.
 - Portable recovery requires explicit storage fencing and honest treatment of in-flight work.
 - Hub and Node developers can work against fakes and contract tests with a small shared edit surface.
