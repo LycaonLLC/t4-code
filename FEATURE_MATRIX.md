@@ -9,14 +9,14 @@ The README and release notes are the release contract. They must only claim beha
 | State | What it means |
 |---|---|
 | Exists today | T4 owns `packages/host-wire` and `packages/host-service`; the client protocol consumes the T4-owned wire package. |
-| Compatibility transition | The verified OMP integration binary still embeds the legacy host copy, and T4 retains a bounded read-only JSONL projector for that exact bridge. |
+| Compatibility transition | The standalone host uses the T4 bridge when available. With an official OMP release that lacks the bridge, it discovers saved sessions through the bounded JSONL projector and exposes them as explicitly labeled, view-only compatibility sessions. |
 | Planned next | Replace the embedded copy with a thin OMP launcher and authority adapter, then test supported upstream OMP versions by bridge capability instead of requiring every T4 host feature inside the fork. |
 
 ## 1. Hosts, connections, and environments
 
 | Capability | OMP authority | T3 reference | Desktop surface and required states | Priority |
 |---|---|---|---|---|
-| Local host discovery | `packages/coding-agent/src/modes/rpc/rpc-mode.ts`, planned appserver health/capabilities | `apps/web/src/routes/__root.tsx`, `packages/client-runtime/src/connection/*` | Host switcher; starting, ready, version-skew, unavailable, reconnecting, read-only, upgrade-required | Launch |
+| Local host discovery | OMP bridge when available; standard session files as a read-only fallback | `apps/web/src/routes/__root.tsx`, `packages/client-runtime/src/connection/*` | Host switcher; starting, ready, version-skew, unavailable, reconnecting, read-only, upgrade-required. Official OMP sessions remain readable and are labeled `OMP · view only`; runtime controls and activity status require the T4 bridge. | Launch |
 | Remote tailnet host | Existing collab transport plus planned appserver; current Mac/bunker topology | `packages/tailscale/src/tailscale.ts`, `packages/ssh/src/tunnel.ts`, connection supervisor | Add by MagicDNS/IP, pair, trust, connect, revoke, latency/status; never expose tokens | Launch |
 | Host capability negotiation | Planned versioned app protocol over OMP runtime | T3 contract schemas and server handshake | Show feature compatibility; disable unsupported actions with reason | Launch |
 | Multi-host operation | Planned appserver registry | T3 environments/projects | Sessions grouped by host and project; host status remains visible across switches | Launch |

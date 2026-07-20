@@ -12,9 +12,35 @@ t4-host (T4 executable)
         +-- omp bridge --stdio
         |      sessions, locks, settings, operations, catalog
         |
-        `-- omp --mode rpc --session <path>
-               one live worker for each active session
+        +-- omp --mode rpc --session <path>
+        |      one live worker for each active session
+        |
+        `-- standard OMP fallback (when the bridge is absent)
+               read saved session files; never start or control a worker
 ```
+
+## Standard OMP compatibility
+
+The standalone host first asks OMP for the T4 control bridge. Official OMP releases do not include
+that bridge. When it is unavailable, the host now falls back to OMP's standard session files instead
+of leaving the profile disconnected.
+
+This fallback is intentionally limited:
+
+| Available | Not available |
+| --- | --- |
+| Discover default and named-profile sessions | Send prompts or slash commands |
+| Read existing transcripts | Stop, resume, rename, archive, or delete sessions |
+| Follow newly saved transcript entries | Reliable running, idle, or ownership status |
+| Search and page through saved history | Token-by-token streaming or T4 runtime settings |
+
+T4 labels these rows `OMP · view only` and shows a `Standard OMP session` banner. The host grants
+only `sessions.read`, never starts an OMP worker, and rejects writes even if a client bypasses its UI.
+This keeps the limitation visible while still making ordinary OMP work readable.
+
+The normal locations are `~/.omp/agent/sessions` for the default profile and
+`~/.omp/profiles/<profile>/agent/sessions` for a named profile. A custom layout can be supplied to
+`t4-host serve` with `--session-root /absolute/path`.
 
 ## T4-owned responsibilities
 
@@ -32,7 +58,7 @@ t4-host (T4 executable)
 - OMP settings, model registry, usage, and credentials
 - turning OMP-native events into the validated bridge stream
 
-The bridge is a versioned, length-bounded line protocol over standard input and output. It validates every message and fails closed when an operation is unavailable or ownership is unclear. The migrated host temporarily retains a read-only, bounded OMP JSONL projector for transcript search. It may project the exact tested format, but it must not mutate OMP state, infer locks, or invent ownership. A later bridge method can replace that final read-only projector with an OMP-published catalog and event stream.
+The bridge is a versioned, length-bounded line protocol over standard input and output. It validates every message and fails closed when an operation is unavailable or ownership is unclear. The migrated host retains a read-only, bounded OMP JSONL projector for transcript search and standard-OMP compatibility. It may project the exact tested format, but it must not mutate OMP state, infer locks, or invent ownership. A later bridge method can replace the projector with an OMP-published catalog and event stream.
 
 ## Direct replacement rollout
 

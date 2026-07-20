@@ -33,6 +33,30 @@ function observerBannerMarkup(transcript: ObserverTranscript, pulse = false): st
   );
 }
 
+function compatibilityBannerMarkup(transcript: ObserverTranscript): string {
+  const presentation = presentSessionControl({ mode: "compatibility", transcript });
+  return renderToStaticMarkup(
+    <SessionControlBanner mode="compatibility" presentation={presentation} pulse={false} />,
+  );
+}
+
+describe("standard OMP compatibility region", () => {
+  it("labels the session as view-only without claiming live activity", () => {
+    for (const transcript of ["live", "snapshot"] as const) {
+      const markup = compatibilityBannerMarkup(transcript);
+      expect(markup).toContain('role="status"');
+      expect(markup).toContain('data-session-control-banner="compatibility"');
+      expect(markup).toContain("Standard OMP session");
+      expect(markup).toContain("activity status and controls are unavailable");
+      expect(markup).not.toContain("Active in another app");
+      expect(markup).not.toContain("Taking over");
+      for (const affordance of ["<button", "<input", "<textarea", "<select", "<a ", "href="]) {
+        expect(markup.toLowerCase()).not.toContain(affordance);
+      }
+    }
+  });
+});
+
 describe("observer ownership region under freshness churn", () => {
   it("renders byte-identical markup while live/snapshot alternates at 250ms for 20 seconds", () => {
     const baseline = observerBannerMarkup("live");
@@ -62,7 +86,16 @@ describe("observer ownership region under freshness churn", () => {
     for (const pulse of [false, true]) {
       for (const transcript of ["live", "snapshot"] as const) {
         const markup = observerBannerMarkup(transcript, pulse);
-        for (const affordance of ["<button", "<input", "<textarea", "<select", "<a ", "href=", "contenteditable", "onclick"]) {
+        for (const affordance of [
+          "<button",
+          "<input",
+          "<textarea",
+          "<select",
+          "<a ",
+          "href=",
+          "contenteditable",
+          "onclick",
+        ]) {
           expect(markup.toLowerCase(), `${transcript} pulse=${pulse}`).not.toContain(affordance);
         }
       }
@@ -87,11 +120,9 @@ describe("record-arrival pulse wiring in SessionMain", () => {
     // The hook receives only the projection's durable entries; transcript
     // live/snapshot and lock freshness have no path into it.
     expect(sessionMainSource).toContain(
-      "const observerPulse = useRecordArrivalPulse(\n    sessionControl?.mode === \"observer\",\n    projection.entries,\n  );",
+      'const observerPulse = useRecordArrivalPulse(\n    sessionControl?.mode === "observer",\n    projection.entries,\n  );',
     );
-    expect(sessionMainSource).toContain(
-      "advanceRecordArrival(baseline, entries)",
-    );
+    expect(sessionMainSource).toContain("advanceRecordArrival(baseline, entries)");
     const pulseCode = sessionMainSource
       .slice(
         sessionMainSource.indexOf("export function createRecordArrivalPulseController"),

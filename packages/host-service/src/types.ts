@@ -228,6 +228,13 @@ export interface AppserverOptions {
 	epoch?: string;
 	clock?: Clock;
 	discovery?: SessionDiscovery;
+	/**
+	 * Follow durable OMP session files without ever starting, taking over, or
+	 * mutating their runtimes. Used when standard OMP has no T4 control bridge.
+	 */
+	readOnlyCompatibility?: boolean;
+	/** Poll a file-backed inventory for new or changed sessions. */
+	discoveryPollMs?: number;
 	sessionAuthority?: SessionAuthority;
 	operationsAuthority?: DesktopOperationsAuthority;
 	usageAuthority?: AppserverUsageAuthority;

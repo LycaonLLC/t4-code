@@ -62,6 +62,14 @@ describe("readSessionControl", () => {
     }
   });
 
+  it("parses both standard OMP compatibility shapes", () => {
+    for (const transcript of ["live", "snapshot"] as const) {
+      expect(
+        readSessionControl(refWith({ sessionControl: { mode: "compatibility", transcript } })),
+      ).toEqual({ mode: "compatibility", transcript });
+    }
+  });
+
   it("reads extra keys on a known mode as unknown (exact shapes only)", () => {
     expect(
       readSessionControl(
@@ -73,6 +81,11 @@ describe("readSessionControl", () => {
     expect(
       readSessionControl(
         refWith({ sessionControl: { mode: "reconciling", transcript: "live", extra: true } }),
+      ),
+    ).toEqual({ mode: "unknown" });
+    expect(
+      readSessionControl(
+        refWith({ sessionControl: { mode: "compatibility", transcript: "live", extra: true } }),
       ),
     ).toEqual({ mode: "unknown" });
   });
@@ -93,6 +106,8 @@ describe("readSessionControl", () => {
       { mode: "observer", lockStatus: "live", transcript: "durable" },
       { mode: "reconciling" },
       { mode: "reconciling", transcript: "partial" },
+      { mode: "compatibility" },
+      { mode: "compatibility", transcript: "partial" },
     ];
     for (const sessionControl of malformed) {
       expect(readSessionControl(refWith({ sessionControl }))).toEqual({ mode: "unknown" });
@@ -123,6 +138,8 @@ const EVERY_STATE: readonly SessionControlState[] = [
   { mode: "observer", lockStatus: "malformed", transcript: "snapshot" },
   { mode: "reconciling", transcript: "live" },
   { mode: "reconciling", transcript: "snapshot" },
+  { mode: "compatibility", transcript: "live" },
+  { mode: "compatibility", transcript: "snapshot" },
   { mode: "unknown" },
 ];
 
@@ -231,6 +248,17 @@ describe("presentSessionControl", () => {
       expect(presentation.composerReason.toLowerCase()).toContain("input returns");
     }
   });
+
+  it("explains standard OMP compatibility without claiming live activity", () => {
+    const presentation = presentSessionControl({ mode: "compatibility", transcript: "live" });
+    expect(presentation.railLabel).toBe("OMP · view only");
+    expect(presentation.bannerTitle).toBe("Standard OMP session");
+    expect(presentation.bannerDetail).toContain("saved output");
+    expect(presentation.bannerDetail).toContain("activity status and controls are unavailable");
+    expect(presentation.bannerBusy).toBe(false);
+    expect(presentation.composerReason).toContain("view-only compatibility mode");
+    expect(presentation.bannerDetail).not.toContain("active in another app");
+  });
 });
 
 describe("sessionControlDisplayKind", () => {
@@ -251,6 +279,9 @@ describe("sessionControlDisplayKind", () => {
         sessionControlDisplayKind({ mode: "observer", lockStatus: "malformed", transcript }),
       ).toBe("unclear");
       expect(sessionControlDisplayKind({ mode: "reconciling", transcript })).toBe("reconciling");
+      expect(sessionControlDisplayKind({ mode: "compatibility", transcript })).toBe(
+        "compatibility",
+      );
     }
     expect(sessionControlDisplayKind({ mode: "unknown" })).toBe("unclear");
   });
@@ -258,7 +289,7 @@ describe("sessionControlDisplayKind", () => {
 
 describe("presentSessionControlKind", () => {
   it("says another app is active only for the observer kind", () => {
-    const kinds = ["observer", "suspect", "reconciling", "unclear"] as const;
+    const kinds = ["observer", "suspect", "reconciling", "compatibility", "unclear"] as const;
     for (const kind of kinds) {
       const presentation = presentSessionControlKind(kind);
       expect(presentation.railLabel === "Active elsewhere", kind).toBe(kind === "observer");

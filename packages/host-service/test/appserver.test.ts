@@ -286,6 +286,30 @@ describe("appserver lifecycle", () => {
 			"unsupported capability has no handler",
 		);
 	});
+	test("keeps compatibility mode read-only by construction", () => {
+		expect(() =>
+			createAppserver({
+				readOnlyCompatibility: true,
+				supportedCapabilities: ["sessions.read", "sessions.prompt"],
+			}),
+		).toThrow("grants only sessions.read");
+		expect(() =>
+			createAppserver({
+				readOnlyCompatibility: true,
+				sessionAuthority: new StaticDiscovery([]) as never,
+			}),
+		).toThrow("cannot install mutation authorities");
+		expect(() => createAppserver({ discoveryPollMs: 249 })).toThrow("discoveryPollMs");
+		expect(() => createAppserver({ discoveryPollMs: 60_001 })).toThrow("discoveryPollMs");
+		expect(() =>
+			createAppserver({
+				readOnlyCompatibility: true,
+				discovery: new StaticDiscovery([]),
+				supportedCapabilities: ["sessions.read"],
+				discoveryPollMs: 1_000,
+			}),
+		).not.toThrow();
+	});
 	test("every desktop catalog command has a live appserver handler", () => {
 		const appserver = createAppserver({
 			operationsAuthority: {

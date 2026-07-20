@@ -751,6 +751,7 @@ describe("app-wire authority", () => {
 		for (const lockStatus of ["live", "suspect", "malformed"])
 			expect(() => decodeServerFrame(frame({ mode: "observer", lockStatus, transcript: "live" }))).not.toThrow();
 		expect(() => decodeServerFrame(frame({ mode: "reconciling", transcript: "snapshot" }))).not.toThrow();
+		expect(() => decodeServerFrame(frame({ mode: "compatibility", transcript: "live" }))).not.toThrow();
 		for (const invalid of [
 			null,
 			{ mode: "observer", transcript: "live" },
@@ -758,6 +759,8 @@ describe("app-wire authority", () => {
 			{ mode: "future", transcript: "live" },
 			{ mode: "reconciling", transcript: "future" },
 			{ mode: "reconciling", transcript: "live", path: "/secret" },
+			{ mode: "compatibility", transcript: "future" },
+			{ mode: "compatibility", transcript: "live", owner: "standard" },
 		])
 			expect(() => decodeServerFrame(frame(invalid))).toThrow(AppWireError);
 	});

@@ -26,6 +26,7 @@ export type SessionControlState =
       readonly transcript: ObserverTranscript;
     }
   | { readonly mode: "reconciling"; readonly transcript: ObserverTranscript }
+  | { readonly mode: "compatibility"; readonly transcript: ObserverTranscript }
   | { readonly mode: "unknown" };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -34,6 +35,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const OBSERVER_KEYS: Record<string, true> = { mode: true, lockStatus: true, transcript: true };
 const RECONCILING_KEYS: Record<string, true> = { mode: true, transcript: true };
+const COMPATIBILITY_KEYS: Record<string, true> = { mode: true, transcript: true };
 
 /**
  * Strict reader for `liveState.sessionControl`. Only a truly absent
@@ -67,6 +69,14 @@ export function readSessionControl(ref: SessionRef | undefined): SessionControlS
     const { transcript } = raw;
     if (transcript !== "live" && transcript !== "snapshot") return { mode: "unknown" };
     return { mode: "reconciling", transcript };
+  }
+  if (raw.mode === "compatibility") {
+    if (Object.keys(raw).some((key) => COMPATIBILITY_KEYS[key] !== true)) {
+      return { mode: "unknown" };
+    }
+    const { transcript } = raw;
+    if (transcript !== "live" && transcript !== "snapshot") return { mode: "unknown" };
+    return { mode: "compatibility", transcript };
   }
   return { mode: "unknown" };
 }
@@ -140,6 +150,22 @@ const UNCLEAR_PRESENTATION: Omit<SessionControlPresentation, "bannerDetail" | "b
 };
 
 export function presentSessionControl(state: SessionControlState): SessionControlPresentation {
+  if (state.mode === "compatibility") {
+    return {
+      railLabel: "OMP · view only",
+      bannerTitle: "Standard OMP session",
+      bannerDetail:
+        "T4 is following this session's saved output. Standard OMP does not provide T4's live control bridge, so activity status and controls are unavailable.",
+      bannerBusy: false,
+      composerReason:
+        "This standard OMP session is available in view-only compatibility mode because it does not provide T4's live control bridge.",
+      cancelReason: "Stopping is unavailable for standard OMP compatibility sessions.",
+      controlReason: "This standard OMP session is available in view-only compatibility mode.",
+      slashReason: "Standard OMP · view only",
+      managementReason: "Session management requires the T4-enabled OMP runtime.",
+      announcement: "Standard OMP session: view-only compatibility mode.",
+    };
+  }
   if (state.mode === "observer") {
     // Observer copy is byte-identical for transcript "live" and "snapshot":
     // that field reports how the follower happens to be reading right now
@@ -218,9 +244,15 @@ export function presentSessionControl(state: SessionControlState): SessionContro
  * quiet lock reads as waiting, and a malformed lock or an unrecognized
  * shape stays an unclear read-only state that never names an owner.
  */
-export type SessionControlDisplayKind = "observer" | "suspect" | "reconciling" | "unclear";
+export type SessionControlDisplayKind =
+  | "observer"
+  | "suspect"
+  | "reconciling"
+  | "compatibility"
+  | "unclear";
 
 export function sessionControlDisplayKind(state: SessionControlState): SessionControlDisplayKind {
+  if (state.mode === "compatibility") return "compatibility";
   if (state.mode === "reconciling") return "reconciling";
   if (state.mode === "observer") {
     if (state.lockStatus === "live") return "observer";
@@ -236,6 +268,7 @@ const DISPLAY_KIND_STATE: Record<SessionControlDisplayKind, SessionControlState>
   observer: { mode: "observer", lockStatus: "live", transcript: "live" },
   suspect: { mode: "observer", lockStatus: "suspect", transcript: "live" },
   reconciling: { mode: "reconciling", transcript: "live" },
+  compatibility: { mode: "compatibility", transcript: "live" },
   unclear: { mode: "unknown" },
 };
 

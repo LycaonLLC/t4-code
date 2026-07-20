@@ -120,6 +120,7 @@ describe("@omp/protocol app-wire facade", () => {
           rawSession({
             sessionControl: { mode: "observer", lockStatus: "live", transcript: "snapshot" },
           }),
+          rawSession({ sessionControl: { mode: "compatibility", transcript: "live" } }),
           rawSession(null),
           rawSession(),
         ],
@@ -133,8 +134,12 @@ describe("@omp/protocol app-wire facade", () => {
       lockStatus: "live",
       transcript: "snapshot",
     });
-    expect(decoded.sessions[2]?.liveState?.sessionControl).toEqual({ mode: "unknown" });
-    expect(decoded.sessions[3]?.liveState?.sessionControl).toBeUndefined();
+    expect(decoded.sessions[2]?.liveState?.sessionControl).toEqual({
+      mode: "compatibility",
+      transcript: "live",
+    });
+    expect(decoded.sessions[3]?.liveState?.sessionControl).toEqual({ mode: "unknown" });
+    expect(decoded.sessions[4]?.liveState?.sessionControl).toBeUndefined();
 
     expect(
       decodeSessions({

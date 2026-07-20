@@ -6,11 +6,14 @@ import { isAbsolute, join, resolve } from "node:path";
 import {
   createAppserver,
   createRemoteAppserver,
+  FileSessionDiscovery,
+  loadPersistentHostId,
   OmpAuthorityBridgeClient,
   profileSocketPath,
   TranscriptSearchIndex,
   type AppserverHandle,
   type AppserverOptions,
+  type SessionDiscovery,
 } from "@t4-code/host-service";
 
 export const T4_HOST_VERSION = "0.1.30";
@@ -20,6 +23,7 @@ const ORIGIN_LIMIT = 32;
 export interface HostDaemonConfig {
   readonly ompExecutable: string;
   readonly profileId: string;
+  readonly sessionRoot: string;
   readonly stateRoot: string;
   readonly remote?: {
     readonly mode: "direct" | "serve";
@@ -65,6 +69,7 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
   if (argv[0] !== "serve") throw new Error("t4-host requires the serve action");
   let ompExecutable: string | undefined;
   let profileId = "default";
+  let sessionRoot: string | undefined;
   let stateRoot = join(home, ".t4-code", "host");
   let remoteMode: "direct" | "serve" | undefined;
   let remoteAddress: string | undefined;
@@ -75,6 +80,7 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
     const flag = argv[index]!;
     if (flag === "--omp") ompExecutable = value(argv, index++, flag);
     else if (flag === "--profile") profileId = value(argv, index++, flag);
+    else if (flag === "--session-root") sessionRoot = value(argv, index++, flag);
     else if (flag === "--state-root") stateRoot = value(argv, index++, flag);
     else if (flag === "--remote-mode") {
       const mode = value(argv, index++, flag);
@@ -95,6 +101,8 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
   if (!ompExecutable || !isAbsolute(ompExecutable))
     throw new Error("--omp must name an absolute executable path");
   if (!PROFILE.test(profileId)) throw new Error("--profile is invalid");
+  sessionRoot ??= standardOmpSessionRoot(profileId, home);
+  if (!isAbsolute(sessionRoot)) throw new Error("--session-root must be absolute");
   if (!isAbsolute(stateRoot)) throw new Error("--state-root must be absolute");
   if (!remoteMode && (remoteAddress || origins.length || trustedServeProxy || remotePort !== 8787))
     throw new Error("remote flags require --remote-mode");
@@ -108,6 +116,7 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
   return {
     ompExecutable: resolve(ompExecutable),
     profileId,
+    sessionRoot: resolve(sessionRoot),
     stateRoot: resolve(stateRoot),
     ...(remoteMode
       ? {
@@ -121,6 +130,14 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
         }
       : {}),
   };
+}
+
+/** Standard OMP's native default and named-profile session layouts. */
+export function standardOmpSessionRoot(profileId: string, home = homedir()): string {
+  if (!PROFILE.test(profileId)) throw new Error("profile is invalid");
+  return profileId === "default"
+    ? join(home, ".omp", "agent", "sessions")
+    : join(home, ".omp", "profiles", profileId, "agent", "sessions");
 }
 
 export function hostDaemonPaths(
@@ -144,10 +161,15 @@ export function hostDaemonPaths(
 export interface HostDaemonDependencies {
   readonly createBridge?: (config: HostDaemonConfig) => OmpAuthorityBridgeClient;
   readonly createTranscriptSearch?: (path: string) => TranscriptSearchIndex;
+  readonly createCompatibilityDiscovery?: (
+    root: string,
+    hostId: Awaited<ReturnType<typeof loadPersistentHostId>>,
+  ) => SessionDiscovery;
   readonly createLocal?: (options: AppserverOptions) => AppserverHandle;
   readonly createRemote?: typeof createRemoteAppserver;
   readonly onSignal?: (signal: "SIGINT" | "SIGTERM", listener: () => void) => void;
   readonly removeSignal?: (signal: "SIGINT" | "SIGTERM", listener: () => void) => void;
+  readonly reportCompatibility?: () => void;
 }
 
 export async function runHostDaemon(
@@ -162,43 +184,76 @@ export async function runHostDaemon(
       executable: config.ompExecutable,
       environment: { OMP_PROFILE: config.profileId },
     });
-  await bridge.start();
   try {
-    const authorities = bridge.createAuthorities();
-    const hostInfo = await authorities.hostInfo();
     const transcriptSearchAuthority =
       dependencies.createTranscriptSearch?.(paths.transcriptSearchPath) ??
       new TranscriptSearchIndex(paths.transcriptSearchPath);
-    const identity = bridge.identity;
-    const options: AppserverOptions = {
-      ...identity,
-      appserverVersion: T4_HOST_VERSION,
-      appserverBuild: process.env.T4_HOST_BUILD?.slice(0, 128) || "source",
-      socketPath: paths.socketPath,
-      hostIdPath: paths.hostIdPath,
-      attentionOutcomePath: paths.attentionOutcomePath,
-      sessionAuthority: authorities.sessionAuthority,
-      discovery: authorities.discovery,
-      operationsAuthority: authorities.operationsAuthority,
-      usageAuthority: authorities.usageAuthority,
-      transcriptSearchAuthority,
-      projectRootForProject: authorities.projectRootForProject,
-      lockCheck: authorities.lockCheck,
-      lockStatus: authorities.lockStatus,
-      transcriptImageRoot: hostInfo.transcriptImageRoot,
-      rpcChildInvocation: { executable: config.ompExecutable, prefixArgv: [] },
-      ...(process.platform === "darwin"
-        ? {
-            projectRevealer: async (root: string): Promise<boolean> => {
-              const child = Bun.spawn(["/usr/bin/open", "-R", root], {
-                stdout: "ignore",
-                stderr: "ignore",
-              });
-              return (await child.exited) === 0;
-            },
-          }
-        : {}),
-    };
+    let options: AppserverOptions;
+    try {
+      await bridge.start();
+      const authorities = bridge.createAuthorities();
+      const hostInfo = await authorities.hostInfo();
+      const identity = bridge.identity;
+      options = {
+        ...identity,
+        appserverVersion: T4_HOST_VERSION,
+        appserverBuild: process.env.T4_HOST_BUILD?.slice(0, 128) || "source",
+        socketPath: paths.socketPath,
+        hostIdPath: paths.hostIdPath,
+        attentionOutcomePath: paths.attentionOutcomePath,
+        sessionAuthority: authorities.sessionAuthority,
+        discovery: authorities.discovery,
+        operationsAuthority: authorities.operationsAuthority,
+        usageAuthority: authorities.usageAuthority,
+        transcriptSearchAuthority,
+        projectRootForProject: authorities.projectRootForProject,
+        lockCheck: authorities.lockCheck,
+        lockStatus: authorities.lockStatus,
+        transcriptImageRoot: hostInfo.transcriptImageRoot,
+        rpcChildInvocation: { executable: config.ompExecutable, prefixArgv: [] },
+        ...(process.platform === "darwin"
+          ? {
+              projectRevealer: async (root: string): Promise<boolean> => {
+                const child = Bun.spawn(["/usr/bin/open", "-R", root], {
+                  stdout: "ignore",
+                  stderr: "ignore",
+                });
+                return (await child.exited) === 0;
+              },
+            }
+          : {}),
+      };
+    } catch {
+      await bridge.stop().catch(() => undefined);
+      if (dependencies.reportCompatibility) dependencies.reportCompatibility();
+      else
+        process.stderr.write(
+          "T4 host: OMP control bridge unavailable; using view-only compatibility mode.\n",
+        );
+      const compatibilityHostId = await loadPersistentHostId(paths.hostIdPath);
+      const discovery =
+        dependencies.createCompatibilityDiscovery?.(config.sessionRoot, compatibilityHostId) ??
+        new FileSessionDiscovery(config.sessionRoot, undefined, compatibilityHostId, true);
+      options = {
+        hostId: compatibilityHostId,
+        ompVersion: "standard",
+        ompBuild: "filesystem-read-only",
+        appserverVersion: T4_HOST_VERSION,
+        appserverBuild: process.env.T4_HOST_BUILD?.slice(0, 128) || "source",
+        socketPath: paths.socketPath,
+        hostIdPath: paths.hostIdPath,
+        attentionOutcomePath: paths.attentionOutcomePath,
+        discovery,
+        readOnlyCompatibility: true,
+        discoveryPollMs: 1_000,
+        transcriptSearchAuthority,
+        supportedCapabilities: ["sessions.read"],
+        supportedFeatures: ["resume", "session.observer", "transcript.page", "transcript.search"],
+        lockCheck: () => {
+          throw new Error("standard OMP compatibility sessions are view-only");
+        },
+      };
+    }
     let appserver: AppserverHandle;
     try {
       appserver = config.remote

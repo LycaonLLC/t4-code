@@ -61,7 +61,7 @@ export interface WorkspaceSession {
    * and on cached/offline rows where freshness copy wins. Values mirror
    * SessionControlDisplayKind in session-observer.ts.
    */
-  readonly control?: "observer" | "suspect" | "reconciling" | "unclear";
+  readonly control?: "observer" | "suspect" | "reconciling" | "compatibility" | "unclear";
 }
 
 export interface WorkspaceData {

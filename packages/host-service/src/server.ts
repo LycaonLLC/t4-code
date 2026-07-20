@@ -735,6 +735,9 @@ export class LocalAppserver implements AppserverHandle {
 	readonly socketPath: string;
 	#clock: Clock;
 	#discovery: SessionDiscovery;
+	#readOnlyCompatibility: boolean;
+	#discoveryPollMs?: number;
+	#discoveryPollTimer?: ReturnType<typeof setInterval>;
 	#authority?: SessionAuthority;
 	#operations?: DesktopOperationDispatcher;
 	#usageAuthority?: AppserverUsageAuthority;
@@ -879,6 +882,28 @@ export class LocalAppserver implements AppserverHandle {
 		this.#workspaceTargetPathForProject = options.workspaceTargetPathForProject;
 		this.#onOwnerAcquired = options.onOwnerAcquired;
 		this.#discovery = options.discovery ?? options.sessionAuthority ?? { list: async () => [] };
+		this.#readOnlyCompatibility = options.readOnlyCompatibility === true;
+		if (
+			this.#readOnlyCompatibility &&
+			(options.sessionAuthority !== undefined ||
+				options.operationsAuthority !== undefined ||
+				options.runtimeAdapters !== undefined ||
+				options.workspaceAuthority !== undefined)
+		)
+			throw new Error("read-only compatibility cannot install mutation authorities");
+		if (
+			this.#readOnlyCompatibility &&
+			options.supportedCapabilities?.some((capability) => capability !== "sessions.read")
+		)
+			throw new Error("read-only compatibility grants only sessions.read");
+		this.#discoveryPollMs = options.discoveryPollMs;
+		if (
+			this.#discoveryPollMs !== undefined &&
+			(!Number.isSafeInteger(this.#discoveryPollMs) ||
+				this.#discoveryPollMs < 250 ||
+				this.#discoveryPollMs > 60_000)
+		)
+			throw new Error("discoveryPollMs must be between 250 and 60000");
 		this.#imageUploads = new ImageUploadStore({ root: `${this.socketPath}.images` });
 		this.#transcriptImages = options.transcriptImageRoot
 			? new TranscriptImageReader({ root: options.transcriptImageRoot })
@@ -911,7 +936,9 @@ export class LocalAppserver implements AppserverHandle {
 		this.#appserverBuild = options.appserverBuild ?? "local";
 		this.#supportedFeatures = new Set(appserverSupportedFeatures(options));
 		this.#remoteSupportedFeatures = new Set(appserverSupportedFeatures(options, true));
-		const requested = appserverSupportedCapabilities(options);
+		const requested = this.#readOnlyCompatibility
+			? ["sessions.read"]
+			: appserverSupportedCapabilities(options);
 		const implemented = new Set([
 			"sessions.read",
 			"sessions.manage",
@@ -1089,6 +1116,11 @@ export class LocalAppserver implements AppserverHandle {
 					throw error;
 				}
 			}
+			if (this.#discoveryPollMs !== undefined) {
+				this.#discoveryPollTimer = setInterval(() => {
+					void this.refreshSessions().catch(() => undefined);
+				}, this.#discoveryPollMs);
+			}
 		} catch (error) {
 			try {
 				await this.cleanupPartial();
@@ -1109,6 +1141,8 @@ export class LocalAppserver implements AppserverHandle {
 		)
 			return;
 		this.#stopping = true;
+		if (this.#discoveryPollTimer) clearInterval(this.#discoveryPollTimer);
+		this.#discoveryPollTimer = undefined;
 		this.#inventoryGeneration += 1;
 		this.#sessionRefresh = undefined;
 		this.#sessionLoads.clear();
@@ -2733,6 +2767,16 @@ export class LocalAppserver implements AppserverHandle {
 		return command.command === "session.state.get" || !OBSERVER_READ_COMMANDS.has(command.command);
 	}
 	private observerBarrierOutcome(command: CommandFrame): CommandOutcome {
+		const control = command.sessionId
+			? this.#projections.get(command.sessionId)?.value.ref.liveState?.sessionControl
+			: undefined;
+		if (control?.mode === "compatibility")
+			return {
+				frame: response(this.hostId, command, false, undefined, {
+					code: "capability_denied",
+					message: "standard OMP compatibility sessions are view-only",
+				}),
+			};
 		return {
 			frame: response(this.hostId, command, false, undefined, {
 				code: "session_locked",
@@ -4001,6 +4045,8 @@ export class LocalAppserver implements AppserverHandle {
 			const projection = this.#projections.get(record.sessionId);
 			if (!projection) {
 				const inserted = new SessionProjection(this.hostId, record, this.epoch, this.#ringSize);
+				if (this.#readOnlyCompatibility)
+					inserted.setSessionControl({ mode: "compatibility", transcript: "snapshot" });
 				const outcome = this.#attentionOutcomes?.get(record.sessionId);
 				if (outcome) inserted.setLatestOutcome(outcome);
 				this.#projections.set(record.sessionId, inserted);
@@ -4010,6 +4056,16 @@ export class LocalAppserver implements AppserverHandle {
 					? projection.reconcileObserverRecord(record)
 					: projection.reconcileRecord(record);
 				if (output && publishChanges) await this.broadcastIndex(output);
+				if (
+					this.#readOnlyCompatibility &&
+					projection.value.ref.liveState?.sessionControl?.mode !== "compatibility"
+				) {
+					const control = projection.setSessionControl({
+						mode: "compatibility",
+						transcript: "snapshot",
+					});
+					if (control && publishChanges) await this.broadcastIndex(control);
+				}
 			}
 		}
 		for (const [sessionId, pending] of this.#createdPending) {
@@ -4224,6 +4280,24 @@ export class LocalAppserver implements AppserverHandle {
 		if (!record || !projection) return;
 		// A local child owns the session. Never let external bytes rebase it.
 		if (this.#supervisors.has(sessionId)) return;
+		if (this.#readOnlyCompatibility) {
+			let observer = this.#observers.get(sessionId);
+			if (!observer) {
+				observer = new SessionTranscriptObserver(record.path, this.hostId);
+				this.#observers.set(sessionId, observer);
+			}
+			const poll = await observer.poll();
+			if (!this.observerIsCurrent(sessionId, observer, record, projection)) return;
+			const matches = poll.record?.sessionId === sessionId;
+			if (matches) await this.applyObserverPoll(sessionId, projection, poll);
+			if (!this.observerIsCurrent(sessionId, observer, record, projection)) return;
+			const control = projection.setSessionControl({
+				mode: "compatibility",
+				transcript: matches ? poll.transcript : "snapshot",
+			});
+			if (control) await this.broadcastIndex(control);
+			return;
+		}
 		let status: SessionLockStatus;
 		try {
 			status = await this.#lockStatus(record);

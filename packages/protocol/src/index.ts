@@ -37,6 +37,12 @@ function isKnownSessionControl(value: unknown): boolean {
       (value.transcript === "live" || value.transcript === "snapshot")
     );
   }
+  if (value.mode === "compatibility") {
+    return (
+      hasExactKeys(value, ["mode", "transcript"]) &&
+      (value.transcript === "live" || value.transcript === "snapshot")
+    );
+  }
   return (
     value.mode === "reconciling" &&
     hasExactKeys(value, ["mode", "transcript"]) &&

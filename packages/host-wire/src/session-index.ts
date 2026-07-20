@@ -113,6 +113,15 @@ export type SessionControlState =
 	| {
 			mode: "reconciling";
 			transcript: SessionObserverTranscript;
+	  }
+	| {
+			/**
+			 * T4 is following standard OMP's durable session file without a
+			 * control bridge. The transcript may advance, but writes and live
+			 * lifecycle claims are unavailable by construction.
+			 */
+			mode: "compatibility";
+			transcript: SessionObserverTranscript;
 	  };
 export interface SessionLiveState {
 	sessionControl?: SessionControlState;
@@ -169,6 +178,13 @@ function decodeSessionControl(value: unknown, path: string): SessionControlState
 			fail("INVALID_FRAME", "invalid reconciling transcript state", `${path}.transcript`);
 		if (Object.keys(control).some(key => !["mode", "transcript"].includes(key)))
 			fail("INVALID_FRAME", "unknown reconciling session control field", path);
+		return control as unknown as SessionControlState;
+	}
+	if (control.mode === "compatibility") {
+		if (control.transcript !== "live" && control.transcript !== "snapshot")
+			fail("INVALID_FRAME", "invalid compatibility transcript state", `${path}.transcript`);
+		if (Object.keys(control).some((key) => !["mode", "transcript"].includes(key)))
+			fail("INVALID_FRAME", "unknown compatibility session control field", path);
 		return control as unknown as SessionControlState;
 	}
 	fail("INVALID_FRAME", "invalid session control mode", `${path}.mode`);
