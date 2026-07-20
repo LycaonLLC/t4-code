@@ -38,7 +38,9 @@ export function createSafeServiceEnvironment(
   return safeEnvironment;
 }
 
-const APP_SERVER_PROBE_TIMEOUT_MS = 1_500;
+// Cold OMP startup can exceed 1.5 seconds on macOS. A shorter deadline can
+// reject the verified runtime before it returns a healthy status response.
+const APP_SERVER_PROBE_TIMEOUT_MS = 3_000;
 const APP_SERVER_PROBE_MAX_OUTPUT_BYTES = 16 * 1024;
 
 export class OmpAppserverCompatibilityError extends Error {
@@ -65,6 +67,13 @@ export interface OmpAppserverProbeOptions
   extends Omit<OmpExecutableDiscoveryOptions, "homeDirectory"> {
   readonly profileId?: string;
 }
+
+export type PathOmpCompatibility =
+  | "compatible"
+  | "incompatible"
+  | "missing"
+  | "mixed"
+  | "unavailable";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -186,6 +195,51 @@ export async function discoverOmpExecutable(
   }
   if (incompatible) throw new OmpAppserverCompatibilityError();
   return undefined;
+}
+
+/**
+ * Check every `omp` command on PATH. T4 may have its own compatible bundled
+ * runtime while another shell or app launch path selects an older build,
+ * which makes cross-app activity look idle or arrive in chunks.
+ */
+export async function inspectPathOmpCompatibility(
+  options: Omit<OmpExecutableDiscoveryOptions, "homeDirectory"> = {},
+): Promise<PathOmpCompatibility> {
+  const environment = options.environment ?? process.env;
+  const runner = options.runner ?? new NodeProcessRunner();
+  const timeoutMs = options.timeoutMs ?? APP_SERVER_PROBE_TIMEOUT_MS;
+  const maxOutputBytes = options.maxOutputBytes ?? APP_SERVER_PROBE_MAX_OUTPUT_BYTES;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10_000) return "unavailable";
+  if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 1 || maxOutputBytes > 64 * 1024)
+    return "unavailable";
+
+  const entries = (environment.PATH ?? "")
+    .split(":")
+    .filter((entry) => entry.startsWith("/") && !entry.includes("\0"))
+    .slice(0, 64);
+  const seen = new Set<string>();
+  let compatible = 0;
+  let incompatible = 0;
+  let unavailable = 0;
+  for (const entry of entries) {
+    const candidate = join(entry, "omp");
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    try {
+      await access(candidate, fsConstants.X_OK);
+    } catch {
+      continue;
+    }
+    const state = await probesAppserverStatus(candidate, environment, runner, timeoutMs, maxOutputBytes);
+    if (state === "running" || state === "stopped") compatible += 1;
+    else if (state === "incompatible") incompatible += 1;
+    else unavailable += 1;
+  }
+  if (compatible > 0 && (incompatible > 0 || unavailable > 0)) return "mixed";
+  if (compatible > 0) return "compatible";
+  if (incompatible > 0) return "incompatible";
+  if (unavailable > 0) return "unavailable";
+  return "missing";
 }
 
 export async function probeOmpAppserver(

@@ -2142,6 +2142,7 @@ describe("session lifecycle", () => {
     });
     expect(deriveWorkspaceData(controller.getSnapshot()).sessions[0]).toMatchObject({
       freshness: "live",
+      lifecycle: "active",
       status: "working",
     });
   });
@@ -2862,6 +2863,7 @@ describe("workspace projection safety", () => {
       });
 
       expect(deriveWorkspaceData(controller.getSnapshot()).sessions[0]).toMatchObject({
+        lifecycle: "idle",
         status: "working",
         latestTurnCompletedAt: null,
       });

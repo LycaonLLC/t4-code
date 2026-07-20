@@ -167,7 +167,7 @@ describe("presentSessionControl", () => {
     }
     const live = presentSessionControl({ mode: "observer", lockStatus: "live", transcript: "live" });
     expect(live.bannerDetail).toBe(
-      "Finished lines land here as the other app saves them. To continue here, run /continue-in-t4 in the other app — or just exit it.",
+      "Following saved output, not a token-by-token stream. Finished steps appear here as the other app saves them. To continue here, run /continue-in-t4 in the other app — or just exit it.",
     );
   });
 

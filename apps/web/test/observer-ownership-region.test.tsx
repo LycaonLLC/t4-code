@@ -53,7 +53,7 @@ describe("observer ownership region under freshness churn", () => {
       expect(markup).toContain('data-session-control-banner="observer"');
       expect(markup).toContain("Active in another app");
       expect(markup).toContain(
-        "Finished lines land here as the other app saves them. To continue here, run /continue-in-t4 in the other app — or just exit it.",
+        "Following saved output, not a token-by-token stream. Finished steps appear here as the other app saves them. To continue here, run /continue-in-t4 in the other app — or just exit it.",
       );
     }
   });
