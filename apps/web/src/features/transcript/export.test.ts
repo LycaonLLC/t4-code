@@ -195,6 +195,24 @@ describe("transcriptRowsToMarkdown", () => {
     expect(out).toContain("> Unrecognized entry `future-widget`");
   });
 
+  it("serializes turn review summaries", () => {
+    const out = transcriptRowsToMarkdown(
+      [
+        {
+          id: "review-turn-1",
+          kind: "turn-review",
+          turnId: "turn-1",
+          changes: 2,
+          additions: 14,
+          deletions: 3,
+        },
+      ],
+      meta(),
+    );
+    expect(out).toContain("### Review changes");
+    expect(out).toContain("2 files · +14 −3");
+  });
+
   it("omits the transient working row", () => {
     const out = transcriptRowsToMarkdown(
       [{ id: "w1", kind: "working", startedAt: null, activity: "working" }],

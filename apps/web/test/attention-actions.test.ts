@@ -1,4 +1,5 @@
 import {
+  OMP_RUNTIME_INTEGRATION,
   ProjectionStore,
   type DesktopRuntimeController,
   type DesktopRuntimeSnapshot,
@@ -35,6 +36,7 @@ function liveSnapshot(pending: readonly Record<string, unknown>[]): DesktopRunti
   } as never);
   return {
     version: 1,
+    integration: OMP_RUNTIME_INTEGRATION,
     platform: "darwin",
     desktopVersion: "test",
     startState: "started",

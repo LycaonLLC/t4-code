@@ -18,22 +18,25 @@ import {
 import type { CommandResult } from "@t4-code/protocol/desktop-ipc";
 
 import { resolveLiveSession } from "../../platform/live-workspace.ts";
-import {
-  presentSessionControl,
-  readSessionControl,
-} from "../session-runtime/session-observer.ts";
+import { presentSessionControl, readSessionControl } from "../session-runtime/session-observer.ts";
 import { sessionWriteLink } from "../session-runtime/session-inventory.ts";
 import {
-  cancelConfirmedAgent,
-  type AgentCancelRuntime,
-} from "../session-runtime/agent-cancel.ts";
+  transcriptImageSourceForSession,
+  type TranscriptImageSource,
+} from "../session-runtime/transcript-images.ts";
+import type { TranscriptArtifactReference } from "../transcript/artifact-metadata.ts";
+import { cancelConfirmedAgent, type AgentCancelRuntime } from "../session-runtime/agent-cancel.ts";
 import {
+  beginTurnReviewAction,
   createInspectorStore,
   installInspectorStoreFactory,
   resolveDir,
   resolvePreview,
   resolveFileWriteOutcome,
+  rejectTurnReviewAction,
   resolveReviewOutcome,
+  resolveTurnReview,
+  resolveTurnReviewOutcome,
   type InspectorController,
   type InspectorStoreApi,
 } from "./inspector-store.ts";
@@ -48,6 +51,11 @@ import {
   sameListing,
   sameReviewFiles,
 } from "./live-projection.ts";
+import {
+  decodeTurnReviewApplyResult,
+  decodeTurnReviewSnapshot,
+  reviewFilesFromTurnSnapshot,
+} from "./turn-review.ts";
 import type {
   AgentNode,
   FileTreeNode,
@@ -64,6 +72,43 @@ import type {
 export interface LiveInspectorRuntime extends AgentCancelRuntime {
   getSnapshot(): DesktopRuntimeSnapshot;
   subscribe(listener: (snapshot: DesktopRuntimeSnapshot) => void): () => void;
+}
+
+async function readTurnPatch(
+  source: TranscriptImageSource,
+  reference: TranscriptArtifactReference,
+): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    let settled = false;
+    let release: () => void = () => undefined;
+    let unsubscribe: () => void = () => undefined;
+    const timeout = setTimeout(() => finish(new Error("Turn patch read timed out.")), 30_000);
+    const finish = (outcome: string | Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      unsubscribe();
+      if (outcome instanceof Error) {
+        release();
+        reject(outcome);
+        return;
+      }
+      void fetch(outcome)
+        .then((response) => response.text())
+        .then(resolve, reject)
+        .finally(release);
+    };
+    const inspect = () => {
+      const snapshot = source.getSnapshot(reference);
+      if (snapshot.status === "ready") finish(snapshot.url);
+      else if (snapshot.status === "error" || snapshot.status === "unavailable") {
+        finish(new Error(snapshot.reason));
+      }
+    };
+    unsubscribe = source.subscribe(reference, inspect);
+    release = source.retain(reference);
+    inspect();
+  });
 }
 
 const ENABLED: PaneActionAvailability = Object.freeze({ enabled: true, reason: null });
@@ -235,7 +280,10 @@ export function createLiveInspectorStore(
   /** Directory paths resolved from pushed file frames; refreshed on sync. */
   const frameDirs = new Set<string>();
   const pendingDirs = new Map<string, string>();
-  const pendingPreviews = new Map<string, { readonly path: string; readonly baseRevision: string | null }>();
+  const pendingPreviews = new Map<
+    string,
+    { readonly path: string; readonly baseRevision: string | null }
+  >();
   const pendingReviewApplies = new Map<string, string>();
   let reviewFiles: readonly ReviewFile[] = [];
   let reviewIdByPath: ReadonlyMap<string, string> = new Map();
@@ -269,12 +317,7 @@ export function createLiveInspectorStore(
 
   const assertAgentCancelWritable = (): void => {
     const snapshot = runtime.getSnapshot();
-    const support = commandAvailability(
-      snapshot,
-      address.targetId,
-      address.hostId,
-      "agent.cancel",
-    );
+    const support = commandAvailability(snapshot, address.targetId, address.hostId, "agent.cancel");
     if (!support.enabled) throw new Error(support.reason ?? "Agent cancellation is unavailable.");
     if (writableNow(snapshot)) return;
     const control = sessionControlNow(snapshot);
@@ -315,17 +358,56 @@ export function createLiveInspectorStore(
       });
     },
     performReview(action, path) {
-      if (action !== "apply") return;
+      const review = api.getState().review;
       const snapshot = runtime.getSnapshot();
       if (
-        !commandAvailability(snapshot, address.targetId, address.hostId, "review.apply").enabled
+        !commandAvailability(snapshot, address.targetId, address.hostId, "review.apply").enabled ||
+        !writableNow(snapshot)
       ) {
         return;
       }
-      if (!writableNow(snapshot)) return;
-      const reviewId = reviewIdByPath.get(path);
+      if (review.source === "turn" && typeof review.turnId === "string") {
+        const request = { turnId: review.turnId, path, action } as const;
+        const reviewRevision = beginTurnReviewAction(api, request);
+        if (reviewRevision === null) return;
+        const protocolAction = action === "apply" ? "keep" : "discard";
+        void runtime
+          .command(address.targetId, {
+            hostId: wireHostId,
+            sessionId: wireSessionId,
+            command: "review.apply",
+            args: { turnId: request.turnId, path, action: protocolAction },
+            expectedRevision: brandRevision(reviewRevision),
+          })
+          .then((result) => {
+            if (!result.accepted) {
+              rejectTurnReviewAction(api, request, "The host did not confirm this review action.");
+              return;
+            }
+            const outcome = decodeTurnReviewApplyResult(result.result, {
+              turnId: request.turnId,
+              path,
+              action: protocolAction,
+            });
+            resolveTurnReviewOutcome(api, request, {
+              applyState: outcome.state,
+              resultingRevision: outcome.resultingRevision,
+            });
+          })
+          .catch(() => {
+            rejectTurnReviewAction(
+              api,
+              request,
+              "The connection dropped before the host confirmed this review action.",
+            );
+          });
+        return;
+      }
+      if (action !== "apply") return;
       const revisionValue = expectedRevision();
-      if (reviewId === undefined || revisionValue === undefined) return;
+      if (revisionValue === undefined) return;
+      const reviewId = reviewIdByPath.get(path);
+      if (reviewId === undefined) return;
       void runtime
         .command(address.targetId, {
           hostId: wireHostId,
@@ -335,13 +417,52 @@ export function createLiveInspectorStore(
           expectedRevision: revisionValue,
         })
         .then((result) => {
-          // The host decides through its confirmation challenge; only an ok
-          // response frame (matched in sync) flips the row to applied.
           if (result.accepted) pendingReviewApplies.set(result.requestId, path);
         })
         .catch(() => {
           // Outcome unknown: the row stays pending and is never resent.
         });
+    },
+    loadTurnReview(turnId) {
+      const snapshot = runtime.getSnapshot();
+      const readable = commandAvailability(
+        snapshot,
+        address.targetId,
+        address.hostId,
+        "files.diff",
+      );
+      if (!readable.enabled) {
+        resolveTurnReview(api, turnId, {
+          error: readable.reason ?? "This host cannot load turn reviews.",
+        });
+        return;
+      }
+      void sendCommand("files.diff", { turnId }, false)
+        .then(async (result) => {
+          if (!result.accepted) {
+            resolveTurnReview(api, turnId, { error: "The host could not load this turn review." });
+            return;
+          }
+          const review = decodeTurnReviewSnapshot(result.result);
+          if (review.turnId !== turnId) throw new Error("Turn review identity mismatch.");
+          resolveTurnReview(api, turnId, {
+            files: reviewFilesFromTurnSnapshot(review),
+            revision: review.headTree,
+          });
+          if (review.patch === null) return;
+          const source = transcriptImageSourceForSession(address.hostId, address.sessionId);
+          if (source === null) return;
+          const patch = await readTurnPatch(source, review.patch);
+          resolveTurnReview(api, turnId, {
+            files: reviewFilesFromTurnSnapshot(review, patch),
+            revision: review.headTree,
+          });
+        })
+        .catch(() =>
+          resolveTurnReview(api, turnId, {
+            error: "The connection dropped before the host answered.",
+          }),
+        );
     },
     loadDir(path) {
       const snapshot = runtime.getSnapshot();
@@ -521,7 +642,20 @@ export function createLiveInspectorStore(
     reviewIdByPath = review.reviewIdByPath;
     if (!sameReviewFiles(reviewFiles, review.files)) {
       reviewFiles = review.files;
-      store.setState((state) => ({ review: { ...state.review, files: review.files } }));
+      store.setState((state) =>
+        state.review.source === "turn"
+          ? state
+          : {
+              review: {
+                ...state.review,
+                files: review.files,
+                source: "legacy",
+                turnId: null,
+                loading: false,
+                error: null,
+              },
+            },
+      );
     }
 
     // Settle command answers that arrived as response frames.
@@ -549,7 +683,11 @@ export function createLiveInspectorStore(
         store,
         typeof content === "string"
           ? { kind: "code", path: pending.path, text: content, truncated: content.length >= 8192 }
-          : { kind: "diagnostic", path: pending.path, message: "The host could not read this file." },
+          : {
+              kind: "diagnostic",
+              path: pending.path,
+              message: "The host could not read this file.",
+            },
         pending.baseRevision,
       );
     }

@@ -12,7 +12,7 @@ T4 Code needs an OMP build with desktop appserver support. For v0.1.30, use the 
 
 T4 Code v0.1.30 was verified with OMP 17.0.5 built from [`09835b92`](https://github.com/lyc-aon/oh-my-pi/commit/09835b929cd028e7e3f800b3e4203e3d1f37931c), tagged [`t4code-17.0.5-appserver-8`](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-8). That public integration is based on the official upstream [`v17.0.5`](https://github.com/can1357/oh-my-pi/tree/v17.0.5) tag at [`9fd6e971`](https://github.com/can1357/oh-my-pi/commit/9fd6e97113f5ed3a847e66d346970efdf8afcad9). It recovers safely from a crashed backend whose old process ID still appears alive, while preserving a responsive owner. It also includes privacy-safe project reveal, fast lazy session indexing, cross-session attention and transcript search, the negotiated browser-preview command surface, redacted Codex transport diagnostics, the versioned Agent View lifecycle contract, session-owned cancellation, lock-aware session observation, complete transcript reconciliation, the cooperative `/continue-in-t4` handoff, and deterministic session ordering. Fork CI verifies the exact upstream base, ancestry, release gates, and published binaries. The official upstream v17.0.5 tag has no `appserver` command, so it cannot host T4 Code. The verified runtime is a normal build from the public `lyc-aon/oh-my-pi` source. T4 Code vendors `@oh-my-pi/app-wire` 0.6.2 from integration commit [`04229b1f`](https://github.com/lyc-aon/oh-my-pi/commit/04229b1f46547ac7c0617e55a993496ec9725f46), source tree `8400a3af618e8af11cccf6b20aadcf3a22baf9a1`.
 
-The current source tree uses the same published `@oh-my-pi/app-wire` 0.6.2 contract. It supplies privacy-safe local project reveal, bounded cross-session transcript search, historical context, and the browser-preview wire contract.
+The development tree now owns the protocol source and generic host service in `@t4-code/host-wire` and `@t4-code/host-service`. The frozen `@oh-my-pi/app-wire` 0.7.0 tarball remains only as a compatibility snapshot for the current OMP bridge. OMP still owns session files, locks, agent execution, and takeover decisions. The verified runtime continues to carry the legacy embedded host copy until a thin bridge release replaces it, so ordinary upstream OMP is not yet compatible.
 
 | Platform | Arch                  | Package                                   |
 | -------- | --------------------- | ----------------------------------------- |
@@ -80,7 +80,8 @@ chmod +x T4-Code-0.1.30-linux-x86_64.AppImage
 
 - **Sessions.** Browse sessions grouped by their working folder, create new ones, and switch between them. Rename, terminate a stuck runtime, archive, restore, or permanently delete a session from its menu. Recently used sessions stay warm, so switching back is instant and nothing is replayed twice.
 - **Composer.** Send prompts, use slash commands (`/model`, `/compact`, `/retry`, `/review`, `/terminal`, and more), and change the session's model, thinking level, or fast mode inline.
-- **Panes.** Watch subagents (and cancel them), apply reviews, browse and preview files on the host, and attach to live terminals with real keyboard input and resize.
+- **Panes.** Watch subagents (and cancel them), inspect turn-owned code changes, keep or discard each changed file, browse and preview files on the host, and attach to live terminals with real keyboard input and resize.
+- **Artifacts.** Preview images, patches, text, and downloadable tool output directly beside the transcript entry that produced them. Large bytes load only when requested, remain scoped to the session, and show an explicit unavailable state offline.
 - **Browser (desktop).** The built-in native Browser workspace is separate from host-backed Browser Preview. It manages stable native surfaces with their own URL, title, lifecycle, bounds, and visibility state. New tabs use the credential-isolated `isolated-session` profile. An authenticated profile is never auto-selected: use requires the exact profile explicitly chosen by the user with opt-in. Browser automation is limited to the native surface contract; touch input currently reports unsupported.
 - **Browser preview.** Open session-linked host previews to inspect page layouts, follow live navigations, and interact with the page via coordinate-mapped clicks and keyboard input. Preview control remains subject to the host's advertised authority and capability gates.
 - **Settings.** Edit host settings over the wire, with an explicit host selector when several hosts are connected; each host keeps its own drafts. Edits stage locally and only apply when the host confirms; a dropped connection never silently writes anything.
@@ -128,13 +129,14 @@ native release checks.
 ## Architecture
 
 ```
-apps/desktop   Electron main process: window, local omp discovery,
-               appserver lifecycle, pairing, credential storage
+apps/desktop   Electron main process: window, local OMP discovery,
+               host lifecycle, pairing, credential storage
 apps/web       React UI (Vite): sessions, composer, panes, settings
-packages/      client, protocol, remote, service-manager, ui
+packages/      client, protocol, host-wire, host-service, remote,
+               service-manager, ui
 ```
 
-The UI talks to an OMP host over typed WebSocket frames (`omp-app/1`, via the vendored `@oh-my-pi/app-wire`). State flows host → app as frames; user actions flow app → host as commands. The app projects what it receives and never fabricates state.
+The UI talks to the T4 host over typed WebSocket frames (`omp-app/1`, owned by `@t4-code/host-wire`). The host delegates authoritative session work to OMP through a narrow runtime bridge. State flows host → app as frames; user actions flow app → host as commands. The app projects what it receives and never fabricates state.
 
 ## Security and license
 

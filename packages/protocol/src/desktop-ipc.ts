@@ -15,7 +15,7 @@ import {
   type ResultError,
   type SessionId,
   type TerminalId,
-} from "@oh-my-pi/app-wire";
+} from "@t4-code/host-wire";
 import {
   ompServerEventFromFrame,
   type OmpServerFrame,

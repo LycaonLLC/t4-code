@@ -26,6 +26,7 @@ import {
   type FileTreeNode,
   type InspectorActionAvailability,
   type ReviewComment,
+  type ReviewApplyState,
   type ReviewFile,
   type ShellInventoryRow,
 } from "./model.ts";
@@ -43,6 +44,12 @@ export interface FileDraft {
   readonly message: string | null;
 }
 
+export interface PendingTurnReviewAction {
+  readonly turnId: string;
+  readonly path: string;
+  readonly action: "apply" | "discard";
+}
+
 export interface ReviewViewState {
   readonly files: readonly ReviewFile[];
   readonly comments: readonly ReviewComment[];
@@ -50,6 +57,15 @@ export interface ReviewViewState {
   readonly view: "unified" | "split";
   readonly wrap: boolean;
   readonly viewedByPath: Readonly<Record<string, boolean>>;
+  /** Pushed ReviewFrame remains the legacy source; turn reads are explicit. */
+  readonly source?: "legacy" | "turn" | null;
+  readonly turnId?: string | null;
+  readonly loading?: boolean;
+  readonly error?: string | null;
+  /** Worktree tree revision used to serialize turn-scoped decisions. */
+  readonly revision?: string | null;
+  /** At most one turn decision may be in flight for this inspector. */
+  readonly pendingAction?: PendingTurnReviewAction | null;
   /** Line the comment composer is open on, if any. */
   readonly draftAnchor: { readonly line: number; readonly side: "old" | "new" } | null;
 }
@@ -109,6 +125,7 @@ export interface InspectorActions {
   closeCommentDraft(): void;
   addComment(path: string, line: number, side: "old" | "new", text: string): void;
   removeComment(commentId: string): void;
+  loadTurnReview(turnId: string): void;
   applyReviewFile(path: string): void;
   discardReviewFile(path: string): void;
   setFilesQuery(query: string): void;
@@ -134,6 +151,8 @@ export interface InspectorController {
   readonly kind: "fixture" | "desktop";
   /** Scoped agent control (steer/cancel/wake) after explicit confirmation. */
   performControl(scope: AgentControlScope): void;
+  /** Explicitly fetches one durable turn review snapshot. */
+  loadTurnReview?(turnId: string): void;
   /** Review apply/discard for one file after explicit confirmation. */
   performReview(action: "apply" | "discard", path: string): void;
   /** Lazy directory listing; resolves through `resolveDir`. */
@@ -151,6 +170,12 @@ const INITIAL_REVIEW: ReviewViewState = {
   view: "unified",
   wrap: false,
   viewedByPath: {},
+  source: null,
+  turnId: null,
+  loading: false,
+  error: null,
+  revision: null,
+  pendingAction: null,
   draftAnchor: null,
 };
 
@@ -246,8 +271,7 @@ export function createInspectorStore(options: CreateInspectorStoreOptions): Insp
       })),
     openCommentDraft: (line, side) =>
       set((state) => ({ review: { ...state.review, draftAnchor: { line, side } } })),
-    closeCommentDraft: () =>
-      set((state) => ({ review: { ...state.review, draftAnchor: null } })),
+    closeCommentDraft: () => set((state) => ({ review: { ...state.review, draftAnchor: null } })),
     addComment: (path, line, side, text) => {
       const trimmed = text.trim();
       if (trimmed.length === 0) return;
@@ -275,6 +299,22 @@ export function createInspectorStore(options: CreateInspectorStoreOptions): Insp
           comments: state.review.comments.filter((comment) => comment.id !== commentId),
         },
       })),
+    loadTurnReview: (turnId) => {
+      if (turnId.length === 0) return;
+      set((state) => ({
+        review: {
+          ...state.review,
+          source: "turn",
+          turnId,
+          loading: true,
+          error: null,
+          revision: null,
+          pendingAction: null,
+          selectedPath: null,
+        },
+      }));
+      controller?.loadTurnReview?.(turnId);
+    },
     applyReviewFile: (path) => controller?.performReview("apply", path),
     discardReviewFile: (path) => controller?.performReview("discard", path),
     setFilesQuery: (query) => set((state) => ({ files: { ...state.files, query } })),
@@ -442,7 +482,10 @@ export function resolvePreview(
         },
       };
     }
-    if (preview.text === draft.originalText || (draft.status === "saving" && preview.text === draft.text)) {
+    if (
+      preview.text === draft.originalText ||
+      (draft.status === "saving" && preview.text === draft.text)
+    ) {
       if (draft.status !== "clean") return { files };
       return {
         files: {
@@ -502,9 +545,7 @@ export function resolveFileWriteOutcome(
         files: {
           ...state.files,
           draftsByPath,
-          ...(state.files.selectedPath === path
-            ? { preview: "loading" as const }
-            : {}),
+          ...(state.files.selectedPath === path ? { preview: "loading" as const } : {}),
         },
       };
     }
@@ -541,6 +582,140 @@ export function resolveReviewOutcome(
       ),
     },
   }));
+}
+
+/** Reserves one turn decision and returns the revision that must authorize it. */
+export function beginTurnReviewAction(
+  api: InspectorStoreApi,
+  request: PendingTurnReviewAction,
+): string | null {
+  const review = api.getState().review;
+  if (
+    review.source !== "turn" ||
+    review.turnId !== request.turnId ||
+    typeof review.revision !== "string" ||
+    review.pendingAction != null ||
+    !review.files.some((file) => file.path === request.path && file.applyState === "pending")
+  ) {
+    return null;
+  }
+  api.setState((state) => {
+    if (
+      state.review.source !== "turn" ||
+      state.review.turnId !== request.turnId ||
+      state.review.revision !== review.revision ||
+      state.review.pendingAction != null
+    ) {
+      return state;
+    }
+    return {
+      review: {
+        ...state.review,
+        pendingAction: request,
+        error: null,
+      },
+    };
+  });
+  return review.revision;
+}
+
+/** Clears only the matching in-flight turn decision and keeps its row retryable. */
+export function rejectTurnReviewAction(
+  api: InspectorStoreApi,
+  request: PendingTurnReviewAction,
+  error: string,
+): void {
+  api.setState((state) => {
+    const pending = state.review.pendingAction;
+    if (
+      state.review.source !== "turn" ||
+      state.review.turnId !== request.turnId ||
+      pending?.turnId !== request.turnId ||
+      pending.path !== request.path ||
+      pending.action !== request.action
+    ) {
+      return state;
+    }
+    return { review: { ...state.review, pendingAction: null, error } };
+  });
+}
+
+/** Applies a turn result only to the request that reserved the current row. */
+export function resolveTurnReviewOutcome(
+  api: InspectorStoreApi,
+  request: PendingTurnReviewAction,
+  result: {
+    readonly applyState: "applied" | "discarded";
+    readonly resultingRevision: string;
+  },
+): void {
+  api.setState((state) => {
+    const pending = state.review.pendingAction;
+    if (
+      state.review.source !== "turn" ||
+      state.review.turnId !== request.turnId ||
+      pending?.turnId !== request.turnId ||
+      pending.path !== request.path ||
+      pending.action !== request.action
+    ) {
+      return state;
+    }
+    return {
+      review: {
+        ...state.review,
+        files: state.review.files.map((file) =>
+          file.path === request.path && file.applyState === "pending"
+            ? { ...file, applyState: result.applyState }
+            : file,
+        ),
+        revision: result.resultingRevision,
+        pendingAction: null,
+        error: null,
+      },
+    };
+  });
+}
+
+/** Completes only the currently requested turn, suppressing stale responses. */
+export function resolveTurnReview(
+  api: InspectorStoreApi,
+  turnId: string,
+  result:
+    | { readonly files: readonly ReviewFile[]; readonly revision: string }
+    | { readonly error: string },
+): void {
+  api.setState((state) => {
+    if (state.review.source !== "turn" || state.review.turnId !== turnId) return state;
+    if ("error" in result) {
+      return { review: { ...state.review, loading: false, error: result.error } };
+    }
+    const priorStates =
+      state.review.source === "turn" && state.review.turnId === turnId
+        ? new Map(state.review.files.map((file) => [file.path, file.applyState]))
+        : new Map<string, ReviewApplyState>();
+    const files = result.files.map((file) => {
+      const prior = priorStates.get(file.path);
+      return prior === undefined || prior === "pending" ? file : { ...file, applyState: prior };
+    });
+    const hasDecision =
+      state.review.pendingAction != null ||
+      state.review.files.some((file) => file.applyState !== "pending");
+    const selectedPath =
+      state.review.selectedPath !== null &&
+      files.some((file) => file.path === state.review.selectedPath)
+        ? state.review.selectedPath
+        : null;
+    return {
+      review: {
+        ...state.review,
+        files,
+        selectedPath,
+        loading: false,
+        error: null,
+        revision: hasDecision ? (state.review.revision ?? result.revision) : result.revision,
+      },
+    };
+  });
 }
 
 // One inspector store per session, created on first use and kept for the

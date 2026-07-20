@@ -21,7 +21,7 @@ const manifest = JSON.parse(readFileSync(join(vendorRoot, "manifest.json"), "utf
   createdAt: string;
 };
 const tarballPath = join(vendorRoot, manifest.tarball);
-const packageEntry = fileURLToPath(import.meta.resolve("@oh-my-pi/app-wire"));
+const packageEntry = fileURLToPath(import.meta.resolve("@t4-code/host-wire"));
 const installedRoot = dirname(dirname(packageEntry));
 
 const expectedTarEntries = [
@@ -135,19 +135,19 @@ function goldenCorpusSha256(root: string): string {
   return digest.digest("hex");
 }
 
-describe("vendored app-wire distribution", () => {
-  it("pins the frozen source, protocol, corpus, and tarball checksums", () => {
+describe("T4 host-wire distribution", () => {
+  it("keeps the T4-owned source compatible with the frozen OMP bridge snapshot", () => {
     expect(manifest).toMatchObject({
       package: "@oh-my-pi/app-wire",
-      version: "0.6.2",
+      version: "0.7.0",
       sourceRepository: "https://github.com/lyc-aon/oh-my-pi",
-      sourceCommit: "04229b1f46547ac7c0617e55a993496ec9725f46",
-      sourceTreeHash: "8400a3af618e8af11cccf6b20aadcf3a22baf9a1",
-      tarball: "oh-my-pi-app-wire-0.6.2.tgz",
+      sourceCommit: "796bb7dca45027bd4b7b94017cdf41ef214a11f2",
+      sourceTreeHash: "0c195a01ba0bb98fbf4d4863aee59bf23a6e81b7",
+      tarball: "oh-my-pi-app-wire-0.7.0.tgz",
       appProtocol: "omp-app/1",
       goldenCorpusSha256: "d5e674095de3d9b3b56a5668bc91cbbf1904b409ea9ea6456c2eabdf272e7870",
     });
-    expect(manifest.createdAt).toBe("2026-07-19T19:45:51Z");
+    expect(manifest.createdAt).toBe("2026-07-20T03:17:05Z");
     expect(sha256(tarballPath)).toBe(manifest.tarballSha256);
     expect(goldenCorpusSha256(join(installedRoot, "fixtures", "v1"))).toBe(
       manifest.goldenCorpusSha256,
@@ -155,8 +155,9 @@ describe("vendored app-wire distribution", () => {
     const installedPackage = JSON.parse(
       readFileSync(join(installedRoot, "package.json"), "utf8"),
     ) as Record<string, unknown>;
-    expect(installedPackage.name).toBe(manifest.package);
-    expect(installedPackage.version).toBe(manifest.version);
+    expect(installedPackage.name).toBe("@t4-code/host-wire");
+    expect(installedPackage.version).toBe("0.1.30");
+    expect(installedPackage.version).not.toBe(manifest.version);
     expect(installedPackage.dependencies ?? {}).toEqual({});
   });
 
@@ -174,10 +175,8 @@ describe("vendored app-wire distribution", () => {
     );
     const lockfile = readFileSync(join(repoRoot, "pnpm-lock.yaml"), "utf8");
     expect(`${protocolPackage}\n${lockfile}`).not.toContain("/home/");
-    expect(protocolPackage).toMatch(
-      /"@oh-my-pi\/app-wire": "file:\.\.\/\.\.\/vendor\/app-wire\/oh-my-pi-app-wire-0\.6\.2\.tgz"/u,
-    );
-    expect(lockfile).toMatch(/version: file:vendor\/app-wire\/oh-my-pi-app-wire-0\.6\.2\.tgz/u);
+    expect(protocolPackage).toMatch(/"@t4-code\/host-wire": "workspace:\*"/u);
+    expect(lockfile).toContain("'@t4-code/host-wire':");
     expect(`${protocolPackage}\n${lockfile}`).not.toMatch(/file:\/\//u);
   });
 });

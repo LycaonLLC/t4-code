@@ -9,16 +9,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ompAppV1ProtocolProvider } from "../src/index.ts";
 
-const protocolEntry = fileURLToPath(import.meta.resolve("@t4-code/protocol"));
-const protocolRoot = dirname(dirname(protocolEntry));
-const fixtureRoot = join(
-  protocolRoot,
-  "node_modules",
-  "@oh-my-pi",
-  "app-wire",
-  "fixtures",
-  "v1",
-);
+const hostWireEntry = fileURLToPath(import.meta.resolve("@t4-code/host-wire"));
+const hostWireRoot = dirname(dirname(hostWireEntry));
+const fixtureRoot = join(hostWireRoot, "fixtures", "v1");
 const fixtureNames = readdirSync(fixtureRoot).filter((name) => name.endsWith(".json")).sort();
 const STRUCTURAL_FIXTURES = new Set(["entry.json"]);
 

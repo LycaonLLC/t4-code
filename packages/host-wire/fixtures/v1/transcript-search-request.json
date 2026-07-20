@@ -1,0 +1,1 @@
+{"v":"omp-app/1","type":"command","requestId":"req-search-1","commandId":"cmd-search-1","hostId":"host-a","command":"transcript.search","args":{"query":"SQLite index","limit":20,"cursor":"cursor-page-2","projectId":"project-a","roles":["user","assistant","summary"],"archived":"include","from":"2026-07-01T00:00:00.000Z","to":"2026-07-18T23:59:59.999Z"}}

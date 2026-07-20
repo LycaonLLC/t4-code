@@ -38,6 +38,7 @@ import { resolveToolRenderer } from "./tool-render/registry.ts";
 import type { ToolRenderHost, ToolRenderProps } from "./tool-render/types.ts";
 import "./tool-render/tool-render.css";
 import { TranscriptImages } from "./TranscriptImages.tsx";
+import { TranscriptArtifacts } from "./TranscriptArtifacts.tsx";
 
 // ---------------------------------------------------------------------------
 // Self-ticking elapsed label
@@ -115,7 +116,11 @@ function ReasoningDisclosure({ reasoning }: { readonly reasoning: string }) {
  * response is speaking (or just failed to), the strip stays visible on
  * desktop instead of waiting for hover, so "Stop reading" is never hidden.
  */
-function AssistantMessageActions({ row }: { readonly row: Extract<TranscriptRow, { kind: "message" }> }) {
+function AssistantMessageActions({
+  row,
+}: {
+  readonly row: Extract<TranscriptRow, { kind: "message" }>;
+}) {
   const { controller, state } = useReadAloud();
   const speaking = state.speakingId === row.id;
   const notice = state.notice !== null && state.notice.messageId === row.id ? state.notice : null;
@@ -164,6 +169,12 @@ function MessageRow({
             label="Attached"
             source={imageSource}
           />
+          <TranscriptArtifacts
+            artifacts={row.artifacts ?? []}
+            issue={row.artifactIssue ?? null}
+            label="Attached"
+            source={imageSource}
+          />
           <span className="mt-1 flex justify-end opacity-100 transition-opacity duration-(--motion-duration-fast) sm:absolute sm:-left-8 sm:top-1.5 sm:mt-0 sm:block sm:opacity-0 sm:focus-within:opacity-100 sm:group-hover/message:opacity-100">
             <CopyButton label="Copy message" text={row.text} />
           </span>
@@ -178,6 +189,12 @@ function MessageRow({
       <TranscriptImages
         images={row.images}
         issue={row.imageIssue}
+        label="Response"
+        source={imageSource}
+      />
+      <TranscriptArtifacts
+        artifacts={row.artifacts ?? []}
+        issue={row.artifactIssue ?? null}
         label="Response"
         source={imageSource}
       />
@@ -471,6 +488,13 @@ const ToolCallRow = memo(function ToolCallRow({
         label={`${label} result`}
         source={imageSource}
       />
+      <TranscriptArtifacts
+        className="mr-1 ml-7"
+        artifacts={call.artifacts ?? []}
+        issue={call.artifactIssue ?? null}
+        label={`${label} result`}
+        source={imageSource}
+      />
       <AnimatedHeight>
         {open && (
           <div
@@ -649,6 +673,39 @@ function WorkingRow({
   );
 }
 
+function TurnReviewRow({
+  row,
+  toolHost,
+}: {
+  readonly row: Extract<TranscriptRow, { kind: "turn-review" }>;
+  readonly toolHost?: ToolRenderHost | undefined;
+}) {
+  return (
+    <section
+      className="my-2 rounded-md border border-border/70 bg-muted/30 p-3"
+      aria-label="Turn review"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="font-medium text-sm">Review changes</p>
+          <p className="text-muted-foreground text-xs">
+            {row.changes} {row.changes === 1 ? "file" : "files"} ·{" "}
+            <span className="text-success-foreground">+{row.additions}</span>{" "}
+            <span className="text-destructive-foreground">−{row.deletions}</span>
+          </p>
+        </div>
+        <button
+          className="min-h-8 rounded border border-input px-2 text-xs hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => toolHost?.openTurnReview?.(row.turnId)}
+          type="button"
+        >
+          Review changes
+        </button>
+      </div>
+    </section>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Dispatcher
 // ---------------------------------------------------------------------------
@@ -683,6 +740,8 @@ export const TranscriptRowContent = memo(function TranscriptRowContent({
       return <NoticeRow row={row} />;
     case "unknown-entry":
       return <UnknownEntryRow row={row} />;
+    case "turn-review":
+      return <TurnReviewRow row={row} toolHost={toolHost} />;
     case "working":
       return <WorkingRow ghost={ghost} nowMs={nowMs} row={row} />;
   }

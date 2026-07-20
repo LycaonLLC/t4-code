@@ -25,7 +25,10 @@ const repoRoot = resolve(import.meta.dirname, "..");
 const deployScript = resolve(repoRoot, "ops/t4-maintainer/deploy-local.sh");
 const runnerScript = resolve(repoRoot, "ops/t4-maintainer/run.sh");
 const bashPath = "/bin/bash";
-const integrationProcessTimeoutMs = 30_000;
+// Full-suite contention can push a successful convergence run past 30 seconds
+// on macOS. Keep this above the production process boundary so the fixture
+// reports the child result instead of a test-harness timeout.
+const integrationProcessTimeoutMs = 60_000;
 const upstreamCommit = "a".repeat(40);
 const integrationCommit = "b".repeat(40);
 const t4Commit = "c".repeat(40);

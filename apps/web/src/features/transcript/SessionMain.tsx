@@ -245,7 +245,11 @@ export const RECORD_ARRIVAL_PULSE_MS = 1200;
  * regression-tested without a DOM renderer.
  */
 export interface RecordArrivalPulseController {
-  observe(active: boolean, entries: readonly { readonly id: string }[], reducedMotion: boolean): void;
+  observe(
+    active: boolean,
+    entries: readonly { readonly id: string }[],
+    reducedMotion: boolean,
+  ): void;
   dispose(): void;
 }
 
@@ -393,11 +397,9 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
     desktopSnapshot === null || liveAddress === null
       ? []
       : [
-          ...(
-            desktopSnapshot.projection.sessions.get(
-              `${liveAddress.hostId}\u0000${liveAddress.sessionId}`,
-            )?.previews.values() ?? []
-          ),
+          ...(desktopSnapshot.projection.sessions
+            .get(`${liveAddress.hostId}\u0000${liveAddress.sessionId}`)
+            ?.previews.values() ?? []),
         ];
   const previewFreshness = previews.some((preview) => preview.freshness !== "fresh")
     ? "Cached"
@@ -413,6 +415,14 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
         const workspace = workspaceStore.getState();
         const view = workspace.sessionViewById[session.id];
         if (view?.paneFamily !== "agents") workspace.togglePaneFamily(session.id, "agents");
+        workspace.setPaneOpen(session.id, true);
+      },
+      openTurnReview: (turnId) => {
+        const inspector = getInspectorStore(session.id);
+        inspector?.getState().loadTurnReview(turnId);
+        const workspace = workspaceStore.getState();
+        const view = workspace.sessionViewById[session.id];
+        if (view?.paneFamily !== "review") workspace.togglePaneFamily(session.id, "review");
         workspace.setPaneOpen(session.id, true);
       },
       openPreview: () => {

@@ -18,8 +18,7 @@ import {
   type ProjectionFrame,
   type PublicOmpServerEvent,
 } from "../src/index.ts";
-const PROTOCOL_ROOT = dirname(dirname(fileURLToPath(import.meta.resolve("@t4-code/protocol"))));
-const APP_WIRE_ROOT = join(PROTOCOL_ROOT, "node_modules", "@oh-my-pi", "app-wire");
+const APP_WIRE_ROOT = dirname(dirname(fileURLToPath(import.meta.resolve("@t4-code/host-wire"))));
 const AGENT_VIEW_CORPUS = JSON.parse(
   readFileSync(
     join(APP_WIRE_ROOT, "fixtures", "v1", "scenarios", "agent-view-lifecycle.json"),

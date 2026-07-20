@@ -1,0 +1,1 @@
+{"v":"omp-app/1","type":"confirmation","confirmationId":"confirm-1","commandId":"cmd-1","hostId":"host-a","sessionId":"same-raw-id","commandHash":"sha256:abc","revision":"rev-1","expiresAt":"2026-07-11T10:10:00Z","summary":"Write src/index.ts","preview":"export {}\n"}

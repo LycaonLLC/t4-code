@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { OMP_RUNTIME_INTEGRATION } from "@t4-code/client";
 import type { DesktopRuntimeController, DesktopRuntimeSnapshot } from "@t4-code/client";
 import {
   commandId,
@@ -142,6 +143,7 @@ class FakeManagementController {
   getSnapshot(): DesktopRuntimeSnapshot {
     return {
       version: 1,
+      integration: OMP_RUNTIME_INTEGRATION,
       platform: "linux",
       desktopVersion: "test",
       startState: "started",

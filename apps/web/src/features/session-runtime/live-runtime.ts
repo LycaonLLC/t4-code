@@ -45,7 +45,7 @@ import { runImagePromptUpload } from "./image-upload.ts";
 import { promptRejectionReason } from "./command-errors.ts";
 import { pendingPromptsFromRef } from "./pending-prompts.ts";
 import {
-  createTranscriptImageSource,
+  createTranscriptArtifactSource,
   type TranscriptImageAvailability,
 } from "./transcript-images.ts";
 import {
@@ -66,10 +66,7 @@ import {
   sessionControlForLink,
   WriteGateError,
 } from "./session-observer.ts";
-import {
-  hostSessionInventoryIsComplete,
-  sessionWriteLink,
-} from "./session-inventory.ts";
+import { hostSessionInventoryIsComplete, sessionWriteLink } from "./session-inventory.ts";
 
 export interface LiveRuntimeOptions {
   readonly controller: DesktopRuntimeController;
@@ -191,7 +188,6 @@ function findCancelCommand(items: readonly CatalogItem[]): CatalogItem | undefin
   );
 }
 
-
 interface PendingChallenge {
   readonly challenge: SessionProjection["confirmations"] extends ReadonlyMap<string, infer Value>
     ? Value
@@ -238,7 +234,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   const listeners = new Set<() => void>();
   let transcriptImagesAttached = false;
 
-  const transcriptImages = createTranscriptImageSource({
+  const transcriptImages = createTranscriptArtifactSource({
     hostId: options.hostId,
     sessionId: options.sessionId,
     availability: {
@@ -253,8 +249,11 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
       controller.command(targetId, {
         hostId: wireHostId,
         sessionId: wireSessionId,
-        command: "session.image.read",
-        args: { entryId: reference.entryId, sha256: reference.sha256, offset },
+        command: "source" in reference ? "artifact.read" : "session.image.read",
+        args:
+          "source" in reference
+            ? { artifactId: reference.artifactId, offset }
+            : { entryId: reference.entryId, sha256: reference.sha256, offset },
       }),
   });
 
@@ -271,7 +270,10 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
         reason: "This target does not grant transcript image access.",
       };
     }
-    if (!host.grantedFeatures.includes("transcript.images")) {
+    if (
+      !host.grantedFeatures.includes("transcript.images") &&
+      !host.grantedFeatures.includes("artifacts.read")
+    ) {
       return {
         available: false,
         reason: "This OMP host does not offer transcript image reads.",
@@ -731,10 +733,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     const warmNow = runtime.projection.sessions.get(projectionKey);
     const newestTranscriptEventOrdinal = warmNow?.transcriptEventArrivalOrdinal ?? 0;
     const newestRefOrdinal = runtime.projection.sessionRefArrivalOrdinals.get(projectionKey) ?? 0;
-    if (
-      authoritativeWorking === false &&
-      newestRefOrdinal > newestTranscriptEventOrdinal
-    ) {
+    if (authoritativeWorking === false && newestRefOrdinal > newestTranscriptEventOrdinal) {
       // Settle on receive order, not a working true -> false edge. A mounted
       // runtime may miss the active ref entirely (null -> idle) or receive two
       // idle refs around newer transcript activity (idle -> idle). The newer
@@ -956,7 +955,10 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     const runtime = controller.getSnapshot();
     const hasChallenge = warmSession(runtime)?.confirmations.has(intent.approvalId) ?? false;
     if (hasChallenge) {
-      return confirmChallenge(intent.approvalId, intent.decision === "approve" ? "approve" : "deny");
+      return confirmChallenge(
+        intent.approvalId,
+        intent.decision === "approve" ? "approve" : "deny",
+      );
     } else {
       return sendCommand(
         "session.ui.respond",
@@ -995,8 +997,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
             pendingPrompts.length > 0 ||
             sessionIsWorkingWithPendingPrompts(ref, pendingPrompts));
         const sessionControl = sessionControlForLink(link, readSessionControl(ref));
-        const controlGate =
-          sessionControl === null ? null : presentSessionControl(sessionControl);
+        const controlGate = sessionControl === null ? null : presentSessionControl(sessionControl);
         const cancelItem = catalog === undefined ? undefined : findCancelCommand(catalog.items);
         const cancelSupported = cancelItem !== undefined && cancelItem.supported !== false;
         const canCancel =

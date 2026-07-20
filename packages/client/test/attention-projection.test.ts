@@ -6,6 +6,7 @@ import {
 } from "@t4-code/protocol";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  OMP_RUNTIME_INTEGRATION,
   ProjectionStore,
   deriveAttentionInbox,
   readSessionAttention,
@@ -91,6 +92,7 @@ function runtimeSnapshot(
   const hosts = [...new Set(refs.map((ref) => String(ref.hostId)))];
   return {
     version: 1,
+    integration: OMP_RUNTIME_INTEGRATION,
     platform: "darwin",
     desktopVersion: "test",
     startState: "started",

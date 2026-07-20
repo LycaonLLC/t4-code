@@ -29,6 +29,7 @@ import {
   AGENT_VIEW_FIXTURE_GROUPS,
   AGENT_VIEW_FIXTURE_NOW_MS,
 } from "./features/agent-view/fixtures.ts";
+import { getInspectorStore } from "./features/panes/inspector-store.ts";
 import { PreviewWorkspace } from "./features/preview/PreviewWorkspace.tsx";
 import { BrowserWorkspace } from "./features/browser/index.ts";
 import { FixturePreviewWorkspace } from "./features/preview/FixturePreviewWorkspace.tsx";
@@ -338,7 +339,14 @@ function AgentViewRoute() {
         if (activeSessionId === null) void navigate({ to: "/" });
         else void navigate({ params: { sessionId: activeSessionId }, to: "/sessions/$sessionId" });
       }}
-      onOpenSession={(sessionId) => {
+      onOpenSession={(sessionId, agentId) => {
+        const inspector = getInspectorStore(sessionId);
+        if (
+          agentId !== undefined &&
+          inspector?.getState().agentMap.agents[agentId] !== undefined
+        ) {
+          inspector.getState().selectAgent(agentId);
+        }
         const state = workspaceStore.getState();
         const view = selectSessionView(state, sessionId);
         if (view.paneFamily === "agents") state.setPaneOpen(sessionId, true);

@@ -16,7 +16,7 @@
     "test": "vp test run --passWithNoTests"
   },
   "dependencies": {
-    "@oh-my-pi/app-wire": "file:../../vendor/app-wire/oh-my-pi-app-wire-0.6.2.tgz"
+    "@t4-code/host-wire": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",
