@@ -3795,12 +3795,62 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       }
       return;
     }
+    if (frame.command == 'session.state.get') {
+      final result = frame.sessionStateResult;
+      if (result == null || pending.sessionId == null) {
+        throw const FormatException('session.state.get result is missing');
+      }
+      _applySessionStateResult(pending.sessionId!, result);
+      return;
+    }
     if (frame.command == 'session.attach' &&
         pending.sessionId == _selectedSessionId &&
         (_messages.isNotEmpty ||
             _savedCursors.containsKey(_selectedSessionId))) {
       _phase = ConnectionPhase.ready;
     }
+    if (frame.command == 'session.attach' &&
+        pending.sessionId == _selectedSessionId) {
+      _sendSessionStateGet(pending.sessionId!);
+    }
+    _publish();
+  }
+
+  void _applySessionStateResult(String sessionId, SessionStateResult result) {
+    _sessions = _sessions
+        .map((session) {
+          if (session.sessionId != sessionId) return session;
+          final model = result.model;
+          final modelSelector =
+              model?.selector ??
+              (model == null ? null : '${model.provider}/${model.id}');
+          return SessionSummary(
+            hostId: session.hostId,
+            sessionId: session.sessionId,
+            title: session.title,
+            revision: session.revision,
+            status: session.status,
+            projectId: session.projectId,
+            projectName: session.projectName,
+            updatedAt: session.updatedAt,
+            archivedAt: session.archivedAt,
+            working:
+                session.status == 'active' ||
+                session.working ||
+                result.isStreaming,
+            modelSelector: modelSelector ?? session.modelSelector,
+            modelDisplayName: model?.displayName ?? session.modelDisplayName,
+            thinking: result.thinking ?? session.thinking,
+            thinkingSupported:
+                result.thinkingSupported ?? session.thinkingSupported,
+            thinkingLevels: result.thinkingLevels ?? session.thinkingLevels,
+            fast: result.fastActive ?? result.fast ?? session.fast,
+            fastAvailable: result.fastAvailable ?? session.fastAvailable,
+            turnActive: result.isStreaming || session.turnActive,
+            queuedFollowUpCount: result.queuedMessageCount,
+          );
+        })
+        .toList(growable: false);
     _publish();
   }
 
@@ -3906,6 +3956,35 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       // Bounded history is an optional read lane. Live attach remains the
       // authority and must proceed when paging is unavailable or stale.
     }
+  }
+
+  void _sendSessionStateGet(String sessionId) {
+    final hostId = _hostId;
+    if (hostId == null ||
+        !_grantedCapabilities.contains('sessions.read') ||
+        _pendingCommands.values.any(
+          (pending) =>
+              pending.command == 'session.state.get' &&
+              pending.sessionId == sessionId,
+        )) {
+      return;
+    }
+    final ids = _nextCommandIds('session-state');
+    _pendingCommands[ids.requestId] = _PendingCommand(
+      commandId: ids.commandId,
+      command: 'session.state.get',
+      sessionId: sessionId,
+    );
+    _send(
+      WireEncoder.command(
+        requestId: ids.requestId,
+        commandId: ids.commandId,
+        hostId: hostId,
+        sessionId: sessionId,
+        command: 'session.state.get',
+        args: const <String, Object?>{},
+      ),
+    );
   }
 
   void _sendAttach(String sessionId, {TranscriptCursor? cursor}) {

@@ -6,7 +6,7 @@ import { DESKTOP_CATALOG_COMMANDS, type DurableEntry, hostId, projectId, session
 import { completeAttachOutput, prepareAttachOutput } from "../src/attach-output.ts";
 import { IdempotencyStore } from "../src/idempotency.ts";
 import { ensureSecureSocketDirectory } from "../src/ownership.ts";
-import { SessionEntryProjector } from "../src/discovery.ts";
+import { FileSessionDiscovery, realFs } from "../src/discovery.ts";
 import { SessionProjection } from "../src/projection.ts";
 import { appserverSupportedCapabilities, appserverSupportedFeatures, createAppserver } from "../src/server.ts";
 import { SubagentProjection } from "../src/subagent-projection.ts";
@@ -365,27 +365,16 @@ describe("appserver lifecycle", () => {
 			timestamp,
 			message: { role: "assistant", content: "second" },
 		};
-		const projector = new SessionEntryProjector(host, sid, "live");
-		const source: SessionRecord = {
-			sessionId: sid,
-			path: transcriptPath,
-			cwd: root,
-			projectId: projectId("lockless-project"),
-			title: "Lockless session",
-			updatedAt: timestamp,
-			status: "idle",
-			entries: projector.project(first),
-		};
 		await writeFile(
 			transcriptPath,
-			`${JSON.stringify({ type: "session", version: 3, id: sid, cwd: root, timestamp, title: source.title })}\n${JSON.stringify(first)}\n`,
+			`${JSON.stringify({ type: "session", version: 3, id: sid, cwd: root, timestamp, title: "Lockless session" })}\n${JSON.stringify(first)}\n`,
 		);
 		const factory = new FakeFactory();
 		const appserver = createAppserver({
 			hostId: host,
 			epoch: "lockless-observer-test",
 			socketPath,
-			discovery: new StaticDiscovery([source]),
+			discovery: new FileSessionDiscovery(root, realFs, host, true),
 			childFactory: factory,
 			lockStatus: () => "missing",
 		});
@@ -397,12 +386,29 @@ describe("appserver lifecycle", () => {
 				type: "hello",
 				protocol: { min: "omp-app/1", max: "omp-app/1" },
 				client: { name: "lockless-test", version: "1", build: "test", platform: "linux" },
-				requestedFeatures: ["session.observer"],
+				requestedFeatures: ["session.observer", "transcript.page"],
 				capabilities: { client: ["sessions.read"] },
 				savedCursors: [],
 			});
 			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
 			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "page-lockless",
+				commandId: "page-lockless-command",
+				hostId: host,
+				sessionId: sid,
+				command: "transcript.page",
+				args: { limit: 64, maxBytes: 256 * 1024 },
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "page-lockless") {
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
 			client.sendJson({
 				v: "omp-app/1",
 				type: "command",
@@ -420,6 +426,51 @@ describe("appserver lifecycle", () => {
 					break;
 				}
 			}
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "list-lockless",
+				commandId: "list-lockless-command",
+				hostId: host,
+				command: "session.list",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "list-lockless") {
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
+
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "state-lockless",
+				commandId: "state-lockless-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.state.get",
+				args: {},
+			});
+			const stateResponse = await Promise.race([
+				(async () => {
+					for (;;) {
+						const frame = await client.nextServer();
+						if (frame.type === "response" && frame.requestId === "state-lockless") return frame;
+					}
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("observer state read did not settle");
+				}),
+			]);
+			expect(stateResponse).toMatchObject({
+				type: "response",
+				ok: false,
+				error: { code: "session_locked" },
+			});
+			expect(factory.children).toHaveLength(0);
+
 			await appendFile(transcriptPath, `${JSON.stringify(second)}\n`);
 			for (;;) {
 				const frame = await client.nextServer();

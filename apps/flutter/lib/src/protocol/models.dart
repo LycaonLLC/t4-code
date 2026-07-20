@@ -559,6 +559,52 @@ final class SettingsResult {
   final Map<String, Object?> settings;
 }
 
+final class SessionStateModel {
+  const SessionStateModel({
+    required this.id,
+    required this.provider,
+    required this.displayName,
+    required this.selector,
+    required this.role,
+  });
+
+  final String id;
+  final String provider;
+  final String? displayName;
+  final String? selector;
+  final String? role;
+}
+
+final class SessionStateResult {
+  const SessionStateResult({
+    required this.isStreaming,
+    required this.isCompacting,
+    required this.isPaused,
+    required this.messageCount,
+    required this.queuedMessageCount,
+    required this.model,
+    required this.thinking,
+    required this.thinkingLevels,
+    required this.thinkingSupported,
+    required this.fast,
+    required this.fastAvailable,
+    required this.fastActive,
+  });
+
+  final bool isStreaming;
+  final bool isCompacting;
+  final bool isPaused;
+  final int messageCount;
+  final int queuedMessageCount;
+  final SessionStateModel? model;
+  final String? thinking;
+  final List<String>? thinkingLevels;
+  final bool? thinkingSupported;
+  final bool? fast;
+  final bool? fastAvailable;
+  final bool? fastActive;
+}
+
 final class ResponseFrame extends WireFrame {
   const ResponseFrame({
     required this.requestId,
@@ -603,6 +649,9 @@ final class ResponseFrame extends WireFrame {
 
   TranscriptPageResult? get transcriptPageResult =>
       result is TranscriptPageResult ? result as TranscriptPageResult : null;
+
+  SessionStateResult? get sessionStateResult =>
+      result is SessionStateResult ? result as SessionStateResult : null;
 
   UsageReadResult? get usageReadResult =>
       result is UsageReadResult ? result as UsageReadResult : null;

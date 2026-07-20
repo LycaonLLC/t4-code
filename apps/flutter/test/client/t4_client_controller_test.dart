@@ -255,6 +255,93 @@ void main() {
     },
   );
 
+  test(
+    'hydrates Fast availability after attaching an existing session',
+    () async {
+      final profile = _profile('alpha');
+      final directory = _MemoryDirectoryStore(
+        directory: const HostDirectory.empty().upsert(profile),
+      );
+      final connector = _FakeConnector();
+      final controller = _controller(
+        directory,
+        _MemoryCredentialStore(),
+        connector,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      final channel = connector.channels.single;
+
+      channel.emit(_welcome('host-alpha'));
+      await _flush();
+      final list = channel.sentJson.last;
+      channel.emit(
+        _response(
+          list,
+          command: 'session.list',
+          result: _sessionListResult('host-alpha'),
+        ),
+      );
+      await _flush();
+      final attach = channel.sentJson.singleWhere(
+        (frame) => frame['command'] == 'session.attach',
+      );
+      channel.emit(
+        _response(
+          attach,
+          command: 'session.attach',
+          result: const <String, Object?>{},
+        ),
+      );
+      await _flush();
+
+      final stateGet = channel.sentJson.last;
+      expect(stateGet['command'], 'session.state.get');
+      expect(stateGet['sessionId'], 'session-alpha');
+      channel.emit(
+        _response(
+          stateGet,
+          command: 'session.state.get',
+          result: <String, Object?>{
+            'isStreaming': false,
+            'isCompacting': false,
+            'isPaused': false,
+            'messageCount': 99,
+            'queuedMessageCount': 0,
+            'steeringMode': 'one-at-a-time',
+            'followUpMode': 'one-at-a-time',
+            'interruptMode': 'immediate',
+            'model': <String, Object?>{
+              'id': 'gpt-5.6-sol',
+              'provider': 'openai-codex',
+              'displayName': 'GPT-5.6-Sol',
+              'selector': 'openai-codex/gpt-5.6-sol:high',
+              'role': 'default',
+            },
+            'thinking': 'high',
+            'thinkingLevels': <Object?>[
+              'low',
+              'medium',
+              'high',
+              'xhigh',
+              'max',
+            ],
+            'thinkingSupported': true,
+            'fast': false,
+            'fastAvailable': true,
+            'fastActive': false,
+          },
+        ),
+      );
+      await _flush();
+
+      expect(controller.state.composer.fastAvailable, isTrue);
+      expect(controller.state.composer.fastEnabled, isFalse);
+      expect(controller.state.composer.modelLabel, 'GPT-5.6-Sol');
+      expect(controller.state.composer.thinking, 'high');
+    },
+  );
+
   test('command ids are unique across controller restarts', () async {
     final profile = _profile('alpha');
     final directory = _MemoryDirectoryStore(

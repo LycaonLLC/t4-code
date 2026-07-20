@@ -406,6 +406,9 @@ ResponseFrame _decodeResponse(Map<String, Object?> raw) {
         'transcript.page' => _decodeTranscriptPageResult(
           _map(raw['result'], 'result'),
         ),
+        'session.state.get' => _decodeSessionStateResult(
+          _map(raw['result'], 'result'),
+        ),
         'usage.read' => _decodeUsageReadResult(_map(raw['result'], 'result')),
         'broker.status' => _decodeBrokerStatusResult(
           _map(raw['result'], 'result'),
@@ -440,6 +443,210 @@ ResponseFrame _decodeResponse(Map<String, Object?> raw) {
     result: result,
     error: error,
     raw: raw,
+  );
+}
+
+SessionStateResult _decodeSessionStateResult(Map<String, Object?> raw) {
+  const allowedKeys = <String>{
+    'isStreaming',
+    'isCompacting',
+    'isPaused',
+    'messageCount',
+    'queuedMessageCount',
+    'steeringMode',
+    'followUpMode',
+    'interruptMode',
+    'queuedMessages',
+    'model',
+    'thinking',
+    'thinkingEffective',
+    'thinkingResolved',
+    'thinkingLevels',
+    'thinkingSupported',
+    'thinkingOffFloored',
+    'fast',
+    'fastAvailable',
+    'fastActive',
+    'sessionName',
+    'contextUsage',
+  };
+  for (final key in raw.keys) {
+    if (!allowedKeys.contains(key)) {
+      throw WireFormatException('unknown session state field', 'result.$key');
+    }
+  }
+  _enumString(raw['steeringMode'], 'result.steeringMode', const {
+    'all',
+    'one-at-a-time',
+  });
+  _enumString(raw['followUpMode'], 'result.followUpMode', const {
+    'all',
+    'one-at-a-time',
+  });
+  _enumString(raw['interruptMode'], 'result.interruptMode', const {
+    'immediate',
+    'wait',
+  });
+
+  SessionStateModel? model;
+  if (raw['model'] case final Object value) {
+    final modelRaw = _map(value, 'result.model');
+    const modelKeys = <String>{
+      'id',
+      'provider',
+      'displayName',
+      'selector',
+      'role',
+    };
+    for (final key in modelRaw.keys) {
+      if (!modelKeys.contains(key)) {
+        throw WireFormatException(
+          'unknown session model field',
+          'result.model.$key',
+        );
+      }
+    }
+    model = SessionStateModel(
+      id: _string(modelRaw['id'], 'result.model.id', 256),
+      provider: _string(modelRaw['provider'], 'result.model.provider', 256),
+      displayName: modelRaw.containsKey('displayName')
+          ? _string(modelRaw['displayName'], 'result.model.displayName', 256)
+          : null,
+      selector: modelRaw.containsKey('selector')
+          ? _string(modelRaw['selector'], 'result.model.selector', 512)
+          : null,
+      role: modelRaw.containsKey('role')
+          ? _string(modelRaw['role'], 'result.model.role', 256)
+          : null,
+    );
+  }
+
+  const configuredThinking = <String>{
+    'inherit',
+    'off',
+    'auto',
+    'minimal',
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+    'max',
+  };
+  const resolvedThinking = <String>{
+    'minimal',
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+    'max',
+  };
+  final thinking = raw.containsKey('thinking')
+      ? _enumString(raw['thinking'], 'result.thinking', configuredThinking)
+      : null;
+  if (raw.containsKey('thinkingEffective')) {
+    _enumString(raw['thinkingEffective'], 'result.thinkingEffective', const {
+      'off',
+      ...resolvedThinking,
+    });
+  }
+  if (raw.containsKey('thinkingResolved')) {
+    _enumString(
+      raw['thinkingResolved'],
+      'result.thinkingResolved',
+      resolvedThinking,
+    );
+  }
+  List<String>? thinkingLevels;
+  if (raw.containsKey('thinkingLevels')) {
+    thinkingLevels = _stringList(
+      raw['thinkingLevels'],
+      'result.thinkingLevels',
+      maxItems: resolvedThinking.length,
+    );
+    for (var index = 0; index < thinkingLevels.length; index++) {
+      if (!resolvedThinking.contains(thinkingLevels[index])) {
+        throw WireFormatException(
+          'invalid thinking level',
+          'result.thinkingLevels[$index]',
+        );
+      }
+    }
+    if (thinkingLevels.toSet().length != thinkingLevels.length) {
+      throw const WireFormatException(
+        'duplicate thinking level',
+        'result.thinkingLevels',
+      );
+    }
+    thinkingLevels = List<String>.unmodifiable(thinkingLevels);
+  }
+  if (raw.containsKey('thinkingOffFloored')) {
+    _bool(raw['thinkingOffFloored'], 'result.thinkingOffFloored');
+  }
+  if (raw.containsKey('sessionName')) {
+    _string(raw['sessionName'], 'result.sessionName', 512);
+  }
+  if (raw['contextUsage'] case final Object value) {
+    final usage = _map(value, 'result.contextUsage');
+    if (usage.keys.toSet().difference(const {'used', 'limit'}).isNotEmpty) {
+      throw const WireFormatException(
+        'unknown context usage field',
+        'result.contextUsage',
+      );
+    }
+    final used = _safeInteger(usage['used'], 'result.contextUsage.used');
+    final limit = _safeInteger(usage['limit'], 'result.contextUsage.limit');
+    if (used > limit) {
+      throw const WireFormatException(
+        'context usage exceeds limit',
+        'result.contextUsage',
+      );
+    }
+  }
+  if (raw['queuedMessages'] case final Object value) {
+    final queues = _map(value, 'result.queuedMessages');
+    if (queues.keys.toSet().difference(const {
+      'steering',
+      'followUp',
+    }).isNotEmpty) {
+      throw const WireFormatException(
+        'unknown queued message field',
+        'result.queuedMessages',
+      );
+    }
+    for (final name in const ['steering', 'followUp']) {
+      final messages = _list(queues[name], 'result.queuedMessages.$name', 128);
+      for (var index = 0; index < messages.length; index++) {
+        _boundedText(
+          messages[index],
+          'result.queuedMessages.$name[$index]',
+          65_536,
+        );
+      }
+    }
+  }
+
+  return SessionStateResult(
+    isStreaming: _bool(raw['isStreaming'], 'result.isStreaming'),
+    isCompacting: _bool(raw['isCompacting'], 'result.isCompacting'),
+    isPaused: _bool(raw['isPaused'], 'result.isPaused'),
+    messageCount: _safeInteger(raw['messageCount'], 'result.messageCount'),
+    queuedMessageCount: _safeInteger(
+      raw['queuedMessageCount'],
+      'result.queuedMessageCount',
+    ),
+    model: model,
+    thinking: thinking,
+    thinkingLevels: thinkingLevels,
+    thinkingSupported: raw.containsKey('thinkingSupported')
+        ? _bool(raw['thinkingSupported'], 'result.thinkingSupported')
+        : null,
+    fast: raw.containsKey('fast') ? _bool(raw['fast'], 'result.fast') : null,
+    fastAvailable: raw.containsKey('fastAvailable')
+        ? _bool(raw['fastAvailable'], 'result.fastAvailable')
+        : null,
+    fastActive: raw.containsKey('fastActive')
+        ? _bool(raw['fastActive'], 'result.fastActive')
+        : null,
   );
 }
 

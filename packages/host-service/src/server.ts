@@ -2684,10 +2684,13 @@ export class LocalAppserver implements AppserverHandle {
 		);
 	}
 	private observerBarrierBlocks(command: CommandFrame): boolean {
-		if (!command.sessionId || OBSERVER_READ_COMMANDS.has(command.command)) return false;
-		const control = this.#projections.get(command.sessionId)?.value.ref.liveState?.sessionControl;
-		if (!control) return false;
-		return command.command === "session.state.get" || !OBSERVER_READ_COMMANDS.has(command.command);
+		if (!command.sessionId) return false;
+		if (this.#externalRuntimes.has(command.sessionId)) return false;
+		if (command.command !== "session.state.get" && OBSERVER_READ_COMMANDS.has(command.command)) return false;
+		return (
+			this.#observers.has(command.sessionId) ||
+			this.#projections.get(command.sessionId)?.value.ref.liveState?.sessionControl !== undefined
+		);
 	}
 	private observerBarrierOutcome(command: CommandFrame): CommandOutcome {
 		return {
