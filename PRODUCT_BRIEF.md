@@ -15,7 +15,7 @@ T3 Code at `reference/t3code` is the primary presentation, interaction, desktop-
 - Fast project/session switching with preserved scroll, composer, panel, and draft state.
 - Center session stream remains the primary surface.
 - Optional right pane extends the T3 pattern with five calm surface families: Agents, Activity (including events), Review, Files, and user Terminal. Context is a popover/dialog, not a permanent tab.
-- Browser/app preview is required before parity closure, but opens as a focused preview workspace or secondary Electron window rather than becoming a sixth permanent right-pane family.
+- Browser/app preview is available through the focused host Preview and the separate native desktop Browser workspace rather than becoming a sixth permanent right-pane family.
 - Light and dark themes use neutral surfaces. Accent use is minimal and semantic.
 - OMP identity uses the existing pi/connector mark from the upstream Oh My Pi repository and the Pi Pink `#e83174` accent.
 - No SVG turbulence, paper-grain, noise texture, or equivalent decorative overlay is imported from T3.
