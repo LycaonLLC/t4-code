@@ -1,4 +1,4 @@
-import { isSecretLikeKey, utf8ByteLength } from "@oh-my-pi/app-wire";
+import { isSecretLikeKey, utf8ByteLength } from "@t4-code/host-wire";
 
 /** Browser IPC wire version. The version is intentionally independent of Electron. */
 export const BROWSER_IPC_VERSION = 1 as const;

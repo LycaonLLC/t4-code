@@ -8,6 +8,8 @@ T3 Code is selectively referenced for future ports from https://github.com/pingd
 
 Future adaptations of OMP source use the OMP repository under its repository license. OMP remains runtime authority; adapted files retain OMP attribution and the applicable source license. The vendored `@oh-my-pi/app-wire@0.7.0` package is packed from the public `lyc-aon/oh-my-pi` integration commit `796bb7dca45027bd4b7b94017cdf41ef214a11f2`, source tree `0c195a01ba0bb98fbf4d4863aee59bf23a6e81b7`; tarball SHA-256 `80a49b37e44158d800b1b3ed8ffcc0716941e098517a1909d920c6136c95cd13`; golden corpus SHA-256 `d5e674095de3d9b3b56a5668bc91cbbf1904b409ea9ea6456c2eabdf272e7870`.
 
+The T4-owned `packages/host-wire` and `packages/host-service` packages were migrated from the public Lycaon OMP integration work listed in `provenance/omp-host-migration.json`. They remain MIT-licensed adaptations. OMP-specific session persistence, locking, execution, and takeover authority were deliberately not copied into these packages.
+
 ## Oh My Pi icon
 
 The OMP mark is copied from [`assets/icon.svg`](https://github.com/can1357/oh-my-pi/blob/d9dc250daa1962f6976d1fa8b353f11ffc5a0226/assets/icon.svg) at frozen commit `d9dc250daa1962f6976d1fa8b353f11ffc5a0226` (blob `f1ccf2a08a90ec4d7f6bb947dc62c5e995114422`) to `packages/ui/src/assets/omp-mark.svg`. OMP is MIT-licensed; retain the OMP MIT notice and attribution with this asset.

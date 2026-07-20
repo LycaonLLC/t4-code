@@ -1,4 +1,5 @@
 import {
+  OMP_RUNTIME_INTEGRATION,
   applyPublicFrame,
   createProjectionSnapshot,
   type DesktopRuntimeSnapshot,
@@ -45,7 +46,7 @@ function workspaceSession(
 
 function workspace(sessions: readonly WorkspaceSession[]): WorkspaceData {
   return {
-    hosts: [{ id: HOST, name: "Host", kind: "local" }],
+    hosts: [{ id: HOST, runtimeKind: "omp", name: "Host", kind: "local" }],
     projects: [{ id: PROJECT, name: "Project", path: "Project", hostId: HOST }],
     sessions,
   };
@@ -71,6 +72,7 @@ function runtime(
   const connected = options.connected ?? true;
   return {
     version: 1,
+    integration: OMP_RUNTIME_INTEGRATION,
     platform: "linux",
     desktopVersion: "test",
     startState: "started",
@@ -357,7 +359,7 @@ describe("session route fallback", () => {
 
   it("opens an indexed browser fixture whose local id has no host prefix", () => {
     const data: WorkspaceData = {
-      hosts: [{ id: "fixture-host", name: "Fixture", kind: "local" }],
+      hosts: [{ id: "fixture-host", runtimeKind: "omp", name: "Fixture", kind: "local" }],
       projects: [
         {
           id: "fixture-project",

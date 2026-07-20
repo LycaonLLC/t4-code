@@ -1,4 +1,4 @@
-import { controlFree } from "@oh-my-pi/app-wire";
+import { controlFree } from "@t4-code/host-wire";
 
 export type DesktopUpdatePhase =
   | "idle"

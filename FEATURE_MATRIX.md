@@ -4,6 +4,14 @@ This file maps product ideas to their OMP authority and intended T4 Code surface
 
 The README and release notes are the release contract. They must only claim behavior exercised by the current build. OMP remains the behavioral authority, and T3 Code remains a presentation and interaction reference where noted below.
 
+## Host ownership status
+
+| State | What it means |
+|---|---|
+| Exists today | T4 owns `packages/host-wire` and `packages/host-service`; the client protocol consumes the T4-owned wire package. |
+| Compatibility transition | The verified OMP integration binary still embeds the legacy host copy, and T4 retains a bounded read-only JSONL projector for that exact bridge. |
+| Planned next | Replace the embedded copy with a thin OMP launcher and authority adapter, then test supported upstream OMP versions by bridge capability instead of requiring every T4 host feature inside the fork. |
+
 ## 1. Hosts, connections, and environments
 
 | Capability | OMP authority | T3 reference | Desktop surface and required states | Priority |

@@ -11,7 +11,7 @@ import {
   type AppFrame,
 } from "../src/index.ts";
 
-const appWireEntry = fileURLToPath(import.meta.resolve("@oh-my-pi/app-wire"));
+const appWireEntry = fileURLToPath(import.meta.resolve("@t4-code/host-wire"));
 const appWireRoot = dirname(dirname(appWireEntry));
 
 function fixture(name: string): unknown {

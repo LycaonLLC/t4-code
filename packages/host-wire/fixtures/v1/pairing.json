@@ -1,0 +1,1 @@
+{"v":"omp-app/1","type":"pair.ok","requestId":"req-pair","pairingId":"pair-1","deviceId":"device-1","deviceName":"Desktop","platform":"linux","requestedCapabilities":["sessions.read"],"grantedCapabilities":["sessions.read"],"deviceToken":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","expiresAt":"2026-07-11T10:10:00Z"}

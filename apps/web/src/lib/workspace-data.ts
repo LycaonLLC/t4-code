@@ -4,6 +4,7 @@
 // from live protocol frames — and nothing below this seam knows which one
 // is feeding it. Display data only; never runtime authority.
 import type { SessionStatus } from "@t4-code/ui";
+import type { RuntimeKind } from "@t4-code/client";
 
 /** How current the projection of a session is. */
 export type SessionFreshness = "live" | "cached" | "offline";
@@ -11,6 +12,8 @@ export type SessionListView = "current" | "archived";
 
 export interface WorkspaceHost {
   readonly id: string;
+  /** Runtime that owns this host. Equal native ids from other runtimes are distinct. */
+  readonly runtimeKind: RuntimeKind;
   readonly name: string;
   readonly kind: "local" | "remote";
   /** Native OMP profile id for local hosts. Absent for fixtures and remote hosts. */

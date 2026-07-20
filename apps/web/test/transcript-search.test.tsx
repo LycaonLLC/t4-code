@@ -226,7 +226,7 @@ describe("transcript search model", () => {
       command: () => Promise.reject(new Error("offline hosts must not receive a command")),
     } as unknown as DesktopRuntimeController;
     const source = clientTranscriptSearchSource(controller, {
-      hosts: [{ id: "host-a", name: "Studio Mac", kind: "local" }],
+      hosts: [{ id: "host-a", runtimeKind: "omp", name: "Studio Mac", kind: "local" }],
       projects: [],
       sessions: [],
     });

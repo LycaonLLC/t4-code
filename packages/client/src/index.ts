@@ -1,4 +1,22 @@
 export { OmpClient, createOmpClient } from "./omp-client-runtime.ts";
+export {
+  OMP_RUNTIME_INTEGRATION,
+  OMP_RUNTIME_KIND,
+  T4_RUNTIME_FEATURES,
+  availableRuntimeFeature,
+  runtimeIdentityKey,
+  unavailableRuntimeFeature,
+} from "./runtime-integration.ts";
+export type {
+  KnownRuntimeFeature,
+  RuntimeFeature,
+  RuntimeFeatureMap,
+  RuntimeFeatureSupport,
+  RuntimeIdentity,
+  RuntimeIntegrationDescriptor,
+  RuntimeIntegrationLevel,
+  RuntimeKind,
+} from "./runtime-integration.ts";
 export type {
   PreviewCommandTarget,
   PreviewLaunchIntent,

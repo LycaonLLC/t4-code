@@ -21,7 +21,7 @@ const manifest = JSON.parse(readFileSync(join(vendorRoot, "manifest.json"), "utf
   createdAt: string;
 };
 const tarballPath = join(vendorRoot, manifest.tarball);
-const packageEntry = fileURLToPath(import.meta.resolve("@oh-my-pi/app-wire"));
+const packageEntry = fileURLToPath(import.meta.resolve("@t4-code/host-wire"));
 const installedRoot = dirname(dirname(packageEntry));
 
 const expectedTarEntries = [
@@ -135,8 +135,8 @@ function goldenCorpusSha256(root: string): string {
   return digest.digest("hex");
 }
 
-describe("vendored app-wire distribution", () => {
-  it("pins the frozen source, protocol, corpus, and tarball checksums", () => {
+describe("T4 host-wire distribution", () => {
+  it("keeps the T4-owned source compatible with the frozen OMP bridge snapshot", () => {
     expect(manifest).toMatchObject({
       package: "@oh-my-pi/app-wire",
       version: "0.7.0",
@@ -155,8 +155,9 @@ describe("vendored app-wire distribution", () => {
     const installedPackage = JSON.parse(
       readFileSync(join(installedRoot, "package.json"), "utf8"),
     ) as Record<string, unknown>;
-    expect(installedPackage.name).toBe(manifest.package);
-    expect(installedPackage.version).toBe(manifest.version);
+    expect(installedPackage.name).toBe("@t4-code/host-wire");
+    expect(installedPackage.version).toBe("0.1.30");
+    expect(installedPackage.version).not.toBe(manifest.version);
     expect(installedPackage.dependencies ?? {}).toEqual({});
   });
 
@@ -174,10 +175,8 @@ describe("vendored app-wire distribution", () => {
     );
     const lockfile = readFileSync(join(repoRoot, "pnpm-lock.yaml"), "utf8");
     expect(`${protocolPackage}\n${lockfile}`).not.toContain("/home/");
-    expect(protocolPackage).toMatch(
-      /"@oh-my-pi\/app-wire": "file:\.\.\/\.\.\/vendor\/app-wire\/oh-my-pi-app-wire-0\.7\.0\.tgz"/u,
-    );
-    expect(lockfile).toMatch(/version: file:vendor\/app-wire\/oh-my-pi-app-wire-0\.7\.0\.tgz/u);
+    expect(protocolPackage).toMatch(/"@t4-code\/host-wire": "workspace:\*"/u);
+    expect(lockfile).toContain("'@t4-code/host-wire':");
     expect(`${protocolPackage}\n${lockfile}`).not.toMatch(/file:\/\//u);
   });
 });

@@ -12,7 +12,7 @@ T4 Code needs an OMP build with desktop appserver support. For v0.1.30, use the 
 
 T4 Code v0.1.30 was verified with OMP 17.0.5 built from [`09835b92`](https://github.com/lyc-aon/oh-my-pi/commit/09835b929cd028e7e3f800b3e4203e3d1f37931c), tagged [`t4code-17.0.5-appserver-8`](https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-8). That public integration is based on the official upstream [`v17.0.5`](https://github.com/can1357/oh-my-pi/tree/v17.0.5) tag at [`9fd6e971`](https://github.com/can1357/oh-my-pi/commit/9fd6e97113f5ed3a847e66d346970efdf8afcad9). It recovers safely from a crashed backend whose old process ID still appears alive, while preserving a responsive owner. It also includes privacy-safe project reveal, fast lazy session indexing, cross-session attention and transcript search, the negotiated browser-preview command surface, redacted Codex transport diagnostics, the versioned Agent View lifecycle contract, session-owned cancellation, lock-aware session observation, complete transcript reconciliation, the cooperative `/continue-in-t4` handoff, and deterministic session ordering. Fork CI verifies the exact upstream base, ancestry, release gates, and published binaries. The official upstream v17.0.5 tag has no `appserver` command, so it cannot host T4 Code. The verified runtime is a normal build from the public `lyc-aon/oh-my-pi` source. T4 Code vendors `@oh-my-pi/app-wire` 0.6.2 from integration commit [`04229b1f`](https://github.com/lyc-aon/oh-my-pi/commit/04229b1f46547ac7c0617e55a993496ec9725f46), source tree `8400a3af618e8af11cccf6b20aadcf3a22baf9a1`.
 
-The development tree pins `@oh-my-pi/app-wire` 0.7.0 from [`lyc-aon/oh-my-pi#18`](https://github.com/lyc-aon/oh-my-pi/pull/18) for session-retained artifacts and turn-scoped file review. The published v0.1.29 runtime remains on app-wire 0.6.2 until that OMP integration is merged, tagged, and released.
+The development tree now owns the protocol source and generic host service in `@t4-code/host-wire` and `@t4-code/host-service`. The frozen `@oh-my-pi/app-wire` 0.7.0 tarball remains only as a compatibility snapshot for the current OMP bridge. OMP still owns session files, locks, agent execution, and takeover decisions. The verified runtime continues to carry the legacy embedded host copy until a thin bridge release replaces it, so ordinary upstream OMP is not yet compatible.
 
 | Platform | Arch                  | Package                                   |
 | -------- | --------------------- | ----------------------------------------- |
@@ -129,13 +129,14 @@ native release checks.
 ## Architecture
 
 ```
-apps/desktop   Electron main process: window, local omp discovery,
-               appserver lifecycle, pairing, credential storage
+apps/desktop   Electron main process: window, local OMP discovery,
+               host lifecycle, pairing, credential storage
 apps/web       React UI (Vite): sessions, composer, panes, settings
-packages/      client, protocol, remote, service-manager, ui
+packages/      client, protocol, host-wire, host-service, remote,
+               service-manager, ui
 ```
 
-The UI talks to an OMP host over typed WebSocket frames (`omp-app/1`, via the vendored `@oh-my-pi/app-wire`). State flows host → app as frames; user actions flow app → host as commands. The app projects what it receives and never fabricates state.
+The UI talks to the T4 host over typed WebSocket frames (`omp-app/1`, owned by `@t4-code/host-wire`). The host delegates authoritative session work to OMP through a narrow runtime bridge. State flows host → app as frames; user actions flow app → host as commands. The app projects what it receives and never fabricates state.
 
 ## Security and license
 
