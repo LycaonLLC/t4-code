@@ -1126,6 +1126,7 @@ describe("app-wire authority", () => {
 			"files.write": "authority",
 			"files.patch": "authority",
 			"files.list": "authority",
+			"files.search": "authority",
 			"files.diff": "authority",
 			"review.read": "authority",
 			"review.apply": "authority",

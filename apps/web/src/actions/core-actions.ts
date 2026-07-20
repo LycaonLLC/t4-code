@@ -219,7 +219,8 @@ const fileOpen = defineAction({
   surfaces: QUICK_OPEN,
   icon: "files",
   label: (_environment, args) => args.path,
-  description: () => "Current session · loaded file",
+  description: (_environment, args) =>
+    args.source === "project-search" ? "Current project" : "Current session · loaded file",
   availability: (environment, args) => {
     const active = activeCurrentSessionAvailability(environment, args.sessionId);
     if (active.status !== "enabled") return active;
@@ -227,6 +228,7 @@ const fileOpen = defineAction({
     if (inspector === null) {
       return { status: "disabled", reason: "Files are not loaded for this session yet." };
     }
+    if (args.source === "project-search") return ACTION_ENABLED;
     const entry = flattenFileIndex(inspector.getState().files.childrenByPath).find(
       (candidate) => candidate.path === args.path && !candidate.isDir,
     );

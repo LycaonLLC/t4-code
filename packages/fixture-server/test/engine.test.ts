@@ -894,6 +894,7 @@ describe("deterministic fixture engine", () => {
       ["prompt.lease.acquire", { ownerId: "fixture-device" }],
       ["agent.cancel", { agentId: "agent-fixture" }],
       ["files.list", {}],
+      ["files.search", { query: "app" }],
       ["files.diff", { path: "src/file.ts" }],
       ["audit.tail", {}],
       ["catalog.get", {}],
