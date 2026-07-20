@@ -7,7 +7,7 @@
   "license": "MIT",
   "bin": { "t4-host": "src/cli.ts" },
   "scripts": {
-    "build": "bun run typecheck",
+    "build": "bun run build:binary",
     "build:binary": "bun build --compile src/cli.ts --outfile dist/t4-host",
     "check": "bun run typecheck",
     "test": "bun test test",
