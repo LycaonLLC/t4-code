@@ -164,7 +164,6 @@ final class RunnerTests: XCTestCase {
   func testT4HostDiscoveryRequiresAnExecutableWithTheExactName() throws {
     let home = try temporaryDirectory()
     let hostExecutable = try makeExecutable(home: home, name: "t4-host")
-    let wrongExecutable = try makeExecutable(home: home, name: "not-t4-host")
     XCTAssertEqual(
       T4HostRuntimeDiscovery(
         environment: ["T4_HOST_EXECUTABLE": hostExecutable, "PATH": ""],
@@ -173,10 +172,13 @@ final class RunnerTests: XCTestCase {
       ).discover(),
       hostExecutable
     )
+
+    let wrongHome = try temporaryDirectory()
+    let wrongExecutable = try makeExecutable(home: wrongHome, name: "not-t4-host")
     XCTAssertNil(
       T4HostRuntimeDiscovery(
         environment: ["T4_HOST_EXECUTABLE": wrongExecutable, "PATH": ""],
-        homeDirectory: home.path,
+        homeDirectory: wrongHome.path,
         packagedExecutable: nil
       ).discover()
     )
