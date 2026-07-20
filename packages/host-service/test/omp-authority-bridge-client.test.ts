@@ -57,7 +57,7 @@ class FakeBridgeChild implements OmpAuthorityBridgeChild {
 const ready = {
 	v: OMP_AUTHORITY_BRIDGE_PROTOCOL,
 	type: "ready" as const,
-	methods: ["session.list", "operation.termOpen", "terminal.input", "terminal.resize", "terminal.close", "lock.status", "usage.read"] as const,
+	methods: ["host.info", "session.list", "operation.termOpen", "terminal.input", "terminal.resize", "terminal.close", "lock.status", "usage.read"] as const,
 	ompVersion: "17.0.5",
 	ompBuild: "bridge-test",
 };

@@ -1,4 +1,5 @@
 import type { DeviceCapability, ProjectId, SessionId, UsageReadResult } from "@t4-code/host-wire";
+import { isAbsolute } from "node:path";
 import {
 	decodeOmpAuthorityBridgeServerFrame,
 	encodeOmpAuthorityBridgeFrame,
@@ -35,6 +36,7 @@ export interface OmpAuthorityBridgeInvocation {
 }
 
 export interface OmpAuthorityBridgeAuthorities {
+	readonly hostInfo: () => Promise<{ readonly transcriptImageRoot: string }>;
 	readonly sessionAuthority: SessionAuthority;
 	readonly discovery: SessionDiscovery;
 	readonly operationsAuthority: DesktopOperationsAuthority;
@@ -202,6 +204,12 @@ export class OmpAuthorityBridgeClient {
 			this.#terminalOutputs.delete(String(frame.terminalId));
 		};
 		return {
+			hostInfo: async () => {
+				const value = asRecord(await call("host.info", {}), "host info");
+				if (Object.keys(value).length !== 1 || !isAbsolute(asString(value.transcriptImageRoot, "transcript image root")))
+					throw new Error("host info is invalid");
+				return { transcriptImageRoot: value.transcriptImageRoot as string };
+			},
 			sessionAuthority,
 			discovery,
 			operationsAuthority,

@@ -2,6 +2,7 @@ export const OMP_AUTHORITY_BRIDGE_PROTOCOL = "t4-omp-authority/1" as const;
 export const OMP_AUTHORITY_BRIDGE_MAX_LINE_BYTES = 1024 * 1024;
 
 export const OMP_AUTHORITY_BRIDGE_METHODS = [
+	"host.info",
 	"session.create",
 	"session.list",
 	"session.archive",
