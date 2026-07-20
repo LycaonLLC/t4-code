@@ -99,6 +99,7 @@ const CONTENT_METHODS = new Set<string>([
   "browser.find.label", "browser.find.placeholder", "browser.find.testid", "browser.find.first",
   "browser.find.last", "browser.find.nth", "browser.highlight", "browser.frame.select", "browser.frame.main",
   "browser.storage.get", "browser.storage.set", "browser.storage.clear",
+  "browser.design_mode.set", "browser.design_mode.status",
 ]);
 
 const SPECIAL_METHODS = new Set<string>([
@@ -114,7 +115,7 @@ const MUTATING_METHODS = new Set<string>([
   "browser.keyup", "browser.check", "browser.uncheck", "browser.select", "browser.scroll", "browser.scroll_into_view",
   "browser.highlight", "browser.frame.select", "browser.frame.main", "browser.storage.set", "browser.storage.clear",
   "browser.cookies.set", "browser.cookies.clear", "browser.state.load", "browser.addinitscript", "browser.addscript",
-  "browser.addstyle",
+  "browser.addstyle", "browser.design_mode.set",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {

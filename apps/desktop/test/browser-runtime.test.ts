@@ -141,6 +141,61 @@ async function settleBackgroundWork(): Promise<void> {
 }
 
 describe("BrowserRuntime native view lifecycle", () => {
+  it("routes design mode through the exact owner-scoped browser surface", async () => {
+    electron.reset();
+    const calls: unknown[] = [];
+    const runtime = new BrowserRuntime({
+      window: new FakeWindow() as never,
+      emit: () => {},
+      userDataPath: "/tmp/t4-browser-runtime-design-mode",
+      profileRegistry: {
+        getSession: () => electron.session.defaultSession,
+        markInUse: () => {},
+        release: () => {},
+      },
+      sessionStore: { save: () => {} },
+      downloadController: { attach: () => {}, disposeSurface: () => {}, dispose: () => {} },
+      installSecurity: () => ({
+        auth: null,
+        clearTrustGrants: () => {},
+        dispose: () => {},
+        grantCertificate: () => false,
+        setProfile: () => {},
+        configureProxy: async () => ({ ok: false, code: "not_supported", message: "Not used by this test" }),
+      }),
+      automationCoordinator: {
+        call: async (call) => {
+          calls.push(call);
+          return { enabled: true, prompt: "Refine heading", selection: "Heading" };
+        },
+        dispose: () => {},
+      },
+    });
+    const created = await runtime.call(browserCall("surface.create", {
+      profile: isolatedProfile,
+      url: "https://example.test/",
+    })) as BrowserCallResult<"surface.create">;
+
+    const result = await runtime.call(browserCall("browser.design_mode.set", {
+      surfaceId: created.surface.surfaceId,
+      enabled: true,
+      prompt: "Refine heading",
+    }));
+
+    expect(result).toEqual({ enabled: true, prompt: "Refine heading", selection: "Heading" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      method: "browser.design_mode.set",
+      ownerSessionId: OWNER_A,
+      request: {
+        surfaceId: created.surface.surfaceId,
+        enabled: true,
+        prompt: "Refine heading",
+      },
+    });
+    await runtime.dispose();
+  });
+
   it("requests isolated Electron sessions using the owning OMP session id", async () => {
     electron.reset();
     const ownerSessions: unknown[] = [];

@@ -33,6 +33,36 @@ function surface(lifecycle: "creating" | "loading" | "ready" | "closed" | "crash
 }
 
 describe("browser IPC boundary", () => {
+  it("decodes bounded multiline design-mode requests and status", () => {
+    const call = decodeBrowserCall({
+      version: BROWSER_IPC_VERSION,
+      method: "browser.design_mode.set",
+      ownerSessionId: "session-a",
+      request: {
+        surfaceId: SURFACE_ID,
+        enabled: true,
+        prompt: "Tighten the heading\nand preserve spacing.",
+      },
+    });
+    expect(call.request).toEqual({
+      surfaceId: SURFACE_ID,
+      enabled: true,
+      prompt: "Tighten the heading\nand preserve spacing.",
+    });
+
+    expect(
+      decodeBrowserResult("browser.design_mode.status", {
+        enabled: true,
+        prompt: "Tighten the heading",
+        selection: "Heading\nSupporting copy",
+      }),
+    ).toEqual({
+      enabled: true,
+      prompt: "Tighten the heading",
+      selection: "Heading\nSupporting copy",
+    });
+  });
+
   it("decodes every browser surface lifecycle", () => {
     for (const lifecycle of ["creating", "loading", "ready", "closed", "crashed", "failed"] as const) {
       expect(decodeBrowserResult("surface.get", { surface: surface(lifecycle) })).toMatchObject({

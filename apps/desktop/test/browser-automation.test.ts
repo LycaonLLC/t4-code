@@ -29,7 +29,7 @@ const vitest = await import("vitest") as unknown as VitestMockApi;
 vitest.vi.mock("electron", () => ({ ipcMain: ipcMainMock() }));
 
 // This follows the Electron mock above.
-const { BrowserAutomationCoordinator } = await import("../src/browser-automation.ts");
+const { BrowserAutomationCoordinator, canHandleBrowserAutomationMethod } = await import("../src/browser-automation.ts");
 
 type EvaluationResult = { readonly ok: boolean; readonly value?: unknown; readonly error?: string };
 
@@ -66,6 +66,11 @@ function call(coordinator: InstanceType<typeof BrowserAutomationCoordinator>, me
 }
 
 describe("BrowserAutomationCoordinator native evaluation", () => {
+  it("routes both design-mode methods through the page-content bridge", () => {
+    expect(canHandleBrowserAutomationMethod("browser.design_mode.set")).toBe(true);
+    expect(canHandleBrowserAutomationMethod("browser.design_mode.status")).toBe(true);
+  });
+
   it("evaluates document.title through the live WebContents despite page CSP", async () => {
     const { contents, coordinator } = harness();
     contents.handler = async (script) => {
