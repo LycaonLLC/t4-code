@@ -3,6 +3,7 @@ set -euo pipefail
 umask 077
 
 : "${T4_SESSION_STATE_ROOT:?T4_SESSION_STATE_ROOT is required}"
+: "${T4_SESSION_NAME:?T4_SESSION_NAME is required}"
 : "${T4_AUTHORITY_STATE_DIR:?T4_AUTHORITY_STATE_DIR is required}"
 : "${T4_BROWSER_STATE_DIR:?T4_BROWSER_STATE_DIR is required}"
 : "${T4_CLUSTER_SERVER_SERVICE_ACCOUNT:?T4_CLUSTER_SERVER_SERVICE_ACCOUNT is required}"
@@ -19,6 +20,7 @@ if [[ ! "${T4_SESSION_STATE_ROOT}" =~ ^/workspace/\.t4/sessions/[a-z0-9]([-a-z0-
   echo '{"component":"session-runtime","result":"invalid_config","condition":"session_state_path"}' >&2
   exit 64
 fi
+[[ "${T4_SESSION_NAME}" =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$ ]] || { echo '{"component":"session-runtime","result":"invalid_config","condition":"session_name"}' >&2; exit 64; }
 [[ "${T4_AUTHORITY_STATE_DIR}" == "${T4_SESSION_STATE_ROOT}/authority" ]] || { echo '{"component":"session-runtime","result":"invalid_config","condition":"authority_state_path"}' >&2; exit 64; }
 [[ "${T4_BROWSER_STATE_DIR}" == "${T4_SESSION_STATE_ROOT}/browser" ]] || { echo '{"component":"session-runtime","result":"invalid_config","condition":"browser_state_path"}' >&2; exit 64; }
 
@@ -43,7 +45,7 @@ if [[ "${T4_OMP_ALLOW_UNAUTHENTICATED}" == "false" ]]; then
 fi
 
 export HOME="${T4_SESSION_STATE_ROOT}/home"
-export PI_CODING_AGENT_DIR="${HOME}/.omp/agent"
+export PI_CODING_AGENT_DIR="${HOME}/.omp/profiles/${T4_SESSION_NAME}/agent"
 mkdir -p "${T4_AUTHORITY_STATE_DIR}" "${T4_BROWSER_STATE_DIR}" /run/t4 /tmp/t4
 install -d -m 0700 "${HOME}" "${PI_CODING_AGENT_DIR}"
 models_private="${PI_CODING_AGENT_DIR}/.models.yml.new"

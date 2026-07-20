@@ -240,9 +240,27 @@ func TestRBACSeparatesControllerMutationFromServerProjection(t *testing.T) {
 	controllerRole := documentContaining(t, output, "name: \"release-name-t4-cluster-controller\"")
 	serverRole := documentContaining(t, output, "name: \"release-name-t4-cluster-server\"")
 	assertContains(t, controllerRole, "persistentvolumeclaims", "pods", "services", "t4sessions/status", "leases")
+	assertContains(t, controllerRole,
+		"resources: [configmaps]",
+		"resourceNames: [\"omp-runtime-config\"]",
+		"resources: [secrets]",
+		"resourceNames: [\"omp-runtime-credential\"]",
+		"verbs: [get]",
+	)
 	assertContains(t, serverRole, "t4clusterhosts", "t4workspaces", "t4sessions", "create", "list", "watch")
 	if strings.Contains(serverRole, "secrets") || strings.Contains(serverRole, "persistentvolumeclaims") || strings.Contains(serverRole, "t4sessions/status") {
 		t.Fatal("server role can read secrets or mutate controller-owned infrastructure/status")
+	}
+}
+func TestUnauthenticatedOMPControllerCannotReadSecrets(t *testing.T) {
+	output := helmTemplate(t, append(enabledValues(),
+		"--set", "session.omp.allowUnauthenticated=true",
+		"--set-string", "session.omp.credentialSecret=",
+		"--set-string", "session.omp.credentialKey=",
+	)...)
+	controllerRole := documentContaining(t, output, "name: \"release-name-t4-cluster-controller\"")
+	if strings.Contains(controllerRole, "resources: [secrets]") {
+		t.Fatal("unauthenticated OMP controller can read Secrets")
 	}
 }
 
@@ -443,7 +461,7 @@ func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 		"T4_OMP_CREDENTIAL_KEY",
 		`if [[ "${T4_OMP_ALLOW_UNAUTHENTICATED}" == "false" ]]`,
 		`export HOME="${T4_SESSION_STATE_ROOT}/home"`,
-		`export PI_CODING_AGENT_DIR="${HOME}/.omp/agent"`,
+		`export PI_CODING_AGENT_DIR="${HOME}/.omp/profiles/${T4_SESSION_NAME}/agent"`,
 		`install -m 0600 "${models_source}"`,
 		`install -m 0600 "${settings_source}"`,
 		`"${PI_CODING_AGENT_DIR}/models.yml"`,
@@ -501,6 +519,7 @@ func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing
 			command.Env = append(os.Environ(),
 				"PATH="+bin+":"+os.Getenv("PATH"),
 				"T4_SESSION_STATE_ROOT=/workspace/.t4/sessions/session-a",
+				"T4_SESSION_NAME=session-a",
 				"T4_AUTHORITY_STATE_DIR=/workspace/.t4/sessions/session-a/authority",
 				"T4_BROWSER_STATE_DIR=/workspace/.t4/sessions/session-a/browser",
 				"T4_CLUSTER_SERVER_SERVICE_ACCOUNT=t4-cluster-server",

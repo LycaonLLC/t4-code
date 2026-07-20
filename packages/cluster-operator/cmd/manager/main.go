@@ -77,7 +77,7 @@ func main() {
 	excludedNodes := splitNonempty(os.Getenv("T4_SESSION_EXCLUDED_NODES"))
 	sessionServiceAccount, serverServiceAccount := sessionServiceAccountNames()
 	if err := (&controllers.SessionReconciler{
-		Client: manager.GetClient(), Scheme: manager.GetScheme(),
+		Client: manager.GetClient(), APIReader: manager.GetAPIReader(), Scheme: manager.GetScheme(),
 		RuntimeImage:              os.Getenv("T4_SESSION_RUNTIME_IMAGE"),
 		SessionServiceAccountName: sessionServiceAccount,
 		ServerServiceAccountName:  serverServiceAccount,

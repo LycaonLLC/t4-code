@@ -46,6 +46,43 @@ type SessionOMPConfig struct {
 	CredentialKey        string
 	AllowUnauthenticated bool
 }
+type ompResourceVersions struct {
+	ConfigMap        string `json:"configMap"`
+	CredentialSecret string `json:"credentialSecret,omitempty"`
+}
+
+func (r *SessionReconciler) loadOMPResourceVersions(ctx context.Context, namespace string) (ompResourceVersions, string, string, error) {
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
+	var configMap corev1.ConfigMap
+	if err := reader.Get(ctx, types.NamespacedName{Namespace: namespace, Name: r.OMPConfig.ConfigMapName}, &configMap); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ompResourceVersions{}, "OMPConfigMapNotFound", "administrator-owned OMP ConfigMap does not exist", nil
+		}
+		return ompResourceVersions{}, "", "", err
+	}
+	if configMap.Data[r.OMPConfig.ModelsKey] == "" || configMap.Data[r.OMPConfig.SettingsKey] == "" {
+		return ompResourceVersions{}, "OMPConfigMapInvalid", "administrator-owned OMP ConfigMap must contain nonempty models and settings keys", nil
+	}
+	versions := ompResourceVersions{ConfigMap: configMap.ResourceVersion}
+	if r.OMPConfig.AllowUnauthenticated {
+		return versions, "", "", nil
+	}
+	var secret corev1.Secret
+	if err := reader.Get(ctx, types.NamespacedName{Namespace: namespace, Name: r.OMPConfig.CredentialSecretName}, &secret); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ompResourceVersions{}, "OMPCredentialSecretNotFound", "administrator-owned OMP credential Secret does not exist", nil
+		}
+		return ompResourceVersions{}, "", "", err
+	}
+	if len(secret.Data[r.OMPConfig.CredentialKey]) == 0 {
+		return ompResourceVersions{}, "OMPCredentialSecretInvalid", "administrator-owned OMP credential Secret must contain the configured nonempty key", nil
+	}
+	versions.CredentialSecret = secret.ResourceVersion
+	return versions, "", "", nil
+}
 
 func (config SessionOMPConfig) validationFailure() (string, string) {
 	if config.ConfigMapName == "" || config.ModelsKey == "" || config.SettingsKey == "" {
@@ -76,6 +113,7 @@ func (config SessionOMPConfig) validationFailure() (string, string) {
 type SessionReconciler struct {
 	client.Client
 	Scheme                    *runtime.Scheme
+	APIReader                 client.Reader
 	RuntimeImage              string
 	SessionServiceAccountName string
 	ServerServiceAccountName  string
@@ -145,6 +183,13 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 	if pvc.Status.Phase != corev1.ClaimBound || !pvcHasRWX(&pvc) {
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, r.updateSessionFailure(ctx, &session, "WorkspaceReady", "PVCNotBoundRWX", "workspace PVC must be Bound and ReadWriteMany before a session starts")
 	}
+	runtimeVersions, reason, message, err := r.loadOMPResourceVersions(ctx, session.Namespace)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if reason != "" {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, "RuntimeConfigured", reason, message)
+	}
 
 	serviceName := SessionServiceName(&session)
 	podName := SessionPodName(&session)
@@ -191,7 +236,7 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		}
 	}
 
-	desiredPod, err := r.desiredPod(&session, workspace.Status.PVCName, podName, labels)
+	desiredPod, err := r.desiredPod(&session, workspace.Status.PVCName, podName, labels, runtimeVersions)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -259,10 +304,10 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 	if !podReady(&pod) {
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
-func (r *SessionReconciler) desiredPod(session *clusterv1alpha1.T4Session, pvcName, podName string, labels map[string]string) (corev1.Pod, error) {
+func (r *SessionReconciler) desiredPod(session *clusterv1alpha1.T4Session, pvcName, podName string, labels map[string]string, runtimeVersions ompResourceVersions) (corev1.Pod, error) {
 	falseValue := false
 	trueValue := true
 	runAsUser := int64(10001)
@@ -387,11 +432,14 @@ func (r *SessionReconciler) desiredPod(session *clusterv1alpha1.T4Session, pvcNa
 			Containers:                    []corev1.Container{container}, Volumes: volumes,
 		},
 	}
-	spec, err := json.Marshal(pod.Spec)
+	hashInput, err := json.Marshal(struct {
+		PodSpec             corev1.PodSpec      `json:"podSpec"`
+		OMPResourceVersions ompResourceVersions `json:"ompResourceVersions"`
+	}{PodSpec: pod.Spec, OMPResourceVersions: runtimeVersions})
 	if err != nil {
 		return corev1.Pod{}, fmt.Errorf("serialize desired session Pod: %w", err)
 	}
-	hash := sha256.Sum256(spec)
+	hash := sha256.Sum256(hashInput)
 	pod.Annotations = map[string]string{clusterv1alpha1.SessionPodSpecHashAnnotation: fmt.Sprintf("%x", hash)}
 	return pod, nil
 }

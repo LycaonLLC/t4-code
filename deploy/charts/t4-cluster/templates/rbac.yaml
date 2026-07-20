@@ -19,6 +19,16 @@ rules:
     resources: [pods, services, persistentvolumeclaims]
     verbs: [get, list, watch, create, update, patch, delete]
   - apiGroups: ['']
+    resources: [configmaps]
+    resourceNames: [{{ .Values.session.omp.configMap | quote }}]
+    verbs: [get]
+  {{- if not .Values.session.omp.allowUnauthenticated }}
+  - apiGroups: ['']
+    resources: [secrets]
+    resourceNames: [{{ .Values.session.omp.credentialSecret | quote }}]
+    verbs: [get]
+  {{- end }}
+  - apiGroups: ['']
     resources: [events]
     verbs: [create, patch]
   - apiGroups: [coordination.k8s.io]
