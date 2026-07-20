@@ -1,8 +1,8 @@
-# OMP Desktop Product Brief
+# T4 Code Product Brief
 
 ## Product
 
-A Linux/macOS desktop client for OMP. Preserve OMP as the agent runtime; make projects, concurrent sessions, live streaming, tools, terminal activity, subagents, reviews, files, settings, and remote hosts easier to see and operate.
+A desktop, web, and mobile workspace for OMP. Preserve OMP as the agent runtime; make projects, concurrent sessions, live streaming, tools, terminal activity, subagents, reviews, files, settings, and remote hosts easier to see and operate.
 
 ## Primary reference
 
@@ -24,21 +24,38 @@ T3 Code at `reference/t3code` is the primary presentation, interaction, desktop-
 
 ## Runtime boundary
 
-- OMP remains authoritative for models, tools, commands, sessions, task agents, memory, skills, settings, auth, and execution.
-- The desktop app consumes a versioned OMP app protocol; it does not parse terminal pixels as its primary data source and does not reimplement OMP behavior.
-- A persistent OMP appserver runs on an OMP host, supports local desktop attachment, and supports authenticated remote attachment across the user's Tailscale tailnet.
+- OMP remains authoritative for prompt acceptance, transcript truth, models, tools, sessions, task agents, memory, skills, settings, credentials, and execution.
+- T4 clients consume the versioned T4 Host protocol. The T4 Host consumes the narrower OMP authority bridge; clients do not parse terminal pixels as their primary data source or reimplement OMP behavior.
+- A persistent T4 Host runs beside OMP, speaks to the pinned OMP authority bridge, supports local desktop attachment, and supports authenticated remote attachment across the user's Tailscale tailnet.
 - Remote control must preserve exact session identity, reconnect/replay semantics, capability authorization, and explicit destructive-action boundaries.
+
+## Hub direction
+
+T4 is preparing a central Hub for users who coordinate several personal dev boxes, team machines,
+or managed worker pools. The Hub will coordinate identity, durable commands, ownership, and events;
+OMP will continue to own prompt acceptance, transcript truth, tools, and agent execution. The
+released local T4 Host path remains supported while the Hub matures through the development
+checkpoints in [`ADR-016`](docs/adr/016-hub-collaboration-foundation.md). Shared work is tracked in
+[`docs/T4_HUB_TRACKER.md`](docs/T4_HUB_TRACKER.md).
+
+The Hub contracts are independent of the client framework and deployment scheduler. A normal remote
+dev box does not require Kubernetes or shared cluster storage merely to participate.
 
 ## Planned package boundaries
 
 - `apps/desktop`: Electron main/preload, packaging, updates, OS integration.
 - `apps/web`: T3-derived React renderer and desktop/web client shell.
-- `packages/protocol`: install the checked-in relative app-wire tarball from `vendor/app-wire/`, verify its manifest/checksums, re-export it, and add desktop-only IPC schemas without redeclaring network frames.
+- `apps/mobile`: the current native Android wrapper around the web client.
+- `packages/host-wire`: T4-owned, dependency-free `omp-app/1` wire schema.
+- `packages/host-service`: persistent host service, projections, workspaces, policy, replay, files, PTY, audit, and OMP authority-bridge supervision.
+- `packages/host-daemon`: standalone T4 Host executable.
+- `packages/protocol`: consumes the workspace-owned host wire schema and adds desktop-only IPC schemas.
 - `packages/client`: connection, replay, cache, optimistic-state rules, host/session stores.
+- `packages/remote`: remote target discovery, identity pinning, pairing, and transport helpers.
+- `packages/service-manager`: desktop-side T4 Host installation and lifecycle support.
 - `packages/ui`: T3-derived design primitives, tokens, icons, motion, virtualization.
 - `packages/fixture-server`: deterministic seeded sessions, faults, and load scenarios.
-- OMP `packages/app-wire`: sole versioned, dependency-free protocol authority with JSON-safe TypeScript types, executable decoders/guards, constants, and golden frames.
-- OMP `packages/appserver`: persistent host service, RPC-child supervisor, local socket, remote endpoint, pairing, policy, replay, PTY, files, and audit.
+- OMP authority bridge: versioned runtime boundary for session persistence, locks, workers, configuration, credentials, tools, and execution.
 
 ## Proof standard
 
