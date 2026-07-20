@@ -1,10 +1,11 @@
-import { isCursor } from "@t4-code/protocol";
+import { decodeWorkspaceInfrastructureProjection, isCursor } from "@t4-code/protocol";
 import type {
   Cursor,
   DurableEntry,
   OmpServerFrame,
   SessionEvent,
   SessionRef,
+  WorkspaceInfrastructureProjection,
 } from "@t4-code/protocol";
 import { ImmutableSet } from "./immutable-set.ts";
 import { ImmutableMap } from "./immutable-map.ts";
@@ -199,6 +200,10 @@ export interface ProjectionSnapshot {
   readonly sessionRefArrivalOrdinals: ReadonlyMap<string, number>;
   /** Session-list delta cursors are independent from transcript cursors. */
   readonly sessionDeltaCursors: ReadonlyMap<string, Cursor>;
+  /** Cluster workspace lifecycle, bounded and keyed by host + workspace id. */
+  readonly workspaces: ReadonlyMap<string, WorkspaceInfrastructureProjection>;
+  /** Workspace lifecycle cursors are independent from session and transcript cursors. */
+  readonly workspaceCursors: ReadonlyMap<string, Cursor>;
   readonly lru: readonly string[];
   readonly cursor?: Cursor;
   readonly epoch?: string;
@@ -210,6 +215,7 @@ export interface ProjectionSnapshot {
 export interface ProjectionOptions {
   readonly maxWarmSessions?: number;
   readonly maxIndexedSessions?: number;
+  readonly maxWorkspaces?: number;
   readonly maxEntries?: number;
   readonly maxTranscriptBytes?: number;
   readonly maxEntryBytes?: number;
@@ -243,6 +249,7 @@ export interface ProjectionSubscription {
 }
 
 export const MAX_INDEXED_SESSION_REFS = 1000;
+export const MAX_INDEXED_WORKSPACES = 1000;
 export const MAX_RETAINED_TERMINALS = 64;
 export const MAX_RETAINED_TERMINAL_BYTES = 1024 * 1024;
 export const MAX_RETAINED_TERMINAL_BYTES_PER_TERMINAL = 256 * 1024;
@@ -254,6 +261,7 @@ export const MAX_RETAINED_PREVIEW_EVENTS = 128;
 const DEFAULT_OPTIONS: Required<ProjectionOptions> = {
   maxWarmSessions: 8,
   maxIndexedSessions: MAX_INDEXED_SESSION_REFS,
+  maxWorkspaces: MAX_INDEXED_WORKSPACES,
   maxEntries: MAX_RETAINED_TRANSCRIPT_ENTRIES,
   maxTranscriptBytes: MAX_RETAINED_TRANSCRIPT_BYTES,
   maxEntryBytes: MAX_RETAINED_TRANSCRIPT_ENTRY_BYTES,
@@ -631,10 +639,49 @@ export function createProjectionSnapshot(): ProjectionSnapshot {
     sessionIndexMetadata: immutableMap<string, SessionIndexMetadata>(),
     sessionRefArrivalOrdinals: immutableMap<string, number>(),
     sessionDeltaCursors: immutableMap<string, Cursor>(),
+    workspaces: immutableMap<string, WorkspaceInfrastructureProjection>(),
+    workspaceCursors: immutableMap<string, Cursor>(),
     lru: freezeArray([]),
     freshness: "fresh" as const,
     arrivalOrdinal: 0,
   });
+}
+
+function workspaceCursorIsStale(previous: Cursor | undefined, cursor: Cursor): boolean {
+  return previous !== undefined && previous.epoch === cursor.epoch && cursor.seq <= previous.seq;
+}
+
+function applyWorkspaceInventory(
+  snapshot: ProjectionSnapshot,
+  host: string,
+  workspaces: readonly WorkspaceInfrastructureProjection[],
+  cursor: Cursor | undefined,
+  maxWorkspaces: number,
+): ProjectionSnapshot {
+  if (cursor !== undefined && workspaceCursorIsStale(snapshot.workspaceCursors.get(host), cursor)) {
+    return snapshot;
+  }
+  let nextWorkspaces = snapshot.workspaces;
+  for (const [itemKey] of nextWorkspaces) {
+    if (itemKey.startsWith(`${host}\u0000`)) nextWorkspaces = mapWithout(nextWorkspaces, itemKey);
+  }
+  for (const raw of workspaces.slice(0, maxWorkspaces)) {
+    const workspace = decodeWorkspaceInfrastructureProjection(raw);
+    nextWorkspaces = mapWith(
+      nextWorkspaces,
+      key(host, workspace.id),
+      Object.freeze(workspace),
+      maxWorkspaces,
+    );
+  }
+  const workspaceCursors =
+    cursor === undefined
+      ? snapshot.workspaceCursors
+      : mapWith(snapshot.workspaceCursors, host, Object.freeze({ ...cursor }), maxWorkspaces);
+  if (nextWorkspaces === snapshot.workspaces && workspaceCursors === snapshot.workspaceCursors) {
+    return snapshot;
+  }
+  return Object.freeze({ ...snapshot, workspaces: nextWorkspaces, workspaceCursors });
 }
 
 function nextArrivalOrdinal(snapshot: ProjectionSnapshot): number {
@@ -1012,6 +1059,39 @@ function applyProjectionInput(
 ): ProjectionSnapshot {
   const config = resolveProjectionOptions(options);
   switch (frame.type) {
+    case "workspace.state": {
+      const host = boundedIdentity(frame.hostId);
+      const workspaceId = boundedIdentity(frame.workspaceId);
+      if (host === undefined || workspaceId === undefined) return snapshot;
+      const previousCursor = snapshot.workspaceCursors.get(host);
+      if (workspaceCursorIsStale(previousCursor, frame.cursor)) return snapshot;
+      let workspaces = snapshot.workspaces;
+      if (frame.upsert !== undefined) {
+        const workspace = decodeWorkspaceInfrastructureProjection(frame.upsert);
+        if (workspace.id !== workspaceId) return snapshot;
+        workspaces = mapWith(
+          workspaces,
+          key(host, workspaceId),
+          Object.freeze(workspace),
+          config.maxWorkspaces,
+        );
+      } else if (frame.remove !== undefined) {
+        if (String(frame.remove) !== workspaceId) return snapshot;
+        workspaces = mapWithout(workspaces, key(host, workspaceId));
+      } else {
+        return snapshot;
+      }
+      return Object.freeze({
+        ...snapshot,
+        workspaces,
+        workspaceCursors: mapWith(
+          snapshot.workspaceCursors,
+          host,
+          Object.freeze({ ...frame.cursor }),
+          config.maxWorkspaces,
+        ),
+      });
+    }
     case "sessions": {
       const arrivalOrdinal = nextArrivalOrdinal(snapshot);
       const refs = frame.sessions
@@ -1760,6 +1840,45 @@ export class ProjectionStore {
         /* listener isolation */
       }
     }
+    return next;
+  }
+  replaceWorkspaceInventory(
+    hostId: string,
+    workspaces: readonly WorkspaceInfrastructureProjection[],
+    cursor?: Cursor,
+  ): ProjectionSnapshot {
+    if (this.disposed) return this.current;
+    const host = boundedIdentity(hostId);
+    if (host === undefined) return this.current;
+    const next = applyWorkspaceInventory(
+      this.current,
+      host,
+      workspaces,
+      cursor,
+      this.options.maxWorkspaces,
+    );
+    if (next === this.current) return next;
+    this.mutationGeneration += 1;
+    this.current = next;
+    this.queueCacheSave();
+    for (const listener of [...this.listeners]) {
+      try {
+        listener(next);
+      } catch {
+        /* listener isolation */
+      }
+    }
+    return next;
+  }
+  invalidateWorkspaceInventory(hostId: string): ProjectionSnapshot {
+    if (this.disposed || !this.current.workspaceCursors.has(hostId)) return this.current;
+    const next = Object.freeze({
+      ...this.current,
+      workspaceCursors: mapWithout(this.current.workspaceCursors, hostId),
+    });
+    this.mutationGeneration += 1;
+    this.current = next;
+    this.queueCacheSave();
     return next;
   }
   activateSession(hostId: string, sessionId: string): ProjectionSnapshot {

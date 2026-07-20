@@ -22,7 +22,7 @@ import {
   type TerminalResizeRequest,
   type TerminalResult,
 } from "@t4-code/protocol/desktop-ipc";
-import { decodeCatalog, decodeSessions, hostId, revision, sessionId, type CatalogFrame, type Cursor, type SettingsFrame } from "@t4-code/protocol";
+import { CLUSTER_OPERATOR_FEATURE, decodeCatalog, decodeCommandResult, decodeSessions, decodeWorkspaceInfrastructureProjection, hostId, revision, sessionId, type CatalogFrame, type Cursor, type SettingsFrame, type WorkspaceInfrastructureProjection, type WorkspaceListResult } from "@t4-code/protocol";
 import type { Unsubscribe } from "./index.ts";
 import { ProjectionStore } from "./projection.ts";
 import {
@@ -97,6 +97,7 @@ export class DesktopRuntimeController {
   private readonly projection: ProjectionStore;
   private readonly ownsProjection: boolean;
   private readonly clock: { now(): number };
+  private readonly clusterOperatorEnabled: boolean;
   private readonly timers: DesktopRuntimeTimerScheduler;
   private readonly sessionRefreshTimers = new Map<string, unknown>();
   private readonly sessionRefreshInFlight = new Map<string, DesktopTargetIdentity>();
@@ -124,6 +125,7 @@ export class DesktopRuntimeController {
   private readonly controllerLeaseFallbackTtlMs = 20_000;
   constructor(options: DesktopRuntimeOptions) {
     this.shell = options.shell;
+    this.clusterOperatorEnabled = options.clusterOperatorEnabled === true;
     this.projection = options.projection ?? new ProjectionStore(options.projectionOptions);
     this.ownsProjection = options.projection === undefined;
     this.clock = options.clock ?? { now: () => Date.now() };
@@ -143,6 +145,7 @@ export class DesktopRuntimeController {
       catalogs: mapValue<string, CatalogFrame>([]),
       settings: mapValue<string, SettingsFrame>([]),
       projection: this.projection.getSnapshot(),
+      clusterOperatorEnabled: this.clusterOperatorEnabled,
       runtimeErrors: Object.freeze([]),
     });
     this.projection.subscribe((snapshot) => {
@@ -293,7 +296,7 @@ export class DesktopRuntimeController {
   private async issueCommand(targetId: string, intent: CommandRequest["intent"], capturedIdentity?: DesktopTargetIdentity): Promise<CommandResult> {
     const identity = capturedIdentity ?? this.captureTargetIdentity(targetId);
     const result = freezeClone(await this.shell.command(freezeClone({ targetId, intent })));
-    const isHostProductCommand = intent.command === "session.list" || intent.command === "host.list" || intent.command === "catalog.get" || intent.command === "settings.read";
+    const isHostProductCommand = intent.command === "session.list" || intent.command === "host.list" || intent.command === "workspace.list" || intent.command === "catalog.get" || intent.command === "settings.read";
     if (result.accepted === true && isHostProductCommand) {
       if (identity === undefined || !this.isCurrentTargetIdentity(identity) || !this.isCurrentHostProjection(identity) || identity.hostId !== String(intent.hostId)) {
         throw new DesktopRuntimeError("stale", "host product command completed for a stale target binding");
@@ -776,6 +779,17 @@ export class DesktopRuntimeController {
       const catalog = decodeCatalog({ v: "omp-app/1", type: "catalog", hostId: hostValue, revision: result.revision, items: result.items });
       if (catalog.type !== "catalog") throw new DesktopRuntimeError("protocol", "catalog response decoded as settings");
       this.replace({ catalogs: mapValue(new Map(this.current.catalogs).set(hostValue, catalog)) });
+    } else if (command === "workspace.list") {
+      const decoded = decodeCommandResult(command, result) as WorkspaceListResult;
+      const workspaces: WorkspaceInfrastructureProjection[] = [];
+      for (const item of decoded.workspaces) {
+        try {
+          workspaces.push(decodeWorkspaceInfrastructureProjection(item));
+        } catch {
+          // Legacy local workspace rows are not cluster infrastructure projections.
+        }
+      }
+      this.projection.replaceWorkspaceInventory(hostValue, workspaces, decoded.cursor);
     } else if (command === "settings.read") {
       const settings = decodeCatalog({ v: "omp-app/1", type: "settings", hostId: hostValue, revision: result.revision, settings: result.settings });
       if (settings.type !== "settings") throw new DesktopRuntimeError("protocol", "settings response decoded as catalog");
@@ -813,6 +827,7 @@ export class DesktopRuntimeController {
     // the previous transport generation, even for the brief notification
     // before the welcome frame itself reaches the shared projection.
     this.projection.invalidateSessionInventory(String(frame.hostId));
+    if (this.clusterOperatorEnabled) this.projection.invalidateWorkspaceInventory(String(frame.hostId));
     if (this.current.connections.get(targetId) !== "connected") {
       this.welcomedBeforeConnected.add(targetId);
     }
@@ -832,6 +847,7 @@ export class DesktopRuntimeController {
     if (identity === undefined) return;
     void bootstrapDesktopHost({
       targetId,
+      clusterOperatorEnabled: this.clusterOperatorEnabled,
       frame,
       issue: (intent) => this.stopped ? Promise.resolve(undefined) : this.issueCommand(targetId, intent, identity),
       onError: (error, code) => {
@@ -852,6 +868,11 @@ export class DesktopRuntimeController {
     targetId: string,
     event: RendererServerEventEnvelope["event"],
   ): void {
+    if (
+      event.kind === "workspace.state" &&
+      (!this.clusterOperatorEnabled ||
+        !this.hostState.metadataForTarget(targetId)?.grantedFeatures.includes(CLUSTER_OPERATOR_FEATURE))
+    ) return;
     if (this.stopped) return;
     this.projection.applyPublicEvent(event);
     if (this.current.targets.has(targetId)) {

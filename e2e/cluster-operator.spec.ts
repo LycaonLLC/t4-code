@@ -1,3 +1,4 @@
+import { mkdir, writeFile } from "node:fs/promises";
 import { type AddressInfo } from "node:net";
 import { expect, test, type Page } from "@playwright/test";
 import WebSocket, { WebSocketServer } from "ws";
@@ -8,6 +9,36 @@ const PUBLIC_WSS = "wss://operator-fixture.tailnet.ts.net/v1/ws";
 const HOST = "cluster-host";
 const SESSION = "cluster-session";
 const VIEW = `${HOST}/${SESSION}`;
+const PROOF_ROOT = "artifacts/cluster-proof";
+type ScenarioId =
+  | "gui-auth-isolation"
+  | "desktop-viewport"
+  | "mobile-viewport"
+  | "wire-reconnect-idempotency";
+
+async function recordScenario(
+  page: Page,
+  id: ScenarioId,
+  assertions: readonly string[],
+  viewport: "desktop" | "mobile",
+): Promise<void> {
+  await mkdir(`${PROOF_ROOT}/scenarios`, { recursive: true });
+  await mkdir(`${PROOF_ROOT}/screenshots`, { recursive: true });
+  await page.screenshot({
+    animations: "disabled",
+    path: `${PROOF_ROOT}/screenshots/${id}-${viewport}-redacted.png`,
+  });
+  await writeFile(
+    `${PROOF_ROOT}/scenarios/${id}.json`,
+    `${JSON.stringify({
+      schemaVersion: "t4-cluster-scenario/1",
+      id,
+      status: "passed",
+      observedAt: new Date().toISOString(),
+      assertions,
+    })}\n`,
+  );
+}
 const WORKSPACE = {
   id: "workspace-a",
   displayName: "Release train",
@@ -335,6 +366,12 @@ test.describe("OMP/T4 cluster GUI boundaries", () => {
     await expect.poll(() => wire.hellos.length).toBeGreaterThan(helloCount);
     await expect(page.locator(`[data-session-row="${VIEW}"]`)).toHaveCount(1);
     expect(wire.hellos.at(-1)?.requestedFeatures).toContain("cluster.operator");
+    await recordScenario(
+      page,
+      "wire-reconnect-idempotency",
+      ["hello.feature-granted", "reconnect.completed", "session.row-unique"],
+      "desktop",
+    );
   });
 
   test("Agent View keeps exact OMP ids, parentage, attention, and progress alongside exact CI state", async ({ page }) => {
@@ -349,6 +386,12 @@ test.describe("OMP/T4 cluster GUI boundaries", () => {
     await expect(page.getByText("Parked peer revived; owner-scoped job still running", { exact: true })).toBeVisible();
     await expect(page.getByText("verify", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("running", { exact: true }).first()).toBeVisible();
+    await recordScenario(
+      page,
+      "desktop-viewport",
+      ["agent.parentage", "agent.progress", "ci.stage-exact"],
+      "desktop",
+    );
   });
 
   test("phone uses one secure WSS target and reconnect replay does not duplicate workspace or session rows", async ({ page }) => {
@@ -375,6 +418,12 @@ test.describe("OMP/T4 cluster GUI boundaries", () => {
         getComputedStyle(document.documentElement).getPropertyValue("--motion-duration-fast").trim(),
       ),
     ).toBe("0ms");
+    await recordScenario(
+      page,
+      "mobile-viewport",
+      ["mobile.wss-only", "workspace.row-unique", "motion.reduced", "touch.target"],
+      "mobile",
+    );
   });
 
   test("phone Browser Preview gates input through lease/revision and denies cross-session GUI routes", async ({ page }) => {
@@ -391,5 +440,13 @@ test.describe("OMP/T4 cluster GUI boundaries", () => {
     await expect(page.getByRole("heading", { name: "Browser preview" })).toBeVisible();
     await page.goto(`${web.url}#/sessions/${encodeURIComponent(`${HOST}/other-session`)}/preview`);
     await expect(page.getByRole("heading", { name: "Browser preview" })).toHaveCount(0);
+    await page.goBack();
+    await expect(page.getByRole("heading", { name: "Browser preview" })).toBeVisible();
+    await recordScenario(
+      page,
+      "gui-auth-isolation",
+      ["preview.lease-gated", "preview.input-forwarded", "cross-session.denied"],
+      "mobile",
+    );
   });
 });

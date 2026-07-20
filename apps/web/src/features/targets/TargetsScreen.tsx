@@ -4,7 +4,7 @@
 // runtime snapshot or a completed desktop call — connection words are the
 // runtime's words, and removing a host says exactly what it does: it
 // deletes the credential stored on this computer, nothing more.
-import type { DesktopRuntimeSnapshot } from "@t4-code/client";
+import type { DesktopRuntimeController, DesktopRuntimeSnapshot } from "@t4-code/client";
 import type { LocalProfile, PhoneSetupState, ServiceInspection } from "@t4-code/protocol/desktop-ipc";
 import {
   Badge,
@@ -25,6 +25,7 @@ import { useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 
 import { ToneBadge } from "../onboarding/bits.tsx";
+import { ClusterOperatorSection } from "./ClusterOperatorSection.tsx";
 import { FIELD_CLASS } from "../settings/controls.tsx";
 import {
   capabilityDiff,
@@ -954,6 +955,9 @@ function RemoveProfileDialog({ api }: { readonly api: TargetsStoreApi }) {
 
 export function TargetsScreen({
   api,
+  controller,
+  onOpenSession,
+  onOpenPreview,
   snapshot,
   serviceAvailable,
   profilesAvailable,
@@ -961,6 +965,9 @@ export function TargetsScreen({
   onBack,
 }: {
   readonly api: TargetsStoreApi;
+  readonly controller: DesktopRuntimeController;
+  readonly onOpenSession: (sessionId: string) => void;
+  readonly onOpenPreview: (sessionId: string) => void;
   readonly snapshot: DesktopRuntimeSnapshot;
   /** Whether this desktop build exposes local service management. */
   readonly serviceAvailable: boolean;
@@ -1018,6 +1025,12 @@ export function TargetsScreen({
               </ul>
             )}
           </section>
+          <ClusterOperatorSection
+            controller={controller}
+            onOpenPreview={onOpenPreview}
+            onOpenSession={onOpenSession}
+            snapshot={snapshot}
+          />
           <AddHostForm api={api} />
         </div>
       </div>

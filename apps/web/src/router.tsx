@@ -466,6 +466,13 @@ function HostsRoute() {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <TargetsScreen
+        controller={controller}
+        onOpenPreview={(sessionId) =>
+          void navigate({ to: "/sessions/$sessionId/preview", params: { sessionId } })
+        }
+        onOpenSession={(sessionId) =>
+          void navigate({ to: "/sessions/$sessionId", params: { sessionId } })
+        }
         api={targetsStoreInstance}
         onBack={() => void navigate({ to: "/settings" })}
         profilesAvailable={localProfiles !== undefined}
