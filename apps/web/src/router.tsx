@@ -30,6 +30,7 @@ import {
   AGENT_VIEW_FIXTURE_NOW_MS,
 } from "./features/agent-view/fixtures.ts";
 import { PreviewWorkspace } from "./features/preview/PreviewWorkspace.tsx";
+import { BrowserWorkspace } from "./features/browser/index.ts";
 import { FixturePreviewWorkspace } from "./features/preview/FixturePreviewWorkspace.tsx";
 import { LiveAttentionInbox } from "./features/attention/index.ts";
 import { LiveTranscriptSearch } from "./features/transcript-search/index.ts";
@@ -107,6 +108,7 @@ const searchRoute = createRoute({
 interface SessionRouteGateProps {
   readonly sessionId: string;
   readonly previewRoute: boolean;
+  readonly browserRoute?: boolean;
   readonly children: (
     session: WorkspaceSession,
     project: WorkspaceProject,
@@ -114,7 +116,12 @@ interface SessionRouteGateProps {
   ) => ReactNode;
 }
 
-function SessionRouteGate({ children, previewRoute, sessionId }: SessionRouteGateProps) {
+function SessionRouteGate({
+  browserRoute = false,
+  children,
+  previewRoute,
+  sessionId,
+}: SessionRouteGateProps) {
   const navigate = useNavigate();
   const [nowMs] = useState(() => Date.now());
   const [pendingTimedOut, setPendingTimedOut] = useState(false);
@@ -190,6 +197,12 @@ function SessionRouteGate({ children, previewRoute, sessionId }: SessionRouteGat
         params={{ sessionId: decision.sessionId }}
         replace
         to="/sessions/$sessionId/preview"
+      />
+    ) : browserRoute ? (
+      <Navigate
+        params={{ sessionId: decision.sessionId }}
+        replace
+        to="/sessions/$sessionId/browser"
       />
     ) : (
       <Navigate params={{ sessionId: decision.sessionId }} replace to="/sessions/$sessionId" />
@@ -278,6 +291,23 @@ function PreviewRoute() {
     </SessionRouteGate>
   );
 }
+
+function BrowserRoute() {
+  const { sessionId } = useParams({ from: "/sessions/$sessionId/browser" });
+  return (
+    <SessionRouteGate browserRoute previewRoute={false} sessionId={sessionId}>
+      {(session, project) => (
+        <BrowserWorkspace key={session.id} project={project} session={session} />
+      )}
+    </SessionRouteGate>
+  );
+}
+
+const browserRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/sessions/$sessionId/browser",
+  component: BrowserRoute,
+});
 
 const sessionRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -473,6 +503,7 @@ const routeTree = rootRoute.addChildren([
   searchRoute,
   sessionRoute,
   previewRoute,
+  browserRoute,
   agentViewRoute,
   settingsRoute,
   hostsRoute,

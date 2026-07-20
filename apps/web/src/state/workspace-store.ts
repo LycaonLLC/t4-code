@@ -48,6 +48,10 @@ export interface SessionViewState {
   readonly previewOptInKind: string | null;
   readonly previewOptInAuthorityId: string | null;
   readonly previewScale: PreviewScaleMode;
+  /** Safe browser surface continuity; browser contents stay in the host. */
+  readonly browserSurfaceId: string | null;
+  /** Set only by an explicit user profile selection; never inferred at boot. */
+  readonly browserProfileId: string | null;
 }
 
 export const DEFAULT_SESSION_VIEW: SessionViewState = {
@@ -62,6 +66,8 @@ export const DEFAULT_SESSION_VIEW: SessionViewState = {
   previewOptInKind: null,
   previewOptInAuthorityId: null,
   previewScale: "fit",
+  browserSurfaceId: null,
+  browserProfileId: null,
 };
 
 interface PersistedWorkspaceState {
@@ -158,6 +164,8 @@ export interface WorkspaceActions {
   setTerminalDrawerOpen(sessionId: string, open: boolean): void;
   setSessionPreview(sessionId: string, selection: SessionPreviewSelection): void;
   setSessionPreviewScale(sessionId: string, scale: PreviewScaleMode): void;
+  setSessionBrowserSurface(sessionId: string, surfaceId: string | null): void;
+  setSessionBrowserProfile(sessionId: string, profileId: string | null): void;
 }
 
 export type WorkspaceStore = WorkspaceState & WorkspaceActions;
@@ -266,6 +274,12 @@ function sanitizeAttentionOutcomeRecord(value: unknown): Record<string, string> 
   return result;
 }
 
+const SAFE_BROWSER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
+
+function sanitizeBrowserId(entry: unknown): string | null {
+  return typeof entry === "string" && SAFE_BROWSER_ID_PATTERN.test(entry) ? entry : null;
+}
+
 function sanitizeSessionView(value: unknown): SessionViewState | null {
   if (typeof value !== "object" || value === null) return null;
   const view = value as Record<string, unknown>;
@@ -301,6 +315,8 @@ function sanitizeSessionView(value: unknown): SessionViewState | null {
         : null,
     previewOptIn: view.previewOptIn === true,
     previewScale: view.previewScale === "actual" ? "actual" : "fit",
+    browserSurfaceId: sanitizeBrowserId(view.browserSurfaceId),
+    browserProfileId: sanitizeBrowserId(view.browserProfileId),
   };
 }
 
@@ -599,6 +615,20 @@ export function createWorkspaceStore(options: CreateWorkspaceStoreOptions): Work
       ),
     setSessionPreviewScale: (sessionId, previewScale) =>
       set((state) => updateSessionView(state, sessionId, { previewScale })),
+    setSessionBrowserSurface: (sessionId, browserSurfaceId) =>
+      set((state) =>
+        updateSessionView(state, sessionId, {
+          browserSurfaceId: sanitizeBrowserId(browserSurfaceId),
+        }),
+      ),
+    setSessionBrowserProfile: (sessionId, browserProfileId) =>
+      set((state) =>
+        updateSessionView(state, sessionId, {
+          // This is only an explicit profile-choice token; never use it to
+          // infer or restore an authenticated browser selection.
+          browserProfileId: sanitizeBrowserId(browserProfileId),
+        }),
+      ),
   }));
 
   store.subscribe((state) => persistence.save(toPersistedWorkspace(state)));
