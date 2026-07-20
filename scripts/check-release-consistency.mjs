@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
+import { load as parseYaml } from "js-yaml";
 
 export const RELEASE_CONTRACT_PATHS = [
   ".github/android-release-identity.json",
@@ -743,14 +744,79 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
 
   const releaseWorkflow = files.get(".github/workflows/release.yml") ?? "";
   const ciWorkflow = files.get(".github/workflows/ci.yml") ?? "";
+  try {
+    const workflow = parseYaml(ciWorkflow);
+    const continuityJob = workflow?.jobs?.["legacy-bridge-continuity"];
+    if (!continuityJob || !Array.isArray(continuityJob.steps)) {
+      errors.push(".github/workflows/ci.yml is missing the legacy-bridge-continuity job");
+    } else {
+      const namedStep = (name) => {
+        const matches = continuityJob.steps.filter((step) => step?.name === name);
+        if (matches.length !== 1) {
+          errors.push(`.github/workflows/ci.yml must contain exactly one ${JSON.stringify(name)} step`);
+          return undefined;
+        }
+        return matches[0];
+      };
+      const authorityStep = namedStep("Resolve pinned OMP authority source");
+      const checkoutStep = namedStep("Check out pinned OMP authority source");
+      const continuityStep = namedStep("Run legacy bridge continuity gate");
+      const uploadStep = namedStep("Upload continuity evidence");
+      const authorityCommands = [
+        `source_repository="$(jq -er '.sourceRepository' provenance/omp-host-migration.json)"`,
+        `test "$source_repository" = "https://github.com/lyc-aon/oh-my-pi"`,
+        `sha="$(jq -er '.inputs.operationsContinuity' provenance/omp-host-migration.json)"`,
+        '[[ "$sha" =~ ^[0-9a-f]{40}$ ]]',
+        `echo "repository=lyc-aon/oh-my-pi" >> "$GITHUB_OUTPUT"`,
+        `echo "sha=$sha" >> "$GITHUB_OUTPUT"`,
+      ];
+      for (const command of authorityCommands) {
+        if (!authorityStep?.run?.includes(command))
+          errors.push(`.github/workflows/ci.yml authority step is missing ${JSON.stringify(command)}`);
+      }
+      if (checkoutStep?.with?.repository !== "${{ steps.authority.outputs.repository }}")
+        errors.push(".github/workflows/ci.yml continuity checkout must use the validated repository output");
+      if (checkoutStep?.with?.ref !== "${{ steps.authority.outputs.sha }}")
+        errors.push(".github/workflows/ci.yml continuity checkout must use the validated SHA output");
+      if (checkoutStep?.with?.path !== ".continuity/omp")
+        errors.push(".github/workflows/ci.yml continuity checkout must use .continuity/omp");
+      if (continuityStep?.env?.T4_OMP_SOURCE_DIR !== "${{ github.workspace }}/.continuity/omp")
+        errors.push(".github/workflows/ci.yml continuity gate must target the checked-out OMP source");
+      if (continuityStep?.run !== "pnpm test:legacy-bridge-continuity")
+        errors.push(".github/workflows/ci.yml continuity gate must run the release-bound command");
+      if (
+        uploadStep?.if !== "${{ always() }}" ||
+        uploadStep?.with?.path !== "artifacts/legacy-bridge-continuity/" ||
+        uploadStep?.with?.["if-no-files-found"] !== "error"
+      )
+        errors.push(".github/workflows/ci.yml continuity evidence upload is not fail-closed");
+    }
+  } catch (error) {
+    errors.push(`.github/workflows/ci.yml is invalid YAML: ${error instanceof Error ? error.message : error}`);
+  }
+
   for (const expected of [
     "core:",
+    "legacy-bridge-continuity:",
+    'ref: ${{ github.event.pull_request.head.sha || github.sha }}',
+    `source_repository="$(jq -er '.sourceRepository' provenance/omp-host-migration.json)"`,
+    `test "$source_repository" = "https://github.com/lyc-aon/oh-my-pi"`,
+    `sha="$(jq -er '.inputs.operationsContinuity' provenance/omp-host-migration.json)"`,
+    '[[ "$sha" =~ ^[0-9a-f]{40}$ ]]',
+    `echo "repository=lyc-aon/oh-my-pi" >> "$GITHUB_OUTPUT"`,
+    "repository: ${{ steps.authority.outputs.repository }}",
+    "ref: ${{ steps.authority.outputs.sha }}",
+    "T4_OMP_SOURCE_DIR: ${{ github.workspace }}/.continuity/omp",
+    "run: pnpm test:legacy-bridge-continuity",
+    "path: artifacts/legacy-bridge-continuity/",
+    "if-no-files-found: error",
     "tooling:",
     "android-debug:",
     "name: verify",
     "if: ${{ always() }}",
-    "needs: [core, tooling, android-debug]",
+    "needs: [core, legacy-bridge-continuity, tooling, android-debug]",
     'test "$CORE_RESULT" = success',
+    'test "$CONTINUITY_RESULT" = success',
     'test "$TOOLING_RESULT" = success',
     'test "$ANDROID_RESULT" = success',
     "github.event_name == 'pull_request' && github.ref || github.sha",

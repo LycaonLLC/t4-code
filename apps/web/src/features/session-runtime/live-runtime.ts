@@ -50,6 +50,7 @@ import { pendingPromptsFromRef } from "./pending-prompts.ts";
 import {
   createTranscriptArtifactSource,
   type TranscriptImageAvailability,
+  type TranscriptMediaReference,
 } from "./transcript-images.ts";
 import {
   commandSupport,
@@ -300,24 +301,30 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
 
   const transcriptImageAvailability = (
     runtime: DesktopRuntimeSnapshot,
+    reference: TranscriptMediaReference,
   ): TranscriptImageAvailability => {
     if (runtime.connections.get(targetId) !== "connected") {
-      return { available: false, reason: "Reconnect to this host to load transcript images." };
+      return { available: false, reason: "Reconnect to this host to load transcript media." };
     }
     const host = runtime.hosts.get(options.hostId);
+    const noun = "source" in reference ? "artifact" : "transcript image";
     if (host === undefined || !host.grantedCapabilities.includes("sessions.read")) {
       return {
         available: false,
-        reason: "This target does not grant transcript image access.",
+        reason: `This target does not grant ${noun} access.`,
       };
     }
     if (
-      !host.grantedFeatures.includes("transcript.images") &&
-      !host.grantedFeatures.includes("artifacts.read")
+      "source" in reference
+        ? !host.grantedFeatures.includes("artifacts.read")
+        : !host.grantedFeatures.includes("transcript.images")
     ) {
       return {
         available: false,
-        reason: "This OMP host does not offer transcript image reads.",
+        reason:
+          "source" in reference
+            ? "This host does not offer artifact reads."
+            : "This OMP host does not offer transcript image reads.",
       };
     }
     if (!transcriptImagesAttached) {
@@ -327,8 +334,9 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   };
 
   const syncTranscriptImageAvailability = (runtime: DesktopRuntimeSnapshot) => {
-    transcriptImages.setAvailability(transcriptImageAvailability(runtime));
+    transcriptImages.setAvailability((reference) => transcriptImageAvailability(runtime, reference));
   };
+
 
   const warmSession = (runtime: DesktopRuntimeSnapshot): SessionProjection | undefined =>
     runtime.projection.sessions.get(projectionKey);

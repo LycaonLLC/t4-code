@@ -27,6 +27,7 @@ import {
   type TranscriptImageCommandResult,
   type TranscriptImageSnapshot,
   type TranscriptImageSource,
+  type TranscriptMediaReference,
 } from "../src/features/session-runtime/transcript-images.ts";
 import {
   INVALID_TRANSCRIPT_IMAGE_METADATA,
@@ -34,6 +35,7 @@ import {
   type TranscriptImageMimeType,
   type TranscriptImageReference,
 } from "../src/features/transcript/image-metadata.ts";
+import type { TranscriptArtifactReference } from "../src/features/transcript/artifact-metadata.ts";
 import { initialProjection, reduceTranscript } from "../src/features/transcript/projection.ts";
 import { deriveTranscriptRows } from "../src/features/transcript/rows.ts";
 import { deferred, FakeShell, makeWelcome } from "./fake-shell.ts";
@@ -117,9 +119,30 @@ function responseFor(
   };
 }
 
+function artifactResponseFor(
+  bytes: Uint8Array,
+  artifact: TranscriptArtifactReference,
+  offset: number,
+): TranscriptImageCommandResult {
+  const nextOffset = Math.min(offset + TRANSCRIPT_IMAGE_CHUNK_BYTES, bytes.byteLength);
+  return {
+    accepted: true,
+    result: {
+      artifactId: artifact.artifactId,
+      kind: artifact.kind,
+      mediaType: artifact.mediaType,
+      size: bytes.byteLength,
+      offset,
+      nextOffset,
+      complete: nextOffset === bytes.byteLength,
+      content: base64(bytes.subarray(offset, nextOffset)),
+    },
+  };
+}
+
 async function waitForStatus(
   source: TranscriptImageSource,
-  image: TranscriptImageReference,
+  image: TranscriptMediaReference,
   status: TranscriptImageSnapshot["status"],
 ): Promise<TranscriptImageSnapshot> {
   const initial = source.getSnapshot(image);
@@ -847,12 +870,54 @@ describe("bounded transcript image source", () => {
       status: "unavailable",
       reason: "Waiting for the host.",
     });
+    expect(source.getSnapshot(image)).toBe(source.getSnapshot(image));
     expect(reads).toBe(0);
 
     source.setAvailability({ available: true });
     expect((await waitForStatus(source, image, "ready")).status).toBe("ready");
     expect(reads).toBe(1);
     release();
+    source.dispose();
+  });
+
+  it("hides cached legacy images and artifacts when their capability is revoked", async () => {
+    const bytes = pngBytes();
+    const image = await reference(bytes, { entryId: "revoked-image" });
+    const artifact: TranscriptArtifactReference = {
+      artifactId: "revoked-artifact",
+      kind: "image",
+      mediaType: "image/png",
+      disposition: "inline",
+      retention: "session",
+      source: "artifact",
+    };
+    const source = createTranscriptImageSource({
+      availability: { available: true },
+      readChunk: async (nextReference, offset) =>
+        "artifactId" in nextReference
+          ? artifactResponseFor(bytes, artifact, offset)
+          : responseFor(bytes, image, offset),
+      createObjectUrl: (blob) => `blob:revoked-${blob.size}`,
+    });
+    const releaseImage = source.retain(image);
+    const releaseArtifact = source.retain(artifact);
+    expect((await waitForStatus(source, image, "ready")).status).toBe("ready");
+    expect((await waitForStatus(source, artifact, "ready")).status).toBe("ready");
+
+    source.setAvailability((nextReference) => ({
+      available: false,
+      reason: "artifactId" in nextReference ? "Artifact access revoked." : "Image access revoked.",
+    }));
+    expect(source.getSnapshot(image)).toEqual({
+      status: "unavailable",
+      reason: "Image access revoked.",
+    });
+    expect(source.getSnapshot(artifact)).toEqual({
+      status: "unavailable",
+      reason: "Artifact access revoked.",
+    });
+    releaseArtifact();
+    releaseImage();
     source.dispose();
   });
 
@@ -1100,12 +1165,94 @@ describe("runtime capability gating", () => {
     await controller.stop();
   });
 
+  it("gates mixed legacy images and generic artifacts by their own feature", async () => {
+    const bytes = pngBytes();
+    const image = await reference(bytes, { entryId: "legacy-image" });
+    const artifact: TranscriptArtifactReference = {
+      artifactId: "generic-image",
+      kind: "image",
+      mediaType: "image/png",
+      disposition: "inline",
+      retention: "session",
+      source: "artifact",
+    };
+
+    const run = async (
+      features: readonly string[],
+      available: TranscriptMediaReference,
+      unavailable: TranscriptMediaReference,
+      expectedCommand: "session.image.read" | "artifact.read",
+    ) => {
+      const shell = new FakeShell();
+      shell.command = async (request: CommandRequest): Promise<CommandResult> => {
+        shell.commands.push(request);
+        const result =
+          request.intent.command === "session.image.read"
+            ? responseFor(bytes, image, Number(request.intent.args?.offset)).result
+            : request.intent.command === "artifact.read"
+              ? artifactResponseFor(bytes, artifact, Number(request.intent.args?.offset)).result
+              : { accepted: true };
+        return {
+          targetId: request.targetId,
+          requestId: `mixed-media-${shell.commands.length}`,
+          commandId: `mixed-media-command-${shell.commands.length}`,
+          accepted: true,
+          result,
+        };
+      };
+      const controller = createDesktopRuntimeController({ shell });
+      await controller.start();
+      try {
+        shell.emitFrame({ targetId: "local", frame: makeWelcome(HOST, ["sessions.read"], features) });
+        shell.emitFrame({ targetId: "local", frame: snapshot() });
+        const runtime = createLiveSessionRuntime({
+          controller,
+          targetId: "local",
+          hostId: HOST,
+          sessionId: SESSION,
+        });
+        try {
+          const releaseAvailable = runtime.transcriptImages.retain(available);
+          const releaseUnavailable = runtime.transcriptImages.retain(unavailable);
+          try {
+            expect(await waitForStatus(runtime.transcriptImages, available, "ready")).toMatchObject({
+              status: "ready",
+            });
+            await vi.waitFor(() =>
+              expect(runtime.transcriptImages.getSnapshot(unavailable)).toMatchObject({
+                status: "unavailable",
+              }),
+            );
+            expect(
+              shell.commands
+                .map((request) => request.intent.command)
+                .filter(
+                  (command) => command === "session.image.read" || command === "artifact.read",
+                ),
+            ).toEqual([expectedCommand]);
+          } finally {
+            releaseUnavailable();
+            releaseAvailable();
+          }
+        } finally {
+          runtime.dispose();
+        }
+      } finally {
+        await controller.stop();
+      }
+    };
+
+    await run(["transcript.images"], image, artifact, "session.image.read");
+    await run(["artifacts.read"], artifact, image, "artifact.read");
+  });
+
   it("routes runtime pause and resume through reversible transcript-image eviction", async () => {
     const bytes = pngBytes(32, 43);
     const image = await reference(bytes, { entryId: "runtime-pause" });
     const shell = new FakeShell();
     shell.command = async (request: CommandRequest): Promise<CommandResult> => {
       shell.commands.push(request);
+
       const result =
         request.intent.command === "session.image.read"
           ? responseFor(bytes, image, Number(request.intent.args?.offset)).result

@@ -18,7 +18,8 @@ dist-electron/
 !.env.example
 
 # Test and runtime output
-/artifacts/operations-continuity/
+/artifacts/legacy-bridge-continuity/
+/.continuity/
 /evidence/wire/
 coverage/
 playwright-report/

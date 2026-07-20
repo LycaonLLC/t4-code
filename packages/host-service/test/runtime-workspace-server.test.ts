@@ -20,6 +20,27 @@ async function git(cwd: string, ...arguments_: string[]): Promise<void> {
 	if (exitCode !== 0) throw new Error(stderr || stdout);
 }
 
+async function gitOutput(cwd: string, ...arguments_: string[]): Promise<string> {
+	const child = Bun.spawn(["git", "-C", cwd, ...arguments_], { stdout: "pipe", stderr: "pipe" });
+	const [exitCode, stdout, stderr] = await Promise.all([
+		child.exited,
+		new Response(child.stdout).text(),
+		new Response(child.stderr).text(),
+	]);
+	if (exitCode !== 0) throw new Error(stderr || stdout);
+	return stdout.trim();
+}
+
+async function runProcess(command: string, arguments_: readonly string[]) {
+	const child = Bun.spawn([command, ...arguments_], { stdout: "pipe", stderr: "pipe" });
+	const [exitCode, stdout, stderr] = await Promise.all([
+		child.exited,
+		new Response(child.stdout).text(),
+		new Response(child.stderr).text(),
+	]);
+	return { exitCode, stdout, stderr };
+}
+
 function hello(): Record<string, unknown> {
 	return {
 		v: "omp-app/1",
@@ -53,7 +74,6 @@ async function response(
 		if (frame.type === "response" && frame.requestId === requestId) return frame;
 	}
 }
-
 async function sessionEvent(client: RawUdsWebSocket, type: string): Promise<Record<string, unknown>> {
 	for (;;) {
 		const frame = await client.nextServer();
@@ -64,7 +84,7 @@ async function sessionEvent(client: RawUdsWebSocket, type: string): Promise<Reco
 async function approveChallenge(
 	client: RawUdsWebSocket,
 	requestId: string,
-	sessionId: string,
+	sessionId?: string,
 ): Promise<Extract<ServerFrame, { type: "response" }>> {
 	for (;;) {
 		const frame = await client.nextServer();
@@ -76,10 +96,27 @@ async function approveChallenge(
 			confirmationId: frame.confirmationId,
 			commandId: requestId,
 			hostId: host,
-			sessionId,
+			...(sessionId ? { sessionId } : {}),
 			decision: "approve",
 		});
 		return response(client, requestId);
+	}
+}
+
+async function approveChallengeAndContinue(client: RawUdsWebSocket, requestId: string): Promise<void> {
+	for (;;) {
+		const frame = await client.nextServer();
+		if (frame.type !== "confirmation" || frame.commandId !== requestId) continue;
+		client.sendJson({
+			v: "omp-app/1",
+			type: "confirm",
+			requestId: `${requestId}-confirm`,
+			confirmationId: frame.confirmationId,
+			commandId: requestId,
+			hostId: host,
+			decision: "approve",
+		});
+		return;
 	}
 }
 
@@ -94,11 +131,19 @@ test("negotiates and serves runtime and workspace authority commands", async () 
 	await writeFile(join(repository, "README.md"), "fixture\n");
 	await git(repository, "add", "README.md");
 	await git(repository, "commit", "-qm", "fixture");
-	await workspaceAuthority.import({
+	const rootWorkspace = await workspaceAuthority.import({
 		repositoryId: "project-wire",
 		repositoryPath: repository,
 		workspacePath: repository,
 		ownership: "repository-root",
+	});
+	const importedPath = join(root, "imported-workspace");
+	await git(repository, "worktree", "add", "-b", "external/imported", importedPath, "HEAD");
+	const importedWorkspace = await workspaceAuthority.import({
+		repositoryId: "project-wire",
+		repositoryPath: repository,
+		workspacePath: importedPath,
+		ownership: "imported-user",
 	});
 	const runtimes = new RuntimeAdapterRegistry({
 		executableAvailable: executable => {
@@ -163,15 +208,43 @@ test("negotiates and serves runtime and workspace authority commands", async () 
 
 		client.sendJson(command("workspace-list", "workspace.list"));
 		const workspaceList = await response(client, "workspace-list");
-		expect(workspaceList).toMatchObject({
-			ok: true,
-			result: { workspaces: [{ repositoryId: "project-wire", ownership: "repository-root" }] },
-		});
-		const projectedWorkspace = (workspaceList.result as { workspaces: Array<Record<string, unknown>> })
-			.workspaces[0]!;
+		const workspaceResult = workspaceList.result;
+		if (
+			!workspaceResult ||
+			typeof workspaceResult !== "object" ||
+			!("workspaces" in workspaceResult) ||
+			!Array.isArray(workspaceResult.workspaces)
+		)
+			throw new Error("workspace list result is invalid");
+		const workspaces = workspaceResult.workspaces;
+		expect(workspaces).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ repositoryId: "project-wire", ownership: "repository-root" }),
+				expect.objectContaining({ repositoryId: "project-wire", ownership: "imported-user" }),
+			]),
+		);
+		const projectedWorkspace = workspaces[0]!;
 		expect(projectedWorkspace).not.toHaveProperty("repositoryRoot");
 		expect(projectedWorkspace).not.toHaveProperty("canonicalPath");
 		expect(projectedWorkspace).not.toHaveProperty("recoveryDiagnostic");
+		await writeFile(join(repository, "advanced.txt"), "would seal if unprotected\n");
+		await git(repository, "add", "advanced.txt");
+		await git(repository, "commit", "-qm", "advance protected workspace");
+		client.sendJson(command("archive-protected", "workspace.archive", { instanceId: rootWorkspace.instanceId }));
+		expect(await approveChallenge(client, "archive-protected")).toMatchObject({
+			ok: false,
+			error: { code: "repository-root-protected" },
+		});
+		expect(workspaceAuthority.get(rootWorkspace.instanceId)?.expectedHead).toBe(rootWorkspace.expectedHead);
+		await writeFile(join(importedPath, "advanced.txt"), "would seal if imported\n");
+		await git(importedPath, "add", "advanced.txt");
+		await git(importedPath, "commit", "-qm", "advance imported workspace");
+		client.sendJson(command("archive-imported", "workspace.archive", { instanceId: importedWorkspace.instanceId }));
+		expect(await approveChallenge(client, "archive-imported")).toMatchObject({
+			ok: false,
+			error: { code: "ownership-protected" },
+		});
+		expect(workspaceAuthority.get(importedWorkspace.instanceId)?.expectedHead).toBe(importedWorkspace.expectedHead);
 
 		client.sendJson(command("workspace-recover", "workspace.recover"));
 		expect(await response(client, "workspace-recover")).toMatchObject({ ok: true, result: { workspaces: [] } });
@@ -224,7 +297,21 @@ test("runs owner initialization only after exclusive appserver ownership", async
 
 test("routes an external runtime session through appserver-owned workspace identity", async () => {
 	const root = await realpath(await mkdtemp(join(tmpdir(), "omp-external-runtime-wire-")));
-	const workspaceAuthority = await WorkspaceAuthority.open({ databasePath: join(root, "workspaces.sqlite") });
+	const archiveEntered = Promise.withResolvers<void>();
+	const archiveRelease = Promise.withResolvers<void>();
+	let holdArchive = false;
+	const workspaceAuthority = await WorkspaceAuthority.open({
+		databasePath: join(root, "workspaces.sqlite"),
+		process: {
+			async run(command, arguments_) {
+				if (holdArchive && command === "git" && arguments_.includes("status")) {
+					archiveEntered.resolve();
+					await archiveRelease.promise;
+				}
+				return runProcess(command, arguments_);
+			},
+		},
+	});
 	const repository = join(root, "repository");
 	await mkdir(repository);
 	await git(repository, "init", "-q");
@@ -233,18 +320,22 @@ test("routes an external runtime session through appserver-owned workspace ident
 	await writeFile(join(repository, "README.md"), "fixture\n");
 	await git(repository, "add", "README.md");
 	await git(repository, "commit", "-qm", "fixture");
-	const workspace = await workspaceAuthority.import({
+	const workspace = await workspaceAuthority.create({
 		repositoryId: "project-external",
 		repositoryPath: repository,
-		workspacePath: repository,
-		ownership: "repository-root",
+		targetPath: join(root, "external-workspace"),
+		branch: "agent/external-runtime",
+		sourceCommit: await gitOutput(repository, "rev-parse", "HEAD"),
 	});
 	const promptEntered = Promise.withResolvers<void>();
 	const promptRelease = Promise.withResolvers<void>();
+	const openingEntered = Promise.withResolvers<void>();
+	const openingRelease = Promise.withResolvers<void>();
 	const permissionEntered = Promise.withResolvers<void>();
 	let permissionSelection: unknown;
 	let promptCount = 0;
 	let callbacks: RuntimeAdapterCallbacks | undefined;
+	let openings = 0;
 	let openedCwd: string | undefined;
 	let prompted: string | undefined;
 	let cancelled = 0;
@@ -258,8 +349,11 @@ test("routes an external runtime session through appserver-owned workspace ident
 			capabilities: { prompt: "native", cancel: "native" },
 		},
 		async openSession(request) {
+			openings++;
 			callbacks = request.callbacks;
 			openedCwd = request.workspace.cwd;
+			openingEntered.resolve();
+			await openingRelease.promise;
 			return {
 				adapterId: "test-runtime",
 				sessionId: "provider-private-session",
@@ -348,6 +442,13 @@ test("routes an external runtime session through appserver-owned workspace ident
 				title: "External session",
 			}),
 		);
+		await openingEntered.promise;
+		client.sendJson(command("archive-during-open", "workspace.archive", { instanceId: workspace.instanceId }));
+		expect(await approveChallenge(client, "archive-during-open")).toMatchObject({
+			ok: false,
+			error: { code: "mutation-in-progress" },
+		});
+		openingRelease.resolve();
 		const created = await response(client, "create-external");
 		expect(created).toMatchObject({
 			ok: true,
@@ -359,9 +460,13 @@ test("routes an external runtime session through appserver-owned workspace ident
 			},
 		});
 		expect(JSON.stringify(created)).not.toContain(repository);
-		expect(JSON.stringify(created)).not.toContain("provider-private-session");
-		expect(openedCwd).toBe(repository);
+		expect(openedCwd).toBe(workspace.canonicalPath);
 		const publicSessionId = (created.result as { session: { sessionId: string } }).session.sessionId;
+		client.sendJson(command("archive-live-runtime", "workspace.archive", { instanceId: workspace.instanceId }));
+		expect(await approveChallenge(client, "archive-live-runtime")).toMatchObject({
+			ok: false,
+			error: { code: "mutation-in-progress" },
+		});
 		const sessionCommand = (requestId: string, name: string, args: Record<string, unknown> = {}) => ({
 			...command(requestId, name, args),
 			sessionId: publicSessionId,
@@ -429,8 +534,32 @@ test("routes an external runtime session through appserver-owned workspace ident
 			result: { closed: true },
 		});
 		expect(disposed).toBe(1);
+		await writeFile(join(workspace.canonicalPath, "fast-forward.txt"), "sealed before archive\n");
+		await git(workspace.canonicalPath, "add", "fast-forward.txt");
+		await git(workspace.canonicalPath, "commit", "-qm", "fast forward");
+		holdArchive = true;
+		client.sendJson(command("archive-quiescent-runtime", "workspace.archive", { instanceId: workspace.instanceId }));
+		await approveChallengeAndContinue(client, "archive-quiescent-runtime");
+		await archiveEntered.promise;
+		client.sendJson(
+			command("create-during-archive", "session.create", {
+				projectId: "project-external",
+				runtimeId: "test-runtime",
+				workspaceInstanceId: workspace.instanceId,
+				title: "Rejected while archiving",
+			}),
+		);
+		expect(await response(client, "create-during-archive")).toMatchObject({ ok: false });
+		expect(openings).toBe(1);
+		archiveRelease.resolve();
+		expect(await response(client, "archive-quiescent-runtime")).toMatchObject({
+			ok: true,
+			result: { workspace: { instanceId: workspace.instanceId, lifecycle: "archived" } },
+		});
 	} finally {
 		promptRelease.resolve();
+		openingRelease.resolve();
+		archiveRelease.resolve();
 		client?.destroy();
 		if (client) await client.closed();
 		await appserver.stop();
