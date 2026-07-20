@@ -1,12 +1,13 @@
 {
   "name": "@t4-code/protocol",
-  "version": "0.1.29",
+  "version": "0.1.30",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
     "./app-update": "./src/app-update.ts",
     "./desktop-ipc": "./src/desktop-ipc.ts",
+    "./browser-ipc": "./src/browser-ipc.ts",
     "./pair-link": "./src/pair-link.ts"
   },
   "scripts": {

@@ -37,7 +37,7 @@
       "sourceBlobSha": "8c0ec932d453dfe3534e15d4e93d928e9ec16997",
       "targetPath": "apps/web/src/features/composer/ContextMeter.tsx",
       "classification": "adapted",
-      "checksum": "sha256:f6239e9c58b0232d9acb500bc4623274c8e9175239624d0a8f6c6c26d88b284f"
+    "checksum": "sha256:f6239e9c58b0232d9acb500bc4623274c8e9175239624d0a8f6c6c26d88b284f"
     },
     {
       "sourcePath": "apps/web/src/composerDraftStore.ts",

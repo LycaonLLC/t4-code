@@ -14,10 +14,16 @@ export default defineConfig({
   build: {
     outDir: "dist-electron",
     emptyOutDir: false,
-    lib: { entry: "src/preload.ts", formats: ["cjs"] },
+    lib: {
+      entry: {
+        preload: "src/preload.ts",
+        "browser-content-preload": "src/browser-content-preload.ts",
+      },
+      formats: ["cjs"],
+    },
     rollupOptions: {
       external: (id) => external.has(id) || id.startsWith("node:"),
-      output: { entryFileNames: "preload.cjs", codeSplitting: false },
+      output: { entryFileNames: "[name].cjs", chunkFileNames: "preload-[name]-[hash].cjs", codeSplitting: true },
     },
   },
 });

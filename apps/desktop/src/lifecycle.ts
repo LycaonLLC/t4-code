@@ -8,6 +8,7 @@ import type { ServiceManager } from "@t4-code/service-manager";
 import type { RemoteTargetRegistry } from "./remote-runtime/registry.ts";
 import { createDesktopWindow, type DesktopWindowHandle } from "./window.ts";
 import { DesktopIpcRegistry, runtimeError, type IpcRuntime } from "./ipc.ts";
+import { BrowserRuntime, type BrowserRuntimeOptions } from "./browser-runtime.ts";
 import { ElectronCursorStore, ElectronRemoteTargetStore, ElectronCredentialCiphertextStore, ElectronLocalProfileStore, ElectronProjectionCacheStore, electronSafeStorage, loadDeviceIdentity, type DeviceIdentity } from "./stores.ts";
 import { VersionedRemoteTargetRegistry, DeviceCredentialStore } from "./remote-runtime/index.ts";
 import { LocalTargetManager, type TargetManagerOptions } from "./target-manager.ts";
@@ -46,6 +47,7 @@ export interface DesktopLifecycleOptions {
   readonly app?: typeof app;
   readonly getAllWindows?: () => readonly BrowserWindow[];
   readonly createWindow?: () => DesktopWindowHandle;
+  readonly createBrowserRuntime?: (options: BrowserRuntimeOptions) => BrowserRuntime;
   readonly createIpcRegistry?: (runtime: IpcRuntime) => DesktopIpcRegistry;
   readonly loadIdentity?: () => DeviceIdentity;
   readonly createCursorStore?: () => CursorStore;
@@ -75,6 +77,7 @@ export class DesktopLifecycle {
   private readonly allWindows: () => readonly BrowserWindow[];
   private readonly windowFactory: () => DesktopWindowHandle;
   private readonly ipcFactory: (runtime: IpcRuntime) => DesktopIpcRegistry;
+  private readonly browserRuntimeFactory: (options: BrowserRuntimeOptions) => BrowserRuntime;
   private readonly identityFactory: () => DeviceIdentity;
   private readonly cursorStoreFactory: () => CursorStore;
   private readonly remoteRegistryFactory: () => RemoteTargetRegistry;
@@ -89,6 +92,7 @@ export class DesktopLifecycle {
   private readonly updateControllerFactory: () => DesktopUpdateController;
   private readonly menuInstaller: (options: ApplicationMenuOptions) => void;
   private mainWindow: BrowserWindow | undefined;
+  private browserRuntime: BrowserRuntime | undefined;
   private ipc: DesktopIpcRegistry | undefined;
   private manager: LocalTargetManager | undefined;
   private localProfileRegistry: LocalProfileRegistry | undefined;
@@ -116,6 +120,7 @@ export class DesktopLifecycle {
 
   constructor(options: DesktopLifecycleOptions = {}) {
     this.electronApp = options.app ?? app;
+    this.browserRuntimeFactory = options.createBrowserRuntime ?? ((runtimeOptions) => new BrowserRuntime(runtimeOptions));
     this.allWindows = options.getAllWindows ?? (() => BrowserWindow.getAllWindows());
     this.windowFactory = options.createWindow ?? createDesktopWindow;
     this.ipcFactory = options.createIpcRegistry ?? ((runtime) => new DesktopIpcRegistry(runtime));
@@ -245,10 +250,13 @@ export class DesktopLifecycle {
   }
   private async stopInternal(): Promise<void> {
     this.stopping = true;
+    const browser = this.browserRuntime;
+    const ipc = this.ipc;
+    this.browserRuntime = undefined;
+    ipc?.deactivateBrowserTarget(browser);
+    await this.disposeBrowserRuntime(browser);
     await this.speechService?.dispose();
     this.speechService = undefined;
-    this.ipc?.uninstall();
-    this.ipc = undefined;
     this.mainWindow = undefined;
     this.updateController?.dispose();
     this.updateController = undefined;
@@ -265,6 +273,10 @@ export class DesktopLifecycle {
     ]);
     if (this.beforeQuitHandler !== undefined) this.electronApp.removeListener("before-quit", this.beforeQuitHandler);
     this.beforeQuitHandler = undefined;
+    if (this.ipc === ipc) {
+      ipc?.uninstall();
+      this.ipc = undefined;
+    }
   }
   private async ensureServiceReady(manager: ServiceManager, executable: string): Promise<void> {
     this.assertServiceRecoveryActive();
@@ -433,13 +445,86 @@ export class DesktopLifecycle {
     this.serviceRecoveryPromises.delete(profile);
     this.serviceAvailabilityIssues.delete(profile);
   }
-
   private bindWindow(handle: DesktopWindowHandle): void {
     this.rendererLoaded = false;
     this.updateRendererReady = false;
     const manager = this.manager;
     if (manager === undefined) return;
     this.mainWindow = handle.window;
+    this.installIpc(handle, manager);
+    this.replaceBrowserRuntime(handle);
+    handle.window.webContents.on("did-start-loading", () => {
+      if (this.stopping || this.mainWindow !== handle.window || handle.window.isDestroyed()) return;
+      this.rendererLoaded = false;
+      this.updateRendererReady = false;
+      this.replaceBrowserRuntime(handle);
+    });
+    handle.window.webContents.on("did-finish-load", () => {
+      if (this.stopping || this.mainWindow !== handle.window || handle.window.isDestroyed()) return;
+      if (this.browserRuntime === undefined) this.replaceBrowserRuntime(handle);
+      this.rendererLoaded = true;
+      if (this.startupServiceError !== undefined) {
+        this.ipc?.emitRuntimeError(runtimeError(this.startupServiceError, "local"));
+        this.startupServiceError = undefined;
+      }
+      const links = this.pendingPairs.drain();
+      for (const link of links) this.ipc?.emitPairLink(link);
+      this.updateController?.schedulePassiveCheck();
+    });
+    handle.window.on("closed", () => {
+      if (this.mainWindow !== handle.window) return;
+      const browser = this.browserRuntime;
+      const ipc = this.ipc;
+      this.mainWindow = undefined;
+      this.rendererLoaded = false;
+      this.updateRendererReady = false;
+      this.browserRuntime = undefined;
+      ipc?.deactivateBrowserTarget(browser);
+      void this.disposeBrowserRuntime(browser).then(() => {
+        if (this.stopping || this.mainWindow !== undefined || this.ipc !== ipc) return;
+        try {
+          ipc?.uninstall();
+        } catch {
+          // Teardown must not turn a browser failure into a desktop failure.
+        }
+        if (this.ipc === ipc) this.ipc = undefined;
+      });
+    });
+  }
+
+  private replaceBrowserRuntime(handle: DesktopWindowHandle): BrowserRuntime | undefined {
+    const previous = this.browserRuntime;
+    let runtime: BrowserRuntime | undefined;
+    let created: BrowserRuntime;
+    try {
+      created = this.browserRuntimeFactory({
+        window: handle.window,
+        userDataPath: this.electronApp.getPath("userData"),
+        emit: (event) => {
+          const staleRuntime =
+            runtime === undefined ||
+            this.browserRuntime !== runtime ||
+            this.mainWindow !== handle.window ||
+            handle.window.isDestroyed();
+          if (staleRuntime) return;
+          try {
+            this.ipc?.emitBrowserEvent(event);
+          } catch {
+            // Child WebContents events are diagnostic and must remain nonfatal.
+          }
+        },
+      });
+    } catch {
+      return previous;
+    }
+    runtime = created;
+    this.browserRuntime = created;
+    this.ipc?.updateBrowserTarget(created);
+    void this.disposeBrowserRuntime(previous);
+    return created;
+  }
+
+  private installIpc(handle: DesktopWindowHandle, manager: LocalTargetManager): void {
     this.ipc?.uninstall();
     this.ipc = this.ipcFactory({
       manager,
@@ -457,28 +542,15 @@ export class DesktopLifecycle {
       ...(this.phoneSetup === undefined ? {} : { phoneSetup: this.phoneSetup }),
     });
     this.ipc.install();
-    handle.window.webContents.on("did-start-loading", () => {
-      this.updateRendererReady = false;
-    });
-    handle.window.webContents.once("did-finish-load", () => {
-      this.rendererLoaded = true;
-      if (this.startupServiceError !== undefined) {
-        this.ipc?.emitRuntimeError(runtimeError(this.startupServiceError, "local"));
-        this.startupServiceError = undefined;
-      }
-      const links = this.pendingPairs.drain();
-      for (const link of links) this.ipc?.emitPairLink(link);
-      this.updateController?.schedulePassiveCheck();
-    });
-    handle.window.on("closed", () => {
-      if (this.mainWindow === handle.window) {
-        this.mainWindow = undefined;
-        this.rendererLoaded = false;
-        this.updateRendererReady = false;
-        this.ipc?.uninstall();
-        this.ipc = undefined;
-      }
-    });
+  }
+
+  private async disposeBrowserRuntime(runtime: BrowserRuntime | undefined): Promise<void> {
+    if (runtime === undefined) return;
+    try {
+      await runtime.dispose();
+    } catch {
+      // Browser surfaces are best-effort during renderer and window teardown.
+    }
   }
 
   private openUpdatesFromMenu(): void {

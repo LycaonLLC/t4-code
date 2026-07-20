@@ -21,6 +21,7 @@ import {
   Check,
   ChevronDown,
   Cpu,
+  FileDown,
   FolderGit2,
   Laptop,
   Maximize2,
@@ -30,7 +31,7 @@ import {
   Wifi,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type {
   WorkspaceHost,
@@ -39,6 +40,13 @@ import type {
 } from "../lib/workspace-data.ts";
 import { PaneContent } from "../features/panes/PaneContent.tsx";
 import { TerminalDrawer } from "../features/terminal/TerminalDrawer.tsx";
+import {
+  transcriptFileName,
+  transcriptRowsToJson,
+  transcriptRowsToMarkdown,
+  type ExportContent,
+  type ExportMeta,
+} from "../features/transcript/export.ts";
 import { FreshnessBadge, SessionMain, SessionOwnershipBadge } from "../features/transcript/SessionMain.tsx";
 import { RIGHT_PANE_DOCK_QUERY, useMediaQuery } from "../hooks/useMediaQuery.ts";
 import { rendererPlatform, useWorkspace, workspaceStore } from "../state/store-instance.ts";
@@ -61,11 +69,13 @@ const FRESHNESS_LABEL = {
 
 function SessionContextMenu({
   host,
+  onExport,
   onOpenHostHealth,
   project,
   session,
 }: {
   host: WorkspaceHost | undefined;
+  onExport: (format: "md" | "json") => void;
   onOpenHostHealth: () => void;
   project: WorkspaceProject;
   session: WorkspaceSession;
@@ -133,6 +143,33 @@ function SessionContextMenu({
             >
               View host health
             </button>
+            <div className="mt-1 border-border border-t px-1.5 pt-1.5 pb-0.5 text-[10px] text-muted-foreground uppercase tracking-wide">
+              Export transcript
+            </div>
+            <div className="flex gap-1">
+              <button
+                className="flex min-h-9 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-lg text-muted-foreground text-xs outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => {
+                  setOpen(false);
+                  onExport("md");
+                }}
+                type="button"
+              >
+                <FileDown aria-hidden="true" className="size-3.5" />
+                Markdown
+              </button>
+              <button
+                className="flex min-h-9 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-lg text-muted-foreground text-xs outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => {
+                  setOpen(false);
+                  onExport("json");
+                }}
+                type="button"
+              >
+                <FileDown aria-hidden="true" className="size-3.5" />
+                JSON
+              </button>
+            </div>
           </Popover.Popup>
         </Popover.Positioner>
       </Popover.Portal>
@@ -275,6 +312,37 @@ export function SessionScreen({
   const paneDocks = useMediaQuery(RIGHT_PANE_DOCK_QUERY);
   const shellData = useShellData();
   const host = shellData.hosts.find((entry) => entry.id === project.hostId);
+  // Filled by SessionMain with the current transcript rows; the context
+  // menu serializes whatever is there at click time.
+  const exportRowsRef = useRef<(() => ExportContent) | null>(null);
+  const handleExport = (format: "md" | "json") => {
+    const content = exportRowsRef.current?.();
+    if (content === null || content === undefined) return;
+    const exportedAt = new Date();
+    const meta: ExportMeta = {
+      sessionTitle: session.title,
+      projectName: project.name,
+      hostName: host?.name ?? "Unknown host",
+      model: session.model,
+      freshness: session.freshness,
+      exportedAt: exportedAt.toISOString(),
+      historyTruncated: content.historyTruncated,
+      turnActive: content.turnActive,
+    };
+    const text =
+      format === "json"
+        ? transcriptRowsToJson(content.rows, meta)
+        : transcriptRowsToMarkdown(content.rows, meta);
+    const blob = new Blob([text], {
+      type: format === "json" ? "application/json" : "text/markdown",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = transcriptFileName(session.title, format, exportedAt);
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
   const runtimeSnapshot = useDesktopRuntimeSnapshot();
   const previewAddress =
     runtimeSnapshot === null ? null : resolveLiveSession(runtimeSnapshot, session.id);
@@ -322,6 +390,7 @@ export function SessionScreen({
           <span className="shrink-0 sm:min-w-0 sm:shrink">
             <SessionContextMenu
               host={host}
+              onExport={handleExport}
               onOpenHostHealth={onOpenHostHealth}
               project={project}
               session={session}
@@ -349,6 +418,16 @@ export function SessionScreen({
             <Badge variant="outline">Preview{previewCount === 1 ? "" : ` · ${previewCount}`}</Badge>
           </Link>
         )}
+        {rendererPlatform.browser !== null && (
+          <Link
+            aria-label="Open browser workspace"
+            className="shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            params={{ sessionId: session.id }}
+            to="/sessions/$sessionId/browser"
+          >
+            <Badge variant="outline">Browser</Badge>
+          </Link>
+        )}
         {!archived && !focusMode && (
           <WorkspaceMenu
             paneFamily={viewPaneFamily}
@@ -364,6 +443,7 @@ export function SessionScreen({
           <div className="min-h-0 flex-1 overflow-hidden">
             <SessionMain
               key={session.id}
+              exportRowsRef={exportRowsRef}
               nowMs={nowMs}
               onOpenHostHealth={onOpenHostHealth}
               project={project}
