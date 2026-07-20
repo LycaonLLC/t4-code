@@ -158,7 +158,7 @@ export function lokiLogSummary(payload) {
       try {
         if (JSON.parse(entry[1])?.level === "error") errorCount += 1;
       } catch {
-        if (/\"level\"\s*:\s*\"error\"/u.test(entry[1])) errorCount += 1;
+        if (/"level"\s*:\s*"error"/u.test(entry[1])) errorCount += 1;
       }
     }
   }
