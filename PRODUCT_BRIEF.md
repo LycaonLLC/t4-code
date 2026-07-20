@@ -16,7 +16,7 @@ T3 Code at `reference/t3code` is the primary presentation, interaction, desktop-
 - Center session stream remains the primary surface.
 - Optional right pane extends the T3 pattern with five calm surface families: Agents, Activity (including events), Review, Files, and Agent Terminals. The user terminal remains a bottom drawer. Context is a popover/dialog, not a permanent tab.
 - Browser/app preview is available through the focused host Preview and the separate native desktop Browser workspace rather than becoming a sixth permanent right-pane family.
-- Keyboard shortcuts and Quick Open use one shared action registry so the same operation has one availability rule and one implementation. Workspace menus currently use the same explicit store actions and can move into the registry as the action set grows.
+- Keyboard shortcuts, Quick Open, the workspace menu, and transcript tool links use one shared action registry so the same operation has one availability rule and one implementation.
 - A visible text-file preview can be deliberately staged as bounded, reviewed context for the next new prompt. It is temporary renderer state compiled into ordinary prompt text; it does not create a second runtime authority.
 - Light and dark themes use neutral surfaces. Accent use is minimal and semantic.
 - OMP identity uses the existing pi/connector mark from the upstream Oh My Pi repository and the Pi Pink `#e83174` accent.

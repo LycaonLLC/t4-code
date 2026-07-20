@@ -17,6 +17,9 @@ export type ActionId =
   | "session.open"
   | "surface.toggle"
   | "file.open"
+  | "agent.open"
+  | "review.open"
+  | "preview.open"
   | "inbox.open"
   | "transcript-search.open"
   | "agents.open"
@@ -39,6 +42,9 @@ export interface ActionArguments {
     readonly surfaceId: ActionSessionSurface;
   };
   readonly "file.open": { readonly sessionId: string; readonly path: string };
+  readonly "agent.open": { readonly sessionId: string; readonly agentId: string };
+  readonly "review.open": { readonly sessionId: string; readonly turnId: string };
+  readonly "preview.open": { readonly sessionId: string };
   readonly "inbox.open": undefined;
   readonly "transcript-search.open": { readonly query: string };
   readonly "agents.open": undefined;
@@ -84,6 +90,7 @@ export type ActionDestination =
       readonly route: "/agents" | "/hosts" | "/inbox" | "/settings" | "/usage";
     }
   | { readonly kind: "session"; readonly sessionId: string }
+  | { readonly kind: "preview"; readonly sessionId: string }
   | { readonly kind: "transcript-search"; readonly query: string };
 
 /**

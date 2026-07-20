@@ -8,7 +8,12 @@ import { Outlet, useNavigate } from "@tanstack/react-router";
 import { X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { CORE_ACTIONS, createActionRegistry, type ActionDestination } from "../actions/index.ts";
+import {
+  ActionRegistryProvider,
+  CORE_ACTIONS,
+  createActionRegistry,
+  type ActionDestination,
+} from "../actions/index.ts";
 import { handoffTranscriptSearchQuery } from "../features/transcript-search/index.ts";
 import { TRANSCRIPT_SEARCH_ROUTE } from "../features/transcript-search/route.ts";
 import { getInspectorStore } from "../features/panes/inspector-store.ts";
@@ -218,6 +223,13 @@ export function AppShell() {
             void navigate({ to: TRANSCRIPT_SEARCH_ROUTE });
             return;
           }
+          if (destination.kind === "preview") {
+            void navigate({
+              params: { sessionId: destination.sessionId },
+              to: "/sessions/$sessionId/preview",
+            });
+            return;
+          }
           switch (destination.route) {
             case "/agents":
               void navigate({ to: "/agents" });
@@ -290,123 +302,125 @@ export function AppShell() {
   });
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 max-w-full flex-col overflow-x-hidden bg-background text-foreground">
-      <Titlebar
-        focusMode={focusMode}
-        onExitFocus={() => workspaceStore.getState().setFocusMode(false)}
-        onToggleRail={() => actionRegistry.execute({ id: "rail.toggle", args: undefined })}
-        railToggle={railToggle}
-      />
-      {rendererPlatform.demo && (
-        <div
-          aria-label="Sample data notice"
-          className="flex min-h-7 shrink-0 items-center justify-center gap-1.5 border-border/60 border-b bg-primary/8 px-2 text-center text-xs"
-        >
-          <span className="font-semibold text-primary">Sample data</span>
-          <span aria-hidden="true" className="text-muted-foreground">
-            ·
-          </span>
-          <span className="truncate text-muted-foreground">
-            Explore freely. No live hosts, accounts, or files are connected.
-          </span>
-        </div>
-      )}
-      <div className="flex min-h-0 flex-1">
-        {!railOverlaid && !focusMode && (
-          <>
-            <div
-              className="rail-dock flex h-full shrink-0 flex-col overflow-hidden border-border/60 border-r bg-(--sidebar-background)"
-              style={{ width: railCollapsed ? RAIL_COLLAPSED_WIDTH : effectiveRailWidth }}
-            >
-              {railCollapsed ? (
-                <div className="h-full" style={{ width: RAIL_COLLAPSED_WIDTH }}>
-                  <CollapsedRail
-                    attentionCount={attentionCount}
-                    groups={allCurrentGroups.filter(
-                      (group) => !hiddenProjectIdSet.has(group.project.id),
-                    )}
-                    onExpand={(projectId) => {
-                      const state = workspaceStore.getState();
-                      state.setRailCollapsed(false);
-                      state.setProjectExpanded(projectId, true);
-                    }}
-                  />
-                </div>
-              ) : (
-                <div className="flex h-full flex-col" style={{ width: effectiveRailWidth }}>
-                  <Rail
-                    allGroups={allCurrentGroups}
-                    attentionCount={attentionCount}
-                    archivedCount={archivedCount}
-                    currentCount={currentCount}
-                    groups={groups}
-                    hiddenProjectIds={hiddenProjectIdSet}
-                    nowMs={nowMs}
-                    pinnedSessionGroups={allSessionGroups}
-                    view={sessionListView}
-                  />
-                </div>
-              )}
-            </div>
-            {!railCollapsed && (
-              <ResizeHandle
-                bounds={RAIL_WIDTH}
-                edge="right"
-                label="Resize session list"
-                onCommit={(width) => workspaceStore.getState().setRailWidth(width)}
-                onPreview={setRailPreviewWidth}
-                width={effectiveRailWidth}
-              />
-            )}
-          </>
-        )}
-        <main className="flex min-h-0 min-w-0 flex-1">
-          <Outlet />
-        </main>
-      </div>
-
-      {railOverlaid && (
-        <Sheet
-          onOpenChange={(open) => workspaceStore.getState().setRailOverlayOpen(open)}
-          open={railOverlayOpen && !focusMode}
-        >
-          <SheetPopup
-            aria-label="Working folders and sessions"
-            className="w-[min(20rem,calc(100vw-1rem))] p-0"
-            showCloseButton={false}
-            side="left"
+    <ActionRegistryProvider registry={actionRegistry}>
+      <div className="flex h-full min-h-0 min-w-0 max-w-full flex-col overflow-x-hidden bg-background text-foreground">
+        <Titlebar
+          focusMode={focusMode}
+          onExitFocus={() => actionRegistry.execute({ id: "focus.toggle", args: undefined })}
+          onToggleRail={() => actionRegistry.execute({ id: "rail.toggle", args: undefined })}
+          railToggle={railToggle}
+        />
+        {rendererPlatform.demo && (
+          <div
+            aria-label="Sample data notice"
+            className="flex min-h-7 shrink-0 items-center justify-center gap-1.5 border-border/60 border-b bg-primary/8 px-2 text-center text-xs"
           >
-            <div className="flex h-14 shrink-0 items-center border-border border-b px-3">
-              <SheetTitle className="text-sm">
-                <span aria-hidden="true">T4 Code</span>
-                <span className="sr-only">Working folders and sessions</span>
-              </SheetTitle>
-              <SheetClose
-                aria-label="Close"
-                className="ml-auto size-11"
-                render={<Button size="icon" variant="ghost" />}
+            <span className="font-semibold text-primary">Sample data</span>
+            <span aria-hidden="true" className="text-muted-foreground">
+              ·
+            </span>
+            <span className="truncate text-muted-foreground">
+              Explore freely. No live hosts, accounts, or files are connected.
+            </span>
+          </div>
+        )}
+        <div className="flex min-h-0 flex-1">
+          {!railOverlaid && !focusMode && (
+            <>
+              <div
+                className="rail-dock flex h-full shrink-0 flex-col overflow-hidden border-border/60 border-r bg-(--sidebar-background)"
+                style={{ width: railCollapsed ? RAIL_COLLAPSED_WIDTH : effectiveRailWidth }}
               >
-                <X aria-hidden="true" className="size-4" />
-              </SheetClose>
-            </div>
-            <div className="min-h-0 flex-1">
-              <Rail
-                allGroups={allCurrentGroups}
-                attentionCount={attentionCount}
-                archivedCount={archivedCount}
-                currentCount={currentCount}
-                groups={groups}
-                hiddenProjectIds={hiddenProjectIdSet}
-                nowMs={nowMs}
-                pinnedSessionGroups={allSessionGroups}
-                view={sessionListView}
-              />
-            </div>
-          </SheetPopup>
-        </Sheet>
-      )}
+                {railCollapsed ? (
+                  <div className="h-full" style={{ width: RAIL_COLLAPSED_WIDTH }}>
+                    <CollapsedRail
+                      attentionCount={attentionCount}
+                      groups={allCurrentGroups.filter(
+                        (group) => !hiddenProjectIdSet.has(group.project.id),
+                      )}
+                      onExpand={(projectId) => {
+                        const state = workspaceStore.getState();
+                        state.setRailCollapsed(false);
+                        state.setProjectExpanded(projectId, true);
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div className="flex h-full flex-col" style={{ width: effectiveRailWidth }}>
+                    <Rail
+                      allGroups={allCurrentGroups}
+                      attentionCount={attentionCount}
+                      archivedCount={archivedCount}
+                      currentCount={currentCount}
+                      groups={groups}
+                      hiddenProjectIds={hiddenProjectIdSet}
+                      nowMs={nowMs}
+                      pinnedSessionGroups={allSessionGroups}
+                      view={sessionListView}
+                    />
+                  </div>
+                )}
+              </div>
+              {!railCollapsed && (
+                <ResizeHandle
+                  bounds={RAIL_WIDTH}
+                  edge="right"
+                  label="Resize session list"
+                  onCommit={(width) => workspaceStore.getState().setRailWidth(width)}
+                  onPreview={setRailPreviewWidth}
+                  width={effectiveRailWidth}
+                />
+              )}
+            </>
+          )}
+          <main className="flex min-h-0 min-w-0 flex-1">
+            <Outlet />
+          </main>
+        </div>
 
-      <CommandPalette groups={allSessionGroups} registry={actionRegistry} />
-    </div>
+        {railOverlaid && (
+          <Sheet
+            onOpenChange={(open) => workspaceStore.getState().setRailOverlayOpen(open)}
+            open={railOverlayOpen && !focusMode}
+          >
+            <SheetPopup
+              aria-label="Working folders and sessions"
+              className="w-[min(20rem,calc(100vw-1rem))] p-0"
+              showCloseButton={false}
+              side="left"
+            >
+              <div className="flex h-14 shrink-0 items-center border-border border-b px-3">
+                <SheetTitle className="text-sm">
+                  <span aria-hidden="true">T4 Code</span>
+                  <span className="sr-only">Working folders and sessions</span>
+                </SheetTitle>
+                <SheetClose
+                  aria-label="Close"
+                  className="ml-auto size-11"
+                  render={<Button size="icon" variant="ghost" />}
+                >
+                  <X aria-hidden="true" className="size-4" />
+                </SheetClose>
+              </div>
+              <div className="min-h-0 flex-1">
+                <Rail
+                  allGroups={allCurrentGroups}
+                  attentionCount={attentionCount}
+                  archivedCount={archivedCount}
+                  currentCount={currentCount}
+                  groups={groups}
+                  hiddenProjectIds={hiddenProjectIdSet}
+                  nowMs={nowMs}
+                  pinnedSessionGroups={allSessionGroups}
+                  view={sessionListView}
+                />
+              </div>
+            </SheetPopup>
+          </Sheet>
+        )}
+
+        <CommandPalette groups={allSessionGroups} registry={actionRegistry} />
+      </div>
+    </ActionRegistryProvider>
   );
 }

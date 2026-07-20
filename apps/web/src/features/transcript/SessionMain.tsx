@@ -4,8 +4,15 @@
 // frames into a TranscriptProjection; rows derive from the projection; user
 // actions leave through typed SessionIntents. The shell's outer scroll
 // container stays inert — this surface owns its own virtualized scroller.
-import { useNavigate } from "@tanstack/react-router";
-import { Badge, cn, StatusPill, Tooltip, TooltipPopup, TooltipTrigger, useReducedMotion } from "@t4-code/ui";
+import {
+  Badge,
+  cn,
+  StatusPill,
+  Tooltip,
+  TooltipPopup,
+  TooltipTrigger,
+  useReducedMotion,
+} from "@t4-code/ui";
 import {
   useCallback,
   useEffect,
@@ -16,8 +23,8 @@ import {
   type RefObject,
 } from "react";
 
+import { useActionRegistry } from "../../actions/index.ts";
 import type { WorkspaceProject, WorkspaceSession } from "../../lib/workspace-data.ts";
-import { workspaceStore } from "../../state/store-instance.ts";
 import { useDesktopRuntimeSnapshot } from "../../platform/desktop-runtime.ts";
 import { resolveLiveSession } from "../../platform/live-workspace.ts";
 import { Composer } from "../composer/Composer.tsx";
@@ -68,11 +75,6 @@ export interface SessionMainProps {
   readonly onOpenHostHealth: () => void;
   /** Export hook: registered with the current rows so the header menu can serialize them. */
   readonly exportRowsRef: RefObject<(() => ExportContent) | null>;
-}
-
-/** Stable session-scoped destination; all transcript state stays in the workspace store. */
-export function sessionPreviewDestination(sessionId: string) {
-  return { params: { sessionId }, to: "/sessions/$sessionId/preview" as const };
 }
 
 const NO_FILE_CHILDREN: Readonly<Record<string, FileChildren>> = {};
@@ -452,7 +454,7 @@ export function SessionMain({
   exportRowsRef,
 }: SessionMainProps) {
   const archived = session.archivedAt !== undefined;
-  const navigate = useNavigate();
+  const actionRegistry = useActionRegistry();
   const { snapshot, runtime } = useSessionRuntime(sessionId, session.freshness);
   const projection = snapshot.projection;
   const desktopSnapshot = useDesktopRuntimeSnapshot();
@@ -494,21 +496,16 @@ export function SessionMain({
       hasAgent: (agentId) =>
         getInspectorStore(sessionId)?.getState().agentMap.agents[agentId] !== undefined,
       openAgent: (agentId) => {
-        const inspector = getInspectorStore(sessionId);
-        if (inspector?.getState().agentMap.agents[agentId] === undefined) return;
-        inspector.getState().selectAgent(agentId);
-        workspaceStore.getState().openSessionSurface(sessionId, "agents");
+        actionRegistry.execute({ id: "agent.open", args: { sessionId, agentId } });
       },
       openTurnReview: (turnId) => {
-        const inspector = getInspectorStore(sessionId);
-        inspector?.getState().loadTurnReview(turnId);
-        workspaceStore.getState().openSessionSurface(sessionId, "review");
+        actionRegistry.execute({ id: "review.open", args: { sessionId, turnId } });
       },
       openPreview: () => {
-        void navigate(sessionPreviewDestination(sessionId));
+        actionRegistry.execute({ id: "preview.open", args: { sessionId } });
       },
     }),
-    [navigate, sessionId],
+    [actionRegistry, sessionId],
   );
 
   // Leaving this session surface (switch or unmount) ends any read-aloud

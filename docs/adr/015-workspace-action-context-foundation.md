@@ -18,13 +18,13 @@ much about the UI component it controlled. That creates three forms of drift:
 T4 uses three small foundations that stay above the OMP runtime boundary.
 
 ```text
-keyboard shortcut / Quick Open
-              |
-              v
-       typed action registry
-              |
-       workspace store actions
-              |
+shortcut / Quick Open / workspace menu / transcript tool link
+                          |
+                          v
+                 typed action registry
+                          |
+                 workspace store actions
+                          |
    +----------+-----------+
    |                      |
 transcript + one pane   focused route
@@ -46,10 +46,11 @@ The registry describes presentation and routing; it does not become a second sou
 
 ### Actions and quick open
 
-User operations have stable action IDs and one implementation. Keyboard shortcuts and Quick Open
-call that shared action instead of duplicating side effects. Each action reports whether it is
-available and, when unavailable, a plain reason. Existing workspace menus still call the same
-explicit store actions directly; they can move into the registry as the action set grows.
+User operations have stable action IDs and one implementation. Keyboard shortcuts, Quick Open, the
+workspace menu, and transcript tool links call that shared action instead of duplicating side
+effects. Each action reports whether it is available and, when unavailable, a plain reason. Direct
+store calls remain appropriate for state mechanics such as resizing a pane or closing a temporary
+sheet; those are not named user commands that need several entry points.
 
 Quick Open combines actions, sessions, and files the current inspector has already loaded. It does
 not claim to search the full repository because the current host has no general `files.search`

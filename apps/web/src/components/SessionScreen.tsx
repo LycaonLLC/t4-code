@@ -33,11 +33,8 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import type {
-  WorkspaceHost,
-  WorkspaceProject,
-  WorkspaceSession,
-} from "../lib/workspace-data.ts";
+import { useActionRegistry } from "../actions/index.ts";
+import type { WorkspaceHost, WorkspaceProject, WorkspaceSession } from "../lib/workspace-data.ts";
 import { PaneContent } from "../features/panes/PaneContent.tsx";
 import { TerminalDrawer } from "../features/terminal/TerminalDrawer.tsx";
 import {
@@ -106,7 +103,9 @@ function SessionContextMenu({
           <Popover.Popup className="w-[min(19rem,calc(100vw-1rem))] rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-(--overlay-shadow) outline-none transition-[scale,opacity] duration-(--motion-duration-fast) data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0">
             <div className="flex items-start gap-2 px-1.5 pt-1 pb-2">
               <div className="min-w-0 flex-1">
-                <Popover.Title className="truncate font-medium text-sm">{project.name}</Popover.Title>
+                <Popover.Title className="truncate font-medium text-sm">
+                  {project.name}
+                </Popover.Title>
                 <Popover.Description className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
                   {project.path}
                 </Popover.Description>
@@ -126,7 +125,9 @@ function SessionContextMenu({
               <div className="flex min-h-9 items-center gap-2 border-border border-b">
                 <HostIcon aria-hidden="true" className="size-3.5 text-muted-foreground" />
                 <dt className="text-muted-foreground text-xs">Host</dt>
-                <dd className="ml-auto max-w-40 truncate text-xs">{host?.name ?? "Unknown host"}</dd>
+                <dd className="ml-auto max-w-40 truncate text-xs">
+                  {host?.name ?? "Unknown host"}
+                </dd>
               </div>
               <div className="flex min-h-9 items-center gap-2 border-border border-b">
                 <Cpu aria-hidden="true" className="size-3.5 text-muted-foreground" />
@@ -194,6 +195,7 @@ function WorkspaceMenu({
   paneFamily: SessionSurfaceId;
   terminalOpen: boolean;
 }) {
+  const actionRegistry = useActionRegistry();
   const [open, setOpen] = useState(false);
   const workspaceActive = paneOpen || terminalOpen;
   return (
@@ -213,9 +215,7 @@ function WorkspaceMenu({
       <Popover.Portal>
         <Popover.Positioner align="end" className="z-50" side="bottom" sideOffset={6}>
           <Popover.Popup className="w-[min(17rem,calc(100vw-1rem))] rounded-xl border border-border bg-popover p-1.5 text-popover-foreground shadow-(--overlay-shadow) outline-none transition-[scale,opacity] duration-(--motion-duration-fast) data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0">
-            <Popover.Title className="px-2 pt-1 pb-2 font-medium text-sm">
-              Workspace
-            </Popover.Title>
+            <Popover.Title className="px-2 pt-1 pb-2 font-medium text-sm">Workspace</Popover.Title>
             <p className="px-2 pb-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
               Open on the right
             </p>
@@ -224,16 +224,26 @@ function WorkspaceMenu({
                 const active = paneOpen && paneFamily === meta.id;
                 const Icon = meta.icon;
                 const label = meta.id === "terminals" ? "Agent terminals" : meta.label;
+                const invocation = {
+                  id: "surface.toggle" as const,
+                  args: { sessionId, surfaceId: meta.id },
+                };
+                const presentation = actionRegistry.present(invocation);
                 return (
                   <li key={meta.id}>
                     <button
-                      aria-label={`${active ? "Close" : "Open"} ${label} panel`}
+                      aria-label={`${presentation.label} panel`}
                       aria-pressed={active}
-                      className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-9"
+                      className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
+                      disabled={presentation.availability.status !== "enabled"}
                       onClick={() => {
-                        workspaceStore.getState().toggleSessionSurface(sessionId, meta.id);
-                        setOpen(false);
+                        if (actionRegistry.execute(invocation).executed) setOpen(false);
                       }}
+                      title={
+                        presentation.availability.status === "disabled"
+                          ? presentation.availability.reason
+                          : undefined
+                      }
                       type="button"
                     >
                       <Icon aria-hidden="true" className="size-4 text-muted-foreground" />
@@ -250,12 +260,17 @@ function WorkspaceMenu({
               Open below
             </p>
             <button
-              aria-label={terminalOpen ? "Close terminal below" : "Open terminal below"}
+              aria-label={`${actionRegistry.present({ id: "terminal.toggle", args: undefined }).label} below`}
               aria-pressed={terminalOpen}
-              className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-9"
+              className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
+              disabled={
+                actionRegistry.present({ id: "terminal.toggle", args: undefined }).availability
+                  .status !== "enabled"
+              }
               onClick={() => {
-                workspaceStore.getState().setTerminalDrawerOpen(sessionId, !terminalOpen);
-                setOpen(false);
+                if (actionRegistry.execute({ id: "terminal.toggle", args: undefined }).executed) {
+                  setOpen(false);
+                }
               }}
               type="button"
             >
@@ -269,11 +284,12 @@ function WorkspaceMenu({
               Layout
             </p>
             <button
-              aria-label="Enter focus mode"
+              aria-label={actionRegistry.present({ id: "focus.toggle", args: undefined }).label}
               className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-9"
               onClick={() => {
-                workspaceStore.getState().setFocusMode(true);
-                setOpen(false);
+                if (actionRegistry.execute({ id: "focus.toggle", args: undefined }).executed) {
+                  setOpen(false);
+                }
               }}
               type="button"
             >
@@ -397,7 +413,9 @@ export function SessionScreen({
       <div className="surface-subheader gap-1.5 px-1.5 sm:gap-2 sm:px-3">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <span className="min-w-0 truncate font-medium text-sm">{session.title}</span>
-          <span aria-hidden="true" className="hidden shrink-0 text-border sm:inline">/</span>
+          <span aria-hidden="true" className="hidden shrink-0 text-border sm:inline">
+            /
+          </span>
           <span className="shrink-0 sm:min-w-0 sm:shrink">
             <SessionContextMenu
               host={host}
@@ -473,7 +491,11 @@ export function SessionScreen({
             aria-hidden={paneOpen ? undefined : "true"}
             className="pane-dock flex min-h-0 shrink-0"
             onTransitionEnd={(event) => {
-              if (event.target === event.currentTarget && event.propertyName === "width" && !paneOpen) {
+              if (
+                event.target === event.currentTarget &&
+                event.propertyName === "width" &&
+                !paneOpen
+              ) {
                 setPaneRendered(false);
               }
             }}

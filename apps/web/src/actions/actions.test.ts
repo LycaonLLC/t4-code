@@ -175,6 +175,100 @@ describe("typed action registry", () => {
     expect(workspace.getState().focusMode).toBe(true);
     expect(registry.present({ id: "focus.toggle", args: undefined }).label).toBe("Exit focus mode");
   });
+
+  it("publishes the shared actions used by workspace menus and transcript tool links", () => {
+    const { registry } = setup();
+    expect(registry.list("workspace-menu").map((action) => action.id)).toEqual([
+      "terminal.toggle",
+      "focus.toggle",
+      "surface.toggle",
+    ]);
+    expect(registry.list("tool-link").map((action) => action.id)).toEqual([
+      "agent.open",
+      "review.open",
+      "preview.open",
+    ]);
+  });
+
+  it("selects a transcript-linked agent and opens the shared Agents surface", () => {
+    const { inspector, registry, workspace } = setup();
+    inspector.getState().ingestAgent({
+      id: "agent-a",
+      parentId: null,
+      title: "Implementation agent",
+      kind: "agent",
+      state: "running",
+      progress: null,
+      startedAt: null,
+      lastActivityAt: null,
+      model: null,
+      worktree: null,
+      path: null,
+      currentTool: null,
+      contextUsed: null,
+      contextLimit: null,
+      evidence: null,
+      transcriptEntries: [],
+      transcriptReceived: false,
+      transcriptFreshness: "fresh",
+      transcriptHistoryTruncated: false,
+      transcript: [],
+    });
+    workspace.getState().setFocusMode(true);
+
+    expect(
+      registry.execute({
+        id: "agent.open",
+        args: { sessionId: firstSession.id, agentId: "agent-a" },
+      }).executed,
+    ).toBe(true);
+    expect(inspector.getState().selectedAgentId).toBe("agent-a");
+    expect(workspace.getState().focusMode).toBe(false);
+    expect(workspace.getState().sessionViewById[firstSession.id]).toMatchObject({
+      paneFamily: "agents",
+      paneOpen: true,
+    });
+  });
+
+  it("refuses a transcript link after its agent disappears", () => {
+    const { inspector, registry } = setup();
+    const invocation = {
+      id: "agent.open" as const,
+      args: { sessionId: firstSession.id, agentId: "missing-agent" },
+    };
+    expect(registry.execute(invocation)).toEqual({
+      executed: false,
+      availability: { status: "disabled", reason: "This agent is no longer available." },
+    });
+    expect(inspector.getState().selectedAgentId).toBeNull();
+  });
+
+  it("loads a linked turn review before opening the Review surface", () => {
+    const { inspector, registry, workspace } = setup();
+    expect(
+      registry.execute({
+        id: "review.open",
+        args: { sessionId: firstSession.id, turnId: "turn-42" },
+      }).executed,
+    ).toBe(true);
+    expect(inspector.getState().review).toMatchObject({
+      source: "turn",
+      turnId: "turn-42",
+      loading: true,
+    });
+    expect(workspace.getState().sessionViewById[firstSession.id]).toMatchObject({
+      paneFamily: "review",
+      paneOpen: true,
+    });
+  });
+
+  it("routes transcript previews through the action environment", () => {
+    const { destinations, registry } = setup();
+    expect(
+      registry.execute({ id: "preview.open", args: { sessionId: firstSession.id } }).executed,
+    ).toBe(true);
+    expect(destinations).toEqual([{ kind: "preview", sessionId: firstSession.id }]);
+  });
 });
 
 describe("Quick Open providers", () => {

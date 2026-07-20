@@ -20,6 +20,7 @@ const SURFACE_LABELS = {
 
 const QUICK_OPEN = ["quick-open"] as const;
 const QUICK_OPEN_AND_SHORTCUT = ["quick-open", "shortcut"] as const;
+const QUICK_OPEN_SHORTCUT_AND_MENU = ["quick-open", "shortcut", "workspace-menu"] as const;
 
 function defineAction<K extends ActionId>(definition: ActionDefinition<K>): ActionDefinition<K> {
   return definition;
@@ -100,7 +101,7 @@ const railToggle = defineAction({
 const terminalToggle = defineAction({
   id: "terminal.toggle",
   group: "workspace",
-  surfaces: QUICK_OPEN_AND_SHORTCUT,
+  surfaces: QUICK_OPEN_SHORTCUT_AND_MENU,
   icon: "terminal",
   keywords: ["drawer", "shell"],
   label: (environment) => {
@@ -136,7 +137,7 @@ const terminalToggle = defineAction({
 const focusToggle = defineAction({
   id: "focus.toggle",
   group: "workspace",
-  surfaces: QUICK_OPEN_AND_SHORTCUT,
+  surfaces: QUICK_OPEN_SHORTCUT_AND_MENU,
   keywords: ["distraction", "fullscreen"],
   label: (environment) =>
     environment.workspace.getState().focusMode ? "Exit focus mode" : "Enter focus mode",
@@ -186,7 +187,7 @@ const sessionOpen = defineAction({
 const surfaceToggle = defineAction({
   id: "surface.toggle",
   group: "workspace",
-  surfaces: QUICK_OPEN,
+  surfaces: ["quick-open", "workspace-menu"],
   icon: (_environment, args) => args.surfaceId,
   label: (environment, args) => {
     const workspace = environment.workspace.getState();
@@ -244,6 +245,73 @@ const fileOpen = defineAction({
   },
 });
 
+const agentOpen = defineAction({
+  id: "agent.open",
+  group: "workspace",
+  surfaces: ["tool-link"],
+  icon: "agents",
+  label: () => "Open agent",
+  description: () => "Transcript tool result · Agents",
+  availability: (environment, args) => {
+    const active = activeCurrentSessionAvailability(environment, args.sessionId);
+    if (active.status !== "enabled") return active;
+    const inspector = environment.inspector(args.sessionId);
+    if (inspector === null) {
+      return { status: "disabled", reason: "Agents are not loaded for this session yet." };
+    }
+    return inspector.getState().agentMap.agents[args.agentId] === undefined
+      ? { status: "disabled", reason: "This agent is no longer available." }
+      : ACTION_ENABLED;
+  },
+  run: (environment, args) => {
+    const inspector = environment.inspector(args.sessionId);
+    if (inspector === null) return ACTION_COMPLETED;
+    inspector.getState().selectAgent(args.agentId);
+    const workspace = environment.workspace.getState();
+    if (workspace.focusMode) workspace.setFocusMode(false);
+    workspace.openSessionSurface(args.sessionId, "agents");
+    return ACTION_COMPLETED;
+  },
+});
+
+const reviewOpen = defineAction({
+  id: "review.open",
+  group: "workspace",
+  surfaces: ["tool-link"],
+  icon: "review",
+  label: () => "Open turn review",
+  description: () => "Transcript tool result · Review",
+  availability: (environment, args) => {
+    const active = activeCurrentSessionAvailability(environment, args.sessionId);
+    if (active.status !== "enabled") return active;
+    return environment.inspector(args.sessionId) === null
+      ? { status: "disabled", reason: "Review is not loaded for this session yet." }
+      : ACTION_ENABLED;
+  },
+  run: (environment, args) => {
+    const inspector = environment.inspector(args.sessionId);
+    if (inspector === null) return ACTION_COMPLETED;
+    inspector.getState().loadTurnReview(args.turnId);
+    const workspace = environment.workspace.getState();
+    if (workspace.focusMode) workspace.setFocusMode(false);
+    workspace.openSessionSurface(args.sessionId, "review");
+    return ACTION_COMPLETED;
+  },
+});
+
+const previewOpen = defineAction({
+  id: "preview.open",
+  group: "workspace",
+  surfaces: ["tool-link"],
+  label: () => "Open preview",
+  description: () => "Session preview",
+  availability: (environment, args) => sessionAvailability(environment, args.sessionId),
+  run: (environment, args) => {
+    environment.navigate({ kind: "preview", sessionId: args.sessionId });
+    return ACTION_COMPLETED;
+  },
+});
+
 function routeAction<
   K extends "inbox.open" | "agents.open" | "settings.open" | "hosts.open" | "usage.open",
 >(
@@ -293,6 +361,9 @@ export const CORE_ACTIONS: readonly AnyActionDefinition[] = Object.freeze([
   sessionOpen,
   surfaceToggle,
   fileOpen,
+  agentOpen,
+  reviewOpen,
+  previewOpen,
   routeAction("inbox.open", "navigate", "Open Inbox", "Attention across sessions", "/inbox"),
   transcriptSearchOpen,
   routeAction("agents.open", "navigate", "Open Agent View", "Agents", "/agents"),
