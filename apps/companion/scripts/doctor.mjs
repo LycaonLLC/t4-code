@@ -28,8 +28,28 @@ function androidSdkRoot(environment = process.env, userHome = homedir()) {
     environment.ANDROID_SDK_ROOT,
     join(userHome, "Library", "Android", "sdk"),
     join(userHome, "Android", "Sdk"),
+    "/opt/homebrew/share/android-commandlinetools",
+    "/usr/local/share/android-commandlinetools",
   ];
   return candidates.find((candidate) => typeof candidate === "string" && existsSync(candidate));
+}
+
+function androidJavaVersion(environment = process.env) {
+  const homes = [
+    environment.JAVA_HOME,
+    "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home",
+    "/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home",
+    "/Applications/Android Studio.app/Contents/jbr/Contents/Home",
+  ];
+  for (const home of homes) {
+    if (typeof home !== "string") continue;
+    const java = join(home, "bin", "java");
+    if (!existsSync(java)) continue;
+    const result = run(java, ["-version"]);
+    const major = Number(/version "(\d+)/u.exec(result.output)?.[1] ?? 0);
+    if (major === 17 || major === 21) return String(major);
+  }
+  return "";
 }
 
 export function hasPairedIphone(deviceOutput) {
@@ -91,6 +111,16 @@ export function evaluateDoctor(snapshot, platform = "all") {
       ok: snapshot.adbAvailable,
       detail: snapshot.adbAvailable ? "adb is available" : "install Android SDK Platform-Tools",
     });
+    checks.push({
+      name: "Android Java",
+      ok: snapshot.androidJavaVersion === "17" || snapshot.androidJavaVersion === "21",
+      detail: snapshot.androidJavaVersion ? `Java ${snapshot.androidJavaVersion}` : "install openjdk@17",
+    });
+    checks.push({
+      name: "Android target",
+      ok: snapshot.androidTargetAvailable,
+      detail: snapshot.androidTargetAvailable ? "connected device or configured emulator is available" : "connect a phone or create an Android virtual device",
+    });
   }
   return checks;
 }
@@ -110,6 +140,18 @@ export function collectSnapshot() {
     }
   }
   const sdkRoot = androidSdkRoot();
+  const adb = executableOnPath("adb")
+    ? "adb"
+    : sdkRoot !== undefined && existsSync(join(sdkRoot, "platform-tools", "adb"))
+      ? join(sdkRoot, "platform-tools", "adb")
+      : "";
+  const adbDevices = adb ? run(adb, ["devices"]) : { ok: false, output: "" };
+  const emulator = sdkRoot !== undefined && existsSync(join(sdkRoot, "emulator", "emulator"))
+    ? join(sdkRoot, "emulator", "emulator")
+    : executableOnPath("emulator")
+      ? "emulator"
+      : "";
+  const virtualDevices = emulator ? run(emulator, ["-list-avds"]) : { ok: false, output: "" };
   return {
     nodeMajor: Number(process.versions.node.split(".")[0]),
     nodeVersion: process.versions.node,
@@ -124,6 +166,10 @@ export function collectSnapshot() {
     androidSdkRoot: sdkRoot ?? "",
     adbAvailable:
       executableOnPath("adb") || (sdkRoot !== undefined && existsSync(join(sdkRoot, "platform-tools", "adb"))),
+    androidJavaVersion: androidJavaVersion(),
+    androidTargetAvailable:
+      (adbDevices.ok && adbDevices.output.split("\n").some((line) => /\tdevice(?:\s|$)/u.test(line)))
+      || (virtualDevices.ok && virtualDevices.output.trim() !== ""),
   };
 }
 

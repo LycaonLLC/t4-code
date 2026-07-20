@@ -9,6 +9,11 @@ import {
   pairedPhysicalIphones,
   parseArguments,
 } from "./ios-device.mjs";
+import {
+  parseAdbDevices,
+  parseAndroidArguments,
+  resolveAndroidSdkRoot,
+} from "./android-device.mjs";
 
 const ready = Object.freeze({
   nodeMajor: 24,
@@ -22,6 +27,8 @@ const ready = Object.freeze({
   androidSdkAvailable: true,
   androidSdkRoot: "/sdk",
   adbAvailable: true,
+  androidJavaVersion: "17",
+  androidTargetAvailable: true,
 });
 
 test("all-platform readiness passes when every prerequisite is present", () => {
@@ -50,6 +57,14 @@ test("Android mode reports the SDK and device-tools repair actions", () => {
     ["Android SDK", "Android device tools"],
   );
   assert.equal(checks.some((check) => check.name === "Xcode"), false);
+});
+
+test("Android mode does not claim readiness without Java and a target", () => {
+  const checks = evaluateDoctor({ ...ready, androidJavaVersion: "", androidTargetAvailable: false }, "android");
+  assert.deepEqual(
+    checks.filter((check) => !check.ok).map((check) => check.name),
+    ["Android Java", "Android target"],
+  );
 });
 
 test("physical-iPhone detection accepts Apple's current table order", () => {
@@ -107,4 +122,35 @@ test("native installer parses safe workflow switches", () => {
   assert.throws(() => parseArguments(["--mystery"]), /Unknown option/u);
   assert.throws(() => parseArguments(["--launch-only", "--no-launch"]), /cannot be used together/u);
   assert.equal(launchFailureIsLocked("request denied: Locked"), true);
+});
+
+test("Android installer selects connected devices from adb output", () => {
+  const output = [
+    "List of devices attached",
+    "emulator-5554 device product:sdk_phone model:Pixel_8 device:emu64a transport_id:1",
+    "offline-phone offline transport_id:2",
+  ].join("\n");
+  assert.deepEqual(parseAdbDevices(output), [{ serial: "emulator-5554", model: "Pixel 8" }]);
+});
+
+test("Android installer parses the repeatable build workflow", () => {
+  assert.deepEqual(parseAndroidArguments(["--device", "emulator-5554", "--reuse-build", "--no-launch"]), {
+    device: "emulator-5554",
+    avd: "T4_Pixel_API_36",
+    url: "",
+    reuseBuild: true,
+    launchOnly: false,
+    noLaunch: true,
+    help: false,
+  });
+  assert.throws(() => parseAndroidArguments(["--mystery"]), /Unknown option/u);
+  assert.throws(() => parseAndroidArguments(["--launch-only", "--no-launch"]), /cannot be used together/u);
+});
+
+test("Android installer recognizes a standard SDK", () => {
+  const existing = new Set([
+    "/Users/test/Library/Android/sdk/platforms",
+  ]);
+  const pathExists = (path) => existing.has(path);
+  assert.equal(resolveAndroidSdkRoot({ ANDROID_HOME: "/missing" }, "/Users/test", pathExists), "/Users/test/Library/Android/sdk");
 });

@@ -69,12 +69,25 @@ a provisioning profile for `com.roycorp.t4companion`. Xcode can create both
 after the project owner signs in under **Xcode Settings > Accounts**. This is a
 one-time Apple Developer account change; later local installs reuse it.
 
-Run Android:
+For Android, the matching one-command workflow discovers a connected phone or
+starts the `T4_Pixel_API_36` emulator, builds a Release APK for that device's
+processor, installs it, opens it, and passes the stable Tailnet address:
 
 ```bash
-cd apps/companion
-mise exec node@24.17.0 -- pnpm exec expo run:android
+mise exec node@24.17.0 -- pnpm --filter @t4-code/companion android:device
 ```
+
+To reopen the installed app without rebuilding, run:
+
+```bash
+mise exec node@24.17.0 -- pnpm --filter @t4-code/companion android:device --launch-only
+```
+
+Use `android:device --help` for an explicit device, virtual-device name,
+Tailnet URL, build reuse, and install-without-launch options. The Android phone
+or emulator must be able to reach the Mac's Tailnet address. Run
+`doctor:android` first if Java 17, the Android SDK, platform tools, or a target
+device are missing.
 
 Run focused checks:
 

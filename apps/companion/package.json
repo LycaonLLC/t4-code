@@ -30,6 +30,7 @@
     "doctor:ios": "node scripts/doctor.mjs --platform ios",
     "doctor:android": "node scripts/doctor.mjs --platform android",
     "ios:device": "node scripts/ios-device.mjs",
+    "android:device": "node scripts/android-device.mjs",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
