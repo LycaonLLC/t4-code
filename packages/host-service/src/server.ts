@@ -91,7 +91,7 @@ import {
 	unlinkIfExists,
 } from "./ownership.ts";
 import { SessionProjection } from "./projection.ts";
-import { BunRemoteListener, createListenerPlan, createServeProxyPlan } from "./remote/listener.ts";
+import { BunRemoteListener, createInternalListenerPlan, createListenerPlan, createServeProxyPlan } from "./remote/listener.ts";
 import type { RemoteConnection, RemoteListenerConfig } from "./remote/types.ts";
 import { BunRpcChildFactory, RpcChildSupervisor } from "./rpc-child.ts";
 import type {
@@ -1070,9 +1070,11 @@ export class LocalAppserver implements AppserverHandle {
 				const listener =
 					this.#remoteListener ??
 					new BunRemoteListener(
-						this.#remoteEndpoint.serveProxy === true
-							? createServeProxyPlan(this.#remoteEndpoint)
-							: createListenerPlan(this.#remoteEndpoint),
+						this.#remoteEndpoint.internalPeerNodeId
+							? createInternalListenerPlan(this.#remoteEndpoint)
+							: this.#remoteEndpoint.serveProxy === true
+								? createServeProxyPlan(this.#remoteEndpoint)
+								: createListenerPlan(this.#remoteEndpoint),
 						{
 							connected: connection => this.#remoteConnected(connection),
 							message: (connection, message) => this.#remoteMessage(connection, message),

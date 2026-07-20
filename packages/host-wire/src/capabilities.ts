@@ -23,6 +23,7 @@ export const DEVICE_CAPABILITIES = [
 	"preview.read",
 	"preview.control",
 	"preview.input",
+	"ci.trigger",
 ] as const;
 export type DeviceCapability = (typeof DEVICE_CAPABILITIES)[number];
 export const PROTOCOL_FEATURES = [
@@ -52,6 +53,7 @@ export const PROTOCOL_FEATURES = [
 	"preview.control",
 	"runtime.adapters",
 	"workspace.lifecycle",
+	"cluster.operator",
 ] as const;
 export type ProtocolFeature = (typeof PROTOCOL_FEATURES)[number];
 export const REMOTE_DEFAULT_CAPABILITIES = [
