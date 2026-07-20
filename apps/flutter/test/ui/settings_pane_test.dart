@@ -45,6 +45,21 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  Future<void> selectSettingsCategory(
+    WidgetTester tester,
+    Size size,
+    String label,
+  ) async {
+    if (size.width >= 980) {
+      await tester.tap(find.text(label).last);
+    } else {
+      await tester.tap(find.byKey(const Key('settings-category-picker')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(label).last);
+    }
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('phone navigation changes the live theme preference', (
     tester,
   ) async {
@@ -60,9 +75,18 @@ void main() {
 
     await openSettings(tester, phone);
 
-    expect(find.text('Appearance'), findsOneWidget);
-    expect(find.text('OMP settings'), findsOneWidget);
-    expect(find.text('Settings'), findsOneWidget);
+    expect(find.byKey(const Key('settings-category-picker')), findsOneWidget);
+    expect(find.text('Appearance'), findsWidgets);
+    expect(
+      find.text('Choose how T4 follows your device appearance.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'Changes are staged here. Save sends them to the host, where host-scoped changes may require inbox approval.',
+      ),
+      findsNothing,
+    );
     await tester.tap(find.text('Dark'));
     await tester.pump();
 
@@ -125,6 +149,7 @@ void main() {
       await pumpApp(tester, state: state, actions: actions, size: wide);
 
       await openSettings(tester, wide);
+      await selectSettingsCategory(tester, wide, 'OMP settings');
 
       expect(find.byTooltip('Close settings'), findsOneWidget);
       expect(find.text('Permission denied'), findsOneWidget);
@@ -142,6 +167,48 @@ void main() {
       expect(find.byType(Drawer), findsNothing);
     },
   );
+
+  testWidgets('OMP settings renders only the selected setting group', (
+    tester,
+  ) async {
+    final actions = _FakeActions();
+    final state = _state(
+      capabilities: const <String>{
+        'catalog.read',
+        'config.read',
+        'config.write',
+      },
+      entries: <HostSettingEntry>[
+        _entry(
+          path: 'runtime.enabled',
+          label: 'Runtime · Enabled',
+          control: HostSettingControlKind.boolean,
+          effectiveValue: true,
+        ),
+        _entry(
+          path: 'provider.enabled',
+          label: 'Provider · Enabled',
+          control: HostSettingControlKind.boolean,
+          effectiveValue: false,
+        ),
+      ],
+    );
+    await pumpApp(tester, state: state, actions: actions, size: wide);
+    await openSettings(tester, wide);
+    await selectSettingsCategory(tester, wide, 'OMP settings');
+
+    expect(find.byKey(const Key('host-settings-group-picker')), findsOneWidget);
+    expect(find.text('Runtime · Enabled'), findsOneWidget);
+    expect(find.text('Provider · Enabled'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('host-settings-group-picker')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Provider (1)').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Runtime · Enabled'), findsNothing);
+    expect(find.text('Provider · Enabled'), findsOneWidget);
+  });
 
   testWidgets(
     'phone controls stage changes and require Save for write and reset',
@@ -165,6 +232,7 @@ void main() {
       );
       await pumpApp(tester, state: state, actions: actions, size: phone);
       await openSettings(tester, phone);
+      await selectSettingsCategory(tester, phone, 'OMP settings');
 
       final control = find.byKey(const Key('setting-control-runtime.enabled'));
       await tester.ensureVisible(control);
@@ -232,6 +300,7 @@ void main() {
       size: wide,
     );
     await openSettings(tester, wide);
+    await selectSettingsCategory(tester, wide, 'OMP settings');
     await tester.tap(find.byKey(const Key('setting-control-runtime.enabled')));
     await tester.pump();
 
@@ -275,6 +344,7 @@ void main() {
       platformActions: platformActions,
     );
     await openSettings(tester, wide);
+    await selectSettingsCategory(tester, wide, 'App and runtime');
 
     final runtimeRestart = find.byKey(const Key('runtime-restart'));
     await tester.ensureVisible(runtimeRestart);

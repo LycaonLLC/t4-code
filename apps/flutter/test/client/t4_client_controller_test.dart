@@ -1853,6 +1853,141 @@ void main() {
       );
     },
   );
+  test(
+    'thinking menu exposes advertised levels and keeps a valid current value',
+    () async {
+      final profile = _profile('alpha');
+      final directory = _MemoryDirectoryStore(
+        directory: const HostDirectory.empty().upsert(profile),
+      );
+      final connector = _FakeConnector();
+      final controller = _controller(
+        directory,
+        _MemoryCredentialStore(),
+        connector,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      final channel = connector.channels.single;
+      channel.emit(
+        _welcome('host-alpha', capabilities: t4RequestedCapabilities),
+      );
+      await _flush();
+
+      Map<String, Object?> sessionFrame({
+        required String? thinking,
+        required bool? thinkingSupported,
+        required List<String> thinkingLevels,
+      }) => <String, Object?>{
+        'v': 'omp-app/1',
+        'type': 'sessions',
+        'hostId': 'host-alpha',
+        'cursor': <String, Object?>{'epoch': 'index', 'seq': 1},
+        'sessions': <Object?>[
+          <String, Object?>{
+            'hostId': 'host-alpha',
+            'sessionId': 'session-alpha',
+            'project': <String, Object?>{
+              'projectId': 'project-alpha',
+              'name': 'Project Alpha',
+            },
+            'revision': 'revision-alpha',
+            'title': 'session-alpha title',
+            'status': 'idle',
+            'updatedAt': '2026-07-19T00:00:00.000Z',
+            'liveState': <String, Object?>{
+              'thinking': ?thinking,
+              'thinkingSupported': ?thinkingSupported,
+              if (thinkingLevels.isNotEmpty) 'thinkingLevels': thinkingLevels,
+            },
+          },
+        ],
+        'totalCount': 1,
+        'truncated': false,
+      };
+
+      // Model advertises off/low/medium/high/auto; current value is high.
+      channel.emit(
+        sessionFrame(
+          thinking: 'high',
+          thinkingSupported: true,
+          thinkingLevels: const <String>['low', 'medium', 'high'],
+        ),
+      );
+      await _flush();
+      await controller.selectSession('session-alpha');
+      await _flush();
+      channel.emit(
+        _snapshot('host-alpha', 'session-alpha', revision: 'revision-alpha'),
+      );
+      await _flush();
+
+      var composer = controller.state.composer;
+      expect(composer.thinking, 'high');
+      expect(composer.thinkingLevels, <String>[
+        'off',
+        'auto',
+        'low',
+        'medium',
+        'high',
+      ]);
+
+      // Capability refresh arrives without concrete efforts yet: the still-valid
+      // current value (high) must remain selectable rather than collapsing to
+      // off/auto only.
+      channel.emit(
+        sessionFrame(
+          thinking: 'high',
+          thinkingSupported: true,
+          thinkingLevels: const <String>[],
+        ),
+      );
+      await _flush();
+      composer = controller.state.composer;
+      expect(composer.thinking, 'high');
+      expect(composer.thinkingLevels, contains('off'));
+      expect(composer.thinkingLevels, contains('auto'));
+      expect(composer.thinkingLevels, contains('high'));
+      expect(composer.thinkingLevels, isNot(contains('low')));
+      expect(composer.thinkingLevels, isNot(contains('medium')));
+
+      // A model that cannot reason exposes no levels.
+      channel.emit(
+        sessionFrame(
+          thinking: 'high',
+          thinkingSupported: false,
+          thinkingLevels: const <String>['low', 'medium', 'high'],
+        ),
+      );
+      await _flush();
+      composer = controller.state.composer;
+      expect(composer.thinkingLevels, isEmpty);
+
+      // Submitting the current level sends the canonical raw value.
+      channel.emit(
+        sessionFrame(
+          thinking: 'high',
+          thinkingSupported: true,
+          thinkingLevels: const <String>['low', 'medium', 'high'],
+        ),
+      );
+      await _flush();
+      final setting = controller.setSessionThinking('high');
+      await _flush();
+      final sent = channel.sentJson.lastWhere(
+        (frame) => frame['command'] == 'session.thinking.set',
+      );
+      expect(sent['args'], <String, Object?>{'level': 'high'});
+      channel.emit(
+        _response(
+          sent,
+          command: 'session.thinking.set',
+          result: <String, Object?>{'updated': true},
+        ),
+      );
+      await setting;
+    },
+  );
 }
 
 const String _token = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';

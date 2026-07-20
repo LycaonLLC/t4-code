@@ -1055,34 +1055,11 @@ final class _PromptComposerState extends State<_PromptComposer> {
                   spacing: _T4Space.xs,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    PopupMenuButton<String>(
-                      tooltip: 'Choose model',
-                      enabled: composer.modelChoices.isNotEmpty,
-                      onSelected: (selector) => unawaited(
+                    _ModelSelectorMenu(
+                      composer: composer,
+                      onSelect: (selector) => unawaited(
                         _runControl(
                           () => widget.actions.setSessionModel(selector),
-                        ),
-                      ),
-                      itemBuilder: (context) => [
-                        for (final choice in composer.modelChoices)
-                          PopupMenuItem<String>(
-                            value: choice.selector,
-                            enabled: choice.supported,
-                            child: Text(
-                              choice.supported
-                                  ? choice.label
-                                  : '${choice.label} · ${choice.reason ?? 'Unavailable'}',
-                            ),
-                          ),
-                      ],
-                      child: Chip(
-                        avatar: const Icon(Icons.memory, size: 20),
-                        label: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 140),
-                          child: Text(
-                            composer.modelLabel ?? 'Model',
-                            overflow: TextOverflow.ellipsis,
-                          ),
                         ),
                       ),
                     ),
@@ -1195,6 +1172,104 @@ final class _PromptComposerState extends State<_PromptComposer> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Provider-grouped model selector for the composer.
+///
+/// Replaces the giant flat catalog list with a navigable provider → model menu
+/// that mirrors the Electron/web T4 model picker. Human model names render as
+/// the primary label; raw `provider/modelId` selectors are carried through as
+/// the submitted values. Unknown providers/models stay selectable under an
+/// 'Other models' group. A single-provider host collapses to a flat list so
+/// the user is never forced through a one-item submenu.
+final class _ModelSelectorMenu extends StatelessWidget {
+  const _ModelSelectorMenu({required this.composer, required this.onSelect});
+
+  final SessionComposerState composer;
+  final ValueChanged<String> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final groups = composer.modelGroups;
+    final enabled = groups.any((group) => group.choices.isNotEmpty);
+    final theme = Theme.of(context);
+    final menuStyle = MenuStyle(
+      visualDensity: VisualDensity.compact,
+      maximumSize: const WidgetStatePropertyAll<Size?>(Size(280, 360)),
+    );
+    final itemStyle = MenuItemButton.styleFrom(
+      visualDensity: VisualDensity.compact,
+      minimumSize: const Size.fromHeight(44),
+    );
+    return Semantics(
+      label: 'Model: ${composer.modelLabel ?? 'None'}',
+      button: true,
+      child: MenuAnchor(
+        style: menuStyle,
+        alignmentOffset: const Offset(0, 8),
+        menuChildren: <Widget>[
+          if (groups.length == 1)
+            for (final choice in groups.single.choices)
+              _modelItem(choice, theme, itemStyle)
+          else
+            for (final group in groups)
+              if (group.choices.isNotEmpty)
+                SubmenuButton(
+                  key: ValueKey<String>('model-provider-${group.provider}'),
+                  style: itemStyle,
+                  menuStyle: menuStyle,
+                  leadingIcon: const Icon(Icons.folder_outlined, size: 18),
+                  menuChildren: <Widget>[
+                    for (final choice in group.choices)
+                      _modelItem(choice, theme, itemStyle),
+                  ],
+                  child: Text(group.label, overflow: TextOverflow.ellipsis),
+                ),
+        ],
+        builder: (context, controller, child) {
+          return ActionChip(
+            avatar: const Icon(Icons.memory, size: 20),
+            label: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 140),
+              child: Text(
+                composer.modelLabel ?? 'Model',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            onPressed: enabled ? () => _open(controller) : null,
+          );
+        },
+      ),
+    );
+  }
+
+  void _open(MenuController controller) {
+    if (controller.isOpen) {
+      controller.close();
+    } else {
+      controller.open();
+    }
+  }
+
+  Widget _modelItem(
+    ResolvedModelChoice choice,
+    ThemeData theme,
+    ButtonStyle itemStyle,
+  ) {
+    final selected = composer.modelSelector == choice.selector;
+    final label = choice.supported
+        ? choice.label
+        : '${choice.label} · ${choice.reason ?? 'Unavailable'}';
+    return MenuItemButton(
+      key: ValueKey<String>('model-${choice.selector}'),
+      style: itemStyle,
+      onPressed: choice.supported ? () => onSelect(choice.selector) : null,
+      leadingIcon: selected
+          ? Icon(Icons.check, size: 18, color: theme.colorScheme.primary)
+          : null,
+      child: Text(label, overflow: TextOverflow.ellipsis),
     );
   }
 }

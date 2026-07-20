@@ -10,6 +10,7 @@ import 'package:xterm/xterm.dart';
 
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import '../client/app_state.dart';
+import '../client/model_labels.dart';
 import '../platform/platform_lifecycle.dart';
 import '../protocol/protocol.dart';
 import '../platform/platform_lifecycle_controller.dart';

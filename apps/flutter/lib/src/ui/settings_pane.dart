@@ -4,6 +4,18 @@ const String _settingsReadCapability = 'config.read';
 const String _settingsWriteCapability = 'config.write';
 const String _diagnosticsKind = 't4-code.flutter-diagnostics';
 
+enum _SettingsCategory {
+  appearance('Appearance', Icons.palette_outlined),
+  host('OMP settings', Icons.tune_outlined),
+  app('App and runtime', Icons.system_update_alt_outlined),
+  diagnostics('Diagnostics', Icons.monitor_heart_outlined);
+
+  const _SettingsCategory(this.label, this.icon);
+
+  final String label;
+  final IconData icon;
+}
+
 /// Builds the allowlisted, redacted diagnostics payload used by the settings UI.
 ///
 /// This deliberately does not serialize [T4ViewState]. Credentials, raw wire
@@ -133,6 +145,8 @@ final class _SettingsPaneState extends State<_SettingsPane> {
   bool _refreshing = false;
   bool _themePending = false;
   late T4ThemePreference _themeSelection;
+  _SettingsCategory _activeCategory = _SettingsCategory.appearance;
+  String? _activeHostGroup;
 
   @override
   void initState() {
@@ -149,6 +163,7 @@ final class _SettingsPaneState extends State<_SettingsPane> {
     final nextHostKey = widget.state.hostDirectory.activeProfile?.endpointKey;
     if (nextHostKey != _hostKey) {
       _hostKey = nextHostKey;
+      _activeHostGroup = null;
       _discardDrafts();
       _baseRevision = widget.state.settings.revision;
     } else if (_staged.isEmpty && !_saving) {
@@ -344,40 +359,121 @@ final class _SettingsPaneState extends State<_SettingsPane> {
           const LinearProgressIndicator(
             semanticsLabel: 'Loading settings and platform status',
           ),
-        Expanded(
-          child: ListView(
-            key: const PageStorageKey<String>('settings-pane-scroll'),
-            padding: EdgeInsets.fromLTRB(
-              horizontal,
-              _T4Space.lg,
-              horizontal,
-              _T4Space.xl,
-            ),
-            children: [
-              Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    maxWidth: _T4Layout.contentMaxWidth,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _buildAppearance(context),
-                      const SizedBox(height: _T4Space.xl),
-                      _buildHostSettings(context),
-                      const SizedBox(height: _T4Space.xl),
-                      _buildAppStatus(context),
-                      const SizedBox(height: _T4Space.xl),
-                      _buildDiagnostics(context),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+        Expanded(child: _buildCategoryLayout(context, horizontal)),
         if (_staged.isNotEmpty || _validationErrors.isNotEmpty)
           _buildSaveBar(context),
+      ],
+    );
+  }
+
+  Widget _buildCategoryLayout(BuildContext context, double horizontal) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= _T4Breakpoints.wide) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                width: 240,
+                child: NavigationRail(
+                  key: const Key('settings-category-rail'),
+                  extended: true,
+                  minExtendedWidth: 240,
+                  groupAlignment: -1,
+                  selectedIndex: _activeCategory.index,
+                  onDestinationSelected: (index) {
+                    setState(() {
+                      _activeCategory = _SettingsCategory.values[index];
+                    });
+                  },
+                  destinations: [
+                    for (final category in _SettingsCategory.values)
+                      NavigationRailDestination(
+                        icon: Icon(category.icon),
+                        label: Text(category.label),
+                      ),
+                  ],
+                ),
+              ),
+              const VerticalDivider(width: 1),
+              Expanded(
+                child: _buildActiveCategory(context, horizontal: horizontal),
+              ),
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                horizontal,
+                _T4Space.md,
+                horizontal,
+                0,
+              ),
+              child: DropdownButtonFormField<_SettingsCategory>(
+                key: const Key('settings-category-picker'),
+                initialValue: _activeCategory,
+                decoration: const InputDecoration(labelText: 'Category'),
+                isExpanded: true,
+                items: [
+                  for (final category in _SettingsCategory.values)
+                    DropdownMenuItem(
+                      value: category,
+                      child: Row(
+                        children: [
+                          Icon(category.icon, size: 20),
+                          const SizedBox(width: _T4Space.sm),
+                          Text(category.label),
+                        ],
+                      ),
+                    ),
+                ],
+                onChanged: (category) {
+                  if (category == null || category == _activeCategory) return;
+                  setState(() => _activeCategory = category);
+                },
+              ),
+            ),
+            Expanded(
+              child: _buildActiveCategory(context, horizontal: horizontal),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildActiveCategory(
+    BuildContext context, {
+    required double horizontal,
+  }) {
+    final section = switch (_activeCategory) {
+      _SettingsCategory.appearance => _buildAppearance(context),
+      _SettingsCategory.host => _buildHostSettings(context),
+      _SettingsCategory.app => _buildAppStatus(context),
+      _SettingsCategory.diagnostics => _buildDiagnostics(context),
+    };
+    return ListView(
+      key: PageStorageKey<String>(
+        'settings-pane-${_activeCategory.name}-scroll',
+      ),
+      padding: EdgeInsets.fromLTRB(
+        horizontal,
+        _T4Space.lg,
+        horizontal,
+        _T4Space.xl,
+      ),
+      children: [
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxWidth: _T4Layout.contentMaxWidth,
+            ),
+            child: section,
+          ),
+        ),
       ],
     );
   }
@@ -696,8 +792,17 @@ final class _SettingsPaneState extends State<_SettingsPane> {
     final canRead = _canReadHostSettings(state);
     final groups = <String, List<HostSettingEntry>>{};
     for (final entry in settings.entries) {
-      groups.putIfAbsent(entry.section, () => <HostSettingEntry>[]).add(entry);
+      final group = _hostSettingGroupLabel(entry);
+      groups.putIfAbsent(group, () => <HostSettingEntry>[]).add(entry);
     }
+    final selectedGroup = groups.containsKey(_activeHostGroup)
+        ? _activeHostGroup
+        : groups.isEmpty
+        ? null
+        : groups.keys.first;
+    final selectedEntries = selectedGroup == null
+        ? const <HostSettingEntry>[]
+        : groups[selectedGroup]!;
 
     return _SettingsSection(
       title: 'OMP settings',
@@ -759,23 +864,30 @@ final class _SettingsPaneState extends State<_SettingsPane> {
               title: 'No settings published',
               message: 'Refresh after the host publishes its settings catalog.',
             )
-          else
-            for (final group in groups.entries) ...[
-              Padding(
-                padding: const EdgeInsets.only(
-                  top: _T4Space.lg,
-                  bottom: _T4Space.xs,
-                ),
-                child: Text(
-                  group.key,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-              for (final entry in group.value) ...[
-                _buildSettingRow(context, entry),
-                const Divider(),
+          else ...[
+            DropdownButtonFormField<String>(
+              key: const Key('host-settings-group-picker'),
+              initialValue: selectedGroup,
+              decoration: const InputDecoration(labelText: 'Setting group'),
+              isExpanded: true,
+              items: [
+                for (final group in groups.entries)
+                  DropdownMenuItem<String>(
+                    value: group.key,
+                    child: Text('${group.key} (${group.value.length})'),
+                  ),
               ],
+              onChanged: (group) {
+                if (group == null || group == selectedGroup) return;
+                setState(() => _activeHostGroup = group);
+              },
+            ),
+            const SizedBox(height: _T4Space.sm),
+            for (final entry in selectedEntries) ...[
+              _buildSettingRow(context, entry),
+              const Divider(),
             ],
+          ],
         ],
       ),
     );
@@ -1491,6 +1603,13 @@ bool _canReadHostSettings(T4ViewState state) =>
     state.grantedFeatures.contains('catalog.metadata') &&
     state.grantedCapabilities.contains(_settingsReadCapability) &&
     state.grantedFeatures.contains('settings.metadata');
+String _hostSettingGroupLabel(HostSettingEntry entry) {
+  final separator = entry.label.indexOf(' · ');
+  if (separator > 0) return entry.label.substring(0, separator);
+  final section = entry.section.trim();
+  if (section.isEmpty) return 'General';
+  return '${section[0].toUpperCase()}${section.substring(1)}';
+}
 
 bool _settingMetadataIsValid(HostSettingEntry entry) {
   if (entry.path.trim().isEmpty ||

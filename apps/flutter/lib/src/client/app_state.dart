@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import '../host/host_profile.dart';
 import '../protocol/models.dart';
+import 'model_labels.dart';
 
 enum ConnectionPhase {
   disconnected,
@@ -94,6 +95,7 @@ final class SessionSummary {
     this.modelSelector,
     this.modelDisplayName,
     this.thinking,
+    this.thinkingSupported,
     this.thinkingLevels = const <String>[],
     this.fast = false,
     this.fastAvailable = false,
@@ -114,6 +116,7 @@ final class SessionSummary {
   final String? modelSelector;
   final String? modelDisplayName;
   final String? thinking;
+  final bool? thinkingSupported;
   final List<String> thinkingLevels;
   final bool fast;
   final bool fastAvailable;
@@ -161,12 +164,20 @@ final class ComposerModelChoice {
   const ComposerModelChoice({
     required this.label,
     required this.selector,
+    this.provider = '',
+    this.providerLabel = '',
     this.supported = true,
     this.reason,
   });
 
   final String label;
   final String selector;
+
+  /// Raw provider id (empty when the model has no provider).
+  final String provider;
+
+  /// Friendly provider name (empty when none).
+  final String providerLabel;
   final bool supported;
   final String? reason;
 }
@@ -190,6 +201,7 @@ final class SessionComposerState {
     this.modelLabel,
     this.modelSelector,
     this.modelChoices = const <ComposerModelChoice>[],
+    this.modelGroups = const <ModelProviderGroup>[],
     this.slashCommands = const <ComposerSlashCommand>[],
     this.thinking,
     this.thinkingLevels = const <String>[],
@@ -202,6 +214,9 @@ final class SessionComposerState {
   final String? modelLabel;
   final String? modelSelector;
   final List<ComposerModelChoice> modelChoices;
+
+  /// Provider-grouped choices for the navigable model selector.
+  final List<ModelProviderGroup> modelGroups;
   final List<ComposerSlashCommand> slashCommands;
   final String? thinking;
   final List<String> thinkingLevels;

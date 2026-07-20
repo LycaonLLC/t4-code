@@ -12,6 +12,7 @@ import '../host/app_preferences.dart';
 import '../host/host_profile.dart';
 import '../protocol/protocol.dart';
 import 'app_state.dart';
+import 'model_labels.dart';
 import 'web_socket_connector.dart';
 
 String _secureToken(int byteLength) {
@@ -168,12 +169,15 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     final slashCommands = <ComposerSlashCommand>[];
     for (final item in _catalogItems) {
       if (item.kind == 'model') {
-        final selector = _modelSelector(item);
+        final selector = modelItemSelector(item);
         if (selector == null || !seen.add(selector)) continue;
+        final label = modelLabelFor(item);
         choices.add(
           ComposerModelChoice(
-            label: item.name,
-            selector: selector,
+            label: label.label,
+            selector: label.selector,
+            provider: label.provider,
+            providerLabel: label.providerLabel,
             supported: item.supported != false,
             reason: item.reason,
           ),
@@ -199,17 +203,40 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         ),
       );
     }
-    final levels = <String>[
-      'off',
-      'auto',
-      ...session.thinkingLevels.where(
-        (level) => level != 'off' && level != 'auto',
-      ),
-    ];
+    final groups = groupModelChoices(_catalogItems);
+    // The host reports concrete effort levels for the selected model and a
+    // thinkingSupported flag. Off and Auto are client-side bookends the host
+    // never lists; the menu is Off, Auto, then the model's concrete efforts in
+    // host-reported order. When the model cannot reason the menu is empty.
+    final levels = <String>[];
+    if (session.thinkingSupported != false) {
+      levels.addAll(<String>['off', 'auto']);
+      for (final level in session.thinkingLevels) {
+        if (level != 'off' && level != 'auto' && !levels.contains(level)) {
+          levels.add(level);
+        }
+      }
+      // Keep a still-valid configured value selectable even before the host
+      // reports concrete efforts (e.g. a resumed session set to "high"). The
+      // host already accepted this level, so it is advertised for the model.
+      final configured = session.thinking;
+      if (configured != null &&
+          configured != 'off' &&
+          configured != 'auto' &&
+          configured != 'inherit' &&
+          !levels.contains(configured)) {
+        levels.add(configured);
+      }
+    }
     return SessionComposerState(
-      modelLabel: session.modelDisplayName ?? session.modelSelector,
+      modelLabel: sessionModelLabel(
+        session.modelSelector,
+        session.modelDisplayName,
+        _catalogItems,
+      ),
       modelSelector: session.modelSelector,
       modelChoices: List<ComposerModelChoice>.unmodifiable(choices),
+      modelGroups: List<ModelProviderGroup>.unmodifiable(groups),
       slashCommands: List<ComposerSlashCommand>.unmodifiable(slashCommands),
       thinking: session.thinking,
       thinkingLevels: List<String>.unmodifiable(levels),
@@ -266,19 +293,6 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     final activities = _agentActivities.values.toList(growable: false)
       ..sort((left, right) => right.updatedAt.compareTo(left.updatedAt));
     return List<AgentActivity>.unmodifiable(activities);
-  }
-
-  String? _modelSelector(CatalogItem item) {
-    final metadata = item.metadata;
-    final provider = metadata?['provider'];
-    final modelId = metadata?['modelId'];
-    if (provider is String &&
-        provider.isNotEmpty &&
-        modelId is String &&
-        modelId.isNotEmpty) {
-      return '$provider/$modelId';
-    }
-    return item.name.contains('/') ? item.name : null;
   }
 
   Future<void> initialize() => _initialization ??= _initialize();
@@ -759,7 +773,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   String _hello(DeviceCredentials? credentials) => WireEncoder.hello(
     client: ClientIdentity(
       name: 'T4 Code',
-      version: '0.1.24',
+      version: '0.1.30',
       build: 'flutter',
       platform: defaultTargetPlatform.name,
     ),
@@ -2671,6 +2685,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     }
     final rawThinking = liveState['thinking'] ?? session.raw['thinking'];
     final thinking = rawThinking is String ? rawThinking : null;
+    final thinkingSupported = liveState['thinkingSupported'] == true;
     final thinkingLevels = switch (liveState['thinkingLevels']) {
       final List<Object?> values => values.whereType<String>().toList(
         growable: false,
@@ -2702,6 +2717,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       modelSelector: modelSelector,
       modelDisplayName: modelDisplayName,
       thinking: thinking,
+      thinkingSupported: thinkingSupported,
       thinkingLevels: thinkingLevels,
       fast: liveState['fast'] == true,
       fastAvailable: liveState['fastAvailable'] == true,
@@ -3333,6 +3349,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
                   modelSelector: session.modelSelector,
                   modelDisplayName: session.modelDisplayName,
                   thinking: session.thinking,
+                  thinkingSupported: session.thinkingSupported,
                   thinkingLevels: session.thinkingLevels,
                   fast: session.fast,
                   fastAvailable: session.fastAvailable,

@@ -1,15 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, stat, symlink } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DESKTOP_CATALOG_COMMANDS, type DurableEntry, hostId, projectId, sessionId } from "@t4-code/host-wire";
 import { completeAttachOutput, prepareAttachOutput } from "../src/attach-output.ts";
 import { IdempotencyStore } from "../src/idempotency.ts";
 import { ensureSecureSocketDirectory } from "../src/ownership.ts";
+import { SessionEntryProjector } from "../src/discovery.ts";
 import { SessionProjection } from "../src/projection.ts";
 import { appserverSupportedCapabilities, appserverSupportedFeatures, createAppserver } from "../src/server.ts";
 import { SubagentProjection } from "../src/subagent-projection.ts";
 import type { ChildHandle, RpcChildFactory, SessionDiscovery, SessionRecord } from "../src/types.ts";
+import { RawUdsWebSocket } from "./raw-uds-client.ts";
 
 const host = hostId("host-test");
 function record(id: string): SessionRecord {
@@ -340,6 +342,100 @@ describe("appserver lifecycle", () => {
 				"appserver socket directory is a symlink",
 			);
 		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("tails an initially lockless session without spawning a writer", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-lockless-observer-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const transcriptPath = join(root, "lockless-session.jsonl");
+		const sid = sessionId("lockless-session");
+		const timestamp = "2026-07-20T00:00:00.000Z";
+		const first = {
+			type: "message",
+			id: "first",
+			parentId: null,
+			timestamp,
+			message: { role: "user", content: "first" },
+		};
+		const second = {
+			type: "message",
+			id: "second",
+			parentId: "first",
+			timestamp,
+			message: { role: "assistant", content: "second" },
+		};
+		const projector = new SessionEntryProjector(host, sid, "live");
+		const source: SessionRecord = {
+			sessionId: sid,
+			path: transcriptPath,
+			cwd: root,
+			projectId: projectId("lockless-project"),
+			title: "Lockless session",
+			updatedAt: timestamp,
+			status: "idle",
+			entries: projector.project(first),
+		};
+		await writeFile(
+			transcriptPath,
+			`${JSON.stringify({ type: "session", version: 3, id: sid, cwd: root, timestamp, title: source.title })}\n${JSON.stringify(first)}\n`,
+		);
+		const factory = new FakeFactory();
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "lockless-observer-test",
+			socketPath,
+			discovery: new StaticDiscovery([source]),
+			childFactory: factory,
+			lockStatus: () => "missing",
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "lockless-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: ["session.observer"],
+				capabilities: { client: ["sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "attach-lockless",
+				commandId: "attach-lockless-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.attach",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "attach-lockless") {
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
+			await appendFile(transcriptPath, `${JSON.stringify(second)}\n`);
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "entry" && frame.entry.data.text === "second") break;
+				if (frame.type === "snapshot" && frame.entries.some(value => value.data.text === "second")) break;
+			}
+			expect(appserver.snapshot(sid)?.entries.at(-1)?.data.text).toBe("second");
+			expect(appserver.snapshot(sid)?.ref.liveState?.sessionControl).toEqual({
+				mode: "reconciling",
+				transcript: "live",
+			});
+			expect(factory.children).toHaveLength(0);
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
 			await rm(root, { recursive: true, force: true });
 		}
 	});
