@@ -2,7 +2,7 @@
   "expo": {
     "name": "T4 Companion",
     "slug": "t4-companion",
-    "version": "0.1.28",
+    "version": "0.1.29",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "t4companion",

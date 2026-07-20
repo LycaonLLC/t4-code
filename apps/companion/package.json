@@ -1,7 +1,7 @@
 {
   "name": "@t4-code/companion",
   "main": "expo-router/entry",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "dependencies": {
     "@t4-code/client": "workspace:*",
     "@t4-code/protocol": "workspace:*",

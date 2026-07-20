@@ -172,7 +172,7 @@ export function CompanionRuntimeProvider({ children }: PropsWithChildren) {
       },
       client: {
         name: "T4 Companion",
-        version: "0.1.28",
+        version: "0.1.29",
         build: "expo-57",
         platform: Platform.OS,
       },
