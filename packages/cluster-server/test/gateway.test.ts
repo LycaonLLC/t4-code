@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+	agentId,
+	entryId,
 	hostId,
 	projectId,
 	revision,
@@ -84,7 +86,7 @@ class MemoryMutations implements GatewayMutationBackend {
 	}
 	async deleteSession() {
 		this.sessionDeletes++;
-		return { deleted: true };
+		return { deleted: true as const };
 	}
 }
 
@@ -180,16 +182,16 @@ describe("stateless omp-app cluster gateway", () => {
 			hostId: "upstream", sessionId: "omp-private-one", command: "session.attach",
 		});
 		value.connector.onFrame?.({
-			v: "omp-app/1", type: "snapshot", hostId: "upstream", sessionId: "omp-private-one",
-			cursor: { epoch: "pod-epoch", seq: 1 }, revision: "session-r1", entries: [],
+			v: "omp-app/1", type: "snapshot", hostId: hostId("upstream"), sessionId: sessionId("omp-private-one"),
+			cursor: { epoch: "pod-epoch", seq: 1 }, revision: revision("session-r1"), entries: [],
 		});
 		value.connector.onFrame?.({
-			v: "omp-app/1", type: "entry", hostId: "upstream", sessionId: "omp-private-one",
-			cursor: { epoch: "pod-epoch", seq: 2 }, revision: "session-r2",
-			entry: { id: "entry-one", parentId: null, hostId: "upstream", sessionId: "omp-private-one", kind: "message", timestamp: "2026-07-20T00:00:00.000Z", data: { text: "hello", correlationId: "omp-private-one" } },
+			v: "omp-app/1", type: "entry", hostId: hostId("upstream"), sessionId: sessionId("omp-private-one"),
+			cursor: { epoch: "pod-epoch", seq: 2 }, revision: revision("session-r2"),
+			entry: { id: entryId("entry-one"), parentId: null, hostId: hostId("upstream"), sessionId: sessionId("omp-private-one"), kind: "message", timestamp: "2026-07-20T00:00:00.000Z", data: { text: "hello", correlationId: "omp-private-one" } },
 		});
 		value.connector.onFrame?.({
-			v: "omp-app/1", type: "agent", hostId: "upstream", sessionId: "omp-private-one", agentId: "Main", state: "running", detail: {},
+			v: "omp-app/1", type: "agent", hostId: hostId("upstream"), sessionId: sessionId("omp-private-one"), agentId: agentId("Main"), state: "running", detail: {},
 		});
 		const forwarded = value.client.frames.slice(-3);
 		expect(forwarded.map(frame => frame.type)).toEqual(["snapshot", "entry", "agent"]);

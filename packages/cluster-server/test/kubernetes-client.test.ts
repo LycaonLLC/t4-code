@@ -152,7 +152,7 @@ describe("namespaced Kubernetes client", () => {
 	});
 
 	it("treats an already absent session as a successful idempotent delete", async () => {
-		const fetch = (async () => Response.json({ reason: "NotFound" }, { status: 404 })) as typeof globalThis.fetch;
+		const fetch = (async () => Response.json({ reason: "NotFound" }, { status: 404 })) as unknown as typeof globalThis.fetch;
 		const backend = new KubernetesGatewayMutationBackend({
 			client: new KubernetesApiClient({ baseUrl: "https://kubernetes.default.svc", namespace: "development", token: "token", fetch }),
 			hostRef: "primary",
@@ -224,7 +224,7 @@ describe("Kubernetes projected identity review", () => {
 					caPath: join(directory, "ca.crt"),
 					namespacePath: join(directory, "namespace"),
 					serverServiceAccountName: "release-t4-cluster-server",
-					fetch: (async () => Response.json({ apiVersion: "authentication.k8s.io/v1", kind: "TokenReview", status })) as typeof globalThis.fetch,
+					fetch: (async () => Response.json({ apiVersion: "authentication.k8s.io/v1", kind: "TokenReview", status })) as unknown as typeof globalThis.fetch,
 				});
 				expect(await reviewer.review(presentedToken)).toBe(false);
 			}
@@ -232,14 +232,14 @@ describe("Kubernetes projected identity review", () => {
 				baseUrl: "https://kubernetes.default.svc",
 				tokenPath: join(directory, "token"), caPath: join(directory, "ca.crt"), namespacePath: join(directory, "namespace"),
 				serverServiceAccountName: "release-t4-cluster-server",
-				fetch: (async () => new Response("{", { status: 200, headers: { "content-type": "application/json" } })) as typeof globalThis.fetch,
+				fetch: (async () => new Response("{", { status: 200, headers: { "content-type": "application/json" } })) as unknown as typeof globalThis.fetch,
 			});
 			expect(await malformed.review(presentedToken)).toBe(false);
 			const unavailable = new KubernetesTokenReviewer({
 				baseUrl: "https://kubernetes.default.svc",
 				tokenPath: join(directory, "token"), caPath: join(directory, "ca.crt"), namespacePath: join(directory, "namespace"),
 				serverServiceAccountName: "release-t4-cluster-server",
-				fetch: (async () => { throw new Error("network unavailable"); }) as typeof globalThis.fetch,
+				fetch: (async () => { throw new Error("network unavailable"); }) as unknown as typeof globalThis.fetch,
 			});
 			expect(await unavailable.review(presentedToken)).toBe(false);
 		} finally {

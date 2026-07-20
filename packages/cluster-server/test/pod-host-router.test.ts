@@ -21,13 +21,15 @@ const welcome = {
 	resumed: false,
 } as const;
 class MemoryWebSocket {
-	readyState = WebSocket.CONNECTING;
+	readyState: number = WebSocket.CONNECTING;
 	readonly sent = Promise.withResolvers<string>();
 	readonly sentValues: string[] = [];
 	readonly closes: Array<{ readonly code?: number; readonly reason?: string }> = [];
 	readonly #listeners: Record<string, Array<(event: unknown) => void>> = {};
 	addEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
-		const callback = typeof listener === "function" ? listener : event => listener.handleEvent(event as Event);
+		const callback = typeof listener === "function"
+			? (event: unknown) => listener(event as Event)
+			: (event: unknown) => listener.handleEvent(event as Event);
 		(this.#listeners[type] ??= []).push(callback);
 	}
 	send(value: string | ArrayBufferLike | Blob | ArrayBufferView): void {

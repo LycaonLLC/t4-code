@@ -160,7 +160,7 @@ describe("bounded Woodpecker provider", () => {
 			webBaseUrl: "https://woodpecker-ci-dev.tail.example.test",
 			token: "server-side-token",
 			repositories: { "t4-code": { slug: "owner/t4-code" } },
-			fetch: (async () => Response.json([pipeline])) as typeof globalThis.fetch,
+			fetch: (async () => Response.json([pipeline])) as unknown as typeof globalThis.fetch,
 		});
 		expect((await woodpecker.query(correlation)).link).toBe("https://woodpecker-ci-dev.tail.example.test/repos/owner/t4-code/pipeline/42");
 		expect(() => new WoodpeckerProvider({
@@ -174,10 +174,10 @@ describe("bounded Woodpecker provider", () => {
 	it("fails closed for unconfigured repositories, insecure provider URLs, oversized replies, and unknown correlation", async () => {
 		expect(() => new WoodpeckerProvider({ baseUrl: "http://ci.example.test", token: "secret", repositories: {} })).toThrow("HTTPS");
 		expect(() => new WoodpeckerProvider({ baseUrl: "https://ci.example.test", token: "secret", tokenFile: "/run/token", repositories: {} })).toThrow("exactly one");
-		const fetch = (async () => Response.json(Array.from({ length: 101 }, () => pipeline))) as typeof globalThis.fetch;
+		const fetch = (async () => Response.json(Array.from({ length: 101 }, () => pipeline))) as unknown as typeof globalThis.fetch;
 		await expect(provider(fetch).query(correlation)).rejects.toThrow("pipeline response limit");
 		await expect(provider(fetch).query({ ...correlation, repositoryId: "not-allowed" })).rejects.toThrow("not allowlisted");
-		const unknown = await provider((async () => Response.json([])) as typeof globalThis.fetch).query(correlation);
+		const unknown = await provider((async () => Response.json([])) as unknown as typeof globalThis.fetch).query(correlation);
 		expect(unknown).toEqual({
 			provider: "woodpecker",
 			correlation: "unknown",

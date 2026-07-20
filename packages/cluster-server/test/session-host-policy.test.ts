@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { RemoteConnection } from "@t4-code/host-service";
+import { commandId, hostId, requestId, sessionId } from "@t4-code/host-wire";
 import {
 	ClusterInternalRemotePolicy,
 	decodeClusterInternalClientFrame,
@@ -72,18 +73,18 @@ describe("one-session pod host authority", () => {
 	it("authorizes only negotiated command capabilities on an authenticated connection", async () => {
 		const remotePolicy = policy(new MemoryReviewer());
 		await remotePolicy.authenticate(connection, hello);
-		expect(await remotePolicy.authorize(connection, { v: "omp-app/1", type: "ping", nonce: "one" }, { connectionId: "connection-one", peer: connection.peer })).toBe(true);
+		expect(await remotePolicy.authorize(connection, { v: "omp-app/1", type: "ping", nonce: "one", timestamp: "2026-07-20T00:00:00.000Z" }, { connectionId: "connection-one", peer: connection.peer })).toBe(true);
 		expect(await remotePolicy.authorize(connection, {
-			v: "omp-app/1", type: "command", requestId: "r1", commandId: "c1", hostId: "pod-host",
-			sessionId: "private-session", command: "session.attach", args: {},
+			v: "omp-app/1", type: "command", requestId: requestId("r1"), commandId: commandId("c1"), hostId: hostId("pod-host"),
+			sessionId: sessionId("private-session"), command: "session.attach", args: {},
 		}, { connectionId: "connection-one", peer: connection.peer })).toBe(true);
 		expect(await remotePolicy.authorize(connection, {
-			v: "omp-app/1", type: "command", requestId: "r2", commandId: "c2", hostId: "pod-host",
-			sessionId: "private-session", command: "session.prompt", args: { message: "hello" },
+			v: "omp-app/1", type: "command", requestId: requestId("r2"), commandId: commandId("c2"), hostId: hostId("pod-host"),
+			sessionId: sessionId("private-session"), command: "session.prompt", args: { message: "hello" },
 		}, { connectionId: "connection-one", peer: connection.peer })).toBe(true);
 		expect(await remotePolicy.authorize(connection, {
-			v: "omp-app/1", type: "command", requestId: "r3", commandId: "c3", hostId: "pod-host",
-			sessionId: "private-session", command: "preview.click", args: { previewId: "preview-one", x: 10, y: 20 },
+			v: "omp-app/1", type: "command", requestId: requestId("r3"), commandId: commandId("c3"), hostId: hostId("pod-host"),
+			sessionId: sessionId("private-session"), command: "preview.click", args: { previewId: "preview-one", x: 10, y: 20 },
 		}, { connectionId: "connection-one", peer: connection.peer })).toBe(false);
 	});
 
