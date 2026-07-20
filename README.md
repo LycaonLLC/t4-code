@@ -128,7 +128,7 @@ cd apps/flutter
 flutter test            # shared client, protocol, settings, and UI contracts
 flutter build apk --debug
 flutter build ios --simulator --debug
-flutter build macos
+pnpm --dir ../.. build:flutter:macos
 ```
 
 Prefer Task as a Make alternative? Install [Task](https://taskfile.dev/), then run `task setup`,

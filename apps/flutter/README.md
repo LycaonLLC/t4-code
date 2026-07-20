@@ -12,7 +12,7 @@ From this directory:
 ```sh
 flutter run -d android
 flutter run -d ios
-flutter run -d macos
+pnpm --dir ../.. dev:flutter -- -d macos
 flutter test
 flutter analyze
 flutter test integration_test/app_smoke_test.dart -d <device-id>
@@ -33,7 +33,8 @@ an Android emulator and an iOS simulator; local device IDs come from
   only after validating the canonical T4 manifest, APK package, version, and
   signer.
 - iOS uses the Flutter lifecycle and App Store-managed updates.
-- macOS manages a per-user OMP LaunchAgent and validates canonical signed DMG
+- macOS bundles the standalone `t4-host`, manages its per-user LaunchAgent,
+  connects it to OMP's authority bridge, and validates canonical signed DMG
   updates before opening the installer.
 
 The Settings surface is generated from host `catalog.get` and `settings.read`

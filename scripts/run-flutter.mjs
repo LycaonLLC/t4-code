@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -16,9 +16,22 @@ if (
 }
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const hostBuild = spawnSync("pnpm", ["build:host"], {
+  cwd: repositoryRoot,
+  env: process.env,
+  stdio: "inherit",
+});
+if (hostBuild.status !== 0) {
+  process.exitCode = hostBuild.status ?? 1;
+  process.exit();
+}
+const hostExecutable = resolve(repositoryRoot, "packages/host-daemon/dist/t4-host");
 const child = spawn("flutter", ["run", ...args], {
   cwd: resolve(repositoryRoot, "apps/flutter"),
-  env: process.env,
+  env: {
+    ...process.env,
+    T4_HOST_EXECUTABLE: process.env.T4_HOST_EXECUTABLE ?? hostExecutable,
+  },
   stdio: "inherit",
 });
 

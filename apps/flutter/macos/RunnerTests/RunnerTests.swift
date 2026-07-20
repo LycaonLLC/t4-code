@@ -12,6 +12,7 @@ private final class StubRuntimeRunner: RuntimeProcessRunning {
 
   var probeOutput: String
   var probeExitCode: Int32
+  var bridgeOutput = "Expose the private OMP authority bridge used by T4 Code\n--stdio\n"
   var registered = false
   var invocations: [Invocation] = []
 
@@ -33,6 +34,14 @@ private final class StubRuntimeRunner: RuntimeProcessRunning {
       environment: environment
     ))
     if executableURL.path != "/bin/launchctl" {
+      if arguments == ["bridge", "--help"] {
+        return RuntimeProcessResult(
+          exitCode: 0,
+          output: bridgeOutput,
+          timedOut: false,
+          overflowed: false
+        )
+      }
       return RuntimeProcessResult(
         exitCode: probeExitCode,
         output: probeOutput,
@@ -95,14 +104,15 @@ final class RunnerTests: XCTestCase {
     ).discover()
 
     XCTAssertEqual(discovery, .found(executable))
-    XCTAssertEqual(runner.invocations.count, 1)
+    XCTAssertEqual(runner.invocations.count, 2)
     XCTAssertEqual(
       Set(runner.invocations[0].environment.keys),
       Set(["HOME", "PATH", "TMPDIR", "OMP_PROFILE"])
     )
     XCTAssertEqual(runner.invocations[0].environment["OMP_PROFILE"], "default")
     XCTAssertNil(runner.invocations[0].environment["OPENAI_API_KEY"])
-    XCTAssertEqual(runner.invocations[0].arguments, ["appserver", "status", "--json"])
+    XCTAssertEqual(runner.invocations[0].arguments, ["bridge", "--help"])
+    XCTAssertEqual(runner.invocations[1].arguments, ["appserver", "status", "--json"])
   }
 
   func testDiscoveryAcceptsExactStoppedStatus() throws {
@@ -151,13 +161,39 @@ final class RunnerTests: XCTestCase {
     XCTAssertEqual(missing, .missing)
   }
 
+  func testT4HostDiscoveryRequiresAnExecutableWithTheExactName() throws {
+    let home = try temporaryDirectory()
+    let hostExecutable = try makeExecutable(home: home, name: "t4-host")
+    let wrongExecutable = try makeExecutable(home: home, name: "not-t4-host")
+    XCTAssertEqual(
+      T4HostRuntimeDiscovery(
+        environment: ["T4_HOST_EXECUTABLE": hostExecutable, "PATH": ""],
+        homeDirectory: home.path,
+        packagedExecutable: nil
+      ).discover(),
+      hostExecutable
+    )
+    XCTAssertNil(
+      T4HostRuntimeDiscovery(
+        environment: ["T4_HOST_EXECUTABLE": wrongExecutable, "PATH": ""],
+        homeDirectory: home.path,
+        packagedExecutable: nil
+      ).discover()
+    )
+  }
+
   func testLaunchAgentInstallInspectAndUninstallLifecycle() throws {
     let home = try temporaryDirectory()
     let executable = try makeExecutable(home: home)
+    let hostExecutable = try makeExecutable(home: home, name: "t4-host")
     let runner = StubRuntimeRunner(probeOutput: #"{"state":"stopped","reason":"unreachable"}"#)
     let files = SecureRuntimeFileStore()
     let lifecycle = MacRuntimeLifecycle(
-      environment: ["HOME": home.path, "OMP_EXECUTABLE": executable],
+      environment: [
+        "HOME": home.path,
+        "OMP_EXECUTABLE": executable,
+        "T4_HOST_EXECUTABLE": hostExecutable,
+      ],
       homeDirectory: home.path,
       uid: 501,
       runner: runner,
@@ -170,9 +206,11 @@ final class RunnerTests: XCTestCase {
     let definitionPath = "\(home.path)/Library/LaunchAgents/dev.oh-my-pi.appserver.plist"
     let snapshot = try files.read(definitionPath, maxBytes: 64 * 1024)
     XCTAssertEqual(snapshot.mode, 0o600)
+    XCTAssertTrue(snapshot.content?.contains("<string>\(hostExecutable)</string>") == true)
     XCTAssertTrue(snapshot.content?.contains("<string>\(executable)</string>") == true)
-    XCTAssertTrue(snapshot.content?.contains("<string>appserver</string>") == true)
     XCTAssertTrue(snapshot.content?.contains("<string>serve</string>") == true)
+    XCTAssertTrue(snapshot.content?.contains("<string>--omp</string>") == true)
+    XCTAssertTrue(snapshot.content?.contains("<string>--profile</string>") == true)
     XCTAssertTrue(snapshot.content?.contains("<key>OMP_PROFILE</key>") == true)
     XCTAssertTrue(snapshot.content?.contains("<string>default</string>") == true)
     XCTAssertTrue(snapshot.content?.contains("Library/Logs/T4 Code/appserver/appserver.log") == true)
@@ -254,10 +292,10 @@ final class RunnerTests: XCTestCase {
     return directory
   }
 
-  private func makeExecutable(home: URL) throws -> String {
+  private func makeExecutable(home: URL, name: String = "omp") throws -> String {
     let directory = home.appendingPathComponent("bin", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    let executable = directory.appendingPathComponent("omp")
+    let executable = directory.appendingPathComponent(name)
     XCTAssertTrue(FileManager.default.createFile(atPath: executable.path, contents: Data()))
     XCTAssertEqual(chmod(executable.path, 0o700), 0)
     return executable.path

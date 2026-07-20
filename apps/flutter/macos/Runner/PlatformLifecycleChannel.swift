@@ -7,6 +7,10 @@ private let runtimeOutputLimit = 16 * 1024
 private let runtimeProbeTimeout: TimeInterval = 1.5
 private let runtimeCommandTimeout: TimeInterval = 8
 private let runtimeLabel = "dev.oh-my-pi.appserver"
+private let authorityBridgeHelpMarkers = [
+  "Expose the private OMP authority bridge used by T4 Code",
+  "--stdio",
+]
 
 struct RuntimeProcessResult {
   let exitCode: Int32?
@@ -175,6 +179,14 @@ final class OmpRuntimeDiscovery {
     safeEnvironment["OMP_PROFILE"] = "default"
 
     guard
+      let bridge = try? runner.run(
+        executableURL: URL(fileURLWithPath: executable),
+        arguments: ["bridge", "--help"],
+        environment: safeEnvironment,
+        timeout: runtimeProbeTimeout,
+        maxOutputBytes: runtimeOutputLimit
+      ), bridge.exitCode == 0, !bridge.timedOut, !bridge.overflowed,
+      authorityBridgeHelpMarkers.allSatisfy({ bridge.output.contains($0) }),
       let result = try? runner.run(
         executableURL: URL(fileURLWithPath: executable),
         arguments: ["appserver", "status", "--json"],
@@ -217,6 +229,57 @@ final class OmpRuntimeDiscovery {
       || value.contains("unrecognized flag")
       || value.contains("unrecognized option")
       || value.contains("flag provided but not defined")
+  }
+}
+
+final class T4HostRuntimeDiscovery {
+  private let environment: [String: String]
+  private let homeDirectory: String
+  private let packagedExecutable: String?
+
+  init(
+    environment: [String: String] = ProcessInfo.processInfo.environment,
+    homeDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path,
+    packagedExecutable: String? = Bundle.main.resourceURL?
+      .appendingPathComponent("runtime/t4-host").path
+  ) {
+    self.environment = environment
+    self.homeDirectory = homeDirectory
+    self.packagedExecutable = packagedExecutable
+  }
+
+  func discover() -> String? {
+    var candidates: [String] = []
+    if let explicit = environment["T4_HOST_EXECUTABLE"], !explicit.isEmpty {
+      candidates.append(explicit)
+    }
+    if let packagedExecutable, !packagedExecutable.isEmpty {
+      candidates.append(packagedExecutable)
+    }
+    let pathEntries = (environment["PATH"] ?? "")
+      .split(separator: ":", omittingEmptySubsequences: true)
+      .prefix(64)
+    candidates.append(contentsOf: pathEntries.map { "\($0)/t4-host" })
+    candidates.append(contentsOf: [
+      "\(homeDirectory)/.local/bin/t4-host",
+      "\(homeDirectory)/bin/t4-host",
+      "/usr/local/bin/t4-host",
+      "/usr/bin/t4-host",
+    ])
+
+    var seen = Set<String>()
+    for candidate in candidates where seen.insert(candidate).inserted {
+      guard candidate.utf8.count <= 4096,
+        candidate.first == "/",
+        !candidate.utf8.contains(0),
+        URL(fileURLWithPath: candidate).lastPathComponent == "t4-host",
+        let attributes = try? FileManager.default.attributesOfItem(atPath: candidate),
+        attributes[.type] as? FileAttributeType == .typeRegular,
+        Darwin.access(candidate, X_OK) == 0
+      else { continue }
+      return candidate
+    }
+    return nil
   }
 }
 
@@ -389,19 +452,23 @@ final class MacRuntimeLifecycle {
   private let uid: uid_t
   private let runner: RuntimeProcessRunning
   private let files: RuntimeFileStoring
+  private let packagedHostExecutable: String?
 
   init(
     environment: [String: String] = ProcessInfo.processInfo.environment,
     homeDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path,
     uid: uid_t = getuid(),
     runner: RuntimeProcessRunning = BoundedRuntimeProcessRunner(),
-    files: RuntimeFileStoring = SecureRuntimeFileStore()
+    files: RuntimeFileStoring = SecureRuntimeFileStore(),
+    packagedHostExecutable: String? = Bundle.main.resourceURL?
+      .appendingPathComponent("runtime/t4-host").path
   ) {
     self.environment = environment
     self.homeDirectory = homeDirectory
     self.uid = uid
     self.runner = runner
     self.files = files
+    self.packagedHostExecutable = packagedHostExecutable
   }
 
   private var definitionPath: String {
@@ -421,8 +488,12 @@ final class MacRuntimeLifecycle {
 
   func install() throws -> [String: Any] {
     let discovery = discovery()
-    let executable = try requireExecutable(discovery)
-    let definition = try renderDefinition(executable: executable)
+    let ompExecutable = try requireExecutable(discovery)
+    let hostExecutable = try requireHostExecutable()
+    let definition = try renderDefinition(
+      hostExecutable: hostExecutable,
+      ompExecutable: ompExecutable
+    )
     let previous = try fileSnapshotForMutation()
     let status = try launchctl(["print", target], allowMissing: true)
     let registered = !isMissingService(status)
@@ -458,8 +529,12 @@ final class MacRuntimeLifecycle {
 
   func start() throws -> [String: Any] {
     let discovery = discovery()
-    let executable = try requireExecutable(discovery)
-    try requireCurrentDefinition(executable: executable)
+    let ompExecutable = try requireExecutable(discovery)
+    let hostExecutable = try requireHostExecutable()
+    try requireCurrentDefinition(
+      hostExecutable: hostExecutable,
+      ompExecutable: ompExecutable
+    )
     let status = try launchctl(["print", target], allowMissing: true)
     if isMissingService(status) { _ = try launchctl(["bootstrap", domain, definitionPath]) }
     _ = try launchctl(["kickstart", "-k", target])
@@ -473,8 +548,12 @@ final class MacRuntimeLifecycle {
 
   func restart() throws -> [String: Any] {
     let discovery = discovery()
-    let executable = try requireExecutable(discovery)
-    try requireCurrentDefinition(executable: executable)
+    let ompExecutable = try requireExecutable(discovery)
+    let hostExecutable = try requireHostExecutable()
+    try requireCurrentDefinition(
+      hostExecutable: hostExecutable,
+      ompExecutable: ompExecutable
+    )
     let status = try launchctl(["print", target], allowMissing: true)
     if isMissingService(status) { _ = try launchctl(["bootstrap", domain, definitionPath]) }
     _ = try launchctl(["kickstart", "-k", target])
@@ -515,26 +594,40 @@ final class MacRuntimeLifecycle {
       "diagnostics": "",
     ]
 
-    var executable: String?
+    var ompExecutable: String?
+    var hostExecutable: String?
     switch discovery {
     case .found(let path):
-      executable = path
-      map["available"] = true
+      ompExecutable = path
       map["executable"] = String(path.prefix(4096))
     case .incompatible:
-      map["issueCode"] = "omp_appserver_status_json_required"
+      map["issueCode"] = "omp_authority_bridge_required"
       map["message"] = boundedDiagnostic(
-        "Installed OMP is incompatible with this T4 Code build. T4 Code requires `omp appserver status --json`. Update OMP, then choose Check again."
+        "Installed OMP is incompatible with this T4 Code build. T4 Code requires the versioned `omp bridge --stdio` authority bridge. Update OMP, then choose Check again."
       )
     case .missing:
       map["issueCode"] = "omp_not_found"
       map["message"] = "A compatible system OMP executable was not found."
     }
 
+    if ompExecutable != nil {
+      hostExecutable = hostDiscovery().discover()
+      if let hostExecutable {
+        map["available"] = true
+        map["hostExecutable"] = String(hostExecutable.prefix(4096))
+      } else {
+        map["issueCode"] = "t4_host_not_found"
+        map["message"] = "The standalone T4 host executable is missing from this build."
+      }
+    }
+
     do {
       let snapshot = try files.read(definitionPath, maxBytes: 64 * 1024)
-      if let desiredExecutable = executable,
-        let expected = try? renderDefinition(executable: desiredExecutable),
+      if let ompExecutable, let hostExecutable,
+        let expected = try? renderDefinition(
+          hostExecutable: hostExecutable,
+          ompExecutable: ompExecutable
+        ),
         snapshot.content == expected,
         snapshot.mode == 0o600
       {
@@ -585,9 +678,9 @@ final class MacRuntimeLifecycle {
     case .found(let path): return path
     case .incompatible:
       throw RuntimeBridgeFailure(
-        code: "omp_appserver_status_json_required",
+        code: "omp_authority_bridge_required",
         message:
-          "Installed OMP is incompatible with this T4 Code build. T4 Code requires `omp appserver status --json`."
+          "Installed OMP is incompatible with this T4 Code build. T4 Code requires the versioned `omp bridge --stdio` authority bridge."
       )
     case .missing:
       throw RuntimeBridgeFailure(
@@ -595,9 +688,30 @@ final class MacRuntimeLifecycle {
     }
   }
 
-  private func requireCurrentDefinition(executable: String) throws {
+  private func hostDiscovery() -> T4HostRuntimeDiscovery {
+    T4HostRuntimeDiscovery(
+      environment: environment,
+      homeDirectory: homeDirectory,
+      packagedExecutable: packagedHostExecutable
+    )
+  }
+
+  private func requireHostExecutable() throws -> String {
+    guard let executable = hostDiscovery().discover() else {
+      throw RuntimeBridgeFailure(
+        code: "t4_host_not_found",
+        message: "The standalone T4 host executable is missing from this build."
+      )
+    }
+    return executable
+  }
+
+  private func requireCurrentDefinition(hostExecutable: String, ompExecutable: String) throws {
     let snapshot = try fileSnapshotForMutation()
-    let expected = try renderDefinition(executable: executable)
+    let expected = try renderDefinition(
+      hostExecutable: hostExecutable,
+      ompExecutable: ompExecutable
+    )
     guard snapshot.content == expected, snapshot.mode == 0o600 else {
       throw RuntimeBridgeFailure(
         code: "runtime_definition_not_current",
@@ -606,8 +720,8 @@ final class MacRuntimeLifecycle {
     }
   }
 
-  private func renderDefinition(executable: String) throws -> String {
-    let values = [executable, logsDirectory]
+  private func renderDefinition(hostExecutable: String, ompExecutable: String) throws -> String {
+    let values = [hostExecutable, ompExecutable, logsDirectory]
     guard
       values.allSatisfy({ value in
         !value.isEmpty && value.utf8.count <= 4096
@@ -617,7 +731,8 @@ final class MacRuntimeLifecycle {
       throw RuntimeBridgeFailure(
         code: "runtime_path_invalid", message: "The runtime path is invalid.")
     }
-    let executableXML = escapeXML(executable)
+    let hostExecutableXML = escapeXML(hostExecutable)
+    let ompExecutableXML = escapeXML(ompExecutable)
     let logsXML = escapeXML(logsDirectory)
     return [
       "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
@@ -627,9 +742,12 @@ final class MacRuntimeLifecycle {
       "    <key>Label</key><string>\(runtimeLabel)</string>",
       "    <key>ProgramArguments</key>",
       "    <array>",
-      "      <string>\(executableXML)</string>",
-      "      <string>appserver</string>",
+      "      <string>\(hostExecutableXML)</string>",
       "      <string>serve</string>",
+      "      <string>--omp</string>",
+      "      <string>\(ompExecutableXML)</string>",
+      "      <string>--profile</string>",
+      "      <string>default</string>",
       "    </array>",
       "    <key>RunAtLoad</key><true/>",
       "    <key>KeepAlive</key>",
