@@ -1,4 +1,5 @@
 import ElectronStore from "electron-store";
+import { createHash } from "node:crypto";
 import { session as electronSession, type Session } from "electron";
 import type { BrowserProfile } from "@t4-code/protocol/browser-ipc";
 
@@ -105,6 +106,16 @@ function profilePartition(profileId: string): string {
   return `persist:browser-profile-${profileId}`;
 }
 
+function isolatedPartition(ownerSessionId: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(ownerSessionId)) {
+    throw new Error("an owning OMP session is required for isolated browser state");
+  }
+  // Partition names are observable in Electron diagnostics. Hash the durable
+  // OMP session id so browser isolation does not disclose the session id.
+  const ownerHash = createHash("sha256").update(ownerSessionId, "utf8").digest("hex").slice(0, 32);
+  return `${BROWSER_ISOLATED_PARTITION}-${ownerHash}`;
+}
+
 function metadataForRecord(record: BrowserProfileStoreRecord): BrowserProfileMetadata {
   return {
     profileId: record.profileId,
@@ -201,9 +212,17 @@ export class BrowserProfileRegistry {
 
   getProfile(profileId?: string | null): BrowserProfile { return this.profile(profileId); }
 
-  getPartition(profileId?: string | null): string { return this.resolve(profileId).partition; }
-  /** Returns the partition session for a resolved profile. No persistent partition is inferred. */
-  getSession(profile: BrowserProfile | string | null | undefined = undefined): Session {
+  getPartition(profileId?: string | null, ownerSessionId?: string): string {
+    const metadata = this.resolve(profileId);
+    return metadata.kind === "isolated-session"
+      ? isolatedPartition(ownerSessionId ?? "")
+      : metadata.partition;
+  }
+  /** Returns a profile session; isolated state is scoped to one owning OMP session. */
+  getSession(
+    profile: BrowserProfile | string | null | undefined = undefined,
+    ownerSessionId?: string,
+  ): Session {
     const profileId = typeof profile === "string"
       ? profile
       : profile?.kind === "authenticated-profile" ? profile.profileId : undefined;
@@ -211,7 +230,10 @@ export class BrowserProfileRegistry {
     if (profile !== undefined && profile !== null && typeof profile !== "string" && profile.kind === "authenticated-profile" && profile.explicitOptIn !== true) {
       throw new Error("authenticated browser profile requires explicit opt-in");
     }
-    return this.sessions.fromPartition(metadata.partition, { cache: metadata.kind === "authenticated-profile" });
+    const partition = metadata.kind === "isolated-session"
+      ? isolatedPartition(ownerSessionId ?? "")
+      : metadata.partition;
+    return this.sessions.fromPartition(partition, { cache: metadata.kind === "authenticated-profile" });
   }
 
   create(options: BrowserProfileCreateOptions = {}): BrowserProfileMetadata {

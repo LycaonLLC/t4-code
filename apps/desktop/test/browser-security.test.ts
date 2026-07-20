@@ -44,6 +44,7 @@ class FakeSession {
   readonly listeners = new Map<string, Listener[]>();
   permissionRequestHandler: PermissionRequestHandler | null = null;
   permissionCheckHandler: ((contents: FakeWebContents) => boolean) | null = null;
+  proxyChanges = 0;
 
   on(event: string, listener: Listener): void {
     const listeners = this.listeners.get(event) ?? [];
@@ -67,7 +68,7 @@ class FakeSession {
     this.permissionCheckHandler = handler;
   }
 
-  async setProxy(): Promise<void> {}
+  async setProxy(): Promise<void> { this.proxyChanges += 1; }
 
   async closeAllConnections(): Promise<void> {}
 }
@@ -177,5 +178,20 @@ describe("browser surface security", () => {
 
     first.dispose();
     second.dispose();
+  });
+
+  it("fails closed instead of replacing the shared session proxy", async () => {
+    const session = new FakeSession();
+    const controller = createController(session, new FakeWebContents());
+
+    expect(await controller.configureProxy({ mode: "fixed", proxy: "https://proxy.example.test:443" })).toEqual({
+      ok: false,
+      code: "not_supported",
+      message: "Electron proxy configuration is session-wide and cannot be safely scoped to one browser surface",
+    });
+    controller.dispose();
+    await Promise.resolve();
+
+    expect(session.proxyChanges).toBe(0);
   });
 });

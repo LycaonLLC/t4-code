@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type { BrowserWindow, Session, WebContents } from "electron";
-import { session as electronSession } from "electron";
 import type {
   BrowserCall,
   BrowserCallResult,
@@ -33,7 +32,7 @@ export interface SessionStoreLike {
 
 export interface ProfileRegistryLike {
   resolve?: (profileId?: string) => unknown;
-  getSession?: (profile: BrowserProfile) => unknown;
+  getSession?: (profile: BrowserProfile, ownerSessionId?: OwnerSessionId) => unknown;
   markInUse?: (profileId: string) => void;
   release?: (profileId: string) => void;
 }
@@ -276,7 +275,9 @@ export class BrowserRuntime {
         window: this.window,
         onPopup: (request) => {
           const ownerSessionId = this.surfaceOwners.get(surface.surfaceId);
-          if (ownerSessionId === undefined || !isSafeBrowserUrl(request.url, this.allowFileUrls)) return false;
+          // A popup cannot inherit the one-time consent that created an
+          // authenticated surface. Keep it blocked until the UI can ask again.
+          if (surface.profile.kind === "authenticated-profile" || ownerSessionId === undefined || !isSafeBrowserUrl(request.url, this.allowFileUrls)) return false;
           this.createSurface(ownerSessionId, surface.profile, request.url, { x: 0, y: 0, width: 800, height: 600 }, false);
           return true;
         },
@@ -454,10 +455,17 @@ export class BrowserRuntime {
     return selected;
   }
 
-  private resolveSession(profile: BrowserProfile): Session | undefined {
-    const candidate = this.profileRegistry?.getSession?.(profile);
-    if (candidate && typeof candidate === "object" && "then" in candidate) return undefined;
-    return candidate as Session | undefined;
+  private resolveSession(profile: BrowserProfile, ownerSessionId: OwnerSessionId): Session {
+    const candidate = this.profileRegistry?.getSession?.(
+      profile,
+      profile.kind === "isolated-session" ? ownerSessionId : undefined,
+    );
+    if (profile.kind === "isolated-session" && candidate && typeof candidate === "object" && !("then" in candidate)) {
+      return candidate as Session;
+    }
+    if (profile.kind === "isolated-session") throw new BrowserRuntimeError("security", "An isolated browser session could not be created");
+    if (candidate && typeof candidate === "object" && !("then" in candidate)) return candidate as Session;
+    throw new BrowserRuntimeError("security", "An authenticated browser session could not be created");
   }
 
   private createSurface(
@@ -472,7 +480,7 @@ export class BrowserRuntime {
     const handle = identity?.handle ?? `surface:${this.nextSurfaceNumber++}` as SurfaceHandle;
     const handleNumber = Number(handle.slice("surface:".length));
     if (Number.isSafeInteger(handleNumber)) this.nextSurfaceNumber = Math.max(this.nextSurfaceNumber, handleNumber + 1);
-    const session = this.resolveSession(profile) ?? electronSession.defaultSession;
+    const session = this.resolveSession(profile, ownerSessionId);
     const surface = new BrowserSurface({
       window: this.window,
       surfaceId,
@@ -512,7 +520,9 @@ export class BrowserRuntime {
       generation: surface.generation,
     };
     if (!this.isRecoveryCurrent(recoveredTarget)) return;
-    const session = this.resolveSession(surface.profile) ?? electronSession.defaultSession;
+    const ownerSessionId = this.surfaceOwners.get(surface.surfaceId);
+    if (ownerSessionId === undefined) return;
+    const session = this.resolveSession(surface.profile, ownerSessionId);
     this.installSurfaceControllers(surface, adapter.webContents, session);
   }
 
@@ -525,6 +535,9 @@ export class BrowserRuntime {
       if (!surface) continue;
       const ownerSessionId = this.surfaceOwners.get(id);
       if (ownerSessionId === undefined) continue;
+      // Authenticated pages require fresh, explicit user selection after an
+      // app restart. Do not persist their URL as an auto-load instruction.
+      if (surface.profile.kind === "authenticated-profile") continue;
       metadata.push({ surfaceId: id, handle: surface.handle, ownerSessionId, profile: surface.state.profile, url: surface.state.url, order, zoom: 1 });
     }
     await Promise.resolve(save.call(this.sessionStore, metadata));
@@ -543,6 +556,9 @@ export class BrowserRuntime {
         if (Array.isArray(records)) {
           for (const record of [...records].sort((left, right) => left.order - right.order)) {
             if (record.ownerSessionId !== ownerSessionId || this.surfaces.has(record.surfaceId)) continue;
+            // A stored opt-in is not fresh consent. Old authenticated records
+            // are ignored without loading their URL or touching the profile.
+            if (record.profile.kind === "authenticated-profile") continue;
             try {
               const profile = this.resolveProfile(record.profile);
               this.createSurface(ownerSessionId, profile, record.url, { x: 0, y: 0, width: 800, height: 600 }, false, record);

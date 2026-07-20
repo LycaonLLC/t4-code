@@ -1,30 +1,43 @@
-# ADR-010: Native Browser and Host Preview Contract
+# ADR-010: Browser Preview Workspace and Authority Security Contract
 
 - Status: Accepted
-- Decision: T4 Code provides a desktop-only native Browser workspace alongside, rather than in place of, the existing host-backed Browser Preview workspace. The two surfaces have separate ownership, authority, and capability contracts.
+- Decision: Implement a dedicated session-linked Browser/App Preview Workspace. To maintain security isolation, previews must run under credential-isolated authority scopes, enforce lease-locked concurrency controls, restrict directory uploads, and handle memory bounds carefully.
 
-## 1. Separate browser surfaces
+## 1. Pluggable Preview Authority & Explicit Opt-In
 
-The native Browser workspace is available only in the T4 Code desktop app, where Electron can embed native browser surfaces. It is not a replacement for the session-linked Host Preview workspace: Host Preview remains available from a session when the connected host advertises it.
+To prevent automated credential extraction or session hijacking, preview hosts advertise their authority profile under one of two classifications:
+1. `isolated-session` (e.g. OMP session-only browsers): credential-free, ephemeral, and restricted to the session context.
+2. `authenticated-profile` (e.g. a user's authenticated local browser profile): holds active cookies, session tokens, or identity credentials.
 
-Each native Browser tab has a stable `surfaceId` for its lifetime. The Browser IPC contract exposes a surface's handle, profile, URL, title, lifecycle and ready states, navigation availability, bounds, visibility, focus, and timestamps. Callers operate on that surface identifier and receive a `not_found` error after it is closed.
+**Security Contract**:
+- Authenticated-profile previews MUST NEVER be selected automatically.
+- `choosePreview` only selects `isolated-session` previews by default.
+- Authenticated-profile previews require explicit, user-initiated selection (matching a concrete `selectedPreviewId` chosen via the UI dropdown).
 
-## 2. Isolated default and exact authenticated-profile opt-in
+## 2. Policy & Confirmation Gates
 
-New native Browser surfaces use the credential-isolated `isolated-session` profile. The runtime does not discover, implicitly import, or auto-select an authenticated browser profile.
+Browser automation actions (such as clicking, typing, navigating, or upload) are privileged.
+- The client runtime executes a `preview.policy.check` pre-flight request before mutations to verify that the action is allowed by the host's policy.
+- Confirmation is handled dynamically via the host-driven command-challenge flow: when a preview command is sent to the appserver, if the host requires human confirmation, it returns a `confirmation` challenge frame.
+- The client projects this challenge onto the active session's confirmations list and renders a confirmation dialog.
+- The mutation is only executed on the host once the user clicks "Confirm" and the client returns a corresponding `confirm` frame approving the challenge.
+## 3. Concurrency Lease Locks
 
-An authenticated profile is a separately named persistent Electron partition that can contain cookies or other authenticated browser state. It MUST NEVER be selected implicitly. Every operation using one requires an exact profile object whose `profileId` matches the user's selected profile and whose `explicitOptIn` value is `true`; incomplete, mismatched, or stale selections are rejected. Cookie import also requires a user-selected JSON export and an exact authenticated profile.
+To prevent race conditions and multi-agent command collisions over a shared browser instance, mutations are guarded by lease locks:
+- Client-side mutations are routed through the `PreviewLeaseManager`.
+- Before executing click, type, fill, scroll, select, or upload, the manager acquires a lease (`preview.lease.acquire`) with a finite time-to-live (TTL).
+- The lease is renewed half-way through its TTL (`preview.lease.renew`).
+- On any transport disconnection, mutation failure, or timeout, the lease token is immediately invalidated and cleared from local memory to prevent subsequent execution hijacking.
 
-## 3. Bounded native automation
+## 4. Directory and Path Confinement
 
-Browser IPC is a bounded, per-surface interface. It covers surface lifecycle and navigation, snapshots and screenshots, limited DOM queries and actions, keyboard and mouse input, console output, cookies and storage, downloads, bounds, mute, focus, and restore. Inputs and results are validated and bounded by the desktop runtime; unavailable operations return a coded error instead of falling through to the host Preview path.
+The preview upload action allows selecting local files to upload via input elements:
+- File paths MUST be validated via `isProjectRelativeUploadPath(path)` prior to transmission.
+- Absolute paths, windows drive letters, and parent traversal sequences (`..`) are strictly rejected.
+- Upload actions are confined exclusively to project-relative assets within the workspace directory.
 
-The protocol includes a touch-input capability name for compatibility, but native touch input is currently unsupported because Electron `WebContents.sendInputEvent` cannot send it. A `browser.input_touch` request returns `not_supported`.
+## 5. Capture Object-URL Memory Management
 
-## 4. Lifecycle teardown
-
-The desktop lifecycle disposes the native Browser runtime when its renderer begins reloading, when its window closes, and while the application stops. Disposal closes every native surface, releases profile-use tracking, disposes security, network, automation, capture, input, profile, and download controllers, and clears the runtime's active-surface state before persisting its session metadata. Events from a stale runtime are not forwarded to a replacement renderer.
-
-## 5. Host Preview remains host-backed
-
-Host Preview continues to project the bounded preview state supplied by the connected host and accepts only the preview actions that host advertises. Its host-side authority, capability, and lease behavior are independent of the desktop Browser runtime. Native Browser profiles and automation never grant Host Preview access to desktop browser state.
+Screenshot captures contain base64 image data sent in chunks:
+- Decoded screenshots are loaded as memory-bounded Blobs via `URL.createObjectURL(blob)`.
+- To prevent browser memory leaks from accumulated images, the runtime MUST immediately revoke the active URL using `URL.revokeObjectURL(url)` whenever a preview is replaced, closed, or the session runtime is disposed.

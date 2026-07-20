@@ -73,6 +73,36 @@ function expectSecurity(result: { readonly ok: boolean; readonly code?: string }
   expect(result.code).toBe("security");
 }
 
+describe("BrowserProfileRegistry isolated sessions", () => {
+  it("uses one in-memory Electron session per owning OMP session", () => {
+    const profiles = registry();
+    const isolated = { kind: "isolated-session", profileId: "isolated-session" } as const;
+
+    const first = profiles.getSession(isolated, "workspace-session-a");
+    const sameOwner = profiles.getSession(isolated, "workspace-session-a");
+    const second = profiles.getSession(isolated, "workspace-session-b");
+
+    expect(first).toBe(sameOwner);
+    expect(first).not.toBe(second);
+    expect(electron.sessions.size).toBe(2);
+    expect([...electron.sessions.keys()].every((partition) => !partition.includes("workspace-session"))).toBe(true);
+  });
+
+  it("continues sharing an explicitly selected authenticated profile", () => {
+    const profiles = registry();
+    const metadata = profiles.create({ profileId: "work" });
+    const authenticated = {
+      kind: "authenticated-profile",
+      profileId: metadata.profileId,
+      explicitOptIn: true,
+    } as const;
+
+    expect(profiles.getSession(authenticated, "workspace-session-a")).toBe(
+      profiles.getSession(authenticated, "workspace-session-b"),
+    );
+  });
+});
+
 describe("BrowserProfileRegistry active profile counts", () => {
   it("keeps a profile in use until both tabs release it without underflow", async () => {
     const profiles = registry();

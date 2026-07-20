@@ -3,7 +3,7 @@ import type { BrowserProfile } from "@t4-code/protocol/browser-ipc";
 import type { BrowserWindow, Certificate, Event, Session, WebContents } from "electron";
 import type { BrowserAuthController, BrowserAuthControllerOptions } from "./browser-auth.ts";
 import { createBrowserAuthController } from "./browser-auth.ts";
-import { createBrowserProxyController, type BrowserProxyResult, type BrowserSystemProxySettings } from "./browser-proxy.ts";
+import type { BrowserProxyResult, BrowserSystemProxySettings } from "./browser-proxy.ts";
 
 const MAX_TEXT_BYTES = 8_192;
 const MAX_GRANT_LIFETIME_MS = 10 * 60_000;
@@ -120,7 +120,6 @@ export function installBrowserSurfaceSecurity(options: BrowserSurfaceSecurityOpt
   const { webContents, session } = options;
   const grants = new Map<string, BrowserCertificateGrant>();
   const auth = options.auth ? createBrowserAuthController(options.auth) : null;
-  const proxy = createBrowserProxyController(session);
   let profile = options.profile;
   let disposed = false;
 
@@ -209,7 +208,6 @@ export function installBrowserSurfaceSecurity(options: BrowserSurfaceSecurityOpt
       if (auth) app.off("login", authLoginHandler);
       webContents.setWindowOpenHandler(() => ({ action: "deny" }));
       auth?.dispose();
-      void proxy.dispose();
     },
     clearTrustGrants(): void { grants.clear(); },
     grantCertificate(grant): boolean {
@@ -226,7 +224,13 @@ export function installBrowserSurfaceSecurity(options: BrowserSurfaceSecurityOpt
       if (nextProfile.profileId !== profile.profileId || nextProfile.kind !== profile.kind) grants.clear();
       profile = nextProfile;
     },
-    configureProxy(settings): Promise<BrowserProxyResult> { return proxy.configure(settings); },
+    configureProxy(_settings): Promise<BrowserProxyResult> {
+      return Promise.resolve({
+        ok: false,
+        code: "not_supported",
+        message: "Electron proxy configuration is session-wide and cannot be safely scoped to one browser surface",
+      });
+    },
   };
 }
 

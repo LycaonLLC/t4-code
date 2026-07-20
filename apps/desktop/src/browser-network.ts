@@ -80,6 +80,7 @@ export interface BrowserNetworkControllerOptions {
 interface WebRequestDetails {
   readonly id: number;
   readonly url: string;
+  readonly webContentsId?: number;
   readonly method?: string;
   readonly resourceType?: string;
   readonly statusCode?: number;
@@ -87,16 +88,18 @@ interface WebRequestDetails {
 }
 
 type BeforeRequestListener = (details: WebRequestDetails, callback: (response: { readonly cancel?: boolean; readonly redirectURL?: string }) => void) => void;
-type HeaderListener = (details: { readonly requestHeaders: Record<string, string> }, callback: (response: { readonly requestHeaders: Record<string, string> }) => void) => void;
+type HeaderDetails = {
+  readonly webContentsId?: number;
+  readonly requestHeaders: Record<string, string>;
+};
+type HeaderListener = (details: HeaderDetails, callback: (response: { readonly requestHeaders: Record<string, string> }) => void) => void;
 type RequestDetailsListener = (details: WebRequestDetails) => void;
-type WebRequestListener = BeforeRequestListener | HeaderListener | RequestDetailsListener;
 
 interface WebRequestLike {
-  onBeforeRequest(filter: { readonly urls: readonly string[] }, listener: BeforeRequestListener): void;
-  onBeforeSendHeaders?(filter: { readonly urls: readonly string[] }, listener: HeaderListener): void;
-  onCompleted?(filter: { readonly urls: readonly string[] }, listener: RequestDetailsListener): void;
-  onErrorOccurred?(filter: { readonly urls: readonly string[] }, listener: RequestDetailsListener): void;
-  removeListener?(event: string, listener: WebRequestListener): void;
+  onBeforeRequest(filter: { readonly urls: readonly string[] }, listener: BeforeRequestListener | null): void;
+  onBeforeSendHeaders?(filter: { readonly urls: readonly string[] }, listener: HeaderListener | null): void;
+  onCompleted?(filter: { readonly urls: readonly string[] }, listener: RequestDetailsListener | null): void;
+  onErrorOccurred?(filter: { readonly urls: readonly string[] }, listener: RequestDetailsListener | null): void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -123,14 +126,14 @@ function boundedString(value: unknown, maxBytes = MAX_TEXT_BYTES): string | unde
 
 type SessionNetworkLike = Session & {
   readonly webRequest?: WebRequestLike;
-  enableNetworkEmulation?: (options: { readonly offline: boolean; readonly latency?: number; readonly downloadThroughput?: number; readonly uploadThroughput?: number }) => void;
-  setUserAgent?: (userAgent: string, acceptLanguages?: string) => void | Promise<void>;
-  getUserAgent?: () => string;
 };
 
 type WebContentsNetworkLike = WebContents & {
+  readonly id?: number;
   enableDeviceEmulation?: (parameters: Record<string, unknown>) => void;
   disableDeviceEmulation?: () => void;
+  setUserAgent?: (userAgent: string) => void;
+  getUserAgent?: () => string;
   setAudioMuted?: (muted: boolean) => void;
 };
 
@@ -139,6 +142,72 @@ interface RouteEntry {
   readonly pattern: string;
   readonly expression: RegExp;
   readonly redirectUrl?: string;
+}
+
+interface SessionNetworkPolicy {
+  readonly beforeRequest: BeforeRequestListener;
+  readonly beforeSendHeaders: HeaderListener;
+  readonly completed: RequestDetailsListener;
+  readonly failed: RequestDetailsListener;
+}
+
+interface SessionNetworkState {
+  readonly policies: Map<number, SessionNetworkPolicy>;
+  readonly webRequest: WebRequestLike;
+}
+
+const sessionNetworkStates = new WeakMap<SessionNetworkLike, SessionNetworkState>();
+
+function policyFor(
+  policies: ReadonlyMap<number, SessionNetworkPolicy>,
+  webContentsId: number | undefined,
+): SessionNetworkPolicy | undefined {
+  return Number.isSafeInteger(webContentsId) ? policies.get(webContentsId as number) : undefined;
+}
+
+/** Electron keeps only the last WebRequest listener, so one listener must multiplex a shared Session. */
+function registerSessionNetworkPolicy(
+  session: SessionNetworkLike,
+  webContentsId: number,
+  policy: SessionNetworkPolicy,
+): () => void {
+  const webRequest = session.webRequest;
+  if (webRequest === undefined) return () => {};
+  let state = sessionNetworkStates.get(session);
+  if (state === undefined) {
+    const policies = new Map<number, SessionNetworkPolicy>();
+    state = { policies, webRequest };
+    sessionNetworkStates.set(session, state);
+    webRequest.onBeforeRequest({ urls: NETWORK_FILTER }, (details, callback) => {
+      const selected = policyFor(policies, details.webContentsId);
+      if (selected === undefined) callback({});
+      else selected.beforeRequest(details, callback);
+    });
+    webRequest.onBeforeSendHeaders?.({ urls: NETWORK_FILTER }, (details, callback) => {
+      const selected = policyFor(policies, details.webContentsId);
+      if (selected === undefined) callback({ requestHeaders: { ...details.requestHeaders } });
+      else selected.beforeSendHeaders(details, callback);
+    });
+    webRequest.onCompleted?.({ urls: NETWORK_FILTER }, (details) => {
+      policyFor(policies, details.webContentsId)?.completed(details);
+    });
+    webRequest.onErrorOccurred?.({ urls: NETWORK_FILTER }, (details) => {
+      policyFor(policies, details.webContentsId)?.failed(details);
+    });
+  }
+  const registeredState = state;
+  registeredState.policies.set(webContentsId, policy);
+
+  return (): void => {
+    if (registeredState.policies.get(webContentsId) !== policy) return;
+    registeredState.policies.delete(webContentsId);
+    if (registeredState.policies.size > 0) return;
+    sessionNetworkStates.delete(session);
+    registeredState.webRequest.onBeforeRequest({ urls: NETWORK_FILTER }, null);
+    registeredState.webRequest.onBeforeSendHeaders?.({ urls: NETWORK_FILTER }, null);
+    registeredState.webRequest.onCompleted?.({ urls: NETWORK_FILTER }, null);
+    registeredState.webRequest.onErrorOccurred?.({ urls: NETWORK_FILTER }, null);
+  };
 }
 
 
@@ -242,8 +311,8 @@ function safeResourceType(value: unknown): string | undefined {
 }
 
 /**
- * Controls only the network behavior Electron exposes for one Session. It does
- * not emulate CDP-only state and never records request bodies or headers.
+ * Controls one WebContents while multiplexing Electron's Session-wide
+ * WebRequest hooks. It never records request bodies or headers.
  */
 export class BrowserNetworkController {
   private readonly targetSession: SessionNetworkLike;
@@ -252,22 +321,22 @@ export class BrowserNetworkController {
   private readonly routes = new Map<string, RouteEntry>();
   private readonly requests: BrowserNetworkRequest[] = [];
   private readonly beforeRequestListener: (details: WebRequestDetails, callback: (response: { readonly cancel?: boolean; readonly redirectURL?: string }) => void) => void;
-  private readonly beforeSendHeadersListener: ((details: { readonly requestHeaders: Record<string, string> }, callback: (response: { readonly requestHeaders: Record<string, string> }) => void) => void) | undefined;
-  private readonly completedListener: ((details: WebRequestDetails) => void) | undefined;
-  private readonly errorListener: ((details: WebRequestDetails) => void) | undefined;
+  private readonly beforeSendHeadersListener: (details: HeaderDetails, callback: (response: { readonly requestHeaders: Record<string, string> }) => void) => void;
+  private readonly completedListener: (details: WebRequestDetails) => void;
+  private readonly errorListener: (details: WebRequestDetails) => void;
+  private readonly disposeNetworkPolicy: () => void;
   private configuredHeaders: Readonly<Record<string, string>> = Object.freeze({});
   private originalUserAgent: string | undefined;
   private userAgentChanged = false;
   private deviceEmulationEnabled = false;
   private disposed = false;
-  private offline = false;
   private nextRouteNumber = 1;
 
   constructor(options: BrowserNetworkControllerOptions) {
     this.targetSession = options.session as SessionNetworkLike;
     this.targetWebContents = options.webContents as WebContentsNetworkLike | undefined;
     this.now = options.now ?? Date.now;
-    this.originalUserAgent = this.targetSession.getUserAgent?.();
+    this.originalUserAgent = this.targetWebContents?.getUserAgent?.();
     this.beforeRequestListener = (details, callback) => {
       const requestId = Number.isSafeInteger(details.id) ? details.id : 0;
       const url = safeUrl(details.url);
@@ -287,24 +356,22 @@ export class BrowserNetworkController {
       else if (route?.info.action === "redirect" && route.redirectUrl !== undefined) callback({ redirectURL: route.redirectUrl });
       else callback({});
     };
-    const webRequest = this.targetSession.webRequest;
-    if (webRequest !== undefined) {
-      webRequest.onBeforeRequest({ urls: NETWORK_FILTER }, this.beforeRequestListener);
-      this.beforeSendHeadersListener = (details, callback) => {
-        const requestHeaders = { ...details.requestHeaders };
-        for (const [key, value] of Object.entries(this.configuredHeaders)) requestHeaders[key] = value;
-        callback({ requestHeaders });
-      };
-      this.completedListener = (details) => this.finishRequest(details, false);
-      this.errorListener = (details) => this.finishRequest(details, true);
-      webRequest.onBeforeSendHeaders?.({ urls: NETWORK_FILTER }, this.beforeSendHeadersListener);
-      webRequest.onCompleted?.({ urls: NETWORK_FILTER }, this.completedListener);
-      webRequest.onErrorOccurred?.({ urls: NETWORK_FILTER }, this.errorListener);
-    } else {
-      this.beforeSendHeadersListener = undefined;
-      this.completedListener = undefined;
-      this.errorListener = undefined;
-    }
+    this.beforeSendHeadersListener = (details, callback) => {
+      const requestHeaders = { ...details.requestHeaders };
+      for (const [key, value] of Object.entries(this.configuredHeaders)) requestHeaders[key] = value;
+      callback({ requestHeaders });
+    };
+    this.completedListener = (details) => this.finishRequest(details, false);
+    this.errorListener = (details) => this.finishRequest(details, true);
+    const webContentsId = this.targetWebContents?.id;
+    this.disposeNetworkPolicy = Number.isSafeInteger(webContentsId)
+      ? registerSessionNetworkPolicy(this.targetSession, webContentsId as number, {
+          beforeRequest: this.beforeRequestListener,
+          beforeSendHeaders: this.beforeSendHeadersListener,
+          completed: this.completedListener,
+          failed: this.errorListener,
+        })
+      : () => {};
   }
 
   private finishRequest(details: WebRequestDetails, failed: boolean): void {
@@ -329,29 +396,24 @@ export class BrowserNetworkController {
     const download = options.downloadThroughputBytesPerSecond ?? -1;
     const upload = options.uploadThroughputBytesPerSecond ?? -1;
     if (![latency, download, upload].every((value) => typeof value === "number" && Number.isFinite(value) && value >= -1 && value <= Number.MAX_SAFE_INTEGER)) return failure("invalid_params", "network emulation values are invalid");
-    if (typeof this.targetSession.enableNetworkEmulation !== "function") return unsupported("Electron does not expose per-session network emulation");
-    try {
-      this.targetSession.enableNetworkEmulation({ offline: options.offline, latency, downloadThroughput: download, uploadThroughput: upload });
-      this.offline = options.offline;
-      return success({ offline: this.offline });
-    } catch { return failure("internal", "per-session network emulation could not be applied"); }
+    return unsupported("Electron network emulation is session-wide and cannot be safely scoped to one browser surface");
   }
 
   setUserAgent(userAgent: string): BrowserNetworkResult<{ readonly applied: true }> {
     if (this.disposed) return failure("invalid_state", "network controller is disposed");
     const value = boundedString(userAgent, MAX_TEXT_BYTES);
     if (value === undefined || /[\r\n]/u.test(value)) return failure("invalid_params", "user agent is invalid");
-    if (typeof this.targetSession.setUserAgent !== "function") return unsupported("Electron does not expose session user-agent configuration");
+    if (typeof this.targetWebContents?.setUserAgent !== "function") return unsupported("Electron does not expose per-surface user-agent configuration");
     try {
-      this.targetSession.setUserAgent(value);
+      this.targetWebContents.setUserAgent(value);
       this.userAgentChanged = true;
       return success({ applied: true });
-    } catch { return failure("internal", "session user-agent could not be applied"); }
+    } catch { return failure("internal", "surface user-agent could not be applied"); }
   }
 
   setHeaders(settings: BrowserHeaderSettings): BrowserNetworkResult<{ readonly count: number }> {
     if (this.disposed) return failure("invalid_state", "network controller is disposed");
-    if (this.targetSession.webRequest === undefined || this.beforeSendHeadersListener === undefined) return unsupported("Electron webRequest header interception is unavailable");
+    if (this.targetSession.webRequest === undefined || !Number.isSafeInteger(this.targetWebContents?.id)) return unsupported("Electron webRequest header interception is unavailable");
     const headers = normalizeHeaders(settings?.headers);
     if (headers === undefined) return failure("invalid_params", "headers are invalid or contain credentials");
     this.configuredHeaders = Object.freeze({ ...headers });
@@ -387,7 +449,7 @@ export class BrowserNetworkController {
 
   route(route: BrowserNetworkRoute): BrowserNetworkResult<BrowserNetworkRouteInfo> {
     if (this.disposed) return failure("invalid_state", "network controller is disposed");
-    if (this.targetSession.webRequest === undefined) return unsupported("Electron webRequest routing is unavailable");
+    if (this.targetSession.webRequest === undefined || !Number.isSafeInteger(this.targetWebContents?.id)) return unsupported("Electron webRequest routing is unavailable");
     if (this.routes.size >= MAX_ROUTES) return failure("invalid_params", "network route limit reached");
     const expression = routeExpression(route?.urlPattern);
     if (expression === undefined) return failure("invalid_params", "network route pattern is invalid");
@@ -428,27 +490,12 @@ export class BrowserNetworkController {
     this.disposed = true;
     this.routes.clear();
     this.configuredHeaders = Object.freeze({});
-    const webRequest = this.targetSession.webRequest;
-    if (webRequest?.removeListener !== undefined) {
-      try { webRequest.removeListener("before-request", this.beforeRequestListener); } catch { /* best effort */ }
-      if (this.beforeSendHeadersListener !== undefined) {
-        try { webRequest.removeListener("before-send-headers", this.beforeSendHeadersListener); } catch { /* best effort */ }
-      }
-      if (this.completedListener !== undefined) {
-        try { webRequest.removeListener("completed", this.completedListener); } catch { /* best effort */ }
-      }
-      if (this.errorListener !== undefined) {
-        try { webRequest.removeListener("error-occurred", this.errorListener); } catch { /* best effort */ }
-      }
-    }
+    this.disposeNetworkPolicy();
     if (this.deviceEmulationEnabled) {
       try { this.targetWebContents?.disableDeviceEmulation?.(); } catch { /* best effort */ }
     }
-    if (this.userAgentChanged && this.originalUserAgent !== undefined && typeof this.targetSession.setUserAgent === "function") {
-      try { await this.targetSession.setUserAgent(this.originalUserAgent); } catch { /* best effort */ }
-    }
-    if (this.offline && typeof this.targetSession.enableNetworkEmulation === "function") {
-      try { this.targetSession.enableNetworkEmulation({ offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }); } catch { /* best effort */ }
+    if (this.userAgentChanged && this.originalUserAgent !== undefined && typeof this.targetWebContents?.setUserAgent === "function") {
+      try { this.targetWebContents.setUserAgent(this.originalUserAgent); } catch { /* best effort */ }
     }
     this.requests.length = 0;
   }

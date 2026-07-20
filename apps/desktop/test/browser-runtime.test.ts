@@ -141,6 +141,40 @@ async function settleBackgroundWork(): Promise<void> {
 }
 
 describe("BrowserRuntime native view lifecycle", () => {
+  it("requests isolated Electron sessions using the owning OMP session id", async () => {
+    electron.reset();
+    const ownerSessions: unknown[] = [];
+    const runtime = new BrowserRuntime({
+      window: new FakeWindow() as never,
+      emit: () => {},
+      userDataPath: "/tmp/t4-browser-runtime-owner-partitions",
+      profileRegistry: {
+        getSession: (_profile, ownerSessionId) => {
+          ownerSessions.push(ownerSessionId);
+          return {};
+        },
+        markInUse: () => {},
+        release: () => {},
+      },
+      sessionStore: { save: () => {} },
+      downloadController: { attach: () => {}, disposeSurface: () => {}, dispose: () => {} },
+      installSecurity: () => ({
+        auth: null,
+        clearTrustGrants: () => {},
+        dispose: () => {},
+        grantCertificate: () => false,
+        setProfile: () => {},
+        configureProxy: async () => ({ ok: false, code: "not_supported", message: "Not used by this test" }),
+      }),
+    });
+
+    await runtime.call(browserCall("surface.create", { profile: isolatedProfile }, OWNER_A));
+    await runtime.call(browserCall("surface.create", { profile: isolatedProfile }, OWNER_B));
+
+    expect(ownerSessions).toEqual([OWNER_A, OWNER_B]);
+    await runtime.dispose();
+  });
+
   it("creates and attaches a surface, detaches it while hidden, reattaches it, and disposes without orphaning it", async () => {
     electron.reset();
     const window = new FakeWindow();
@@ -308,6 +342,50 @@ describe("BrowserRuntime native view lifecycle", () => {
     await restored.dispose();
   });
 
+  it("does not restore authenticated pages before fresh user consent", async () => {
+    electron.reset();
+    const authenticated = {
+      kind: "authenticated-profile",
+      profileId: "work",
+      explicitOptIn: true,
+    } as const;
+    let sessionRequests = 0;
+    const runtime = new BrowserRuntime({
+      window: new FakeWindow() as never,
+      emit: () => {},
+      userDataPath: "/tmp/t4-browser-runtime-authenticated-restore",
+      profileRegistry: {
+        resolve: () => authenticated,
+        getSession: () => {
+          sessionRequests += 1;
+          return electron.session.defaultSession;
+        },
+        markInUse: () => {},
+        release: () => {},
+      },
+      sessionStore: {
+        load: () => [{
+          surfaceId: "11111111-1111-4111-8111-111111111111",
+          handle: "surface:1",
+          ownerSessionId: OWNER_A,
+          profile: authenticated,
+          url: "https://authenticated.example.test/",
+          order: 0,
+          zoom: 1,
+        }] as never,
+        save: () => {},
+      },
+      downloadController: { attach: () => {}, disposeSurface: () => {}, dispose: () => {} },
+    });
+
+    const restored = await runtime.call(browserCall("surface.list", {}, OWNER_A)) as BrowserCallResult<"surface.list">;
+
+    expect(restored.surfaces).toEqual([]);
+    expect(sessionRequests).toBe(0);
+    expect(electron.views).toHaveLength(0);
+    await runtime.dispose();
+  });
+
   it("creates a hidden managed surface for accepted popups", async () => {
     electron.reset();
     let popup: ((request: { readonly url: string; readonly frameName: string; readonly disposition: string; readonly referrer: string }) => boolean) | undefined;
@@ -352,6 +430,57 @@ describe("BrowserRuntime native view lifecycle", () => {
     expect(listed.surfaces[1]?.url).toBe("https://popup.example.test/");
     expect(listed.surfaces[1]?.visible).toBe(false);
     expect(electron.views).toHaveLength(2);
+    await runtime.dispose();
+  });
+
+  it("blocks authenticated popups until the user can consent to the new surface", async () => {
+    electron.reset();
+    let popup: ((request: { readonly url: string; readonly frameName: string; readonly disposition: string; readonly referrer: string }) => boolean) | undefined;
+    const authenticated = {
+      kind: "authenticated-profile",
+      profileId: "work",
+      explicitOptIn: true,
+    } as const;
+    const runtime = new BrowserRuntime({
+      window: new FakeWindow() as never,
+      emit: () => {},
+      userDataPath: "/tmp/t4-browser-runtime-authenticated-popup",
+      profileRegistry: {
+        resolve: () => authenticated,
+        getSession: () => electron.session.defaultSession,
+        markInUse: () => {},
+        release: () => {},
+      },
+      sessionStore: { save: () => {} },
+      downloadController: { attach: () => {}, disposeSurface: () => {}, dispose: () => {} },
+      installSecurity: (options) => {
+        if (options.onPopup !== undefined) popup = options.onPopup;
+        return {
+          auth: null,
+          clearTrustGrants: () => {},
+          dispose: () => {},
+          grantCertificate: () => false,
+          setProfile: () => {},
+          configureProxy: async () => ({ ok: false, code: "not_supported", message: "Not used by this test" }),
+        };
+      },
+    });
+    await runtime.call(browserCall("surface.create", {
+      profile: authenticated,
+      url: "https://authenticated.example.test/",
+    }, OWNER_A));
+    if (popup === undefined) throw new Error("Expected popup callback to be installed");
+
+    expect(popup({
+      url: "https://popup.example.test/",
+      frameName: "popup",
+      disposition: "new-window",
+      referrer: "https://authenticated.example.test/",
+    })).toBe(false);
+
+    const listed = await runtime.call(browserCall("surface.list", {}, OWNER_A)) as BrowserCallResult<"surface.list">;
+    expect(listed.surfaces).toHaveLength(1);
+    expect(electron.views).toHaveLength(1);
     await runtime.dispose();
   });
 
