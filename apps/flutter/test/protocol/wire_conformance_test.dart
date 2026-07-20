@@ -835,6 +835,56 @@ void main() {
         throwsA(isA<WireFormatException>()),
       );
     });
+
+    test('transcript page response is bounded, typed, and immutable', () {
+      final entry = <String, Object?>{
+        'id': 'entry-latest',
+        'parentId': null,
+        'hostId': 'host-test',
+        'sessionId': 'session-1',
+        'kind': 'message',
+        'timestamp': '2026-07-20T09:00:00.000Z',
+        'data': <String, Object?>{
+          'role': 'assistant',
+          'text': 'Latest durable response',
+        },
+      };
+      final responseWire =
+          _cloneMap(
+              _namedCase(corpus, 'inbound', 'successful-response')['wire'],
+            )
+            ..['command'] = 'transcript.page'
+            ..['sessionId'] = 'session-1'
+            ..['result'] = <String, Object?>{
+              'entries': <Object?>[entry],
+              'nextCursor': 'older-page',
+              'hasMore': true,
+              'generation': 'generation-1',
+            };
+
+      final response =
+          WireDecoder.decode(jsonEncode(responseWire)) as ResponseFrame;
+      final page = response.transcriptPageResult;
+
+      expect(page?.entries.single.id, 'entry-latest');
+      expect(page?.entries.single.data['text'], 'Latest durable response');
+      expect(page?.nextCursor, 'older-page');
+      expect(page?.hasMore, isTrue);
+      expect(page?.generation, 'generation-1');
+      expect(
+        () => page?.entries.add(page.entries.single),
+        throwsUnsupportedError,
+      );
+
+      final malformed = _cloneMap(responseWire);
+      final malformedResult = _cloneMap(malformed['result'])
+        ..['entries'] = List<Object?>.filled(129, entry);
+      malformed['result'] = malformedResult;
+      expect(
+        () => WireDecoder.decode(jsonEncode(malformed)),
+        throwsA(isA<WireFormatException>()),
+      );
+    });
   });
 }
 

@@ -403,6 +403,9 @@ ResponseFrame _decodeResponse(Map<String, Object?> raw) {
         'transcript.context' => _decodeTranscriptContextResult(
           _map(raw['result'], 'result'),
         ),
+        'transcript.page' => _decodeTranscriptPageResult(
+          _map(raw['result'], 'result'),
+        ),
         'usage.read' => _decodeUsageReadResult(_map(raw['result'], 'result')),
         'broker.status' => _decodeBrokerStatusResult(
           _map(raw['result'], 'result'),
@@ -1171,6 +1174,22 @@ TranscriptSearchResult _decodeTranscriptSearchResult(Map<String, Object?> raw) {
       knownSessions: knownSessions,
       generation: _string(index['generation'], 'result.index.generation', 128),
     ),
+  );
+}
+
+TranscriptPageResult _decodeTranscriptPageResult(Map<String, Object?> raw) {
+  final values = _list(raw['entries'], 'result.entries', 128);
+  final entries = <DurableEntry>[];
+  for (var index = 0; index < values.length; index++) {
+    entries.add(_durableEntry(values[index], 'result.entries[$index]'));
+  }
+  return TranscriptPageResult(
+    entries: List<DurableEntry>.unmodifiable(entries),
+    nextCursor: raw.containsKey('nextCursor')
+        ? _string(raw['nextCursor'], 'result.nextCursor', 2048)
+        : null,
+    hasMore: _bool(raw['hasMore'], 'result.hasMore'),
+    generation: _string(raw['generation'], 'result.generation', 128),
   );
 }
 

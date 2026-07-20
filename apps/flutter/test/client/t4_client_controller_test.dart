@@ -129,6 +129,132 @@ void main() {
     },
   );
 
+  test(
+    'pages a cold transcript before attach and prepends older history separately',
+    () async {
+      final profile = _profile('alpha');
+      final directory = _MemoryDirectoryStore(
+        directory: const HostDirectory.empty().upsert(profile),
+      );
+      final connector = _FakeConnector();
+      final controller = _controller(
+        directory,
+        _MemoryCredentialStore(),
+        connector,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      final channel = connector.channels.single;
+      Map<String, Object?> entry(String id, String text) => <String, Object?>{
+        'id': id,
+        'parentId': null,
+        'hostId': 'host-alpha',
+        'sessionId': 'session-alpha',
+        'kind': 'message',
+        'timestamp': '2026-07-20T09:00:00.000Z',
+        'data': <String, Object?>{'role': 'assistant', 'text': text},
+      };
+
+      channel.emit(
+        _welcome('host-alpha', features: const <String>['transcript.page']),
+      );
+      await _flush();
+      final list = channel.sentJson.last;
+      channel.emit(
+        _response(
+          list,
+          command: 'session.list',
+          result: _sessionListResult('host-alpha'),
+        ),
+      );
+      await _flush();
+
+      final page = channel.sentJson.last;
+      expect(page['command'], 'transcript.page');
+      expect(page['args'], <String, Object?>{
+        'limit': 64,
+        'maxBytes': 256 * 1024,
+      });
+      expect(
+        channel.sentJson.where((frame) => frame['command'] == 'session.attach'),
+        isEmpty,
+      );
+      channel.emit(
+        _response(
+          page,
+          command: 'transcript.page',
+          result: <String, Object?>{
+            'entries': <Object?>[
+              entry('page-1', 'paged one'),
+              entry('page-2', 'paged two'),
+            ],
+            'nextCursor': 'older-page',
+            'hasMore': true,
+            'generation': 'page-generation',
+          },
+        ),
+      );
+      await _flush();
+
+      final attach = channel.sentJson.last;
+      expect(attach['command'], 'session.attach');
+      expect(controller.state.messages.map((message) => message.id), <String>[
+        'page-1',
+        'page-2',
+      ]);
+      expect(controller.state.transcriptHistoryHasMore, isTrue);
+
+      channel.emit(<String, Object?>{
+        ..._snapshot(
+          'host-alpha',
+          'session-alpha',
+          revision: 'revision-session-alpha',
+        ),
+        'entries': <Object?>[
+          entry('page-2', 'paged two'),
+          entry('live-3', 'live three'),
+        ],
+      });
+      await _flush();
+      expect(controller.state.messages.map((message) => message.id), <String>[
+        'page-1',
+        'page-2',
+        'live-3',
+      ]);
+
+      final loadOlder = controller.loadEarlierTranscript();
+      await _flush();
+      final older = channel.sentJson.last;
+      expect(older['command'], 'transcript.page');
+      expect(older['args'], <String, Object?>{
+        'before': 'older-page',
+        'limit': 128,
+        'maxBytes': 512 * 1024,
+      });
+      channel.emit(
+        _response(
+          older,
+          command: 'transcript.page',
+          result: <String, Object?>{
+            'entries': <Object?>[entry('older-0', 'older zero')],
+            'hasMore': false,
+            'generation': 'page-generation',
+          },
+        ),
+      );
+      await loadOlder;
+
+      expect(controller.state.messages.map((message) => message.id), <String>[
+        'older-0',
+        'page-1',
+        'page-2',
+        'live-3',
+      ]);
+      expect(controller.state.transcriptHistoryHasMore, isFalse);
+      expect(controller.state.transcriptHistoryLoading, isFalse);
+    },
+  );
+
   test('command ids are unique across controller restarts', () async {
     final profile = _profile('alpha');
     final directory = _MemoryDirectoryStore(

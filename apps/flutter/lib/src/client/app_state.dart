@@ -27,6 +27,7 @@ const List<String> t4RequestedFeatures = <String>[
   'prompt.images',
   'transcript.images',
   'transcript.search',
+  'transcript.page',
   'agent.lifecycle',
   'agent.progress',
   'agent.event',
@@ -549,6 +550,9 @@ final class T4ViewState {
     this.sessions = const <SessionSummary>[],
     this.selectedSessionId,
     this.messages = const <TranscriptMessage>[],
+    this.transcriptHistoryLoading = false,
+    this.transcriptHistoryHasMore = false,
+    this.transcriptHistoryError,
     this.errorMessage,
     this.hostDirectory = const HostDirectory.empty(),
     this.authenticationPhase = AuthenticationPhase.unknown,
@@ -584,6 +588,9 @@ final class T4ViewState {
   final List<SessionSummary> sessions;
   final String? selectedSessionId;
   final List<TranscriptMessage> messages;
+  final bool transcriptHistoryLoading;
+  final bool transcriptHistoryHasMore;
+  final String? transcriptHistoryError;
   final String? errorMessage;
   final HostDirectory hostDirectory;
   final AuthenticationPhase authenticationPhase;
@@ -685,6 +692,8 @@ abstract interface class T4Actions {
     int before = 8,
     int after = 8,
   });
+
+  Future<void> loadEarlierTranscript();
 
   Future<UsageReadResult> readUsage();
   Future<BrokerStatusResult> readBrokerStatus();

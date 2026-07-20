@@ -40,6 +40,12 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   final LinkedHashMap<String, TranscriptMessage> _messages = LinkedHashMap();
   final Map<String, TranscriptCursor> _savedCursors =
       <String, TranscriptCursor>{};
+  List<DurableEntry> _pagedTranscriptEntries = const <DurableEntry>[];
+  String? _transcriptPageGeneration;
+  String? _transcriptPageCursor;
+  bool _transcriptPageLoading = false;
+  bool _transcriptPageHasMore = false;
+  String? _transcriptPageError;
   final Map<String, _PendingCommand> _pendingCommands =
       <String, _PendingCommand>{};
   final Map<String, _PendingCommand> _pendingSessionOperations =
@@ -114,6 +120,9 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     sessions: List<SessionSummary>.unmodifiable(_sessions),
     selectedSessionId: _selectedSessionId,
     messages: List<TranscriptMessage>.unmodifiable(_messages.values),
+    transcriptHistoryLoading: _transcriptPageLoading,
+    transcriptHistoryHasMore: _transcriptPageHasMore,
+    transcriptHistoryError: _transcriptPageError,
     errorMessage: _errorMessage,
     hostDirectory: _hostDirectory,
     authenticationPhase: _authenticationPhase,
@@ -990,11 +999,12 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     if (!known) return;
     _selectedSessionId = sessionId;
     _selectDeveloperSessionProjection(sessionId);
+    _resetTranscriptPage();
     _messages.clear();
     _phase = ConnectionPhase.synchronizing;
     _errorMessage = null;
     _publish();
-    _sendAttach(sessionId);
+    _primeTranscriptTailThenAttach(sessionId);
   }
 
   @override
@@ -1198,6 +1208,85 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   }
 
   @override
+  Future<void> loadEarlierTranscript() async {
+    final sessionId = _selectedSessionId;
+    final before = _transcriptPageCursor;
+    if (_transcriptPageLoading ||
+        !_transcriptPageSupported ||
+        sessionId == null ||
+        before == null) {
+      return;
+    }
+    final connectionGeneration = _connectionGeneration;
+    final pageGeneration = _transcriptPageGeneration;
+    _transcriptPageLoading = true;
+    _transcriptPageError = null;
+    _publish();
+    try {
+      final frame = await _runSessionReadCommand(
+        prefix: 'transcript-page-older',
+        command: 'transcript.page',
+        sessionId: sessionId,
+        args: <String, Object?>{
+          'before': before,
+          'limit': 128,
+          'maxBytes': 512 * 1024,
+        },
+      );
+      if (connectionGeneration != _connectionGeneration ||
+          sessionId != _selectedSessionId) {
+        return;
+      }
+      final page = frame.transcriptPageResult;
+      if (page == null) {
+        throw const WireFormatException(
+          'transcript.page returned an invalid result',
+          'result',
+        );
+      }
+      if (pageGeneration != null && page.generation != pageGeneration) {
+        throw StateError(
+          'The transcript changed while older history was loading.',
+        );
+      }
+      final existingIds = _pagedTranscriptEntries
+          .map((entry) => entry.id)
+          .toSet();
+      final added = page.entries
+          .where((entry) => existingIds.add(entry.id))
+          .toList(growable: false);
+      _pagedTranscriptEntries = <DurableEntry>[
+        ...added,
+        ..._pagedTranscriptEntries,
+      ];
+      _transcriptPageGeneration = page.generation;
+      _transcriptPageCursor = page.nextCursor;
+      _transcriptPageHasMore = page.hasMore && page.nextCursor != null;
+      final visible = _messages.values.toList(growable: false);
+      _messages.clear();
+      for (final entry in added) {
+        _upsertEntry(entry);
+      }
+      for (final message in visible) {
+        _messages[message.id] = message;
+      }
+    } on Object catch (error) {
+      if (connectionGeneration == _connectionGeneration &&
+          sessionId == _selectedSessionId) {
+        _transcriptPageError = error is StateError
+            ? error.message
+            : 'Older transcript history could not be loaded.';
+      }
+    } finally {
+      if (connectionGeneration == _connectionGeneration &&
+          sessionId == _selectedSessionId) {
+        _transcriptPageLoading = false;
+        _publish();
+      }
+    }
+  }
+
+  @override
   Future<UsageReadResult> readUsage() async {
     final frame = await _runHostReadCommand(
       prefix: 'usage-read',
@@ -1260,7 +1349,11 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     required Map<String, Object?> args,
   }) async {
     final hostId = _hostId;
-    if (_phase != ConnectionPhase.ready || hostId == null) {
+    if (_channel == null ||
+        hostId == null ||
+        _phase == ConnectionPhase.disconnected ||
+        _phase == ConnectionPhase.retrying ||
+        _phase == ConnectionPhase.failed) {
       throw StateError('connect before reading a session');
     }
     if (!_grantedCapabilities.contains('sessions.read')) {
@@ -2639,12 +2732,17 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       return;
     }
     final selectionChanged = selected != previousSelectedSessionId;
-    if (selectionChanged) _messages.clear();
+    if (selectionChanged) {
+      _resetTranscriptPage();
+      _messages.clear();
+    }
     _publish();
-    _sendAttach(
-      selected,
-      cursor: selectionChanged ? null : _savedCursors[selected],
-    );
+    final cursor = selectionChanged ? null : _savedCursors[selected];
+    if (cursor == null) {
+      _primeTranscriptTailThenAttach(selected);
+    } else {
+      _sendAttach(selected, cursor: cursor);
+    }
   }
 
   SessionSummary _summaryFromRef(SessionRef session) {
@@ -3327,7 +3425,17 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
 
   void _applySnapshot(SnapshotFrame frame) {
     if (_selectedSessionId != frame.sessionId) return;
+    final liveIds = frame.entries.map((entry) => entry.id).toSet();
+    final firstOverlap = _pagedTranscriptEntries.indexWhere(
+      (entry) => liveIds.contains(entry.id),
+    );
+    final pagedPrefix = firstOverlap < 0
+        ? _pagedTranscriptEntries
+        : _pagedTranscriptEntries.take(firstOverlap);
     _messages.clear();
+    for (final entry in pagedPrefix) {
+      _upsertEntry(entry);
+    }
     for (final entry in frame.entries) {
       _upsertEntry(entry);
     }
@@ -3736,6 +3844,70 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     );
   }
 
+  void _resetTranscriptPage() {
+    _pagedTranscriptEntries = const <DurableEntry>[];
+    _transcriptPageGeneration = null;
+    _transcriptPageCursor = null;
+    _transcriptPageLoading = false;
+    _transcriptPageHasMore = false;
+    _transcriptPageError = null;
+  }
+
+  bool get _transcriptPageSupported =>
+      _grantedCapabilities.contains('sessions.read') &&
+      _grantedFeatures.contains('transcript.page');
+
+  void _primeTranscriptTailThenAttach(String sessionId) {
+    if (!_transcriptPageSupported) {
+      _sendAttach(sessionId);
+      return;
+    }
+    final generation = _connectionGeneration;
+    unawaited(
+      _loadInitialTranscriptPage(sessionId).whenComplete(() {
+        if (_disposed ||
+            generation != _connectionGeneration ||
+            sessionId != _selectedSessionId ||
+            _channel == null) {
+          return;
+        }
+        _sendAttach(sessionId);
+      }),
+    );
+  }
+
+  Future<void> _loadInitialTranscriptPage(String sessionId) async {
+    try {
+      final frame = await _runSessionReadCommand(
+        prefix: 'transcript-page',
+        command: 'transcript.page',
+        sessionId: sessionId,
+        args: const <String, Object?>{'limit': 64, 'maxBytes': 256 * 1024},
+      );
+      if (sessionId != _selectedSessionId) return;
+      final page = frame.transcriptPageResult;
+      if (page == null) {
+        throw const WireFormatException(
+          'transcript.page returned an invalid result',
+          'result',
+        );
+      }
+      _pagedTranscriptEntries = page.entries;
+      _transcriptPageGeneration = page.generation;
+      _transcriptPageCursor = page.nextCursor;
+      _transcriptPageHasMore = page.hasMore && page.nextCursor != null;
+      _transcriptPageError = null;
+      _messages.clear();
+      for (final entry in page.entries) {
+        _upsertEntry(entry);
+      }
+      _publish();
+    } on Object {
+      // Bounded history is an optional read lane. Live attach remains the
+      // authority and must proceed when paging is unavailable or stale.
+    }
+  }
+
   void _sendAttach(String sessionId, {TranscriptCursor? cursor}) {
     final session = _sessions
         .where((item) => item.sessionId == sessionId)
@@ -3789,6 +3961,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     _channel = null;
     _sessions = const <SessionSummary>[];
     _messages.clear();
+    _resetTranscriptPage();
     _savedCursors.clear();
     _attentionBySession.clear();
     _attentionConfirmations.clear();

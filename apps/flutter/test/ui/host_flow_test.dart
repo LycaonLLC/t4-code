@@ -33,7 +33,12 @@ void main() {
     await tester.pump();
   }
 
-  T4ViewState keyboardTranscriptState({List<TranscriptMessage>? messages}) {
+  T4ViewState keyboardTranscriptState({
+    List<TranscriptMessage>? messages,
+    bool transcriptHistoryHasMore = false,
+    bool transcriptHistoryLoading = false,
+    String? transcriptHistoryError,
+  }) {
     final profile = HostProfile.parseTailnetAddress(
       'https://alpha.tailnet-name.ts.net',
     );
@@ -54,6 +59,9 @@ void main() {
           status: 'idle',
         ),
       ],
+      transcriptHistoryHasMore: transcriptHistoryHasMore,
+      transcriptHistoryLoading: transcriptHistoryLoading,
+      transcriptHistoryError: transcriptHistoryError,
       messages:
           messages ??
           List<TranscriptMessage>.generate(
@@ -699,6 +707,108 @@ void main() {
       expect(actions.submittedPrompts, <String>['Alpha draft']);
     },
   );
+  testWidgets(
+    'Fast toggle reads as an inactive toggle when available and off, and selected when on',
+    (tester) async {
+      final profile = HostProfile.parseTailnetAddress(
+        'https://alpha.tailnet-name.ts.net',
+      );
+      final actions = _FakeActions();
+      T4ViewState stateFor({required bool fastEnabled}) => T4ViewState(
+        connectionPhase: ConnectionPhase.ready,
+        hostDirectory: HostDirectory.empty().upsert(profile),
+        authenticationPhase: AuthenticationPhase.paired,
+        grantedCapabilities: t4RequestedCapabilities.toSet(),
+        selectedSessionId: 'session-alpha',
+        sessions: const <SessionSummary>[
+          SessionSummary(
+            hostId: 'host-alpha',
+            sessionId: 'session-alpha',
+            projectId: 'project-alpha',
+            projectName: 'Project Alpha',
+            title: 'Fast toggle state',
+            revision: 'revision-alpha',
+            status: 'idle',
+          ),
+        ],
+        composer: SessionComposerState(
+          modelLabel: 'Fixture model',
+          modelSelector: 'fixture/model',
+          modelChoices: const <ComposerModelChoice>[
+            ComposerModelChoice(
+              label: 'Fixture model',
+              selector: 'fixture/model',
+            ),
+          ],
+          thinking: 'medium',
+          thinkingLevels: const <String>['off', 'medium', 'high'],
+          fastAvailable: true,
+          fastEnabled: fastEnabled,
+        ),
+      );
+
+      Color? chipBackground(WidgetTester tester) {
+        // The RawChip under the FilterChip paints its resolved background as a
+        // ShapeDecoration on an Ink widget; reading it observes the effective
+        // selected vs unselected appearance without asserting on source text.
+        final ink = tester.widget<Ink>(
+          find
+              .ancestor(of: find.text('Fast'), matching: find.byType(Ink))
+              .first,
+        );
+        final decoration = ink.decoration as ShapeDecoration;
+        return decoration.color;
+      }
+
+      // Available but off: the chip keeps its normal filled surface and
+      // border (unchanged from the other dropdown chips), but the literal
+      // "Fast" label foreground is muted grey so the toggle reads inactive
+      // without the button itself looking selected.
+      await pumpApp(
+        tester,
+        state: stateFor(fastEnabled: false),
+        actions: actions,
+        size: compactPhone,
+      );
+      await tester.pumpAndSettle();
+      final scheme = Theme.of(
+        tester.element(find.widgetWithText(FilterChip, 'Fast')),
+      ).colorScheme;
+      final offChip = tester.widget<FilterChip>(
+        find.widgetWithText(FilterChip, 'Fast'),
+      );
+      expect(offChip.selected, isFalse);
+      // Normal filled chip surface, identical to the other composer chips.
+      expect(chipBackground(tester), scheme.surfaceContainer);
+      // The label foreground is the muted/grey variant color.
+      final offLabel = tester.widget<Text>(find.text('Fast'));
+      expect(offLabel.style?.color, scheme.onSurfaceVariant);
+
+      // Tapping the off toggle requests enabling Fast.
+      await tester.tap(find.widgetWithText(FilterChip, 'Fast'));
+      await tester.pumpAndSettle();
+      expect(actions.selectedFastModes, <bool>[true]);
+
+      // On: the selected pink/primary-container surface and the chip's normal
+      // selected label foreground are unchanged (the label style is null, so
+      // the theme's selected label color applies).
+      await tester.pumpWidget(
+        T4App(
+          state: stateFor(fastEnabled: true),
+          actions: actions,
+          credentialsAreVolatile: false,
+        ),
+      );
+      await tester.pumpAndSettle();
+      final onChip = tester.widget<FilterChip>(
+        find.widgetWithText(FilterChip, 'Fast'),
+      );
+      expect(onChip.selected, isTrue);
+      expect(chipBackground(tester), scheme.primaryContainer);
+      final onLabel = tester.widget<Text>(find.text('Fast'));
+      expect(onLabel.style?.color, isNull);
+    },
+  );
   testWidgets('keeps the latest message visible when the keyboard opens', (
     tester,
   ) async {
@@ -800,6 +910,70 @@ void main() {
       resizedScrollable.position.pixels,
       closeTo(positionBeforeKeyboard, 0.5),
     );
+  });
+
+  testWidgets('older transcript pages preserve the visible history anchor', (
+    tester,
+  ) async {
+    final actions = _FakeActions();
+    final current = List<TranscriptMessage>.generate(
+      24,
+      (index) => TranscriptMessage(
+        id: 'message-$index',
+        role: index.isEven ? MessageRole.user : MessageRole.assistant,
+        text: 'Transcript message ${index + 1}',
+      ),
+    );
+    await pumpApp(
+      tester,
+      state: keyboardTranscriptState(
+        messages: current,
+        transcriptHistoryHasMore: true,
+      ),
+      actions: actions,
+      size: compactPhone,
+    );
+    await tester.pumpAndSettle();
+
+    final list = transcriptList();
+    await tester.drag(list, const Offset(0, 320));
+    await tester.pumpAndSettle();
+    final scrollable = tester.state<ScrollableState>(
+      find.descendant(of: list, matching: find.byType(Scrollable)).first,
+    );
+    final distanceFromEnd =
+        scrollable.position.maxScrollExtent - scrollable.position.pixels;
+    expect(distanceFromEnd, greaterThan(96));
+
+    final older = List<TranscriptMessage>.generate(
+      4,
+      (index) => TranscriptMessage(
+        id: 'older-$index',
+        role: MessageRole.assistant,
+        text: 'Older transcript message ${index + 1}',
+      ),
+    );
+    await pumpApp(
+      tester,
+      state: keyboardTranscriptState(
+        messages: <TranscriptMessage>[...older, ...current],
+        transcriptHistoryHasMore: true,
+      ),
+      actions: actions,
+      size: compactPhone,
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      scrollable.position.maxScrollExtent - scrollable.position.pixels,
+      closeTo(distanceFromEnd, 0.5),
+    );
+    await tester.drag(list, const Offset(0, 2000));
+    await tester.pumpAndSettle();
+    expect(find.text('Load earlier messages'), findsOneWidget);
+    await tester.tap(find.text('Load earlier messages'));
+    await tester.pump();
+    expect(actions.loadEarlierCalls, 1);
   });
   testWidgets('attention inbox exposes decisions and agent updates', (
     tester,
@@ -1196,6 +1370,7 @@ final class _FakeActions implements T4Actions {
   final List<String> submittedPrompts = <String>[];
   final List<String> queuedPrompts = <String>[];
   int cancelTurnCalls = 0;
+  int loadEarlierCalls = 0;
   final List<String> selectedModels = <String>[];
   final List<String> selectedThinkingLevels = <String>[];
   final List<bool> selectedFastModes = <bool>[];
@@ -1306,6 +1481,11 @@ final class _FakeActions implements T4Actions {
     contextAnchors.add(anchorId);
     return transcriptContextResult ??
         (throw UnsupportedError('transcript context is not configured'));
+  }
+
+  @override
+  Future<void> loadEarlierTranscript() async {
+    loadEarlierCalls += 1;
   }
 
   @override

@@ -253,6 +253,16 @@ final class _TranscriptViewState extends State<_TranscriptView> {
       oldWidget.state.messages,
       widget.state.messages,
     );
+    final historyPrepended =
+        !sessionChanged &&
+        !_followEnd &&
+        _historyWasPrepended(oldWidget.state.messages, widget.state.messages);
+    if (historyPrepended && _scrollController.hasClients) {
+      final position = _scrollController.position;
+      _restoreHistoryDistanceFromEnd(
+        position.maxScrollExtent - position.pixels,
+      );
+    }
     if (!sessionChanged && !messagesChanged) return;
     if (sessionChanged) _followEnd = true;
 
@@ -295,6 +305,44 @@ final class _TranscriptViewState extends State<_TranscriptView> {
     return oldLast.id != newLast.id ||
         oldLast.text != newLast.text ||
         oldLast.streaming != newLast.streaming;
+  }
+
+  bool _historyWasPrepended(
+    List<TranscriptMessage> previous,
+    List<TranscriptMessage> current,
+  ) {
+    if (previous.isEmpty || current.length <= previous.length) return false;
+    final offset = current.indexWhere(
+      (message) => message.id == previous.first.id,
+    );
+    if (offset <= 0 || current.length < offset + previous.length) return false;
+    for (var index = 0; index < previous.length; index++) {
+      if (current[offset + index].id != previous[index].id) return false;
+    }
+    return true;
+  }
+
+  void _restoreHistoryDistanceFromEnd(
+    double distanceFromEnd, {
+    int framesRemaining = 3,
+  }) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      final target = (position.maxScrollExtent - distanceFromEnd).clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      );
+      if ((position.pixels - target).abs() > 0.5) {
+        position.jumpTo(target);
+      }
+      if (framesRemaining > 1) {
+        _restoreHistoryDistanceFromEnd(
+          distanceFromEnd,
+          framesRemaining: framesRemaining - 1,
+        );
+      }
+    });
   }
 
   void _scheduleScrollToEnd({required bool animate}) {
@@ -346,6 +394,12 @@ final class _TranscriptViewState extends State<_TranscriptView> {
       );
     }
 
+    final showHistoryControl =
+        widget.state.transcriptHistoryLoading ||
+        widget.state.transcriptHistoryHasMore ||
+        widget.state.transcriptHistoryError != null;
+    final messageOffset = showHistoryControl ? 1 : 0;
+
     return NotificationListener<ScrollMetricsNotification>(
       onNotification: _trackScrollMetrics,
       child: NotificationListener<ScrollNotification>(
@@ -361,15 +415,77 @@ final class _TranscriptViewState extends State<_TranscriptView> {
               _T4Space.md,
               _T4Space.xl,
             ),
-            itemCount: widget.state.messages.length,
+            itemCount: widget.state.messages.length + messageOffset,
             separatorBuilder: (context, index) =>
                 const SizedBox(height: _T4Space.lg),
-            itemBuilder: (context, index) => _TranscriptMessageView(
-              message: widget.state.messages[index],
-              actions: widget.actions,
-            ),
+            itemBuilder: (context, index) {
+              if (showHistoryControl && index == 0) {
+                return _TranscriptHistoryControl(
+                  loading: widget.state.transcriptHistoryLoading,
+                  hasMore: widget.state.transcriptHistoryHasMore,
+                  error: widget.state.transcriptHistoryError,
+                  onLoad: widget.actions.loadEarlierTranscript,
+                );
+              }
+              return _TranscriptMessageView(
+                message: widget.state.messages[index - messageOffset],
+                actions: widget.actions,
+              );
+            },
           ),
         ),
+      ),
+    );
+  }
+}
+
+final class _TranscriptHistoryControl extends StatelessWidget {
+  const _TranscriptHistoryControl({
+    required this.loading,
+    required this.hasMore,
+    required this.error,
+    required this.onLoad,
+  });
+
+  final bool loading;
+  final bool hasMore;
+  final String? error;
+  final Future<void> Function() onLoad;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      label: loading
+          ? 'Loading earlier messages'
+          : 'Earlier transcript history',
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (error != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: _T4Space.xs),
+              child: Text(
+                error!,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.error,
+                ),
+              ),
+            ),
+          OutlinedButton.icon(
+            onPressed: loading || !hasMore ? null : () => unawaited(onLoad()),
+            icon: loading
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.history, size: 18),
+            label: Text(
+              loading ? 'Loading earlier messages' : 'Load earlier messages',
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1085,7 +1201,14 @@ final class _PromptComposerState extends State<_PromptComposer> {
                     ),
                     if (composer.fastAvailable)
                       FilterChip(
-                        label: const Text('Fast'),
+                        label: Text(
+                          'Fast',
+                          style: TextStyle(
+                            color: composer.fastEnabled
+                                ? null
+                                : scheme.onSurfaceVariant,
+                          ),
+                        ),
                         selected: composer.fastEnabled,
                         onSelected: (enabled) => unawaited(
                           _runControl(

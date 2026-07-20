@@ -269,6 +269,20 @@ final class TranscriptSearchResult {
   final TranscriptSearchIndexStatus index;
 }
 
+final class TranscriptPageResult {
+  const TranscriptPageResult({
+    required this.entries,
+    required this.hasMore,
+    required this.generation,
+    this.nextCursor,
+  });
+
+  final List<DurableEntry> entries;
+  final String? nextCursor;
+  final bool hasMore;
+  final String generation;
+}
+
 final class TranscriptContextRow {
   const TranscriptContextRow({
     required this.anchorId,
@@ -586,6 +600,9 @@ final class ResponseFrame extends WireFrame {
       result is TranscriptContextResult
       ? result as TranscriptContextResult
       : null;
+
+  TranscriptPageResult? get transcriptPageResult =>
+      result is TranscriptPageResult ? result as TranscriptPageResult : null;
 
   UsageReadResult? get usageReadResult =>
       result is UsageReadResult ? result as UsageReadResult : null;
