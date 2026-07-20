@@ -206,8 +206,8 @@ export class KubernetesGatewayMutationBackend {
 				displayName: args.displayName,
 				retentionPolicy: args.retentionPolicy,
 				size: args.capacity,
-				...(args.storageClass ? { storageClass: args.storageClass } : {}),
-				...(args.repository ? { repository: { id: args.repository.repositoryId, ...(args.repository.ref ? { ref: args.repository.ref } : {}), ...(args.repository.commit ? { commit: args.repository.commit } : {}) } } : {}),
+				...(args.storageClass ? { storageClassName: args.storageClass } : {}),
+				...(args.repository ? { repository: { repositoryId: args.repository.repositoryId, ...(args.repository.ref ? { ref: args.repository.ref } : {}), ...(args.repository.commit ? { commit: args.repository.commit } : {}) } } : {}),
 			},
 		};
 		const resource = await this.#createOrRead("t4workspaces", name, body, commandId, semanticResourceHash({ args, principal }), principal);
@@ -227,9 +227,9 @@ export class KubernetesGatewayMutationBackend {
 			spec: {
 				hostRef: this.#hostRef,
 				workspaceRef: args.workspaceId,
-				...(args.title ? { title: args.title } : {}),
+				title: args.title ?? "Cluster session",
 				runtimeProfile: args.runtimeProfile,
-				gui: { enabled: args.guiEnabled },
+				guiEnabled: args.guiEnabled,
 				...(args.ci ? { ci: { repositoryId: args.ci.repositoryId, ref: args.ci.ref, commit: args.ci.commit } } : {}),
 			},
 		};

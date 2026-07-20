@@ -36,9 +36,9 @@ const workspace = {
 		owner: PRINCIPAL,
 		displayName: "T4 code",
 		retentionPolicy: "Retain",
-		storageClass: "t4-workspaces-rwx",
+		storageClassName: "t4-workspaces-rwx",
 		size: "20Gi",
-		repository: { id: "t4-code", ref: "refs/heads/main", commit: "abc", credentialPath: "/secret" },
+		repository: { repositoryId: "t4-code", ref: "refs/heads/main", commit: "abc" },
 	},
 	status: {
 		observedGeneration: 3,
@@ -57,17 +57,14 @@ const session = {
 		workspaceRef: "workspace-one",
 		title: "Cluster task",
 		runtimeProfile: "omp-17.0.5",
-		gui: { enabled: true },
+		guiEnabled: true,
 		ci: { repositoryId: "t4-code", ref: "refs/heads/main", commit: "abc" },
 	},
 	status: {
 		observedGeneration: 5,
 		phase: "Running",
-		podRef: "session-one-pod",
-		serviceRef: "session-one",
-		upstreamSessionId: "omp-session-private",
-		previewId: "preview-one",
-		guiState: "Ready",
+		podName: "session-one-pod",
+		serviceName: "session-one",
 		conditions: [{ type: "Available", status: "True", reason: "PodReady", message: "ready", observedGeneration: 5 }],
 	},
 };
@@ -93,8 +90,8 @@ describe("Kubernetes infrastructure projection", () => {
 		});
 		expect(JSON.stringify(projection.workspaceList())).not.toContain("credentialPath");
 		expect(JSON.stringify(projection.workspaceList())).not.toContain("pvcRef");
+		expect(JSON.stringify(projection.workspaceList())).not.toContain("repositoryId");
 	});
-
 	test("keeps workspace cursors separate and reconnect replacement idempotent", () => {
 		const projection = new ClusterInfrastructureProjection({ epoch: "replica-uid-1", namespace: "development" });
 		projection.replace({ host, workspaces: [workspace], sessions: [session], resourceVersion: "102" });

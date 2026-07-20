@@ -249,7 +249,7 @@ export class ClusterInfrastructureProjection {
 	}
 	sessionEndpoints(): PodHostEndpoint[] {
 		return [...this.#sessions.values()].flatMap(resource => {
-			const service = serviceName(record(resource.status).serviceRef);
+			const service = serviceName(record(resource.status).serviceName);
 			return service ? [{ clusterSessionId: resource.metadata.name, url: `ws://${service}.${this.namespace}.svc:8787/v1/ws` }] : [];
 		});
 	}
@@ -257,7 +257,7 @@ export class ClusterInfrastructureProjection {
 		const resource = this.#sessions.get(clusterSessionId);
 		const authoritative = this.#authoritativeSessions.get(clusterSessionId);
 		if (!resource || !authoritative || principal !== undefined && !this.#ownsSessionResource(resource, principal)) return undefined;
-		const service = serviceName(record(resource.status).serviceRef);
+		const service = serviceName(record(resource.status).serviceName);
 		if (!service) return undefined;
 		return { clusterSessionId, upstreamSessionId: authoritative.sessionId, url: `ws://${service}.${this.namespace}.svc:8787/v1/ws` };
 	}
@@ -407,7 +407,7 @@ export class ClusterInfrastructureProjection {
 		const workspaceId = text(spec.workspaceRef, "unknown-workspace");
 		const ci = record(spec.ci);
 		const condition = firstCondition(status);
-		const guiEnabled = record(spec.gui).enabled === true;
+		const guiEnabled = spec.guiEnabled === true;
 		const infrastructurePhase = categorical(status.phase, ["Pending", "Running", "Failed", "Terminating", "Unknown"] as const, "Unknown");
 		const guiState = !guiEnabled
 			? "Unavailable"
@@ -445,7 +445,7 @@ export class ClusterInfrastructureProjection {
 			displayName: text(spec.displayName, resource.metadata.name).slice(0, 256),
 			phase: resource.metadata.deletionTimestamp ? "Terminating" : categorical(status.phase, ["Pending", "Ready", "Failed", "Terminating", "Unknown"] as const, "Unknown"),
 			retentionPolicy: spec.retentionPolicy === "Delete" ? "Delete" : "Retain",
-			...(typeof spec.storageClass === "string" ? { storageClass: spec.storageClass.slice(0, 128) } : {}),
+			...(typeof spec.storageClassName === "string" ? { storageClass: spec.storageClassName.slice(0, 128) } : {}),
 			...(typeof status.capacity === "string" ? { capacity: status.capacity.slice(0, 64) } : typeof spec.size === "string" ? { capacity: spec.size.slice(0, 64) } : {}),
 			accessMode: "ReadWriteMany",
 			revision: resourceRevision(resource),

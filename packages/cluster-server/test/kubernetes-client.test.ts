@@ -92,7 +92,15 @@ describe("namespaced Kubernetes client", () => {
 					"cluster.t4.dev/semantic-hash": semanticResourceHash({ args: workspaceArgs, principal: PRINCIPAL }),
 				},
 			},
-			spec: { hostRef: "primary", owner: PRINCIPAL, displayName: "Created workspace", retentionPolicy: "Retain", size: "20Gi" },
+			spec: {
+				hostRef: "primary",
+				owner: PRINCIPAL,
+				displayName: "Created workspace",
+				retentionPolicy: "Retain",
+				size: "20Gi",
+				storageClassName: "t4-workspaces-rwx",
+				repository: { repositoryId: "t4-code", ref: "refs/heads/main", commit: "abc" },
+			},
 		});
 		expect(JSON.stringify(workspaceBody)).not.toContain("token");
 		expect(JSON.stringify(workspaceBody)).not.toContain("url");
@@ -109,7 +117,7 @@ describe("namespaced Kubernetes client", () => {
 			apiVersion: "cluster.t4.dev/v1alpha1",
 			kind: "T4Session",
 			metadata: { name: expect.stringMatching(/^session-[a-f0-9]{16}$/) },
-			spec: { hostRef: "primary", workspaceRef: "workspace-one", runtimeProfile: "omp-17.0.5", gui: { enabled: true } },
+			spec: { hostRef: "primary", workspaceRef: "workspace-one", title: "Task", runtimeProfile: "omp-17.0.5", guiEnabled: true },
 		});
 	});
 

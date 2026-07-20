@@ -30,18 +30,15 @@ const workspace = {
 	spec: { hostRef: "primary", owner: PRINCIPAL, displayName: "Workspace one", retentionPolicy: "Retain", size: "20Gi" },
 	status: { observedGeneration: 1, phase: "Ready", conditions: [] },
 };
-const session = (name: string, upstream: string, previewId?: string) => ({
+const session = (name: string, upstream: string) => ({
 	apiVersion: "cluster.t4.dev/v1alpha1",
 	kind: "T4Session",
 	metadata: { name, uid: `${name}-uid`, resourceVersion: name === "session-one" ? "12" : "13", generation: 1 },
-	spec: { hostRef: "primary", workspaceRef: "workspace-one", title: name, runtimeProfile: "omp-17.0.5", gui: { enabled: true } },
+	spec: { hostRef: "primary", workspaceRef: "workspace-one", title: name, runtimeProfile: "omp-17.0.5", guiEnabled: true },
 	status: {
 		observedGeneration: 1,
 		phase: "Running",
-		serviceRef: name,
-		upstreamSessionId: upstream,
-		guiState: "Ready",
-		...(previewId ? { previewId } : {}),
+		serviceName: name,
 		conditions: [],
 	},
 });
@@ -87,7 +84,7 @@ function setup(epoch = "replica-uid-1") {
 	projection.replace({
 		host,
 		workspaces: [workspace],
-		sessions: [session("session-one", "omp-private-one", "preview-one"), session("session-two", "omp-private-two")],
+		sessions: [session("session-one", "omp-private-one"), session("session-two", "omp-private-two")],
 		resourceVersion: "13",
 	});
 	projection.setSessionAuthority("session-one", authority("omp-private-one"));
@@ -181,14 +178,23 @@ describe("stateless omp-app cluster gateway", () => {
 		});
 	});
 
-	test("denies cross-session preview ids before opening an upstream socket", async () => {
+	test("denies a preview id learned from another session without opening a second upstream socket", async () => {
 		const value = setup();
 		await value.connection.receive(hello);
+		await value.connection.receive({
+			v: "omp-app/1", type: "command", requestId: "request-owner", commandId: "command-owner",
+			hostId: "cluster:host-uid", sessionId: "session-one", command: "preview.state", args: { previewId: "preview-one" },
+		});
+		value.connector.onFrame?.({
+			v: "omp-app/1", type: "preview.state", hostId: "upstream" as never, sessionId: "omp-private-one" as never,
+			previewId: "preview-one" as never, state: "ready", url: "https://example.test", revision: "preview-r1" as never,
+			cursor: { epoch: "preview-e1", seq: 1 },
+		});
 		await value.connection.receive({
 			v: "omp-app/1", type: "command", requestId: "request-preview", commandId: "command-preview",
 			hostId: "cluster:host-uid", sessionId: "session-two", command: "preview.state", args: { previewId: "preview-one" },
 		});
-		expect(value.connector.routes).toHaveLength(0);
+		expect(value.connector.routes).toHaveLength(1);
 		expect(value.client.frames.at(-1)).toMatchObject({ type: "response", commandId: "command-preview", ok: false, error: { code: "NOT_AUTHORIZED" } });
 	});
 
