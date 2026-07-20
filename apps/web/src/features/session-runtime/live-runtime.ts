@@ -9,12 +9,14 @@ import type {
   DesktopRuntimeSnapshot,
   SessionProjection,
 } from "@t4-code/client";
+import { readTranscriptPage, TranscriptPageClientError } from "@t4-code/client";
 import {
   hostId as brandHostId,
   PROTOCOL_VERSION,
   revision as brandRevision,
   sessionId as brandSessionId,
   type CatalogItem,
+  type DurableEntry,
   type Revision,
   type SessionEvent,
   type SessionRef,
@@ -39,6 +41,7 @@ import type {
   SessionLink,
   SessionRuntime,
   SessionRuntimeSnapshot,
+  TranscriptHistoryPageState,
 } from "./controller.ts";
 import { IMAGE_PROMPTS_UNSUPPORTED_REASON, type SessionIntent } from "./intents.ts";
 import { runImagePromptUpload } from "./image-upload.ts";
@@ -87,6 +90,39 @@ const CONTROL_REJECTED: Record<PendingControl, string> = {
 const CONTROL_UNKNOWN =
   "The connection dropped before the host answered. The control shows the host's last confirmed value.";
 const MAX_RETIRED_PENDING_PROMPTS = 128;
+const INITIAL_TRANSCRIPT_PAGE_ENTRIES = 64;
+const INITIAL_TRANSCRIPT_PAGE_BYTES = 256 * 1024;
+const OLDER_TRANSCRIPT_PAGE_ENTRIES = 128;
+const OLDER_TRANSCRIPT_PAGE_BYTES = 512 * 1024;
+const MAX_PAGED_TRANSCRIPT_ENTRIES = 4_096;
+
+function prependTranscriptPage(
+  current: readonly DurableEntry[],
+  older: readonly DurableEntry[],
+): readonly DurableEntry[] {
+  const existing = new Set(current.map((entry) => entry.id));
+  const added: DurableEntry[] = [];
+  for (const entry of older) {
+    if (existing.has(entry.id)) continue;
+    existing.add(entry.id);
+    added.push(entry);
+  }
+  return [...added, ...current];
+}
+
+function presentPagedTranscript(
+  projection: TranscriptProjection,
+  pagedEntries: readonly DurableEntry[],
+): TranscriptProjection {
+  if (pagedEntries.length === 0) return projection;
+  if (projection.entries.length === 0) return { ...projection, entries: pagedEntries };
+  const liveIds = new Set(projection.entries.map((entry) => entry.id));
+  const firstOverlap = pagedEntries.findIndex((entry) => liveIds.has(entry.id));
+  const prefix = firstOverlap < 0 ? pagedEntries : pagedEntries.slice(0, firstOverlap);
+  return prefix.length === 0
+    ? projection
+    : { ...projection, entries: [...prefix, ...projection.entries] };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -233,6 +269,11 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   const decidedChallenges = new Set<string>();
   const listeners = new Set<() => void>();
   let transcriptImagesAttached = false;
+  let pagedEntries: readonly DurableEntry[] = [];
+  let transcriptHistory: TranscriptHistoryPageState | undefined;
+  let transcriptPageGeneration: string | undefined;
+  let transcriptPageCursor: string | undefined;
+  let transcriptPageRequest: Promise<void> | null = null;
 
   const transcriptImages = createTranscriptArtifactSource({
     hostId: options.hostId,
@@ -337,6 +378,97 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
   const notify = () => {
     snapshot = null;
     for (const listener of listeners) listener();
+  };
+
+  const transcriptPageSupported = (runtime: DesktopRuntimeSnapshot): boolean => {
+    const host = runtime.hosts.get(options.hostId);
+    return (
+      runtime.connections.get(targetId) === "connected" &&
+      runtime.targetHosts.get(targetId) === options.hostId &&
+      host?.grantedCapabilities.includes("sessions.read") === true &&
+      host.grantedFeatures.includes("transcript.page")
+    );
+  };
+
+  const loadTranscriptPage = (before?: string): Promise<void> => {
+    if (transcriptPageRequest !== null) return transcriptPageRequest;
+    const loadingOlder = before !== undefined;
+    const remainingEntries = MAX_PAGED_TRANSCRIPT_ENTRIES - pagedEntries.length;
+    if (loadingOlder && remainingEntries <= 0) return Promise.resolve();
+    transcriptHistory = {
+      phase: "loading",
+      hasMore: transcriptPageCursor !== undefined,
+      error: null,
+    };
+    notify();
+    const request = readTranscriptPage(
+      controller,
+      { targetId, hostId: options.hostId, sessionId: options.sessionId },
+      {
+        ...(before === undefined ? {} : { before }),
+        limit: loadingOlder
+          ? Math.min(OLDER_TRANSCRIPT_PAGE_ENTRIES, remainingEntries)
+          : INITIAL_TRANSCRIPT_PAGE_ENTRIES,
+        maxBytes: loadingOlder ? OLDER_TRANSCRIPT_PAGE_BYTES : INITIAL_TRANSCRIPT_PAGE_BYTES,
+      },
+    )
+      .then((page) => {
+        if (disposed) return;
+        if (
+          loadingOlder &&
+          transcriptPageGeneration !== undefined &&
+          page.generation !== transcriptPageGeneration
+        ) {
+          throw new TranscriptPageClientError(
+            "stale",
+            "The transcript changed while older history was loading.",
+            "transcript_generation_changed",
+          );
+        }
+        pagedEntries = loadingOlder
+          ? prependTranscriptPage(pagedEntries, page.entries)
+          : [...page.entries];
+        transcriptPageGeneration = page.generation;
+        transcriptPageCursor = page.nextCursor;
+        transcriptHistory = {
+          phase: "ready",
+          hasMore: page.hasMore && pagedEntries.length < MAX_PAGED_TRANSCRIPT_ENTRIES,
+          error:
+            page.hasMore && pagedEntries.length >= MAX_PAGED_TRANSCRIPT_ENTRIES
+              ? "This view reached its in-memory history limit."
+              : null,
+        };
+        notify();
+      })
+      .catch((error: unknown) => {
+        if (disposed) return;
+        const unsupported =
+          error instanceof TranscriptPageClientError && error.code === "unsupported";
+        transcriptHistory = {
+          phase: unsupported ? "unsupported" : "error",
+          hasMore: transcriptPageCursor !== undefined,
+          error: unsupported
+            ? null
+            : error instanceof TranscriptPageClientError
+              ? error.message
+              : "Older transcript history could not be loaded.",
+        };
+        notify();
+      })
+      .finally(() => {
+        if (transcriptPageRequest === request) transcriptPageRequest = null;
+      });
+    transcriptPageRequest = request;
+    return request;
+  };
+
+  const primeTranscriptTail = (): Promise<void> => {
+    if (transcriptHistory !== undefined) return transcriptPageRequest ?? Promise.resolve();
+    if (!transcriptPageSupported(controller.getSnapshot())) {
+      transcriptHistory = { phase: "unsupported", hasMore: false, error: null };
+      return Promise.resolve();
+    }
+    return loadTranscriptPage();
   };
 
   // Seed from the controller's warm projection. Durable entries install at the
@@ -675,8 +807,16 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     retryAfterAttach = false;
     const generation = connectionGeneration;
     attached = true;
-    void controller
-      .attachSession(targetId, options.hostId, options.sessionId, transcript.cursor ?? undefined)
+    const tailPrime = primeTranscriptTail();
+    const startAttach = () =>
+      controller.attachSession(
+        targetId,
+        options.hostId,
+        options.sessionId,
+        transcript.cursor ?? undefined,
+      );
+    const attachRequest = transcript.cursor === null ? tailPrime.then(startAttach) : startAttach();
+    void attachRequest
       .then((result) => {
         const current = controller.getSnapshot();
         transcriptImagesAttached = result.accepted === true && generation === connectionGeneration;
@@ -1046,6 +1186,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
           pendingControl,
           controlError,
         });
+        projection = presentPagedTranscript(projection, pagedEntries);
 
         snapshot = {
           projection,
@@ -1076,6 +1217,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
               : gateComposerControls(derivedControls, controlGate.controlReason),
           sessionControl,
           providerTransport: ref?.liveState?.providerTransport ?? null,
+          ...(transcriptHistory === undefined ? {} : { transcriptHistory }),
           nowMs: Date.now(),
         };
       }
@@ -1089,6 +1231,11 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
       void submitPrompt(intent);
     },
     submitPrompt,
+    async loadEarlierTranscript() {
+      if (transcriptHistory?.phase === "loading") return;
+      if (transcriptPageCursor === undefined && transcriptHistory?.phase !== "error") return;
+      await loadTranscriptPage(transcriptPageCursor);
+    },
     pause() {
       // Live frames keep applying in the background so switch-back is warm.
       // Image bytes do not: every inactive runtime releases its object URLs

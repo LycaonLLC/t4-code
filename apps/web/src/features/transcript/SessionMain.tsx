@@ -580,9 +580,11 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
         ) : (
           <TranscriptTimeline
             bottomInset={archived ? 16 : dockHeight + 16}
+            history={snapshot.transcriptHistory}
             imageSource={runtime.transcriptImages}
             key={session.id}
             nowMs={snapshot.nowMs}
+            onLoadEarlier={runtime.loadEarlierTranscript}
             rows={rows}
             sessionId={session.id}
             streaming={snapshot.sessionActive}

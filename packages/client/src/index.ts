@@ -277,3 +277,10 @@ export type {
   TranscriptSearchRuntime,
   TranscriptSearchSnapshot,
 } from "./transcript-search.ts";
+export { readTranscriptPage, TranscriptPageClientError } from "./transcript-page.ts";
+export type {
+  TranscriptPageAddress,
+  TranscriptPageArguments,
+  TranscriptPageResult,
+  TranscriptPageRuntime,
+} from "./transcript-page.ts";

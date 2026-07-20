@@ -12,6 +12,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 
 import { workspaceStore } from "../../state/store-instance.ts";
 import { selectSessionView } from "../../state/workspace-store.ts";
+import type { TranscriptHistoryPageState } from "../session-runtime/controller.ts";
 import type { TranscriptImageSource } from "../session-runtime/transcript-images.ts";
 import type { ToolRenderHost } from "./tool-render/types.ts";
 import { createAnchoredToggle, DisclosureAnchorContext } from "./disclosure-anchor.tsx";
@@ -51,6 +52,8 @@ export interface TranscriptTimelineProps {
   readonly nowMs: number;
   readonly imageSource: TranscriptImageSource;
   readonly toolHost?: ToolRenderHost | undefined;
+  readonly history?: TranscriptHistoryPageState | undefined;
+  readonly onLoadEarlier?: (() => Promise<void>) | undefined;
 }
 
 export const TranscriptTimeline = memo(function TranscriptTimeline({
@@ -61,6 +64,8 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
   nowMs,
   imageSource,
   toolHost,
+  history,
+  onLoadEarlier,
 }: TranscriptTimelineProps) {
   const listRef = useRef<LegendListRef | null>(null);
   // null anchor = the user was following the tail when they left. Read the
@@ -168,13 +173,15 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
   );
 
   // New output while scrolled away raises the pill.
-  const lastRowCountRef = useRef(rows.length);
+  const lastTailIdRef = useRef(rows.at(-1)?.id);
   useEffect(() => {
-    if (rows.length !== lastRowCountRef.current) {
-      lastRowCountRef.current = rows.length;
-      if (!following) setNewOutputPending(true);
+    const nextTailId = rows.at(-1)?.id;
+    if (nextTailId !== lastTailIdRef.current) {
+      const hadTail = lastTailIdRef.current !== undefined;
+      lastTailIdRef.current = nextTailId;
+      if (hadTail && nextTailId !== undefined && !following) setNewOutputPending(true);
     }
-  }, [rows.length, following]);
+  }, [rows, following]);
 
   // Follow pins at the TRUE max on every painted frame, not eventually:
   // 1. React-commit growth (streamed rows, composer/footer resize) pins in
@@ -230,6 +237,30 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
     setNewOutputPending(false);
     void listRef.current?.scrollToEnd({ animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches });
   }, []);
+
+  const listHeader = useMemo(() => {
+    if (history === undefined || history.phase === "unsupported") return LIST_HEADER;
+    if (!history.hasMore && history.phase !== "loading" && history.phase !== "error") return LIST_HEADER;
+    return (
+      <div className="flex min-h-12 items-center justify-center px-4 py-2">
+        <Button
+          disabled={history.phase === "loading"}
+          onClick={() => void onLoadEarlier?.()}
+          size="xs"
+          variant="outline"
+        >
+          {history.phase === "loading"
+            ? "Loading earlier messages…"
+            : history.phase === "error"
+              ? "Retry earlier messages"
+              : "Load earlier messages"}
+        </Button>
+        {history.error !== null && (
+          <span className="ml-2 max-w-sm text-muted-foreground text-xs">{history.error}</span>
+        )}
+      </div>
+    );
+  }, [history, onLoadEarlier]);
 
   // Cold-mount mask: commit the exact warm tail before mounting LegendList.
   // Rendering the hidden virtual list and its duplicate warm rows in the
@@ -320,7 +351,7 @@ export const TranscriptTimeline = memo(function TranscriptTimeline({
             // max, and the last row rests a full gap above the composer at every
             // viewport size.
             ListFooterComponent={<div style={{ height: bottomInset }} />}
-            ListHeaderComponent={LIST_HEADER}
+            ListHeaderComponent={listHeader}
             maintainScrollAtEnd={maintainScrollAtEnd}
             maintainVisibleContentPosition={{ data: true, size: false }}
             onScroll={handleScroll}
