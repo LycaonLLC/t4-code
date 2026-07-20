@@ -47,7 +47,12 @@ import {
   type ExportContent,
   type ExportMeta,
 } from "../features/transcript/export.ts";
-import { FreshnessBadge, SessionMain, SessionOwnershipBadge } from "../features/transcript/SessionMain.tsx";
+import {
+  FreshnessBadge,
+  SessionLifecycleBadge,
+  SessionMain,
+  SessionOwnershipBadge,
+} from "../features/transcript/SessionMain.tsx";
 import { RIGHT_PANE_DOCK_QUERY, useMediaQuery } from "../hooks/useMediaQuery.ts";
 import { rendererPlatform, useWorkspace, workspaceStore } from "../state/store-instance.ts";
 import { useDesktopRuntimeSnapshot } from "../platform/desktop-runtime.ts";
@@ -406,6 +411,7 @@ export function SessionScreen({
         )}
         <span className="shrink-0">
           <FreshnessBadge session={session} />
+          <SessionLifecycleBadge session={session} />
           <SessionOwnershipBadge session={session} />
         </span>
         {previewCount > 0 && (

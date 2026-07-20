@@ -13,6 +13,7 @@ import type { SessionStatus } from "@t4-code/ui";
 import type {
   WorkspaceData,
   WorkspaceHost,
+  SessionLifecycle,
   WorkspaceProject,
   WorkspaceSession,
 } from "../lib/workspace-data.ts";
@@ -309,6 +310,10 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
     // read-only, but only a confirmed live lock may claim another app.
     const control = freshness === "live" ? readSessionControl(ref) : null;
     const controlKind = control === null ? undefined : sessionControlDisplayKind(control);
+    let lifecycle: SessionLifecycle = "unknown";
+    if (ref.status === "active") lifecycle = "active";
+    else if (ref.status === "idle") lifecycle = "idle";
+    else if (ref.status === "closed") lifecycle = "closed";
     let status: SessionStatus | null = null;
     if (connection.state === "connecting") status = "connecting";
     else if (freshness === "live" && controlKind === undefined) {
@@ -323,6 +328,7 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
       title: ref.title,
       model: ref.model ?? "",
       status,
+      lifecycle,
       freshness,
       pendingApprovals,
       latestTurnCompletedAt: lastKnownWorking ? null : ref.updatedAt,

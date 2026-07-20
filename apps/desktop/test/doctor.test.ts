@@ -29,6 +29,7 @@ function runtime(overrides: Partial<DoctorRuntime> = {}): DoctorRuntime {
     sourceContract: async () => contract,
     pnpmVersion: async () => "11.10.0",
     discoverOmp: async () => "/opt/omp/bin/omp",
+    inspectPathOmp: async () => "compatible",
     probeOmp: async () => true,
     profileCount: async () => 3,
     inspectTailnet: async () => "ready",
@@ -56,11 +57,24 @@ describe("T4 setup doctor", () => {
       ["node", "pass"],
       ["pnpm", "pass"],
       ["omp", "pass"],
+      ["terminal-omp", "pass"],
       ["appserver", "pass"],
       ["profiles", "pass"],
       ["tailscale", "pass"],
     ]);
     expect(formatDoctorReport(report)).toContain("Required setup checks passed.");
+  });
+
+  it("warns when shells and apps can resolve different OMP builds", async () => {
+    const report = await collectDoctorReport(
+      runtime({ inspectPathOmp: async () => "mixed" }),
+    );
+    const terminalOmp = report.checks.find((item) => item.id === "terminal-omp");
+
+    expect(report.ok).toBe(true);
+    expect(terminalOmp).toMatchObject({ status: "warning", label: "OMP commands" });
+    expect(terminalOmp?.detail).toContain("look live in one app but idle or delayed in another");
+    expect(terminalOmp?.action).toContain(contract.ompTag);
   });
 
   it("explains incompatible tools without exposing executable paths or raw errors", async () => {

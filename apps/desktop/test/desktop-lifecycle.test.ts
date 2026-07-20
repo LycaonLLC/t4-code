@@ -7,6 +7,7 @@ import {
   createSafeServiceEnvironment,
   discoverOmpExecutable,
   discoverT4HostExecutable,
+  inspectPathOmpCompatibility,
   NodeServiceRunner,
   OmpAppserverCompatibilityError,
   probeOmpAppserver,
@@ -142,6 +143,52 @@ describe("desktop lifecycle boundaries", () => {
     expect(error.code).toBe("omp_appserver_status_json_required");
     expect(error.message.includes("requires `omp appserver status --json`")).toBe(true);
     expect(calls).toBe(1);
+  });
+  it("detects mixed PATH candidates instead of blessing only the first compatible one", async () => {
+    const root = await mkdtemp(join(tmpdir(), "t4-desktop-"));
+    const oldDir = join(root, "old");
+    const newDir = join(root, "new");
+    await mkdir(oldDir);
+    await mkdir(newDir);
+    await writeFile(join(oldDir, "omp"), "");
+    await writeFile(join(newDir, "omp"), "");
+    await chmod(join(oldDir, "omp"), 0o755);
+    await chmod(join(newDir, "omp"), 0o755);
+    let calls = 0;
+    const runner: ProcessRunner = {
+      spawn: async (spec) => {
+        calls += 1;
+        if (spec.command === join(newDir, "omp")) {
+          return {
+            kill: () => {},
+            result: Promise.resolve({
+              exitCode: 0,
+              signal: null,
+              stdout: JSON.stringify({ state: "stopped", reason: "unreachable" }),
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            }),
+          };
+        }
+        return {
+          kill: () => {},
+          result: Promise.resolve({
+            exitCode: 2,
+            signal: null,
+            stdout: "",
+            stderr: "Error: unknown flag: --json",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          }),
+        };
+      },
+    };
+
+    expect(
+      await inspectPathOmpCompatibility({ environment: { PATH: `${oldDir}:${newDir}` }, runner }),
+    ).toBe("mixed");
+    expect(calls).toBe(2);
   });
   it("scopes named appserver probes without inheriting provider credentials", async () => {
     const root = await mkdtemp(join(tmpdir(), "t4-desktop-"));

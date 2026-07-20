@@ -5,7 +5,7 @@
 // actions leave through typed SessionIntents. The shell's outer scroll
 // container stays inert — this surface owns its own virtualized scroller.
 import { useNavigate } from "@tanstack/react-router";
-import { Badge, cn, Tooltip, TooltipPopup, TooltipTrigger, useReducedMotion } from "@t4-code/ui";
+import { Badge, cn, StatusPill, Tooltip, TooltipPopup, TooltipTrigger, useReducedMotion } from "@t4-code/ui";
 import {
   useCallback,
   useEffect,
@@ -23,6 +23,7 @@ import { resolveLiveSession } from "../../platform/live-workspace.ts";
 import { Composer } from "../composer/Composer.tsx";
 import { flattenFileIndex } from "../composer/file-refs.ts";
 import { getInspectorStore, type FileChildren } from "../panes/inspector-store.ts";
+import { useNowTick } from "../panes/hooks.ts";
 import {
   ApprovalPanel,
   AskPanel,
@@ -48,6 +49,7 @@ import {
   computeStableRows,
   deriveAttention,
   deriveTranscriptRows,
+  formatElapsed,
   initialStableRowsState,
   shouldShowAttention,
   type StableRowsState,
@@ -95,6 +97,32 @@ export function FreshnessBadge({ session }: { readonly session: WorkspaceSession
     );
   }
   return null;
+}
+
+/** Plain lifecycle badge for sessions that have no richer live status pill. */
+export function SessionLifecycleBadge({ session }: { readonly session: WorkspaceSession }) {
+  if (session.freshness !== "live" || session.status !== null || session.control !== undefined)
+    return null;
+
+  const label =
+    session.lifecycle === "idle"
+      ? "Idle"
+      : session.lifecycle === "closed"
+        ? "Stopped"
+        : "Status unknown";
+  const detail =
+    label === "Status unknown"
+      ? "T4 has saved history for this task, but the runtime did not report whether it is running, idle, or stopped."
+      : label === "Stopped"
+        ? "The runtime reports that this task has stopped."
+        : "The runtime reports that this task is waiting and has no work in progress.";
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<Badge variant="outline">{label}</Badge>} />
+      <TooltipPopup side="bottom">{detail}</TooltipPopup>
+    </Tooltip>
+  );
 }
 
 /** Subheader ownership badge; mirrors FreshnessBadge, which wins when set. */
@@ -148,6 +176,56 @@ function activityLabel(activity: SessionActivity): string {
   if (activity === "compacting") return "Compacting context";
   if (activity === "working") return "Working";
   return "";
+}
+
+/**
+ * A quiet, continuously moving confirmation that this task is genuinely
+ * running here. The separate announcer below owns screen-reader updates so
+ * this visual timer can tick without speaking every second.
+ */
+export function SessionActivityBanner({
+  activity,
+  nowMs,
+  startedAt,
+}: {
+  readonly activity: SessionActivity;
+  readonly nowMs: number;
+  readonly startedAt: string | null;
+}) {
+  if (activity === null) return null;
+
+  return (
+    <div
+      aria-hidden="true"
+      className="flex min-h-9 shrink-0 items-center justify-center gap-2 border-border/60 border-b bg-secondary/60 px-3 text-muted-foreground text-xs"
+      data-session-activity-banner={activity}
+    >
+      <StatusPill labelHidden status="working" />
+      <span className="font-medium text-foreground">{activityLabel(activity)}</span>
+      {startedAt !== null && (
+        <>
+          <span className="text-border" aria-hidden="true">
+            ·
+          </span>
+          <SessionActivityElapsed fromIso={startedAt} nowMs={nowMs} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function SessionActivityElapsed({
+  fromIso,
+  nowMs,
+}: {
+  readonly fromIso: string;
+  readonly nowMs: number;
+}) {
+  const tickMs = useNowTick();
+  const baselineRef = useRef({ nowMs, tickMs });
+  if (baselineRef.current.nowMs !== nowMs) baselineRef.current = { nowMs, tickMs };
+  const elapsedNowMs = baselineRef.current.nowMs + tickMs - baselineRef.current.tickMs;
+  return <span className="font-mono tabular-nums">{formatElapsed(fromIso, elapsedNowMs)}</span>;
 }
 
 /**
@@ -498,7 +576,11 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
     projection.entries,
   );
   const sessionActivity: SessionActivity =
-    snapshot.link === "live" && !catchingUp && snapshot.sessionActive
+    !archived &&
+    sessionControl === null &&
+    snapshot.link === "live" &&
+    !catchingUp &&
+    snapshot.sessionActive
       ? projection.contextMaintenance === null
         ? "working"
         : "compacting"
@@ -534,6 +616,11 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
           Catching up — refreshing this transcript from a snapshot
         </div>
       )}
+      <SessionActivityBanner
+        activity={sessionActivity}
+        nowMs={snapshot.nowMs}
+        startedAt={projection.turnStartedAt}
+      />
       {controlPresentation !== null && sessionControl !== null && (
         <SessionControlBanner
           mode={sessionControl.mode}
