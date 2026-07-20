@@ -487,11 +487,11 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(
     ciWorkflow.includes('sdkmanager --install "platforms;android-36" "build-tools;36.0.0"'),
   );
-  assert.ok(ciWorkflow.includes("pnpm --filter @t4-code/mobile check:android:debug"));
+  assert.ok(ciWorkflow.includes("pnpm --filter @t4-code/companion check:android:native"));
   assert.ok(!ciWorkflow.includes("T4_ANDROID_KEYSTORE_BASE64"));
   assert.equal(
-    JSON.parse(files.get("apps/mobile/package.json")).scripts["check:android:debug"],
-    "pnpm sync:android && node ./scripts/run-gradle.mjs testDebugUnitTest assembleDebug lintDebug",
+    JSON.parse(files.get("apps/companion/package.json")).scripts["check:android:native"],
+    "node scripts/android-build.mjs check",
   );
 
   assert.ok(releaseWorkflow.includes("github.ref == 'refs/heads/main'"));
@@ -540,7 +540,7 @@ test("deploys release site source only after artifact publication", () => {
   ]) {
     assert.ok(!releaseVerify.includes(duplicate));
   }
-  assert.ok(releaseWorkflow.includes("pnpm --filter @t4-code/mobile build:android:release"));
+  assert.ok(releaseWorkflow.includes("pnpm --filter @t4-code/companion build:android:release"));
   assert.ok(releaseWorkflow.includes("T4_ANDROID_KEYSTORE_BASE64"));
   assert.ok(releaseWorkflow.includes("node scripts/inspect-android-release.mjs"));
   assert.ok(releaseWorkflow.includes('--metadata "$metadata"'));

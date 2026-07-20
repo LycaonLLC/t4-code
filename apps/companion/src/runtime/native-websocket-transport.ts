@@ -1,7 +1,16 @@
+import { Platform } from "react-native";
+
 import type { OmpTransport, Unsubscribe } from "@t4-code/client";
+import { nativeWebSocketOrigin } from "./native-websocket-origin";
 
 const MAX_MESSAGE_BYTES = 4 * 1024 * 1024;
 const OPEN_TIMEOUT_MS = 12_000;
+
+type NativeWebSocketConstructor = new (
+  url: string,
+  protocols: string[],
+  options: { headers: Record<string, string> },
+) => WebSocket;
 
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
@@ -19,7 +28,12 @@ export class NativeWebSocketTransport implements OmpTransport {
     if (this.socket !== undefined) return Promise.reject(new Error("connection already started"));
     return new Promise((resolve, reject) => {
       let settled = false;
-      const socket = new WebSocket(this.url);
+      const socket =
+        Platform.OS === "web"
+          ? new WebSocket(this.url)
+          : new (WebSocket as unknown as NativeWebSocketConstructor)(this.url, [], {
+              headers: { origin: nativeWebSocketOrigin(this.url) },
+            });
       socket.binaryType = "arraybuffer";
       this.socket = socket;
       const timer = setTimeout(() => {

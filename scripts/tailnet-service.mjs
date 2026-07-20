@@ -14,7 +14,6 @@ const CONFIG_VERSION = 1;
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const MAX_TEXT = 4_096;
 const PROFILE_ROUTES_ENVIRONMENT_KEY = "T4_PROFILE_ROUTES";
-const CAPACITOR_NATIVE_ORIGINS = Object.freeze(["https://localhost", "capacitor://localhost"]);
 
 function fail(message) {
   throw new Error(message);
@@ -94,19 +93,6 @@ function normalizeServiceOrigin(value) {
   return url.origin;
 }
 
-function normalizeServiceNativeOrigins(value = CAPACITOR_NATIVE_ORIGINS) {
-  if (!Array.isArray(value)) fail("native allowed origins must be an array");
-  const origins = value.map((origin) => cleanText(origin, "native allowed origin", 128));
-  const unique = new Set(origins);
-  if (
-    unique.size !== CAPACITOR_NATIVE_ORIGINS.length ||
-    !CAPACITOR_NATIVE_ORIGINS.every((origin) => unique.has(origin))
-  ) {
-    fail(`native allowed origins must contain exactly ${CAPACITOR_NATIVE_ORIGINS.join(", ")}`);
-  }
-  return [...CAPACITOR_NATIVE_ORIGINS];
-}
-
 export function servicePaths({
   platform = process.platform,
   homeDirectory = homedir(),
@@ -166,7 +152,6 @@ export function validateServiceConfig(input) {
     webRoot: absolutePath(input.webRoot ?? join(sourceRoot, "apps", "web", "dist"), "web root"),
     appSocket: absolutePath(input.appSocket, "OMP appserver socket"),
     allowedOrigin: normalizeServiceOrigin(input.allowedOrigin),
-    nativeAllowedOrigins: normalizeServiceNativeOrigins(input.nativeAllowedOrigins),
     port: gatewayPort(input.port ?? DEFAULT_GATEWAY_PORT),
     label: cleanText(input.label ?? "OMP on this Tailnet host", "host label", 128),
     deploymentIdentity: deploymentIdentity(input.deploymentIdentity),
@@ -192,7 +177,6 @@ function escapeXml(value) {
 function gatewayEnvironment(config) {
   return {
     T4_ALLOWED_ORIGIN: config.allowedOrigin,
-    T4_NATIVE_ALLOWED_ORIGINS: config.nativeAllowedOrigins.join(","),
     T4_GATEWAY_HOST: "127.0.0.1",
     T4_GATEWAY_PORT: String(config.port),
     T4_WEB_ROOT: config.webRoot,
@@ -735,7 +719,6 @@ async function inspect(paths, options = {}) {
   console.log(`health: ${healthResult.ok ? "healthy" : "unhealthy"}`);
   console.log(`local URL: http://127.0.0.1:${config.port}`);
   console.log(`allowed origin: ${config.allowedOrigin}`);
-  console.log(`native origins: ${config.nativeAllowedOrigins.join(", ")}`);
   if (deploymentIdentityState !== undefined) console.log(`deployment identity: ${deploymentIdentityState}`);
   if (supervisorResult?.stderr) console.log(`diagnostics: ${supervisorResult.stderr}`);
   if (

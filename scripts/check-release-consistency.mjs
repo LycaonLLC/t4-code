@@ -14,6 +14,7 @@ export const RELEASE_CONTRACT_PATHS = [
   "README.md",
   "SECURITY.md",
   "THIRD_PARTY_NOTICES.md",
+  "apps/companion/app.json",
   "apps/desktop/src/target-manager.ts",
   "apps/site/src/docs/content.ts",
   "apps/site/src/release.ts",
@@ -336,14 +337,33 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       errors.push(`${path} version ${JSON.stringify(manifest.version)} does not match ${version}`);
     }
   }
-  const mobileManifest = parseJson(files, "apps/mobile/package.json", errors);
-  if (
-    mobileManifest?.scripts?.["check:android:debug"] !==
-    "pnpm sync:android && node ./scripts/run-gradle.mjs testDebugUnitTest assembleDebug lintDebug"
-  ) {
-    errors.push(
-      "apps/mobile/package.json must run Android JVM tests, debug compilation, and lint in the pre-merge check",
-    );
+  const companionManifestPath = "apps/companion/package.json";
+  const companionManifest = parseJson(files, companionManifestPath, errors);
+  if (companionManifest?.scripts?.["check:android:native"] !== "node scripts/android-build.mjs check") {
+    errors.push(`${companionManifestPath} must run the native Expo Android pre-merge check`);
+  }
+  if (companionManifest?.scripts?.["build:android:release"] !== "node scripts/android-build.mjs release") {
+    errors.push(`${companionManifestPath} must run the signed native Expo Android release build`);
+  }
+
+  const companionConfigPath = "apps/companion/app.json";
+  const companionConfig = parseJson(files, companionConfigPath, errors)?.expo;
+  const [major, minor, patch] = version.split(".").map(Number);
+  const nativeBuildNumber = major * 1_000_000 + minor * 10_000 + patch;
+  if (companionConfig?.version !== version) {
+    errors.push(`${companionConfigPath} Expo version must be ${version}`);
+  }
+  if (companionConfig?.android?.package !== androidIdentity?.applicationId) {
+    errors.push(`${companionConfigPath} Android package must preserve the release identity`);
+  }
+  if (companionConfig?.android?.versionCode !== nativeBuildNumber) {
+    errors.push(`${companionConfigPath} Android versionCode must be ${nativeBuildNumber}`);
+  }
+  if (companionConfig?.ios?.bundleIdentifier !== androidIdentity?.applicationId) {
+    errors.push(`${companionConfigPath} iOS bundle identifier must preserve the release identity`);
+  }
+  if (companionConfig?.ios?.buildNumber !== String(nativeBuildNumber)) {
+    errors.push(`${companionConfigPath} iOS buildNumber must be ${nativeBuildNumber}`);
   }
 
   if (releaseTag !== undefined && releaseTag !== expectedTag) {
@@ -758,7 +778,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9",
     "android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407",
     'sdkmanager --install "platforms;android-36" "build-tools;36.0.0"',
-    "pnpm --filter @t4-code/mobile check:android:debug",
+    "pnpm --filter @t4-code/companion check:android:native",
   ]) {
     requireText(ciWorkflow, expected, ".github/workflows/ci.yml", errors);
   }
@@ -793,7 +813,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "T4_ANDROID_KEYSTORE_PASSWORD",
     "T4_ANDROID_KEY_ALIAS",
     "T4_ANDROID_KEY_PASSWORD",
-    "pnpm --filter @t4-code/mobile build:android:release",
+    "pnpm --filter @t4-code/companion build:android:release",
     "node scripts/inspect-android-release.mjs",
     "node scripts/inspect-linux-update.mjs",
     '--metadata "$metadata"',

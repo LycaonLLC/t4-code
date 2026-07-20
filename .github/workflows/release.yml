@@ -208,11 +208,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build web application for Android
-        run: pnpm build:web
-
       - name: Verify unsigned Android application
-        run: pnpm --filter @t4-code/mobile check:android:debug
+        run: pnpm --filter @t4-code/companion check:android:native
 
       - name: Restore and validate Android release signing key
         shell: bash
@@ -249,14 +246,14 @@ jobs:
           T4_ANDROID_KEY_ALIAS: ${{ secrets.T4_ANDROID_KEY_ALIAS }}
           T4_ANDROID_KEY_PASSWORD: ${{ secrets.T4_ANDROID_KEY_PASSWORD }}
         run: |
-          pnpm --filter @t4-code/mobile build:android:release
+          pnpm --filter @t4-code/companion build:android:release
 
       - name: Inspect signed Android APK
         shell: bash
         run: |
           set -euo pipefail
-          apk="apps/mobile/android/app/build/outputs/apk/release/app-release.apk"
-          metadata="apps/mobile/android/app/build/outputs/apk/release/output-metadata.json"
+          apk="apps/companion/android/app/build/outputs/apk/release/app-release.apk"
+          metadata="apps/companion/android/app/build/outputs/apk/release/output-metadata.json"
           build_tools="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools/36.0.0"
           node scripts/inspect-android-release.mjs \
             --apk "$apk" \
@@ -271,7 +268,7 @@ jobs:
         run: |
           mkdir -p artifacts
           cp \
-            apps/mobile/android/app/build/outputs/apk/release/app-release.apk \
+            apps/companion/android/app/build/outputs/apk/release/app-release.apk \
             "artifacts/T4-Code-${VERSION}-android.apk"
           (cd artifacts && sha256sum T4-Code-* > SHA256SUMS-android.txt)
 

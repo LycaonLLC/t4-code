@@ -110,11 +110,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build web application
-        run: pnpm build:web
-
       - name: Verify unsigned Android debug application
-        run: pnpm --filter @t4-code/mobile check:android:debug
+        run: pnpm --filter @t4-code/companion check:android:native
 
   verify:
     name: verify

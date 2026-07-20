@@ -9,15 +9,12 @@ import { test } from "node:test";
 import WebSocket, { WebSocketServer } from "ws";
 
 import {
-  CAPACITOR_NATIVE_ORIGINS,
   cacheControlForStaticPath,
   injectBackendConfig,
   normalizeAllowedOrigin,
   normalizeDeploymentIdentity,
-  normalizeNativeAllowedOrigins,
   normalizeProfileRoutes,
   supervisorCommandForRoute,
-  optionsFromEnvironment,
   resolveAppSocket,
   safeStaticPath,
   startTailnetGateway,
@@ -116,40 +113,11 @@ test("origin validation accepts only explicit Tailscale HTTPS origins", () => {
   }
 });
 
-test("native origin validation is pinned to Capacitor's Android and iOS defaults", () => {
-  assert.deepEqual(normalizeNativeAllowedOrigins(), ["https://localhost", "capacitor://localhost"]);
-  assert.deepEqual(normalizeNativeAllowedOrigins(["capacitor://localhost", "https://localhost"]), [
-    ...CAPACITOR_NATIVE_ORIGINS,
-  ]);
-  for (const value of [
-    ["*"],
-    ["null"],
-    ["http://localhost", "capacitor://localhost"],
-    ["https://localhost", "capacitor://localhost", "https://mobile.example.com"],
-  ]) {
-    assert.throws(() => normalizeNativeAllowedOrigins(value), /must contain exactly/u);
-  }
-});
-
 test("deployment identity accepts only an exact immutable SHA-256 token", () => {
   assert.equal(normalizeDeploymentIdentity(DEPLOYMENT_IDENTITY), DEPLOYMENT_IDENTITY);
   for (const value of ["latest", `sha256:${"B".repeat(64)}`, `sha256:${"b".repeat(63)}`]) {
     assert.throws(() => normalizeDeploymentIdentity(value), /exactly 64 lowercase hexadecimal/u);
   }
-});
-
-test("gateway environment parses the explicit comma-separated native origin set", () => {
-  const options = optionsFromEnvironment({
-    T4_ALLOWED_ORIGIN: ALLOWED_ORIGIN,
-    T4_NATIVE_ALLOWED_ORIGINS: "https://localhost,capacitor://localhost",
-    T4_DEPLOYMENT_IDENTITY: DEPLOYMENT_IDENTITY,
-    XDG_RUNTIME_DIR: "/run/user/1000",
-  });
-  assert.deepEqual(normalizeNativeAllowedOrigins(options.nativeAllowedOrigins), [
-    "https://localhost",
-    "capacitor://localhost",
-  ]);
-  assert.equal(options.deploymentIdentity, DEPLOYMENT_IDENTITY);
 });
 
 test("backend injection is explicit, credential-free, and script-safe", () => {
@@ -241,7 +209,7 @@ test("gateway serves configured app and reports real upstream health", async () 
   }
 });
 
-test("gateway rejects cross-origin sockets and bridges only the web and native allowlist", async () => {
+test("gateway accepts only the exact Tailnet origin used by web and Expo native clients", async () => {
   const running = await fixture();
   try {
     for (const origin of ["https://attacker.example-tailnet.ts.net", "null", "*"]) {
@@ -258,7 +226,7 @@ test("gateway rejects cross-origin sockets and bridges only the web and native a
       assert.equal(deniedStatus, 403);
     }
 
-    for (const origin of [ALLOWED_ORIGIN, ...CAPACITOR_NATIVE_ORIGINS]) {
+    for (const origin of [ALLOWED_ORIGIN]) {
       const allowed = new WebSocket(`${running.url.replace("http", "ws")}/v1/ws`, {
         headers: { Origin: origin },
       });

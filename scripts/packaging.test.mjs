@@ -43,7 +43,7 @@ function androidReleaseFixture(overrides = {}) {
   return {
     contract,
     packageVersion,
-    mobilePackageVersion: overrides.mobilePackageVersion ?? packageVersion,
+    companionPackageVersion: overrides.companionPackageVersion ?? packageVersion,
     apkName: overrides.apkName ?? "app-release.apk",
     apkFileNames: overrides.apkFileNames ?? ["app-release.apk"],
     outputMetadata: overrides.outputMetadata ?? {
@@ -173,10 +173,10 @@ test("Android release identity is public, pinned, and wired into the release wor
   assert.match(releaseWorkflow, /--aapt "\$build_tools\/aapt"/u);
   assert.match(releaseWorkflow, /--apksigner "\$build_tools\/apksigner"/u);
   const androidDebugGate = releaseWorkflow.indexOf(
-    "pnpm --filter @t4-code/mobile check:android:debug",
+    "pnpm --filter @t4-code/companion check:android:native",
   );
   const androidReleaseBuild = releaseWorkflow.indexOf(
-    "pnpm --filter @t4-code/mobile build:android:release",
+    "pnpm --filter @t4-code/companion build:android:release",
   );
   assert.ok(androidDebugGate >= 0, "release workflow must run the Android debug verification gate");
   assert.ok(androidDebugGate < androidReleaseBuild, "Android verification must precede the signed build");

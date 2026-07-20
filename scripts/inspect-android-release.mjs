@@ -155,7 +155,7 @@ function validateUniversalMetadata(metadata, expected) {
 export function validateAndroidRelease({
   contract,
   packageVersion,
-  mobilePackageVersion,
+  companionPackageVersion,
   apkName,
   apkFileNames,
   outputMetadata,
@@ -164,8 +164,8 @@ export function validateAndroidRelease({
   signerOutput,
 }) {
   validateIdentityContract(contract);
-  if (mobilePackageVersion !== packageVersion) {
-    fail(`mobile package version ${mobilePackageVersion} does not match root package version ${packageVersion}`);
+  if (companionPackageVersion !== packageVersion) {
+    fail(`companion package version ${companionPackageVersion} does not match root package version ${packageVersion}`);
   }
 
   const versionCode = deriveAndroidVersionCode(packageVersion);
@@ -250,7 +250,7 @@ export function inspectAndroidRelease({ repoRoot, apk, metadata, aapt, apksigner
 
   const contract = readJson(resolve(repoRoot, ".github/android-release-identity.json"), "Android release identity contract");
   const rootPackage = readJson(resolve(repoRoot, "package.json"), "root package manifest");
-  const mobilePackage = readJson(resolve(repoRoot, "apps/mobile/package.json"), "mobile package manifest");
+  const companionPackage = readJson(resolve(repoRoot, "apps/companion/package.json"), "companion package manifest");
   const outputMetadata = readJson(metadata, "Android output metadata");
   const apkFileNames = readdirSync(dirname(apk)).filter((file) => file.endsWith(".apk")).sort();
   const badgingOutput = execFileSync(aapt, ["dump", "badging", apk], { encoding: "utf8" });
@@ -260,7 +260,7 @@ export function inspectAndroidRelease({ repoRoot, apk, metadata, aapt, apksigner
   return validateAndroidRelease({
     contract,
     packageVersion: rootPackage.version,
-    mobilePackageVersion: mobilePackage.version,
+    companionPackageVersion: companionPackage.version,
     apkName: basename(apk),
     apkFileNames,
     outputMetadata,

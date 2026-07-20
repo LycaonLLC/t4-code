@@ -12,8 +12,8 @@ phone browser or bundled T4 mobile UI
 
 There is no T4 password in this mode. Tailscale membership and your tailnet
 ACLs or grants are the access boundary. The gateway never listens on a LAN
-interface. It accepts WebSocket connections from the exact configured `.ts.net`
-HTTPS origin and the two fixed Capacitor WebView origins described below. No
+interface. It accepts WebSocket connections only from the exact shared
+`.ts.net` HTTPS origin configured for both the browser and Expo companion. No
 token or password is passed through the browser or mobile UI.
 
 The Apple Silicon Mac package contains the gateway. Open **Settings → Hosts**,
@@ -152,31 +152,20 @@ connected to the tailnet, the host gateway must be running, and OMP remains the
 owner of every session. The web app deliberately does not cache transcripts,
 host configuration, or runtime state for offline use.
 
-## Native mobile client origins
+## Native mobile client origin
 
-The Android APK and the planned iOS build bundle the T4 UI. They connect to the
-same `/v1/ws` endpoint over WSS; they do not load the hosted website into the
-WebView. Capacitor's documented defaults give those bundled pages these
-origins:
-
-- Android: `https://localhost`
-- iOS: `capacitor://localhost`
-
-The service installer writes those exact values to
-`T4_NATIVE_ALLOWED_ORIGINS`. The gateway accepts them in addition to the one
-Tailnet HTTPS origin passed through `--origin`. Empty values, `null`, wildcard
-origins, alternate localhost schemes, and extra origins are rejected at
-startup. These values must stay aligned with the mobile
-`server.hostname`, `server.androidScheme`, and `server.iosScheme` settings. See
-the [Capacitor configuration reference](https://capacitorjs.com/docs/config#schema)
-for the platform defaults.
+The native Expo clients for Android and iOS connect directly to the same
+`/v1/ws` endpoint over WSS; they do not embed the hosted website. The client
+sets its WebSocket `Origin` to the endpoint's exact HTTPS origin. The gateway
+therefore applies one origin policy to the browser and both native clients: the
+Tailnet HTTPS origin passed through `--origin`. Alternate hosts, ports,
+schemes, `null`, wildcards, and missing origins are rejected.
 
 The hosted web response keeps an exact `connect-src` entry for its configured
-`wss://HOST.ts.net[:PORT]` endpoint. The bundled mobile document can connect to
-user-selected profiles only under `wss://*.ts.net:*`. That subdomain pattern
-restricts outbound destinations; it is never added to the gateway's accepted
-WebSocket Origin list. Do not replace either policy with an unrestricted
-`connect-src *`.
+`wss://HOST.ts.net[:PORT]` endpoint. The native companion validates each saved
+host through `parseCompanionHost`, which requires HTTPS and a full `.ts.net`
+hostname before deriving the WSS route. Do not replace the hosted policy with
+an unrestricted `connect-src *` or relax the native host validation.
 
 An Origin header identifies the page that opened the WebSocket. It does not
 prove that the caller is the signed T4 APK. Tailscale membership and ACLs remain
@@ -274,10 +263,10 @@ removes all of them.
 
 - The local HTTP gateway is fixed to `127.0.0.1` (or `::1` when explicitly
   configured by code); it cannot be configured to listen on a LAN address.
-- The hosted browser endpoint is an exact HTTPS `.ts.net` origin. The native
-  exceptions are exactly `https://localhost` and `capacitor://localhost`.
-  Plain HTTP Tailnet origins, public domains, URL paths, embedded credentials,
-  `null`, wildcard origins, and any other native origin are rejected.
+- Hosted browser and native Expo WebSocket connections must present the same
+  exact HTTPS `.ts.net` origin. Plain HTTP Tailnet origins, public domains, URL
+  paths, embedded credentials, missing origins, `null`, and wildcards are
+  rejected.
 - Tailscale Serve terminates HTTPS and keeps the route tailnet-only. Do not
   substitute Funnel.
 - Every tailnet identity permitted to reach this node and port can operate the

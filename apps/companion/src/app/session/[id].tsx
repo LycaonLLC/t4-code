@@ -15,6 +15,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { TranscriptSpeechButton } from "@/components/transcript-speech-button";
+import { VoiceInputButton } from "@/components/voice-input-button";
 import { useCompanionRuntime } from "@/runtime/companion-runtime";
 import {
   canWriteSession,
@@ -234,6 +235,12 @@ export default function SessionScreen() {
             placeholder={writable ? "Reply or steer…" : "Read-only while another app owns this session"}
             placeholderTextColor={colors.textDim}
             style={styles.composerInput}
+            value={draft}
+          />
+          <VoiceInputButton
+            disabled={!writable || sending}
+            onChangeText={setDraft}
+            onError={(error) => setMessage(error === "" ? null : error)}
             value={draft}
           />
           <Pressable disabled={!writable || sending || draft.trim() === ""} onPress={() => void send()} style={[styles.sendButton, (!writable || sending || draft.trim() === "") && styles.disabled]}>

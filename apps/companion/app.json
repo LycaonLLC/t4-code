@@ -11,7 +11,8 @@
     "ios": {
       "icon": "./assets/images/icon.png",
       "bundleIdentifier": "com.lycaonsolutions.t4code",
-      "supportsTablet": false
+      "supportsTablet": false,
+      "buildNumber": "10029"
     },
     "android": {
       "package": "com.lycaonsolutions.t4code",
@@ -20,7 +21,8 @@
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": true
+      "predictiveBackGestureEnabled": true,
+      "versionCode": 10029
     },
     "web": {
       "output": "static",
@@ -42,7 +44,15 @@
           "defaultChannel": "attention"
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow T4 Companion to transcribe voice input.",
+          "speechRecognitionPermission": "Allow T4 Companion to turn speech into prompt text."
+        }
+      ],
+      "./plugins/with-android-release-signing.cjs"
     ],
     "experiments": {
       "typedRoutes": true,
