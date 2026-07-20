@@ -4,6 +4,7 @@ import { OmpAuthorityBridgeClient, type OmpAuthorityBridgeChild } from "../src/o
 import {
 	decodeOmpAuthorityBridgeClientFrame,
 	encodeOmpAuthorityBridgeFrame,
+	OMP_AUTHORITY_BRIDGE_MAX_LINE_BYTES,
 	OMP_AUTHORITY_BRIDGE_PROTOCOL,
 } from "../src/omp-authority-bridge-contract.ts";
 
@@ -119,7 +120,7 @@ describe("OMP authority bridge client", () => {
 		await client.stop();
 	});
 
-	test("forwards abort and returns only sanitized bridge errors", async () => {
+	test("forwards abort and rejects locally without waiting for an unresponsive bridge", async () => {
 		const child = new FakeBridgeChild();
 		const client = new OmpAuthorityBridgeClient({ executable: "/opt/omp" }, () => child);
 		const started = client.start();
@@ -130,16 +131,17 @@ describe("OMP authority bridge client", () => {
 		await Bun.sleep(0);
 		const request = child.request();
 		controller.abort();
-		await Bun.sleep(0);
+		await expect(pending).rejects.toMatchObject({ code: "ABORTED", message: "operation was cancelled" });
 		expect(child.request(1)).toEqual({ v: OMP_AUTHORITY_BRIDGE_PROTOCOL, type: "cancel", id: request.id });
-		child.server({
-			v: OMP_AUTHORITY_BRIDGE_PROTOCOL,
-			type: "response",
-			id: request.id,
-			ok: false,
-			error: { code: "FORBIDDEN", message: "operation is not permitted" },
-		});
-		await expect(pending).rejects.toMatchObject({ code: "FORBIDDEN", message: "operation is not permitted" });
 		await client.stop();
+	});
+
+	test("fails closed on an oversized unfinished bridge frame", async () => {
+		const child = new FakeBridgeChild();
+		const client = new OmpAuthorityBridgeClient({ executable: "/opt/omp" }, () => child);
+		const started = client.start();
+		child.output.push("x".repeat(OMP_AUTHORITY_BRIDGE_MAX_LINE_BYTES + 1));
+		await expect(started).rejects.toThrow("bridge output exceeds the line limit");
+		expect(child.killed).toBe(true);
 	});
 });

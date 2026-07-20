@@ -3,6 +3,7 @@ import { isAbsolute } from "node:path";
 import {
 	decodeOmpAuthorityBridgeServerFrame,
 	encodeOmpAuthorityBridgeFrame,
+	OMP_AUTHORITY_BRIDGE_MAX_LINE_BYTES,
 	OMP_AUTHORITY_BRIDGE_PROTOCOL,
 	type OmpAuthorityBridgeMethod,
 	type OmpAuthorityBridgeReady,
@@ -87,12 +88,19 @@ async function* lines(stream: AsyncIterable<string | Uint8Array>): AsyncGenerato
 		pending += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
 		let index = pending.indexOf("\n");
 		while (index >= 0) {
-			yield pending.slice(0, index).replace(/\r$/u, "");
+			const line = pending.slice(0, index).replace(/\r$/u, "");
+			if (Buffer.byteLength(line, "utf8") > OMP_AUTHORITY_BRIDGE_MAX_LINE_BYTES)
+				throw new Error("bridge output exceeds the line limit");
+			yield line;
 			pending = pending.slice(index + 1);
 			index = pending.indexOf("\n");
 		}
+		if (Buffer.byteLength(pending, "utf8") > OMP_AUTHORITY_BRIDGE_MAX_LINE_BYTES)
+			throw new Error("bridge output exceeds the line limit");
 	}
 	pending += decoder.decode();
+	if (Buffer.byteLength(pending, "utf8") > OMP_AUTHORITY_BRIDGE_MAX_LINE_BYTES)
+		throw new Error("bridge output exceeds the line limit");
 	if (pending) yield pending;
 }
 
@@ -239,6 +247,7 @@ export class OmpAuthorityBridgeClient {
 		this.#pending.set(id, { method, resolve: gate.resolve, reject: gate.reject, emitTerminalOutput });
 		const onAbort = (): void => {
 			void this.#write({ v: OMP_AUTHORITY_BRIDGE_PROTOCOL, type: "cancel", id }).catch(() => undefined);
+			gate.reject(bridgeError("ABORTED", "operation was cancelled"));
 		};
 		signal?.addEventListener("abort", onAbort, { once: true });
 		try {
