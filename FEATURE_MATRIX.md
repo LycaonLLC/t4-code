@@ -16,10 +16,10 @@ The README and release notes are the release contract. They must only claim beha
 
 | Capability | OMP authority | T3 reference | Desktop surface and required states | Priority |
 |---|---|---|---|---|
-| Local host discovery | `packages/coding-agent/src/modes/rpc/rpc-mode.ts`, planned appserver health/capabilities | `apps/web/src/routes/__root.tsx`, `packages/client-runtime/src/connection/*` | Host switcher; starting, ready, version-skew, unavailable, reconnecting, read-only, upgrade-required | Launch |
-| Remote tailnet host | Existing collab transport plus planned appserver; current Mac/bunker topology | `packages/tailscale/src/tailscale.ts`, `packages/ssh/src/tunnel.ts`, connection supervisor | Add by MagicDNS/IP, pair, trust, connect, revoke, latency/status; never expose tokens | Launch |
+| Local host discovery | Standalone `t4-host`, `omp bridge --stdio`, and the stable administrative status command | `apps/web/src/routes/__root.tsx`, `packages/client-runtime/src/connection/*` | Host switcher; starting, ready, version-skew, unavailable, reconnecting, read-only, upgrade-required | Launch |
+| Remote tailnet host | T4 host WebSocket transport and Tailnet gateway; current Mac/bunker topology | `packages/tailscale/src/tailscale.ts`, `packages/ssh/src/tunnel.ts`, connection supervisor | Add by MagicDNS/IP, pair, trust, connect, revoke, latency/status; never expose tokens | Launch |
 | Host capability negotiation | Planned versioned app protocol over OMP runtime | T3 contract schemas and server handshake | Show feature compatibility; disable unsupported actions with reason | Launch |
-| Multi-host operation | Planned appserver registry | T3 environments/projects | Sessions grouped by host and project; host status remains visible across switches | Launch |
+| Multi-host operation | T4 host registry and profile-scoped services | T3 environments/projects | Sessions grouped by host and project; host status remains visible across switches | Launch |
 | Daemon lifecycle | Planned Linux systemd user unit and macOS launchd agent | T3 desktop service launch/update patterns | Install/start/stop/restart/status/log location; desktop may attach without owning process lifetime | Launch |
 | Offline cached browsing | Session JSONL snapshots plus disposable client cache | T3 cached snapshots/replay | Read cached sessions while host is offline; all writes disabled and labeled; cache never becomes durable truth | Launch |
 
@@ -42,7 +42,7 @@ OMP authority: `packages/coding-agent/src/session/agent-session.ts`, `session-ma
 | List/recent/search/filter | session store and metadata | Codex-parity left rail: By project or In one list; Priority, Last updated, or Manual order; real project/session dragging with keyboard fallbacks; title/project/host search; attention/running/unread/error filters; pinned shortcuts; five-row Show more; project aliases; reversible hidden projects; bulk read/archive; local-only Finder reveal; direct pin/archive controls | `Rail.tsx`, `session-tree.ts`, workspace store, management helpers, browser tests | Launch |
 | New session | `/new` | Create in selected project/host; model/profile defaults visible before first prompt | draft routes and composer draft store | Launch |
 | Fast switch and tabs | session IDs and snapshots | One-click/keyboard switch; preserve draft, scroll anchor, panel widths/tabs, terminal focus; no white flash | T3 routes, `composerDraftStore`, `rightPanelStore`, terminal store | Launch |
-| Tail-first transcript history | Bounded `transcript.page` range reads plus the existing live attach cursor | Paint a small newest page on cold open; prepend older pages without moving the reading anchor or live cursor | T4-owned host and web client implemented; Flutter local cache and thin OMP bridge planned | Launch |
+| Tail-first transcript history | Bounded `transcript.page` range reads plus the existing live attach cursor | Paint a small newest page on cold open; prepend older pages without moving the reading anchor or live cursor | T4-owned host, web client, and thin OMP bridge implemented; Flutter local cache planned | Launch |
 | Resume | `/resume` | Open existing session by stable ID/path; recover moved/missing files with explicit error | thread routing and reconnect supervisor | Launch |
 | Rename | `/rename` | Inline rename with optimistic state and rollback | sidebar row actions | Launch |
 | Move working directory/session | `/move` | Native/remote path picker, validation, explicit impact message | environment picker patterns | Parity |
@@ -67,7 +67,7 @@ OMP authority: `packages/coding-agent/src/session/agent-session.ts`, `session-ma
 | Slash commands | `slash-commands/builtin-registry.ts` | Schema-fed autocomplete, aliases, argument hints, subcommands, disabled reason by mode/guest authority | T3 slash search/menu logic |
 | File/path references | read/workspace/LSP context | Fuzzy file picker, chips, drag/drop, remote paths, remove/reorder | T3 inline chips and file context |
 | Images/attachments | session image attachments, inspect/image tools | Paste/drop/file picker, thumbnails, size/type errors, upload/promotion state | T3 attachment preview/promotion logic |
-| Voice/STT/TTS | `stt/stt-controller.ts`, setup CLI, TTS tool | Optional record/transcribe/read-aloud with explicit install/error state | T3 composer controls; new OMP appserver bridge |
+| Voice/STT/TTS | `stt/stt-controller.ts`, setup CLI, TTS tool | Optional record/transcribe/read-aloud with explicit install/error state | T3 composer controls; T4 host capability |
 | Model selector | model registry and `/model`/`/switch` | Provider/model search, active role, unavailable/limit state, per-session switch | T3 model picker/provider state |
 | Thinking/reasoning level | model capabilities/settings | Only valid options per model; retain user choice by profile/session | T3 reasoning controls |
 | Fast tier | `/fast` | on/off/status and provider scope; semantic accent only while active | composer status control |
@@ -134,7 +134,7 @@ Subagent event authority includes `TASK_SUBAGENT_LIFECYCLE_CHANNEL`, `TASK_SUBAG
 | Right-panel families | `rightPanelStore.ts`, `RightPanelTabs.tsx`, `RightPanelSheet.tsx` | protocol surface registry | Five persistent families: Agents, Activity, Review, Files, Terminal; open/close/reorder/select/restore per session; context is a composer popover/dialog and raw events are Activity filters |
 | Diff/review | `ReviewPane`, `turn-review.ts`, unified/split diff renderers | Implemented app-wire 0.7 turn snapshots plus turn-scoped `files.diff` / `review.apply` | Per-turn file attribution, lazy patch loading, independent keep/discard decisions, comments, and binary/missing/huge states |
 | File preview/editor | `files/FilePreviewPanel.tsx`, file save coordinator | read/write/LSP | loading, dirty, save conflict, diagnostics, binary/image, offline read-only |
-| Terminal drawer | `ThreadTerminalDrawer.tsx`, server terminal manager/node-pty | OMP persistent shell/appserver PTY | tabs/splits/resizing/history/input/exit/restart/reconnect/backpressure |
+| Terminal drawer | `ThreadTerminalDrawer.tsx`, server terminal manager/node-pty | T4 host terminal routed through the OMP authority bridge | tabs/splits/resizing/history/input/exit/restart/reconnect/backpressure |
 | Browser/app preview | T3 preview manager/panel/webview security | OMP browser tool and app preview | Required Wave 4 focused preview workspace or secondary Electron window; navigation, inspect/click/scroll/type, screenshots, crash/reload, trusted partitions; not a sixth permanent right-pane tab |
 | Context inspector | T3 context/session surfaces | OMP context estimate, rules, files, skills, memory contributions | Composer meter popover plus detailed dialog; budget breakdown and source disclosure without secret content |
 | Raw event inspector | New OMP surface | versioned app protocol frames | Activity filters/search/pause/copy/export, redaction, unknown-version fallback; not a separate permanent tab |
@@ -158,7 +158,7 @@ Authority paths: `config/settings.ts`, `settings-schema.ts`, `models-config-sche
 
 ### Built-in tool catalog
 
-The appserver exposes the active tool catalog from `tools/index.ts` and `tools/builtin-names.ts`. Initial known names are:
+The T4 host exposes the active tool catalog from `tools/index.ts` and `tools/builtin-names.ts`. Initial known names are:
 
 `read`, `bash`, `edit`, `ast_grep`, `ast_edit`, `ask`, `debug`, `eval`, `ssh`, `github`, `find/search`, `lsp`, `inspect_image`, `browser`, `checkpoint`, `rewind`, `task`, `job`, `irc`, `todo`, `web_search`, `search_tool_bm25`, `write`, `memory_edit`, `retain`, `recall`, `reflect`, `learn`, `manage_skill`; plus hidden/runtime tools `yield`, `report_finding`, `report_tool_issue`, `resolve`, and `goal` when enabled.
 

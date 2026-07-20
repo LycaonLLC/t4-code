@@ -1,5 +1,5 @@
 // Onboarding and remote-access view models. These are renderer projections
-// of what the appserver reports over app-wire (pairing, host index, service
+// of what the T4 host reports over app-wire (pairing, host index, service
 // state) — never a second protocol and never a credential store. Nothing in
 // this module may carry a bearer token, raw address, socket path, or service
 // file path: hosts and devices travel as safe display labels only.

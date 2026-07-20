@@ -374,7 +374,7 @@ export class DesktopLifecycle {
       if (ready) return;
       if (Date.now() >= deadline)
         throw new Error(
-          `appserver service did not become ready (${inspection.diagnostics.slice(0, 512)})`,
+          `T4 host service did not become ready (${inspection.diagnostics.slice(0, 512)})`,
         );
       const delay = Promise.withResolvers<void>();
       setTimeout(delay.resolve, 100);
@@ -521,7 +521,7 @@ export class DesktopLifecycle {
             code: "service_unavailable",
             message:
               runtimeError(error, "local").message ||
-              "The local OMP service is unavailable. Choose Check again to retry.",
+              "The local T4 host is unavailable. Choose Check again to retry.",
           };
     if (profileId === "default") {
       this.startupServiceError = error;

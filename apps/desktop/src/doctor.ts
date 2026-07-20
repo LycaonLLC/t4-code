@@ -298,14 +298,14 @@ export async function collectDoctorReport(
             "omp",
             "OMP runtime",
             "fail",
-            "No compatible OMP appserver runtime was found.",
+            "No compatible OMP authority bridge was found.",
             `Install the verified OMP ${contract.ompVersion} integration (${contract.ompTag}): ${contract.ompUrl}`,
           )
         : check(
             "omp",
             "OMP runtime",
             "pass",
-            `A compatible OMP ${contract.ompVersion} appserver runtime is available.`,
+            `A compatible OMP ${contract.ompVersion} authority bridge is available.`,
           ),
     );
   } catch (error) {
@@ -315,7 +315,7 @@ export async function collectDoctorReport(
             "omp",
             "OMP runtime",
             "fail",
-            "OMP is installed, but it does not provide the appserver status contract T4 Code requires.",
+            "OMP is installed, but it does not provide the versioned authority bridge T4 Code requires.",
             `Install the verified OMP ${contract.ompVersion} integration (${contract.ompTag}): ${contract.ompUrl}`,
           )
         : check(
@@ -334,7 +334,7 @@ export async function collectDoctorReport(
       "terminal-omp",
       "OMP commands",
       "pass",
-      "Every omp command found on PATH provides the appserver contract T4 requires.",
+      "Every omp command found on PATH provides the authority bridge T4 requires.",
     ),
     incompatible: check(
       "terminal-omp",
@@ -354,7 +354,7 @@ export async function collectDoctorReport(
       "terminal-omp",
       "OMP commands",
       "warning",
-      "Different omp commands are installed, and they do not all pass T4's appserver check. A task can therefore look live in one app but idle or delayed in another.",
+      "Different omp commands are installed, and they do not all pass T4's authority-bridge check. A task can therefore look live in one app but idle or delayed in another.",
       `Update or remove stale OMP copies so every shell and app uses the verified integration (${contract.ompTag}): ${contract.ompUrl}`,
     ),
     unavailable: check(
@@ -373,16 +373,16 @@ export async function collectDoctorReport(
       running
         ? check(
             "appserver",
-            "OMP appserver",
+            "T4 host",
             "pass",
-            "The default OMP appserver is running and healthy.",
+            "The default T4 host is running and healthy.",
           )
         : check(
             "appserver",
-            "OMP appserver",
+            "T4 host",
             "warning",
-            "The compatible OMP runtime was found, but its default appserver is not running.",
-            "Open T4 Code and start the default local profile, or run the appserver using the matching OMP documentation.",
+            "The compatible OMP runtime was found, but the default T4 host is not running.",
+            "Open T4 Code and start the default local profile.",
           ),
     );
   }

@@ -6,7 +6,7 @@ import { createJiti } from "jiti";
 const help = `Usage: node scripts/t4-doctor.mjs [--json]
 
 Run read-only, redacted checks for the T4 Code source toolchain, compatible
-OMP appserver runtime, local profiles, and optional Tailscale access.
+OMP authority bridge, local T4 host, profiles, and optional Tailscale access.
 
 Options:
   --json  Print a machine-readable report suitable for a redacted bug report

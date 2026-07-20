@@ -19,7 +19,7 @@ export const STAGE_INFO: Readonly<Record<OnboardingStage, StageInfo>> = {
   runtime: {
     id: "runtime",
     title: "Get the runtime running",
-    task: "The app talks to a local OMP appserver. Check for one, or install it as a service.",
+    task: "The app talks to a local T4 host backed by OMP. Check for one, or install it as a service.",
   },
   hosts: {
     id: "hosts",
@@ -44,7 +44,7 @@ export interface SessionDefaults {
 export interface OnboardingState {
   readonly stage: OnboardingStage;
   readonly service: ServiceViewModel;
-  /** User explicitly chose to run without a local appserver. */
+  /** User explicitly chose to run without a local T4 host. */
   readonly remoteOnly: boolean;
   readonly hosts: readonly HostRow[];
   readonly defaults: SessionDefaults;
@@ -77,7 +77,7 @@ export function blockedReason(state: OnboardingState): string | null {
   switch (state.stage) {
     case "runtime":
       if (state.service.status === "running" || state.remoteOnly) return null;
-      return "Continue once the appserver is running, or choose to use remote hosts only.";
+      return "Continue once the T4 host is running, or choose to use remote hosts only.";
     case "hosts":
       if (state.hosts.some((host) => hostIsUsable(host.state))) return null;
       if (state.hosts.length === 0) {

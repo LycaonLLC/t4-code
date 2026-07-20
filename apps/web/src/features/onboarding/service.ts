@@ -1,4 +1,4 @@
-// Local appserver service view model. The desktop backend owns the real
+// Local T4 host service view model. The desktop backend owns the real
 // systemd/launchd calls; the renderer only renders what the backend reports
 // and never invents progress. "Running" appears exactly when the backend
 // confirmed it — there is no optimistic success state.
@@ -28,7 +28,7 @@ export const SERVICE_PLATFORM_LABELS: Readonly<Record<ServicePlatform, string>> 
 export interface ServiceViewModel {
   readonly platform: ServicePlatform;
   readonly status: ServiceStatus;
-  /** Appserver version, once one has responded. */
+  /** Host version, once one has responded. */
   readonly version: string | null;
   /** One sentence naming what is true right now. */
   readonly detail: string;
@@ -52,7 +52,7 @@ export function initialService(platform: ServicePlatform): ServiceViewModel {
     platform,
     status: "checking",
     version: null,
-    detail: "Looking for a local OMP appserver…",
+    detail: "Looking for a local T4 host…",
     diagnostics: [],
   };
 }
@@ -60,7 +60,7 @@ export function initialService(platform: ServicePlatform): ServiceViewModel {
 /**
  * Fold a backend report into the view model. Success states only ever come
  * from `check-found-running` / `start-confirmed` — the two events the
- * backend sends after it has actually talked to the appserver.
+ * backend sends after it has actually talked to the host.
  */
 export function serviceReduce(state: ServiceViewModel, event: ServiceEvent): ServiceViewModel {
   const unit = SERVICE_PLATFORM_LABELS[state.platform];
@@ -70,7 +70,7 @@ export function serviceReduce(state: ServiceViewModel, event: ServiceEvent): Ser
         ...state,
         status: "running",
         version: event.version,
-        detail: `Appserver ${event.version} is running as a ${unit}.`,
+        detail: `T4 host ${event.version} is running as a ${unit}.`,
         diagnostics: [],
       };
     case "check-found-stopped":
@@ -83,7 +83,7 @@ export function serviceReduce(state: ServiceViewModel, event: ServiceEvent): Ser
       return {
         ...state,
         status: "not-installed",
-        detail: `No ${unit} is installed for the appserver yet.`,
+        detail: `No ${unit} is installed for the T4 host yet.`,
       };
     case "install-requested":
       return {
@@ -109,14 +109,14 @@ export function serviceReduce(state: ServiceViewModel, event: ServiceEvent): Ser
       return {
         ...state,
         status: "starting",
-        detail: "Starting the appserver…",
+        detail: "Starting the T4 host…",
       };
     case "start-confirmed":
       return {
         ...state,
         status: "running",
         version: event.version,
-        detail: `Appserver ${event.version} is running as a ${unit}.`,
+        detail: `T4 host ${event.version} is running as a ${unit}.`,
         diagnostics: [],
       };
     case "start-failed":

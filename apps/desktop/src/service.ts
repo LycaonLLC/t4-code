@@ -42,13 +42,17 @@ export function createSafeServiceEnvironment(
 // reject the verified runtime before it returns a healthy status response.
 const APP_SERVER_PROBE_TIMEOUT_MS = 3_000;
 const APP_SERVER_PROBE_MAX_OUTPUT_BYTES = 16 * 1024;
+const AUTHORITY_BRIDGE_HELP_MARKERS = [
+  "Expose the private OMP authority bridge used by T4 Code",
+  "--stdio",
+] as const;
 
 export class OmpAppserverCompatibilityError extends Error {
-  readonly code = "omp_appserver_status_json_required" as const;
+  readonly code = "omp_authority_bridge_required" as const;
 
   constructor() {
     super(
-      "Installed OMP is incompatible with this T4 Code build. T4 Code requires `omp appserver status --json`. Update OMP, then choose Check again.",
+      "Installed OMP is incompatible with this T4 Code build. T4 Code requires the versioned `omp bridge --stdio` authority bridge. Update OMP, then choose Check again.",
     );
     this.name = "OmpAppserverCompatibilityError";
     Object.defineProperty(this, "stack", {
@@ -108,6 +112,36 @@ function isAppserverStatus(value: unknown): boolean {
 }
 
 type AppserverProbeState = "running" | "stopped" | "incompatible" | false;
+async function probesAuthorityBridgeCommand(
+  executable: string,
+  environment: NodeJS.ProcessEnv,
+  runner: ProcessRunner,
+  timeoutMs: number,
+  maxOutputBytes: number,
+): Promise<boolean> {
+  try {
+    const result = await runProcess({
+      runner,
+      command: executable,
+      args: ["bridge", "--help"],
+      env: createSafeServiceEnvironment(environment),
+      timeoutMs,
+    });
+    const stdoutBytes = Buffer.byteLength(result.stdout, "utf8");
+    const stderrBytes = Buffer.byteLength(result.stderr, "utf8");
+    return (
+      result.exitCode === 0 &&
+      !result.stdoutTruncated &&
+      !result.stderrTruncated &&
+      stderrBytes === 0 &&
+      stdoutBytes <= maxOutputBytes &&
+      AUTHORITY_BRIDGE_HELP_MARKERS.every((marker) => result.stdout.includes(marker))
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function probesAppserverStatus(
   executable: string,
   environment: NodeJS.ProcessEnv,
@@ -201,6 +235,17 @@ export async function discoverOmpExecutable(
     } catch {
       continue;
     }
+    const hasAuthorityBridge = await probesAuthorityBridgeCommand(
+      candidate,
+      environment,
+      runner,
+      timeoutMs,
+      maxOutputBytes,
+    );
+    if (!hasAuthorityBridge) {
+      incompatible = true;
+      continue;
+    }
     const state = await probesAppserverStatus(
       candidate,
       environment,
@@ -283,6 +328,17 @@ export async function inspectPathOmpCompatibility(
     try {
       await access(candidate, fsConstants.X_OK);
     } catch {
+      continue;
+    }
+    const hasAuthorityBridge = await probesAuthorityBridgeCommand(
+      candidate,
+      environment,
+      runner,
+      timeoutMs,
+      maxOutputBytes,
+    );
+    if (!hasAuthorityBridge) {
+      incompatible += 1;
       continue;
     }
     const state = await probesAppserverStatus(candidate, environment, runner, timeoutMs, maxOutputBytes);

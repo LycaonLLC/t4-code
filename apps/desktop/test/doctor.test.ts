@@ -42,9 +42,9 @@ describe("T4 setup doctor", () => {
     const source = await readSourceContract();
 
     expect(source.ompVersion).toBe("17.0.5");
-    expect(source.ompTag).toBe("t4code-17.0.5-appserver-9");
+    expect(source.ompTag).toBe("t4code-17.0.5-appserver-10");
     expect(source.ompUrl).toBe(
-      "https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-9",
+      "https://github.com/lyc-aon/oh-my-pi/tree/t4code-17.0.5-appserver-10",
     );
   });
 
@@ -96,7 +96,7 @@ describe("T4 setup doctor", () => {
       "pnpm",
       "omp",
     ]);
-    expect(rendered).toContain("does not provide the appserver status contract");
+    expect(rendered).toContain("does not provide the versioned authority bridge");
     expect(rendered).toContain(contract.ompTag);
     expect(rendered).not.toContain("/private/example");
     expect(rendered).not.toContain("REDACT_ME");

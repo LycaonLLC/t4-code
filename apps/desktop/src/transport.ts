@@ -10,10 +10,10 @@ const OMP_SOCKET_NAME = /^\.appserver-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
 function secureStat(path: string, kind: "directory" | "socket"): void {
   const stat = lstatSync(path);
   if (kind === "directory" && !stat.isDirectory()) throw new Error("runtime parent is not a directory");
-  if (kind === "socket" && !stat.isSocket()) throw new Error("appserver path is not a Unix socket");
-  if (typeof process.getuid === "function" && stat.uid !== process.getuid()) throw new Error("appserver path is not owned by this user");
-  if ((stat.mode & 0o022) !== 0) throw new Error("appserver path is writable by group or other users");
-  if (kind === "socket" && (stat.mode & 0o777) !== 0o600) throw new Error("appserver socket must have mode 0600");
+  if (kind === "socket" && !stat.isSocket()) throw new Error("T4 host path is not a Unix socket");
+  if (typeof process.getuid === "function" && stat.uid !== process.getuid()) throw new Error("T4 host path is not owned by this user");
+  if ((stat.mode & 0o022) !== 0) throw new Error("T4 host path is writable by group or other users");
+  if (kind === "socket" && (stat.mode & 0o777) !== 0o600) throw new Error("T4 host socket must have mode 0600");
 }
 
 function rejectSymlinkedParent(path: string): void {
@@ -43,11 +43,11 @@ export function resolveUnixSocketPath(path: string): string {
   }
 
   if (typeof process.getuid === "function" && publicStat.uid !== process.getuid()) {
-    throw new Error("appserver symlink is not owned by this user");
+    throw new Error("T4 host symlink is not owned by this user");
   }
   const target = readlinkSync(path);
   if (!OMP_SOCKET_NAME.test(target) || target.includes("/") || target.includes("\\")) {
-    throw new Error("appserver symlink target is not an OMP socket basename");
+    throw new Error("T4 host symlink target is not a valid socket basename");
   }
   const backingPath = join(parent, target);
   secureStat(backingPath, "socket");

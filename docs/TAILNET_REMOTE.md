@@ -7,7 +7,7 @@ network. The remote path is intentionally small:
 phone browser or bundled T4 mobile UI
   -> Tailscale Serve HTTPS/WSS (tailnet only)
   -> T4 gateway on 127.0.0.1:4194
-  -> OMP appserver Unix socket
+  -> t4-host Unix socket
 ```
 
 There is no T4 password in this mode. Tailscale membership and your tailnet
@@ -28,8 +28,9 @@ for maintainers who need a custom gateway layout.
   session.
 - Node.js 24 and pnpm 11 only when using the manual source procedure.
 - Tailscale installed, signed in, and using MagicDNS/HTTPS.
-- A running local OMP appserver. Opening the T4 desktop app normally installs
-  and starts it; `omp appserver status --json` is a direct check.
+- A running local T4 host connected to a compatible OMP bridge. Opening the T4 desktop app normally
+  installs and starts it; the retained `omp appserver status --json` administrative command is a
+  direct check of the stable service socket.
 - A T4 Code source checkout with dependencies installed only for manual setup.
 
 Do not use Tailscale Funnel for this. Funnel is the public-internet product;
@@ -96,7 +97,7 @@ The service installer is idempotent. On Linux it writes and enables
 unit. On macOS it installs the matching per-user LaunchAgent. It stores no
 Tailscale key, OMP token, or app password.
 
-If OMP uses a non-default appserver socket, add an absolute path:
+If the T4 host uses a non-default service socket, add an absolute path:
 
 ```bash
 node scripts/tailnet-service.mjs install \
@@ -118,7 +119,7 @@ tailscale serve status
 
 `status` exits nonzero if the installed definition drifted, the supervisor is
 not running and durably enabled, the web build is missing, or the gateway
-cannot reach the OMP socket. A healthy response reports `"web":true` and
+cannot reach the T4 host socket. A healthy response reports `"web":true` and
 `"upstream":true`.
 
 Then, from a different device on the tailnet, open:
@@ -196,7 +197,7 @@ Profile starts are disabled unless `T4_ENABLE_PROFILE_STARTS=1`. When enabled,
 only an allowlisted route with a service unit may request a fixed supervisor
 start; the gateway never accepts shell text and never stops or restarts a
 profile. Starts are coalesced and rate-limited while the gateway waits a
-bounded time for the existing private socket checks to pass. The appserver
+bounded time for the existing private socket checks to pass. The T4 host
 still performs its normal device authentication after bridging.
 
 ## Operate and update
@@ -281,7 +282,7 @@ removes all of them.
 - Tailscale Serve terminates HTTPS and keeps the route tailnet-only. Do not
   substitute Funnel.
 - Every tailnet identity permitted to reach this node and port can operate the
-  connected OMP appserver. Restrict the node/port with Tailscale ACLs or grants
+  connected T4 host and its OMP sessions. Restrict the node/port with Tailscale ACLs or grants
   if the tailnet has anyone you do not fully trust.
 - The gateway is an operator surface, not a read-only viewer. Treat access as
   equivalent to local access to your OMP sessions.

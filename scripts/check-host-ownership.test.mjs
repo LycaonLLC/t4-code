@@ -53,10 +53,22 @@ test("compatibility metadata records the artifact-backed OMP bridge", () => {
   const matrix = json("compat/omp-app-matrix.json");
   const provenance = json("provenance/omp-host-migration.json");
 
-  assert.deepEqual(matrix.t4Host.sourcePaths, ["packages/host-wire", "packages/host-service"]);
+  assert.deepEqual(matrix.t4Host.sourcePaths, [
+    "packages/host-wire",
+    "packages/host-service",
+    "packages/host-daemon",
+  ]);
   assert.equal(matrix.t4Host.runtimeAuthority, "omp");
-  assert.equal(matrix.t4Host.deploymentState, "source-owned-artifact-runtime-bridge");
+  assert.equal(matrix.t4Host.deploymentState, "standalone-t4-host-thin-omp-bridge");
   assert.equal(matrix.t4Host.wireSchemaVersion, "0.7.0");
+  assert.equal(matrix.t4Host.daemonPackage, "@t4-code/host-daemon");
+  assert.equal(matrix.t4Host.daemonPackageVersion, "0.1.30");
+  assert.equal(matrix.t4Host.authorityBridgeProtocol, "t4-omp-authority/1");
+  assert.equal(matrix.verifiedRuntime.artifacts["darwin-arm64"].releaseCodeSignature, "adhoc");
+  assert.equal(
+    matrix.verifiedRuntime.artifacts["darwin-arm64"].distributionSigningBoundary,
+    "t4-product-package",
+  );
   assert.deepEqual(matrix.t4Host.migrationInputs, {
     repository: provenance.sourceRepository,
     baseCommit: provenance.inputs.t4codeBase,

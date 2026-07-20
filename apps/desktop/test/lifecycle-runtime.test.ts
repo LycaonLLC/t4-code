@@ -934,7 +934,17 @@ describe("desktop Electron lifecycle", () => {
         return {
           kill: () => {},
           result: Promise.resolve(
-            compatible
+            compatible && spec.args?.[0] === "bridge"
+              ? {
+                  exitCode: 0,
+                  signal: null,
+                  stdout:
+                    "Expose the private OMP authority bridge used by T4 Code\n\nFLAGS\n  --stdio  Use the versioned JSON-lines standard I/O transport\n",
+                  stderr: "",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                }
+              : compatible
               ? {
                   exitCode: 0,
                   signal: null,
@@ -1031,7 +1041,11 @@ describe("desktop Electron lifecycle", () => {
     expect(factories).toBe(1);
     expect(discoveryCalls).toBe(2);
     expect(serviceCalls).toEqual(["inspect", "inspect", "inspect"]);
-    expect(probeArgs).toHaveLength(probesAfterInitialDiscovery + 1);
+    expect(probeArgs).toHaveLength(probesAfterInitialDiscovery + 2);
+    expect(probeArgs.slice(-2)).toEqual([
+      ["bridge", "--help"],
+      ["appserver", "status", "--json"],
+    ]);
 
     const start = fixture.ipc.handlers.get("omp:service:start") as (
       event: unknown,
@@ -1039,7 +1053,10 @@ describe("desktop Electron lifecycle", () => {
     ) => Promise<unknown>;
     await start(event, { channel: "omp:service:start", payload: {} });
     expect(serviceCalls).toEqual(["inspect", "inspect", "inspect", "start"]);
-    expect(probeArgs.every((args) => args.join(" ") === "appserver status --json")).toBe(true);
+    expect(probeArgs.slice(-2)).toEqual([
+      ["bridge", "--help"],
+      ["appserver", "status", "--json"],
+    ]);
     await fixture.lifecycle.stop();
   });
 });

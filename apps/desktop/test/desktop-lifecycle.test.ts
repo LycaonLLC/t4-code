@@ -13,6 +13,25 @@ import {
   probeOmpAppserver,
 } from "../src/service.ts";
 
+const bridgeHelpResult = {
+  exitCode: 0,
+  signal: null,
+  stdout:
+    "Expose the private OMP authority bridge used by T4 Code\n\nFLAGS\n  --stdio  Use the versioned JSON-lines standard I/O transport\n",
+  stderr: "",
+  stdoutTruncated: false,
+  stderrTruncated: false,
+} as const;
+
+const stoppedStatusResult = {
+  exitCode: 0,
+  signal: null,
+  stdout: JSON.stringify({ state: "stopped", reason: "unreachable" }),
+  stderr: "",
+  stdoutTruncated: false,
+  stderrTruncated: false,
+} as const;
+
 describe("desktop lifecycle boundaries", () => {
   it("discovers only an executable standalone T4 host path", async () => {
     const root = await mkdtemp(join(tmpdir(), "t4-host-discovery-"));
@@ -52,16 +71,9 @@ describe("desktop lifecycle boundaries", () => {
     await chmod(explicit, 0o755);
     await chmod(pathCandidate, 0o755);
     const probeRunner: ProcessRunner = {
-      spawn: async () => ({
+      spawn: async (spec) => ({
         kill: () => {},
-        result: Promise.resolve({
-          exitCode: 0,
-          signal: null,
-          stdout: JSON.stringify({ state: "stopped", reason: "unreachable" }),
-          stderr: "",
-          stdoutTruncated: false,
-          stderrTruncated: false,
-        }),
+        result: Promise.resolve(spec.args?.[0] === "bridge" ? bridgeHelpResult : stoppedStatusResult),
       }),
     };
     expect(
@@ -89,16 +101,16 @@ describe("desktop lifecycle boundaries", () => {
     await writeFile(executable, "");
     await chmod(executable, 0o755);
     const runner: ProcessRunner = {
-      spawn: async () => ({
+      spawn: async (spec) => ({
         kill: () => {},
-        result: Promise.resolve({
-          exitCode: 0,
-          signal: null,
-          stdout: "normal agent help",
-          stderr: "",
-          stdoutTruncated: false,
-          stderrTruncated: false,
-        }),
+        result: Promise.resolve(
+          spec.args?.[0] === "bridge"
+            ? bridgeHelpResult
+            : {
+                ...stoppedStatusResult,
+                stdout: "normal agent help",
+              },
+        ),
       }),
     };
     expect(
@@ -109,6 +121,26 @@ describe("desktop lifecycle boundaries", () => {
       }),
     ).toBeUndefined();
   });
+  it("rejects a legacy appserver build that does not expose the authority bridge", async () => {
+    const root = await mkdtemp(join(tmpdir(), "t4-desktop-"));
+    const executable = join(root, "omp");
+    await writeFile(executable, "");
+    await chmod(executable, 0o755);
+    let calls = 0;
+    const runner: ProcessRunner = {
+      spawn: async () => {
+        calls += 1;
+        return { kill: () => {}, result: Promise.resolve(stoppedStatusResult) };
+      },
+    };
+    const error = await discoverOmpExecutable({
+      environment: { OMP_EXECUTABLE: executable, PATH: "" },
+      homeDirectory: root,
+      runner,
+    }).catch((cause: unknown) => cause);
+    expect(error instanceof OmpAppserverCompatibilityError).toBe(true);
+    expect(calls).toBe(1);
+  });
   it("reports old OMP builds that reject the required JSON status flag", async () => {
     const root = await mkdtemp(join(tmpdir(), "t4-desktop-"));
     const executable = join(root, "omp");
@@ -118,6 +150,9 @@ describe("desktop lifecycle boundaries", () => {
     const runner: ProcessRunner = {
       spawn: async (spec) => {
         calls += 1;
+        if (spec.args?.[0] === "bridge") {
+          return { kill: () => {}, result: Promise.resolve(bridgeHelpResult) };
+        }
         expect(spec.args).toEqual(["appserver", "status", "--json"]);
         return {
           kill: () => {},
@@ -140,9 +175,9 @@ describe("desktop lifecycle boundaries", () => {
     expect(error instanceof OmpAppserverCompatibilityError).toBe(true);
     if (!(error instanceof OmpAppserverCompatibilityError))
       throw new Error("expected compatibility error");
-    expect(error.code).toBe("omp_appserver_status_json_required");
-    expect(error.message.includes("requires `omp appserver status --json`")).toBe(true);
-    expect(calls).toBe(1);
+    expect(error.code).toBe("omp_authority_bridge_required");
+    expect(error.message.includes("requires the versioned `omp bridge --stdio`")).toBe(true);
+    expect(calls).toBe(2);
   });
   it("detects mixed PATH candidates instead of blessing only the first compatible one", async () => {
     const root = await mkdtemp(join(tmpdir(), "t4-desktop-"));
@@ -158,6 +193,9 @@ describe("desktop lifecycle boundaries", () => {
     const runner: ProcessRunner = {
       spawn: async (spec) => {
         calls += 1;
+        if (spec.command === join(newDir, "omp") && spec.args?.[0] === "bridge") {
+          return { kill: () => {}, result: Promise.resolve(bridgeHelpResult) };
+        }
         if (spec.command === join(newDir, "omp")) {
           return {
             kill: () => {},
@@ -188,7 +226,7 @@ describe("desktop lifecycle boundaries", () => {
     expect(
       await inspectPathOmpCompatibility({ environment: { PATH: `${oldDir}:${newDir}` }, runner }),
     ).toBe("mixed");
-    expect(calls).toBe(2);
+    expect(calls).toBe(3);
   });
   it("scopes named appserver probes without inheriting provider credentials", async () => {
     const root = await mkdtemp(join(tmpdir(), "t4-desktop-"));
@@ -241,16 +279,11 @@ describe("desktop lifecycle boundaries", () => {
     await writeFile(executable, "");
     await chmod(executable, 0o755);
     const malformed: ProcessRunner = {
-      spawn: async () => ({
+      spawn: async (spec) => ({
         kill: () => {},
-        result: Promise.resolve({
-          exitCode: 0,
-          signal: null,
-          stdout: "{",
-          stderr: "",
-          stdoutTruncated: false,
-          stderrTruncated: false,
-        }),
+        result: Promise.resolve(
+          spec.args?.[0] === "bridge" ? bridgeHelpResult : { ...stoppedStatusResult, stdout: "{" },
+        ),
       }),
     };
     expect(
@@ -261,16 +294,13 @@ describe("desktop lifecycle boundaries", () => {
       }),
     ).toBeUndefined();
     const oversized: ProcessRunner = {
-      spawn: async () => ({
+      spawn: async (spec) => ({
         kill: () => {},
-        result: Promise.resolve({
-          exitCode: 0,
-          signal: null,
-          stdout: "x".repeat(17 * 1024),
-          stderr: "",
-          stdoutTruncated: false,
-          stderrTruncated: false,
-        }),
+        result: Promise.resolve(
+          spec.args?.[0] === "bridge"
+            ? bridgeHelpResult
+            : { ...stoppedStatusResult, stdout: "x".repeat(17 * 1024) },
+        ),
       }),
     };
     expect(
@@ -281,7 +311,10 @@ describe("desktop lifecycle boundaries", () => {
       }),
     ).toBeUndefined();
     const timedOut: ProcessRunner = {
-      spawn: async (_spec, signal) => {
+      spawn: async (spec, signal) => {
+        if (spec.args?.[0] === "bridge") {
+          return { kill: () => {}, result: Promise.resolve(bridgeHelpResult) };
+        }
         const result = Promise.withResolvers<{
           exitCode: number | null;
           signal: null;

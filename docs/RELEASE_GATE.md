@@ -11,7 +11,7 @@ Every release must pass the layers below. Destructive lifecycle checks use a dis
    - Reject stale or locally reimplemented command shapes.
    - Verify the vendored tarball, source tree, fixture corpus, and recorded hashes.
 2. OMP runtime packages
-   - Run app-wire, appserver, and coding-agent type checks and focused tests.
+   - Run app-wire compatibility, authority-bridge, and coding-agent type checks and focused tests.
    - Cover cursor-domain separation, ordered delivery, bounded replay, lifecycle revision conflicts, busy-session refusal, operation and terminal drain, path containment, deletion recovery, and external discovery deltas.
 3. T4 workspaces
    - Run lint, type checks, unit/integration suites, production builds, packaging/tooling checks, and Playwright.
@@ -30,7 +30,7 @@ Run the deterministic compatibility gate from the T4 repository root with Node 2
 T4_OMP_SOURCE_DIR=/path/to/lycaon-oh-my-pi pnpm test:legacy-bridge-continuity
 ```
 
-The gate launches the OMP appserver from the pinned authority source, plus a real OMP TUI and multiple production T4 clients. Its historical command name still says `legacy-bridge`, but the verified runtime now launches checksum-pinned T4 host artifacts through thin compatibility exports. The gate proves client compatibility across bounded transcript loading, live ownership refusal, concurrent profile isolation, reconnect after an in-flight transport loss, appserver restart recovery, transcript search/read-around, stale-revision rejection, recovered control, and cleanup.
+The gate builds and launches T4's standalone `t4-host`, connects it to `omp bridge --stdio` from the pinned authority source, and starts a real OMP TUI plus multiple production T4 clients. Its historical command name still says `legacy-bridge`. The gate proves client compatibility across bounded transcript loading, live ownership refusal, concurrent profile isolation, reconnect after an in-flight transport loss, host restart recovery, transcript search/read-around, stale-revision rejection, recovered control, and cleanup.
 
 CI resolves the exact OMP authority commit from `provenance/omp-host-migration.json`, checks out the exact T4 pull-request head, runs this gate, and attaches the evidence directory to that commit's check run.
 
@@ -40,11 +40,11 @@ For a manual failure investigation, rerun with `T4_KEEP_CONTINUITY_SANDBOX=1`. T
 
 ## Required release-operator proof
 
-1. Start a freshly built OMP appserver with isolated config, state, socket, and session directories.
+1. Start a freshly built `t4-host` with an exact released OMP bridge and isolated config, state, socket, and session directories.
 2. Connect two independent T4 clients. Create a disposable session and confirm both clients receive it.
 3. Send a prompt, wait for the durable transcript, reconnect both clients, and confirm the history appears once in the same order.
 4. Rename, archive, restore, and permanently delete the disposable session. Confirm both clients converge after every change and that archived sessions reject writes.
-5. Build and install the Linux desktop package. Launch the installed executable, not a development Electron process, and confirm the expected appserver service, socket, host identity, session list, transcript, and composer state.
+5. Build and install the Linux desktop package. Launch the installed executable, not a development Electron process, and confirm the expected T4 host service, socket, host identity, session list, transcript, and composer state.
 6. Open the actual Tailscale Serve HTTPS URL in a touch browser. Confirm connected state, shared history, model selection, prompt round-trip, reload recovery, and usable controls at the narrowest viewport.
 7. Confirm the route is Tailscale Serve only. Funnel must be off.
 8. Verify the exact seven-asset GitHub bundle: five installable packages, `latest-linux.yml`, and `SHA256SUMS.txt`. The checksum file must contain exactly the five package digests plus the Linux updater-metadata digest. Fetch `https://t4code.net/releases/latest.json` and match its schema, version, tag, release URL, five canonical package records, sizes, immutable URLs, and SHA-256 digests against that GitHub release.
