@@ -128,8 +128,9 @@ async function runChecked(
 ): Promise<ServiceRunnerResult> {
   const isLaunchctlBootstrap = command[0] === "launchctl" && command[1] === "bootstrap";
   // launchd can accept bootout before it has finished removing the service.
-  // A replacement bootstrap then returns EINPROGRESS (37) for a short window.
-  const retryDeadline = Date.now() + 3_000;
+  // A replacement bootstrap can then return EINPROGRESS (37), or the less
+  // specific EIO (5), for several seconds even though the plist is valid.
+  const retryDeadline = Date.now() + 30_000;
   while (true) {
     let result: ServiceRunnerResult;
     try {
@@ -145,10 +146,17 @@ async function runChecked(
     const diagnostics = `${result.stdout}\n${result.stderr}`;
     const removalStillFinishing =
       isLaunchctlBootstrap &&
-      (result.exitCode === 37 || /operation already in progress|bootstrap failed:\s*37\b/iu.test(diagnostics));
+      (
+        result.exitCode === 37 ||
+        /operation already in progress|bootstrap failed:\s*37\b/iu.test(diagnostics) ||
+        (
+          result.exitCode === 5 &&
+          /bootstrap failed:\s*5\s*:\s*input\/output error/iu.test(diagnostics)
+        )
+      );
     if (!removalStillFinishing || Date.now() >= retryDeadline)
       throw new ServiceCommandError(command, result);
-    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    await new Promise<void>((resolve) => setTimeout(resolve, 250));
   }
 }
 

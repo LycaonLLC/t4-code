@@ -8,6 +8,7 @@ import {
   MacLaunchAgentManager,
   NodeServiceFileSystem,
   type ServiceFileSystem,
+  type ServiceInspection,
   type ServiceManager,
   type ServiceRunner,
   type ServiceRunnerResult,
@@ -266,6 +267,65 @@ export async function probeOmpAppserver(
       options.profileId,
     )
   ) === "running";
+}
+
+export interface AppserverServiceRepairOptions {
+  readonly attempts?: number;
+  readonly delay?: (milliseconds: number) => Promise<void>;
+  readonly retryDelayMs?: number;
+}
+
+/**
+ * Reconcile a T4-owned appserver definition and its service registration.
+ *
+ * The first pass uses the smallest needed action. A second pass performs a
+ * full install transaction, which safely replaces a stale LaunchAgent path
+ * and recovers when launchd was still removing an older registration.
+ */
+export async function repairAppserverService(
+  manager: ServiceManager,
+  options: AppserverServiceRepairOptions = {},
+): Promise<ServiceInspection> {
+  const attempts = options.attempts ?? 2;
+  const retryDelayMs = options.retryDelayMs ?? 150;
+  const delay = options.delay ?? (
+    (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
+  );
+  if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 3)
+    throw new Error("invalid appserver service repair attempt count");
+  if (!Number.isSafeInteger(retryDelayMs) || retryDelayMs < 0 || retryDelayMs > 5_000)
+    throw new Error("invalid appserver service repair delay");
+
+  let inspection = await manager.inspect();
+  if (
+    inspection.definition === "current" &&
+    (inspection.service === "running" || inspection.service === "starting")
+  ) return inspection;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      if (attempt === 0 && inspection.definition === "current") await manager.start();
+      else await manager.install();
+      inspection = await manager.inspect();
+      if (
+        inspection.definition === "current" &&
+        (inspection.service === "running" || inspection.service === "starting")
+      ) return inspection;
+      lastError = new Error(
+        `appserver service repair did not start the service (${inspection.diagnostics.slice(0, 512)})`,
+      );
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt + 1 >= attempts) break;
+    await delay(retryDelayMs);
+    inspection = await manager.inspect();
+    if (
+      inspection.definition === "current" &&
+      (inspection.service === "running" || inspection.service === "starting")
+    ) return inspection;
+  }
+  throw lastError ?? new Error("appserver service repair failed");
 }
 export interface NodeServiceRunnerOptions {
   readonly environment?: NodeJS.ProcessEnv;

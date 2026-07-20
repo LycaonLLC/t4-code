@@ -570,6 +570,36 @@ describe("desktop Electron lifecycle", () => {
     expect(fixture.windows).toHaveLength(1);
     await fixture.lifecycle.stop();
   });
+  it("automatically repairs the default service when its connected target falls back to connecting", async () => {
+    const calls: string[] = [];
+    let state: "running" | "stopped" = "running";
+    const repaired = Promise.withResolvers<void>();
+    const service: ServiceManager = {
+      inspect: async () => {
+        calls.push("inspect");
+        if (state === "running" && calls.includes("start")) repaired.resolve();
+        return { definition: "current", service: state, diagnostics: "" };
+      },
+      install: async () => { calls.push("install"); },
+      start: async () => {
+        calls.push("start");
+        state = "running";
+      },
+      stop: async () => {},
+      restart: async () => {},
+      uninstall: async () => {},
+    };
+    const fixture = setup(service, async () => true);
+    await fixture.lifecycle.start();
+    expect(calls).toEqual([]);
+
+    state = "stopped";
+    fixture.managerOptions?.events.onState({ targetId: "local", state: "connecting" });
+    await repaired.promise;
+
+    expect(calls).toEqual(["inspect", "start", "inspect"]);
+    await fixture.lifecycle.stop();
+  });
   it("shares in-flight profile discovery but revalidates the executable on later recovery", async () => {
     const service: ServiceManager = {
       inspect: async () => ({ definition: "current", service: "running", diagnostics: "" }),

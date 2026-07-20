@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import type { CursorStore } from "@t4-code/client";
 import { parsePairDeepLink, PendingPairQueue, type PendingPair } from "@t4-code/protocol";
-import { decodeLocalProfileId, type ServiceAvailabilityIssue } from "@t4-code/protocol/desktop-ipc";
+import { decodeLocalProfileId, type ConnectionStateEvent, type ServiceAvailabilityIssue } from "@t4-code/protocol/desktop-ipc";
 import type { ServiceManager } from "@t4-code/service-manager";
 import type { RemoteTargetRegistry } from "./remote-runtime/registry.ts";
 import { createDesktopWindow, type DesktopWindowHandle } from "./window.ts";
@@ -12,7 +12,7 @@ import { BrowserRuntime, type BrowserRuntimeOptions } from "./browser-runtime.ts
 import { ElectronCursorStore, ElectronRemoteTargetStore, ElectronCredentialCiphertextStore, ElectronLocalProfileStore, ElectronProjectionCacheStore, electronSafeStorage, loadDeviceIdentity, type DeviceIdentity } from "./stores.ts";
 import { VersionedRemoteTargetRegistry, DeviceCredentialStore } from "./remote-runtime/index.ts";
 import { LocalTargetManager, type TargetManagerOptions } from "./target-manager.ts";
-import { createAppserverServiceManager, discoverOmpExecutable, OmpAppserverCompatibilityError, probeOmpAppserver, NodeServiceFileSystem } from "./service.ts";
+import { createAppserverServiceManager, discoverOmpExecutable, OmpAppserverCompatibilityError, probeOmpAppserver, repairAppserverService, NodeServiceFileSystem } from "./service.ts";
 import { createDesktopSpeechService, type DesktopSpeechService } from "./speech.ts";
 import { createElectronUpdateController } from "./electron-update-controller.ts";
 import { installApplicationMenu, type ApplicationMenuOptions } from "./menu.ts";
@@ -104,6 +104,7 @@ export class DesktopLifecycle {
   private serviceAvailabilityIssue: ServiceAvailabilityIssue | undefined;
   private serviceExecutablePromise: Promise<string | undefined> | undefined;
   private serviceRecoveryPromise: Promise<ServiceManager | undefined> | undefined;
+  private automaticServiceRepairPromise: Promise<void> | undefined;
   private readonly serviceRecoveryPromises = new Map<string, Promise<ServiceManager | undefined>>();
   private readonly serviceAvailabilityIssues = new Map<string, ServiceAvailabilityIssue>();
   private updateController: DesktopUpdateController | undefined;
@@ -211,7 +212,10 @@ export class DesktopLifecycle {
       deviceName: identity.deviceName,
       events: {
         onEvent: (targetId, event) => this.ipc?.emitServerEvent(targetId, event),
-        onState: (state) => this.ipc?.emitConnectionState(state),
+        onState: (state) => {
+          this.ipc?.emitConnectionState(state);
+          this.scheduleAutomaticServiceRepair(state);
+        },
         onError: (error) => this.ipc?.emitRuntimeError(error),
       },
     });
@@ -265,10 +269,12 @@ export class DesktopLifecycle {
     const manager = this.manager;
     this.manager = undefined;
     const recovery = this.serviceRecoveryPromise;
+    const automaticRepair = this.automaticServiceRepairPromise;
     const recoveries = [...this.serviceRecoveryPromises.values()];
     await Promise.all([
       manager?.close() ?? Promise.resolve(),
       recovery?.then(() => undefined, () => undefined) ?? Promise.resolve(),
+      automaticRepair?.then(() => undefined, () => undefined) ?? Promise.resolve(),
       ...recoveries.map((value) => value.then(() => undefined, () => undefined)),
     ]);
     if (this.beforeQuitHandler !== undefined) this.electronApp.removeListener("before-quit", this.beforeQuitHandler);
@@ -335,6 +341,36 @@ export class DesktopLifecycle {
     };
     void recovery.then(clearRecovery, clearRecovery);
     return recovery;
+  }
+
+  private scheduleAutomaticServiceRepair(event: ConnectionStateEvent): void {
+    if (
+      this.stopping ||
+      event.targetId !== "local" ||
+      event.state !== "connecting" ||
+      this.automaticServiceRepairPromise !== undefined
+    ) return;
+    const repair = this.repairAutomaticDefaultService();
+    this.automaticServiceRepairPromise = repair;
+    void repair.then(
+      () => {
+        if (this.automaticServiceRepairPromise === repair)
+          this.automaticServiceRepairPromise = undefined;
+      },
+      (error: unknown) => {
+        if (this.automaticServiceRepairPromise === repair)
+          this.automaticServiceRepairPromise = undefined;
+        if (!this.stopping) this.ipc?.emitRuntimeError(runtimeError(error, "local"));
+      },
+    );
+  }
+
+  private async repairAutomaticDefaultService(): Promise<void> {
+    const profile = await this.localProfileRegistry?.get("default");
+    if (profile?.autoStart !== true || this.stopping) return;
+    const manager = await this.acquireServiceManager();
+    if (manager === undefined || this.stopping) return;
+    await repairAppserverService(manager);
   }
 
   private async recoverServiceManager(profileId = "default"): Promise<ServiceManager | undefined> {
