@@ -49,6 +49,15 @@ func TestEnabledChartRendersHARestrictedWorkloads(t *testing.T) {
 		"coordination.k8s.io",
 		"resources:",
 	)
+	server := documentContainingKind(t, output, "Deployment", "name: release-name-t4-cluster-server")
+	assertContains(t, server,
+		"automountServiceAccountToken: false",
+		"name: T4_CLUSTER_TRUSTED_PROXY_CIDRS",
+		"value: 192.0.2.0/24",
+		"name: kubernetes-api-access",
+		"audience: https://kubernetes.default.svc",
+		"expirationSeconds: 3600",
+	)
 	if strings.Contains(output, "privileged: true") || strings.Contains(output, "hostNetwork: true") || strings.Contains(output, "hostPID: true") {
 		t.Fatal("enabled chart contains a privileged shortcut")
 	}
@@ -158,6 +167,12 @@ func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 		"chromium",
 		"Xvfb",
 	)
+	for name, content := range map[string]string{"server": server, "session": session} {
+		assertContains(t, content, "pnpm install --frozen-lockfile")
+		if strings.Contains(content, "bun install --ignore-scripts --lockfile-only") {
+			t.Fatalf("%s image synthesizes an uncommitted dependency lock", name)
+		}
+	}
 	assertContains(t, server, "packages/cluster-server/src/main.ts")
 	entrypoint := mustRead(t, filepath.Join(root, "cluster", "images", "session-runtime", "session-entrypoint.sh"))
 	assertContains(t, entrypoint,
@@ -187,6 +202,7 @@ func enabledValues() []string {
 		"--set", "images.controller.digest=" + fakeDigest,
 		"--set", "images.server.digest=" + fakeDigest,
 		"--set", "images.sessionRuntime.digest=" + fakeDigest,
+		"--set", "server.trustedProxyCIDRs[0]=192.0.2.0/24",
 	}
 }
 
