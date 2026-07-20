@@ -2462,14 +2462,20 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       case SessionsFrame():
         _applySessions(frame);
       case SnapshotFrame():
-        _applySnapshot(frame);
+        if (frame.hostId == _hostId && frame.sessionId == _selectedSessionId) {
+          _applySnapshot(frame);
+        }
       case EntryFrame():
-        if (_acceptTranscriptCursor(frame.sessionId, frame.cursor)) {
+        if (frame.hostId == _hostId &&
+            frame.sessionId == _selectedSessionId &&
+            _acceptTranscriptCursor(frame.sessionId, frame.cursor)) {
           _upsertEntry(frame.entry);
           _publish();
         }
       case EventFrame():
-        if (_acceptTranscriptCursor(frame.sessionId, frame.cursor)) {
+        if (frame.hostId == _hostId &&
+            frame.sessionId == _selectedSessionId &&
+            _acceptTranscriptCursor(frame.sessionId, frame.cursor)) {
           _applyEvent(frame.event, frame.cursor);
           _publish();
         }
@@ -2517,9 +2523,11 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         _submitting = false;
         _publish();
       case GapFrame():
-        _phase = ConnectionPhase.synchronizing;
-        _errorMessage = 'Recovering transcript continuity…';
-        _publish();
+        if (frame.hostId == _hostId && frame.sessionId == _selectedSessionId) {
+          _phase = ConnectionPhase.synchronizing;
+          _errorMessage = 'Recovering transcript continuity…';
+          _publish();
+        }
       default:
         break;
     }

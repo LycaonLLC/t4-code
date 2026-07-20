@@ -33,6 +33,45 @@ void main() {
     await tester.pump();
   }
 
+  T4ViewState keyboardTranscriptState() {
+    final profile = HostProfile.parseTailnetAddress(
+      'https://alpha.tailnet-name.ts.net',
+    );
+    return T4ViewState(
+      connectionPhase: ConnectionPhase.ready,
+      hostDirectory: HostDirectory.empty().upsert(profile),
+      authenticationPhase: AuthenticationPhase.paired,
+      grantedCapabilities: t4RequestedCapabilities.toSet(),
+      selectedSessionId: 'session-alpha',
+      sessions: const <SessionSummary>[
+        SessionSummary(
+          hostId: 'host-alpha',
+          sessionId: 'session-alpha',
+          projectId: 'project-alpha',
+          projectName: 'Project Alpha',
+          title: 'Keyboard inset test',
+          revision: 'revision-alpha',
+          status: 'idle',
+        ),
+      ],
+      messages: List<TranscriptMessage>.generate(
+        24,
+        (index) => TranscriptMessage(
+          id: 'message-$index',
+          role: index.isEven ? MessageRole.user : MessageRole.assistant,
+          text: 'Transcript message ${index + 1}',
+        ),
+      ),
+    );
+  }
+
+  Finder transcriptList() => find.byWidgetPredicate(
+    (widget) =>
+        widget is ListView &&
+        widget.keyboardDismissBehavior ==
+            ScrollViewKeyboardDismissBehavior.onDrag,
+  );
+
   group('shared T4 theme', () {
     testWidgets('applies canonical neutral light tokens and typography', (
       tester,
@@ -611,6 +650,108 @@ void main() {
       expect(actions.submittedPrompts, <String>['Alpha draft']);
     },
   );
+  testWidgets('keeps the latest message visible when the keyboard opens', (
+    tester,
+  ) async {
+    await pumpApp(
+      tester,
+      state: keyboardTranscriptState(),
+      actions: _FakeActions(),
+      size: compactPhone,
+    );
+    await tester.pumpAndSettle();
+
+    final list = transcriptList();
+    final scrollable = tester.state<ScrollableState>(
+      find.descendant(of: list, matching: find.byType(Scrollable)).first,
+    );
+    expect(
+      scrollable.position.pixels,
+      greaterThanOrEqualTo(scrollable.position.maxScrollExtent - 0.5),
+    );
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 320);
+    await tester.pump();
+    await tester.pump();
+
+    final resizedScrollable = tester.state<ScrollableState>(
+      find.descendant(of: list, matching: find.byType(Scrollable)).first,
+    );
+    expect(
+      resizedScrollable.position.pixels,
+      greaterThanOrEqualTo(resizedScrollable.position.maxScrollExtent - 0.5),
+    );
+  });
+
+  testWidgets('a user drag cancels bottom follow before viewport changes', (
+    tester,
+  ) async {
+    await pumpApp(
+      tester,
+      state: keyboardTranscriptState(),
+      actions: _FakeActions(),
+      size: compactPhone,
+    );
+    await tester.pumpAndSettle();
+
+    final list = transcriptList();
+    final scrollable = tester.state<ScrollableState>(
+      find.descendant(of: list, matching: find.byType(Scrollable)).first,
+    );
+    final gesture = await tester.startGesture(tester.getCenter(list));
+    await gesture.moveBy(const Offset(0, 48));
+    await tester.pump();
+    await gesture.moveBy(const Offset(0, 48));
+    await tester.pump();
+    final positionAfterDrag = scrollable.position.pixels;
+    expect(
+      scrollable.position.maxScrollExtent - positionAfterDrag,
+      greaterThan(0),
+    );
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 80);
+    await tester.pump();
+    await tester.pump();
+
+    expect(scrollable.position.pixels, closeTo(positionAfterDrag, 0.5));
+    await gesture.up();
+  });
+
+  testWidgets('preserves transcript history position when the keyboard opens', (
+    tester,
+  ) async {
+    await pumpApp(
+      tester,
+      state: keyboardTranscriptState(),
+      actions: _FakeActions(),
+      size: compactPhone,
+    );
+    await tester.pumpAndSettle();
+
+    final list = transcriptList();
+    await tester.drag(list, const Offset(0, 320));
+    await tester.pumpAndSettle();
+    final scrollable = tester.state<ScrollableState>(
+      find.descendant(of: list, matching: find.byType(Scrollable)).first,
+    );
+    final positionBeforeKeyboard = scrollable.position.pixels;
+    expect(
+      scrollable.position.maxScrollExtent - positionBeforeKeyboard,
+      greaterThan(96),
+    );
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 320);
+    await tester.pump();
+    await tester.pump();
+
+    final resizedScrollable = tester.state<ScrollableState>(
+      find.descendant(of: list, matching: find.byType(Scrollable)).first,
+    );
+    expect(
+      resizedScrollable.position.pixels,
+      closeTo(positionBeforeKeyboard, 0.5),
+    );
+  });
   testWidgets('attention inbox exposes decisions and agent updates', (
     tester,
   ) async {

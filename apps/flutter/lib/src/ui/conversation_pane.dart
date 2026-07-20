@@ -235,6 +235,8 @@ final class _TranscriptView extends StatefulWidget {
 
 final class _TranscriptViewState extends State<_TranscriptView> {
   final ScrollController _scrollController = ScrollController();
+  bool _followEnd = true;
+  bool _userScrolling = false;
 
   @override
   void initState() {
@@ -252,8 +254,9 @@ final class _TranscriptViewState extends State<_TranscriptView> {
       widget.state.messages,
     );
     if (!sessionChanged && !messagesChanged) return;
+    if (sessionChanged) _followEnd = true;
 
-    final shouldFollow = sessionChanged || _isNearEnd;
+    final shouldFollow = sessionChanged || _followEnd;
     if (shouldFollow) _scheduleScrollToEnd(animate: !sessionChanged);
   }
 
@@ -262,6 +265,23 @@ final class _TranscriptViewState extends State<_TranscriptView> {
     final position = _scrollController.position;
     return position.maxScrollExtent - position.pixels <=
         _T4Layout.followScrollThreshold;
+  }
+
+  bool _trackScroll(ScrollNotification notification) {
+    if (notification is ScrollStartNotification &&
+        notification.dragDetails != null) {
+      _userScrolling = true;
+      _followEnd = false;
+    } else if (_userScrolling && notification is ScrollEndNotification) {
+      _followEnd = _isNearEnd;
+      _userScrolling = false;
+    }
+    return false;
+  }
+
+  bool _trackScrollMetrics(ScrollMetricsNotification notification) {
+    if (_followEnd) _scheduleScrollToEnd(animate: false);
+    return false;
   }
 
   bool _visibleMessagesChanged(
@@ -278,8 +298,9 @@ final class _TranscriptViewState extends State<_TranscriptView> {
   }
 
   void _scheduleScrollToEnd({required bool animate}) {
+    _followEnd = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollController.hasClients) return;
+      if (!mounted || !_scrollController.hasClients || !_followEnd) return;
       final end = _scrollController.position.maxScrollExtent;
       if (animate) {
         unawaited(
@@ -325,23 +346,29 @@ final class _TranscriptViewState extends State<_TranscriptView> {
       );
     }
 
-    return Scrollbar(
-      controller: _scrollController,
-      child: ListView.separated(
-        controller: _scrollController,
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        padding: const EdgeInsets.fromLTRB(
-          _T4Space.md,
-          _T4Space.lg,
-          _T4Space.md,
-          _T4Space.xl,
-        ),
-        itemCount: widget.state.messages.length,
-        separatorBuilder: (context, index) =>
-            const SizedBox(height: _T4Space.lg),
-        itemBuilder: (context, index) => _TranscriptMessageView(
-          message: widget.state.messages[index],
-          actions: widget.actions,
+    return NotificationListener<ScrollMetricsNotification>(
+      onNotification: _trackScrollMetrics,
+      child: NotificationListener<ScrollNotification>(
+        onNotification: _trackScroll,
+        child: Scrollbar(
+          controller: _scrollController,
+          child: ListView.separated(
+            controller: _scrollController,
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: const EdgeInsets.fromLTRB(
+              _T4Space.md,
+              _T4Space.lg,
+              _T4Space.md,
+              _T4Space.xl,
+            ),
+            itemCount: widget.state.messages.length,
+            separatorBuilder: (context, index) =>
+                const SizedBox(height: _T4Space.lg),
+            itemBuilder: (context, index) => _TranscriptMessageView(
+              message: widget.state.messages[index],
+              actions: widget.actions,
+            ),
+          ),
         ),
       ),
     );

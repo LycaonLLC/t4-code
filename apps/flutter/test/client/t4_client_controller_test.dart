@@ -232,6 +232,114 @@ void main() {
     },
   );
 
+  test(
+    'ignores transcript frames from a previously selected session',
+    () async {
+      final profile = _profile('alpha');
+      final directory = _MemoryDirectoryStore(
+        directory: const HostDirectory.empty().upsert(profile),
+      );
+      final connector = _FakeConnector();
+      final controller = _controller(
+        directory,
+        _MemoryCredentialStore(),
+        connector,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      final channel = connector.channels.single;
+
+      channel.emit(_welcome('host-alpha'));
+      await _flush();
+      channel.emit(<String, Object?>{
+        'v': 'omp-app/1',
+        'type': 'sessions',
+        'hostId': 'host-alpha',
+        ..._sessionListResultFor('host-alpha', const <String>[
+          'session-alpha',
+          'session-beta',
+        ]),
+      });
+      await _flush();
+      channel.emit(
+        _snapshot('host-alpha', 'session-alpha', revision: 'revision-alpha'),
+      );
+      await _flush();
+
+      await controller.selectSession('session-beta');
+      channel.emit(
+        _snapshot('host-alpha', 'session-beta', revision: 'revision-beta'),
+      );
+      channel.emit(
+        _transcriptEvent(
+          'host-alpha',
+          'session-beta',
+          seq: 1,
+          event: const <String, Object?>{
+            'type': 'message.update',
+            'entryId': 'live-message',
+            'role': 'assistant',
+            'text': 'Beta response',
+          },
+        ),
+      );
+      await _flush();
+      expect(controller.state.messages.single.text, 'Beta response');
+
+      channel.emit(
+        _transcriptMessageEntry(
+          'host-alpha',
+          'session-alpha',
+          seq: 1,
+          entryId: 'stale-durable-system',
+          role: 'system',
+          text: 'Stale durable system prompt',
+        ),
+      );
+      channel.emit(
+        _transcriptEvent(
+          'host-alpha',
+          'session-alpha',
+          seq: 2,
+          event: const <String, Object?>{
+            'type': 'message.update',
+            'entryId': 'live-message',
+            'role': 'system',
+            'text': 'Stale system prompt',
+          },
+        ),
+      );
+      channel.emit(
+        _transcriptEvent(
+          'host-alpha',
+          'session-alpha',
+          seq: 3,
+          event: const <String, Object?>{
+            'type': 'tool.start',
+            'callId': 'alpha-tool',
+            'tool': 'bash',
+          },
+        ),
+      );
+      channel.emit(<String, Object?>{
+        'v': 'omp-app/1',
+        'type': 'gap',
+        'hostId': 'host-alpha',
+        'sessionId': 'session-alpha',
+        'from': <String, Object?>{'epoch': 'transcript', 'seq': 4},
+        'to': <String, Object?>{'epoch': 'transcript', 'seq': 5},
+        'reason': 'stale alpha gap',
+      });
+      await _flush();
+
+      expect(controller.state.selectedSessionId, 'session-beta');
+      expect(controller.state.connectionPhase, ConnectionPhase.ready);
+      expect(controller.state.messages, hasLength(1));
+      expect(controller.state.messages.single.role, MessageRole.assistant);
+      expect(controller.state.messages.single.text, 'Beta response');
+    },
+  );
+
   test('returning to a session requests its complete transcript', () async {
     final profile = _profile('alpha');
     final directory = _MemoryDirectoryStore(
@@ -1948,6 +2056,45 @@ Map<String, Object?> _snapshot(
   'cursor': <String, Object?>{'epoch': 'transcript', 'seq': 0},
   'revision': revision,
   'entries': <Object?>[],
+};
+
+Map<String, Object?> _transcriptEvent(
+  String hostId,
+  String sessionId, {
+  required int seq,
+  required Map<String, Object?> event,
+}) => <String, Object?>{
+  'v': 'omp-app/1',
+  'type': 'event',
+  'hostId': hostId,
+  'sessionId': sessionId,
+  'cursor': <String, Object?>{'epoch': 'transcript', 'seq': seq},
+  'event': event,
+};
+
+Map<String, Object?> _transcriptMessageEntry(
+  String hostId,
+  String sessionId, {
+  required int seq,
+  required String entryId,
+  required String role,
+  required String text,
+}) => <String, Object?>{
+  'v': 'omp-app/1',
+  'type': 'entry',
+  'hostId': hostId,
+  'sessionId': sessionId,
+  'cursor': <String, Object?>{'epoch': 'transcript', 'seq': seq},
+  'revision': 'revision-$seq',
+  'entry': <String, Object?>{
+    'id': entryId,
+    'parentId': null,
+    'hostId': hostId,
+    'sessionId': sessionId,
+    'kind': 'message',
+    'timestamp': '2026-07-20T00:00:00.000Z',
+    'data': <String, Object?>{'role': role, 'text': text},
+  },
 };
 
 Map<String, Object?> _sessionDelta(
