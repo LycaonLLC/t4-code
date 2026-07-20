@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { hostDaemonPaths, parseHostDaemonArgs } from "../src/cli.ts";
+import { hostDaemonPaths, parseHostDaemonArgs, runHostDaemon } from "../src/cli.ts";
 
 describe("T4 host daemon CLI", () => {
   test("parses a local direct-replacement service without ambient executable lookup", () => {
@@ -49,5 +49,52 @@ describe("T4 host daemon CLI", () => {
         "/home/test",
       ),
     ).toThrow("HTTP origin");
+  });
+
+  test("stops the OMP bridge when authority startup fails", async () => {
+    let bridgeStops = 0;
+    const bridge = {
+      start: async () => {},
+      createAuthorities: () => ({ hostInfo: async () => { throw new Error("host info failed"); } }),
+      stop: async () => { bridgeStops += 1; },
+    };
+    await expect(
+      runHostDaemon(
+        { ompExecutable: "/opt/omp", profileId: "test", stateRoot: "/tmp/t4-host-test" },
+        { createBridge: () => bridge as never },
+      ),
+    ).rejects.toThrow("host info failed");
+    expect(bridgeStops).toBe(1);
+  });
+
+  test("closes the search index when appserver construction fails", async () => {
+    let bridgeStops = 0;
+    let searchCloses = 0;
+    const bridge = {
+      start: async () => {},
+      createAuthorities: () => ({
+        hostInfo: async () => ({ transcriptImageRoot: "/tmp/images" }),
+        sessionAuthority: {},
+        discovery: {},
+        operationsAuthority: {},
+        projectRootForProject: async () => "/tmp",
+        lockCheck: async () => {},
+        lockStatus: async () => "missing",
+      }),
+      identity: { ompVersion: "17.0.5", ompBuild: "test" },
+      stop: async () => { bridgeStops += 1; },
+    };
+    await expect(
+      runHostDaemon(
+        { ompExecutable: "/opt/omp", profileId: "test", stateRoot: "/tmp/t4-host-test" },
+        {
+          createBridge: () => bridge as never,
+          createTranscriptSearch: () => ({ close: async () => { searchCloses += 1; } }) as never,
+          createLocal: () => { throw new Error("appserver construction failed"); },
+        },
+      ),
+    ).rejects.toThrow("appserver construction failed");
+    expect(searchCloses).toBe(1);
+    expect(bridgeStops).toBe(1);
   });
 });

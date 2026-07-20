@@ -143,6 +143,7 @@ export function hostDaemonPaths(
 
 export interface HostDaemonDependencies {
   readonly createBridge?: (config: HostDaemonConfig) => OmpAuthorityBridgeClient;
+  readonly createTranscriptSearch?: (path: string) => TranscriptSearchIndex;
   readonly createLocal?: (options: AppserverOptions) => AppserverHandle;
   readonly createRemote?: typeof createRemoteAppserver;
   readonly onSignal?: (signal: "SIGINT" | "SIGTERM", listener: () => void) => void;
@@ -162,77 +163,82 @@ export async function runHostDaemon(
       environment: { OMP_PROFILE: config.profileId },
     });
   await bridge.start();
-  const authorities = bridge.createAuthorities();
-  const hostInfo = await authorities.hostInfo();
-  const transcriptSearchAuthority = new TranscriptSearchIndex(paths.transcriptSearchPath);
-  const identity = bridge.identity;
-  const options: AppserverOptions = {
-    ...identity,
-    appserverVersion: T4_HOST_VERSION,
-    appserverBuild: process.env.T4_HOST_BUILD?.slice(0, 128) || "source",
-    socketPath: paths.socketPath,
-    hostIdPath: paths.hostIdPath,
-    attentionOutcomePath: paths.attentionOutcomePath,
-    sessionAuthority: authorities.sessionAuthority,
-    discovery: authorities.discovery,
-    operationsAuthority: authorities.operationsAuthority,
-    usageAuthority: authorities.usageAuthority,
-    transcriptSearchAuthority,
-    projectRootForProject: authorities.projectRootForProject,
-    lockCheck: authorities.lockCheck,
-    lockStatus: authorities.lockStatus,
-    transcriptImageRoot: hostInfo.transcriptImageRoot,
-    rpcChildInvocation: { executable: config.ompExecutable, prefixArgv: [] },
-    ...(process.platform === "darwin"
-      ? {
-          projectRevealer: async (root: string): Promise<boolean> => {
-            const child = Bun.spawn(["/usr/bin/open", "-R", root], {
-              stdout: "ignore",
-              stderr: "ignore",
-            });
-            return (await child.exited) === 0;
-          },
-        }
-      : {}),
-  };
-  let appserver: AppserverHandle;
   try {
-    appserver = config.remote
-      ? await (dependencies.createRemote ?? createRemoteAppserver)({
-          stateDir: paths.remoteStateRoot,
-          remoteEndpoint: {
-            address: config.remote.address,
-            port: config.remote.port,
-            originAllowlist: config.remote.origins,
-            serveProxy: config.remote.mode === "serve",
-            trustedServeProxy: config.remote.trustedServeProxy,
-          },
-          appserver: options,
-        })
-      : (dependencies.createLocal ?? createAppserver)(options);
-  } catch (error) {
-    await bridge.stop();
-    throw error;
-  }
-  const stopped = Promise.withResolvers<void>();
-  let stopping = false;
-  const stop = (): void => {
-    if (stopping) return;
-    stopping = true;
-    void appserver.stop().then(stopped.resolve, stopped.reject);
-  };
-  const onSignal = dependencies.onSignal ?? ((signal, listener) => process.on(signal, listener));
-  const removeSignal =
-    dependencies.removeSignal ?? ((signal, listener) => process.off(signal, listener));
-  onSignal("SIGINT", stop);
-  onSignal("SIGTERM", stop);
-  try {
-    await appserver.start();
-    await stopped.promise;
+    const authorities = bridge.createAuthorities();
+    const hostInfo = await authorities.hostInfo();
+    const transcriptSearchAuthority =
+      dependencies.createTranscriptSearch?.(paths.transcriptSearchPath) ??
+      new TranscriptSearchIndex(paths.transcriptSearchPath);
+    const identity = bridge.identity;
+    const options: AppserverOptions = {
+      ...identity,
+      appserverVersion: T4_HOST_VERSION,
+      appserverBuild: process.env.T4_HOST_BUILD?.slice(0, 128) || "source",
+      socketPath: paths.socketPath,
+      hostIdPath: paths.hostIdPath,
+      attentionOutcomePath: paths.attentionOutcomePath,
+      sessionAuthority: authorities.sessionAuthority,
+      discovery: authorities.discovery,
+      operationsAuthority: authorities.operationsAuthority,
+      usageAuthority: authorities.usageAuthority,
+      transcriptSearchAuthority,
+      projectRootForProject: authorities.projectRootForProject,
+      lockCheck: authorities.lockCheck,
+      lockStatus: authorities.lockStatus,
+      transcriptImageRoot: hostInfo.transcriptImageRoot,
+      rpcChildInvocation: { executable: config.ompExecutable, prefixArgv: [] },
+      ...(process.platform === "darwin"
+        ? {
+            projectRevealer: async (root: string): Promise<boolean> => {
+              const child = Bun.spawn(["/usr/bin/open", "-R", root], {
+                stdout: "ignore",
+                stderr: "ignore",
+              });
+              return (await child.exited) === 0;
+            },
+          }
+        : {}),
+    };
+    let appserver: AppserverHandle;
+    try {
+      appserver = config.remote
+        ? await (dependencies.createRemote ?? createRemoteAppserver)({
+            stateDir: paths.remoteStateRoot,
+            remoteEndpoint: {
+              address: config.remote.address,
+              port: config.remote.port,
+              originAllowlist: config.remote.origins,
+              serveProxy: config.remote.mode === "serve",
+              trustedServeProxy: config.remote.trustedServeProxy,
+            },
+            appserver: options,
+          })
+        : (dependencies.createLocal ?? createAppserver)(options);
+    } catch (error) {
+      await Promise.resolve(transcriptSearchAuthority.close()).catch(() => undefined);
+      throw error;
+    }
+    const stopped = Promise.withResolvers<void>();
+    let stopping = false;
+    const stop = (): void => {
+      if (stopping) return;
+      stopping = true;
+      void appserver.stop().then(stopped.resolve, stopped.reject);
+    };
+    const onSignal = dependencies.onSignal ?? ((signal, listener) => process.on(signal, listener));
+    const removeSignal =
+      dependencies.removeSignal ?? ((signal, listener) => process.off(signal, listener));
+    onSignal("SIGINT", stop);
+    onSignal("SIGTERM", stop);
+    try {
+      await appserver.start();
+      await stopped.promise;
+    } finally {
+      removeSignal("SIGINT", stop);
+      removeSignal("SIGTERM", stop);
+      if (!stopping) await appserver.stop().catch(() => undefined);
+    }
   } finally {
-    removeSignal("SIGINT", stop);
-    removeSignal("SIGTERM", stop);
-    if (!stopping) await appserver.stop().catch(() => undefined);
     await bridge.stop();
   }
 }
