@@ -6,7 +6,7 @@
 // container stays inert — this surface owns its own virtualized scroller.
 import { useNavigate } from "@tanstack/react-router";
 import { Badge, cn, Tooltip, TooltipPopup, TooltipTrigger, useReducedMotion } from "@t4-code/ui";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
 import type { WorkspaceProject, WorkspaceSession } from "../../lib/workspace-data.ts";
 import { workspaceStore } from "../../state/store-instance.ts";
@@ -43,6 +43,7 @@ import {
   shouldShowAttention,
   type StableRowsState,
 } from "./rows.ts";
+import type { ExportContent } from "./export.ts";
 import { getReadAloudController } from "./ReadAloud.tsx";
 import { TranscriptTimeline } from "./TranscriptTimeline.tsx";
 import type { ToolRenderHost } from "./tool-render/types.ts";
@@ -52,6 +53,8 @@ export interface SessionMainProps {
   readonly project: WorkspaceProject;
   readonly nowMs: number;
   readonly onOpenHostHealth: () => void;
+  /** Export hook: registered with the current rows so the header menu can serialize them. */
+  readonly exportRowsRef: RefObject<(() => ExportContent) | null>;
 }
 
 /** Stable session-scoped destination; all transcript state stays in the workspace store. */
@@ -347,7 +350,7 @@ export function SessionControlBanner({
   );
 }
 
-export function SessionMain({ onOpenHostHealth, session }: SessionMainProps) {
+export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: SessionMainProps) {
   const archived = session.archivedAt !== undefined;
   const navigate = useNavigate();
   const { snapshot, runtime } = useSessionRuntime(session.id, session.freshness);
@@ -403,6 +406,18 @@ export function SessionMain({ onOpenHostHealth, session }: SessionMainProps) {
     [projection, snapshot.pendingPrompts, snapshot.sessionActive],
   );
   const rows = useStableTranscriptRows(rawRows);
+  // The export menu lives in the header; rows live here. Hand the menu a
+  // getter instead of subscribing to the runtime a second time.
+  useEffect(() => {
+    exportRowsRef.current = () => ({
+      rows: rawRows,
+      historyTruncated: projection.historyTruncated,
+      turnActive: projection.turnActive,
+    });
+    return () => {
+      exportRowsRef.current = null;
+    };
+  }, [exportRowsRef, rawRows, projection]);
   const attention = useMemo(() => deriveAttention(projection), [projection]);
 
   const [revisingPlanId, setRevisingPlanId] = useState<string | null>(null);
