@@ -14,6 +14,12 @@ import '../protocol/protocol.dart';
 import 'app_state.dart';
 import 'web_socket_connector.dart';
 
+String _secureToken(int byteLength) {
+  final random = Random.secure();
+  final bytes = List<int>.generate(byteLength, (_) => random.nextInt(256));
+  return base64Url.encode(bytes).replaceAll('=', '');
+}
+
 final class T4ClientController extends ChangeNotifier implements T4Actions {
   T4ClientController({
     required this.hostDirectoryStore,
@@ -96,6 +102,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   bool _reconnectEnabled = true;
   int _bootstrapGeneration = -1;
   int _commandOrdinal = 0;
+  final String _commandNamespace = _secureToken(12);
   int _localPromptOrdinal = 0;
   String? _sessionIndexEpoch;
   int? _sessionIndexSeq;
@@ -958,11 +965,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     );
   }
 
-  String _newDeviceId() {
-    final random = Random.secure();
-    final bytes = List<int>.generate(24, (_) => random.nextInt(256));
-    return base64Url.encode(bytes).replaceAll('=', '');
-  }
+  String _newDeviceId() => _secureToken(24);
 
   @override
   Future<void> selectSession(String sessionId) async {
@@ -3737,8 +3740,8 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   ({String requestId, String commandId}) _nextCommandIds(String prefix) {
     final ordinal = ++_commandOrdinal;
     return (
-      requestId: '$prefix-request-$ordinal',
-      commandId: '$prefix-command-$ordinal',
+      requestId: '$prefix-$_commandNamespace-request-$ordinal',
+      commandId: '$prefix-$_commandNamespace-command-$ordinal',
     );
   }
 

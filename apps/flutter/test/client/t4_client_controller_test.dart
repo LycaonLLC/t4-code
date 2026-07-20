@@ -129,6 +129,40 @@ void main() {
     },
   );
 
+  test('command ids are unique across controller restarts', () async {
+    final profile = _profile('alpha');
+    final directory = _MemoryDirectoryStore(
+      directory: const HostDirectory.empty().upsert(profile),
+    );
+    final firstConnector = _FakeConnector();
+    final secondConnector = _FakeConnector();
+    final first = _controller(
+      directory,
+      _MemoryCredentialStore(),
+      firstConnector,
+    );
+    final second = _controller(
+      directory,
+      _MemoryCredentialStore(),
+      secondConnector,
+    );
+    addTearDown(first.dispose);
+    addTearDown(second.dispose);
+
+    await first.initialize();
+    await second.initialize();
+    final firstChannel = firstConnector.channels.single;
+    final secondChannel = secondConnector.channels.single;
+    firstChannel.emit(_welcome('host-alpha'));
+    secondChannel.emit(_welcome('host-alpha'));
+    await _flush();
+
+    expect(
+      firstChannel.sentJson.last['commandId'],
+      isNot(secondChannel.sentJson.last['commandId']),
+    );
+  });
+
   test(
     'duplicate inventories share an attach while a new selection stays isolated',
     () async {
