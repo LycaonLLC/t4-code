@@ -16,6 +16,27 @@ const DEFAULT_CONNECTION_BYTES = PROMPT_IMAGE_MAX_COUNT * IMAGE_UPLOAD_MAX_BYTES
 const DEFAULT_GLOBAL_BYTES = 512 * 1024 * 1024;
 const DEFAULT_GLOBAL_UPLOADS = 64;
 
+const STORE_MARKER_NAME = ".t4-image-upload-store";
+const STORE_MARKER_CONTENT = "t4-image-upload-store-v1\n";
+const UPLOAD_FILE_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const CLEANUP_FILE_NAME =
+	/^\.delete-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const MARKER_TEMP_FILE_NAME =
+	/^\.t4-image-upload-store\.[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/iu;
+
+interface DirectoryIdentity {
+	readonly dev: number;
+	readonly ino: number;
+}
+
+function identityOf(info: { readonly dev: number; readonly ino: number }): DirectoryIdentity {
+	return { dev: info.dev, ino: info.ino };
+}
+
+function sameIdentity(left: DirectoryIdentity, right: DirectoryIdentity): boolean {
+	return left.dev === right.dev && left.ino === right.ino;
+}
+
 export class ImageUploadError extends Error {
 	constructor(
 		readonly code:
@@ -42,7 +63,8 @@ export interface ManagedRpcImageRef {
 interface UploadRecord extends ManagedRpcImageRef {
 	readonly connectionId: string;
 	readonly sessionId: SessionId;
-	readonly filePath: string;
+	filePath: string;
+	readonly fileIdentity: DirectoryIdentity;
 	readonly handle: fs.FileHandle;
 	readonly hasher: Hash;
 	received: number;
@@ -111,6 +133,7 @@ export class ImageUploadStore {
 	#timer: NodeJS.Timeout | undefined;
 	#started = false;
 	#tail: Promise<void> = Promise.resolve();
+	#rootIdentity: DirectoryIdentity | undefined;
 
 	constructor(options: ImageUploadStoreOptions) {
 		if (!path.isAbsolute(options.root)) throw new Error("image upload root must be absolute");
@@ -137,9 +160,9 @@ export class ImageUploadStore {
 	async start(): Promise<void> {
 		await this.#run(async () => {
 			if (this.#started) return;
-			await fs.rm(this.root, { recursive: true, force: true });
-			await fs.mkdir(this.root, { mode: 0o700 });
-			await fs.chmod(this.root, 0o700);
+			await this.#prepareRoot();
+			this.#rootIdentity = await this.#ownedRoot();
+			await this.#removeStaleFiles();
 			this.#started = true;
 			this.#timer = setInterval(() => void this.sweepExpired().catch(() => undefined), this.#sweepIntervalMs);
 			this.#timer.unref();
@@ -150,12 +173,18 @@ export class ImageUploadStore {
 		if (this.#timer) clearInterval(this.#timer);
 		this.#timer = undefined;
 		await this.#run(async () => {
-			for (const record of this.#uploads.values()) await this.#remove(record).catch(() => undefined);
-			this.#uploads.clear();
-			this.#reservations.clear();
-			this.#globalBytes = 0;
-			this.#started = false;
-			await fs.rm(this.root, { recursive: true, force: true });
+			try {
+				await this.#ownedRoot();
+				for (const record of this.#uploads.values()) await this.#remove(record);
+				await this.#removeStaleFiles();
+			} finally {
+				for (const record of this.#uploads.values()) await record.handle.close().catch(() => undefined);
+				this.#uploads.clear();
+				this.#reservations.clear();
+				this.#globalBytes = 0;
+				this.#started = false;
+				this.#rootIdentity = undefined;
+			}
 		});
 	}
 
@@ -168,6 +197,7 @@ export class ImageUploadStore {
 	}): Promise<{ imageId: ImageId }> {
 		return this.#run(async () => {
 			this.#assertStarted();
+			await this.#ownedRoot();
 			await this.#sweepExpiredLocked();
 			const reserved = this.#reservations.get(input.connectionId) ?? { bytes: 0, uploads: 0 };
 			if (
@@ -180,8 +210,10 @@ export class ImageUploadStore {
 			const id = imageId(randomUUID());
 			const filePath = path.join(this.root, id);
 			const handle = await fs.open(filePath, "wx+", 0o600);
+			let openedIdentity: DirectoryIdentity | undefined;
 			try {
 				await handle.chmod(0o600);
+				openedIdentity = identityOf(await handle.stat());
 				const record: UploadRecord = {
 					imageId: id,
 					connectionId: input.connectionId,
@@ -191,6 +223,7 @@ export class ImageUploadStore {
 					sha256: input.sha256,
 					filePath,
 					handle,
+					fileIdentity: openedIdentity,
 					hasher: createHash("sha256"),
 					received: 0,
 					updatedAt: this.#now(),
@@ -208,7 +241,11 @@ export class ImageUploadStore {
 				return { imageId: id };
 			} catch (error) {
 				await handle.close().catch(() => undefined);
-				await fs.unlink(filePath).catch(() => undefined);
+				if (openedIdentity !== undefined) {
+					const quarantine = await this.#quarantineFile(filePath, openedIdentity).catch(() => undefined);
+					if (quarantine !== undefined)
+						await this.#unlinkQuarantined(quarantine, openedIdentity).catch(() => undefined);
+				}
 				throw error;
 			}
 		});
@@ -370,12 +407,11 @@ export class ImageUploadStore {
 		if (this.#uploads.get(record.imageId) !== record) return;
 		await record.handle.close().catch(() => undefined);
 		try {
-			await this.#unlink(record.filePath);
+			record.filePath = await this.#quarantineFile(record.filePath, record.fileIdentity);
+			await this.#unlinkQuarantined(record.filePath, record.fileIdentity);
 		} catch (error) {
-			if (!isErrno(error, "ENOENT")) {
-				record.cleanupPending = true;
-				throw error;
-			}
+			record.cleanupPending = true;
+			throw error;
 		}
 		this.#detach(record);
 	}
@@ -389,6 +425,130 @@ export class ImageUploadStore {
 			if (reserved.uploads === 0) this.#reservations.delete(record.connectionId);
 		}
 		this.#globalBytes -= record.size;
+	}
+
+	async #prepareRoot(): Promise<void> {
+		let created = false;
+		try {
+			await fs.mkdir(this.root, { mode: 0o700 });
+			created = true;
+		} catch (error) {
+			if (!isErrno(error, "EEXIST")) throw error;
+		}
+		const uid = process.getuid?.();
+		if (uid === undefined) throw new Error("image upload ownership checks are unavailable");
+		if (created) {
+			await fs.chmod(this.root, 0o700);
+		} else {
+			const info = await fs.lstat(this.root);
+			if (
+				info.isSymbolicLink() ||
+				!info.isDirectory() ||
+				info.uid !== uid ||
+				(info.mode & 0o077) !== 0
+			)
+				throw new Error("unmarked image upload root failed ownership validation");
+		}
+		const names = await fs.readdir(this.root);
+		const markerValid = names.includes(STORE_MARKER_NAME) && (await this.#markerIsValid(uid));
+		if (markerValid) return;
+		const unowned = names.filter(name => name !== STORE_MARKER_NAME && !MARKER_TEMP_FILE_NAME.test(name));
+		if (unowned.length > 0) throw new Error("unmarked image upload root is not empty");
+		await this.#installMarker();
+	}
+
+	async #markerIsValid(uid: number): Promise<boolean> {
+		const markerPath = path.join(this.root, STORE_MARKER_NAME);
+		try {
+			const marker = await fs.lstat(markerPath);
+			return (
+				!marker.isSymbolicLink() &&
+				marker.isFile() &&
+				marker.uid === uid &&
+				(marker.mode & 0o022) === 0 &&
+				(await fs.readFile(markerPath, "utf8")) === STORE_MARKER_CONTENT
+			);
+		} catch (error) {
+			if (isErrno(error, "ENOENT")) return false;
+			throw error;
+		}
+	}
+
+	async #installMarker(): Promise<void> {
+		const temporaryPath = path.join(this.root, `${STORE_MARKER_NAME}.${randomUUID()}.tmp`);
+		const markerPath = path.join(this.root, STORE_MARKER_NAME);
+		const handle = await fs.open(temporaryPath, "wx", 0o600);
+		try {
+			await handle.writeFile(STORE_MARKER_CONTENT, "utf8");
+			await handle.sync();
+		} finally {
+			await handle.close();
+		}
+		await fs.rename(temporaryPath, markerPath);
+	}
+
+	async #ownedFile(filePath: string): Promise<DirectoryIdentity> {
+		const uid = process.getuid?.();
+		if (uid === undefined) throw new Error("image upload ownership checks are unavailable");
+		const info = await fs.lstat(filePath);
+		if (info.isSymbolicLink() || !info.isFile() || info.uid !== uid || (info.mode & 0o022) !== 0)
+			throw new Error("image upload file failed ownership validation");
+		return identityOf(info);
+	}
+
+	async #quarantineFile(filePath: string, expected: DirectoryIdentity): Promise<string> {
+		await this.#ownedRoot();
+		const current = await this.#ownedFile(filePath);
+		if (!sameIdentity(current, expected)) throw new Error("image upload file identity changed");
+		const quarantine = path.join(this.root, `.delete-${randomUUID()}`);
+		await fs.rename(filePath, quarantine);
+		return quarantine;
+	}
+
+	async #unlinkQuarantined(filePath: string, expected: DirectoryIdentity): Promise<void> {
+		await this.#ownedRoot();
+		const current = await this.#ownedFile(filePath);
+		if (!sameIdentity(current, expected)) throw new Error("image upload file identity changed");
+		await this.#unlink(filePath);
+	}
+
+	async #ownedRoot(): Promise<DirectoryIdentity> {
+		const uid = process.getuid?.();
+		if (uid === undefined) throw new Error("image upload ownership checks are unavailable");
+		const info = await fs.lstat(this.root);
+		if (
+			info.isSymbolicLink() ||
+			!info.isDirectory() ||
+			info.uid !== uid ||
+			(info.mode & 0o022) !== 0
+		)
+			throw new Error("image upload root failed ownership validation");
+		const identity = identityOf(info);
+		if (this.#rootIdentity && !sameIdentity(identity, this.#rootIdentity))
+			throw new Error("image upload root identity changed");
+		const markerPath = path.join(this.root, STORE_MARKER_NAME);
+		const marker = await fs.lstat(markerPath);
+		if (marker.isSymbolicLink() || !marker.isFile() || marker.uid !== uid || (marker.mode & 0o022) !== 0)
+			throw new Error("image upload root marker failed validation");
+		if ((await fs.readFile(markerPath, "utf8")) !== STORE_MARKER_CONTENT)
+			throw new Error("image upload root marker is invalid");
+		return identity;
+	}
+
+	async #removeStaleFiles(): Promise<void> {
+		await this.#ownedRoot();
+		const names = (await fs.readdir(this.root)).filter(name => name !== STORE_MARKER_NAME);
+		const stale: { filePath: string; identity: DirectoryIdentity }[] = [];
+		for (const name of names) {
+			if (!UPLOAD_FILE_NAME.test(name) && !CLEANUP_FILE_NAME.test(name) && !MARKER_TEMP_FILE_NAME.test(name))
+				throw new Error("image upload root contains unowned data");
+			const filePath = path.join(this.root, name);
+			stale.push({ filePath, identity: await this.#ownedFile(filePath) });
+		}
+		for (const entry of stale) {
+			const quarantine = await this.#quarantineFile(entry.filePath, entry.identity);
+			await this.#unlinkQuarantined(quarantine, entry.identity);
+		}
 	}
 
 	#assertStarted(): void {

@@ -221,7 +221,7 @@ describe("managed appserver image uploads", () => {
 			const started = await store.begin(input);
 
 			await expect(store.cleanupConnection(input.connectionId)).resolves.toBeUndefined();
-			expect(await fs.stat(path.join(root, started.imageId))).toBeDefined();
+			expect((await fs.readdir(root)).filter(name => name.startsWith(".delete-"))).toHaveLength(1);
 			await expect(
 				store.chunk({
 					connectionId: input.connectionId,
@@ -235,7 +235,7 @@ describe("managed appserver image uploads", () => {
 
 			failUnlink = false;
 			await store.sweepExpired();
-			await expect(fs.stat(path.join(root, started.imageId))).rejects.toMatchObject({ code: "ENOENT" });
+			expect((await fs.readdir(root)).filter(name => name.startsWith(".delete-"))).toHaveLength(0);
 			expect(await store.begin(input)).toHaveProperty("imageId");
 		} finally {
 			await store.stop();
@@ -275,11 +275,11 @@ describe("managed appserver image uploads", () => {
 			// failure while retaining its reservation for a safe retry.
 			await expect(store.release(acknowledged)).resolves.toBeUndefined();
 			await expect(store.begin(input)).rejects.toMatchObject({ code: "image_quota_exceeded" });
-			expect(await fs.stat(path.join(root, started.imageId))).toBeDefined();
+			expect((await fs.readdir(root)).filter(name => name.startsWith(".delete-"))).toHaveLength(1);
 
 			failUnlink = false;
 			await store.sweepExpired();
-			await expect(fs.stat(path.join(root, started.imageId))).rejects.toMatchObject({ code: "ENOENT" });
+			expect((await fs.readdir(root)).filter(name => name.startsWith(".delete-"))).toHaveLength(0);
 			expect(await store.begin(input)).toHaveProperty("imageId");
 		} finally {
 			await store.stop();
@@ -321,6 +321,189 @@ describe("managed appserver image uploads", () => {
 			await expect(fs.stat(path.join(root, expiring.imageId))).rejects.toMatchObject({ code: "ENOENT" });
 		} finally {
 			await store.stop();
+			await fs.rm(parent, { recursive: true, force: true });
+		}
+	});
+
+	test("claims an empty private preexisting root", async () => {
+		const parent = await fs.mkdtemp(path.join(os.tmpdir(), "omp-image-store-empty-"));
+		const root = path.join(parent, "images");
+		await fs.mkdir(root, { mode: 0o700 });
+		const store = new ImageUploadStore({ root, sweepIntervalMs: 60_000 });
+		try {
+			await store.start();
+			expect(await fs.readdir(root)).toEqual([".t4-image-upload-store"]);
+			await store.stop();
+		} finally {
+			await fs.rm(parent, { recursive: true, force: true });
+		}
+	});
+
+	test("repairs an interrupted marker when no unrelated data is present", async () => {
+		const parent = await fs.mkdtemp(path.join(os.tmpdir(), "omp-image-store-marker-"));
+		const root = path.join(parent, "images");
+		await fs.mkdir(root, { mode: 0o700 });
+		await fs.writeFile(path.join(root, ".t4-image-upload-store"), "partial", { mode: 0o600 });
+		const store = new ImageUploadStore({ root, sweepIntervalMs: 60_000 });
+		try {
+			await store.start();
+			expect(await fs.readFile(path.join(root, ".t4-image-upload-store"), "utf8")).toBe(
+				"t4-image-upload-store-v1\n",
+			);
+			await store.stop();
+		} finally {
+			await fs.rm(parent, { recursive: true, force: true });
+		}
+	});
+
+	test("refuses unproven preexisting roots without deleting their contents", async () => {
+		const parent = await fs.mkdtemp(path.join(os.tmpdir(), "omp-image-store-unproven-"));
+		const root = path.join(parent, "images");
+		const sentinel = path.join(root, "sentinel");
+		await fs.mkdir(root, { mode: 0o700 });
+		await fs.writeFile(sentinel, "preserve me");
+		try {
+			const store = new ImageUploadStore({ root, sweepIntervalMs: 60_000 });
+			await expect(store.start()).rejects.toThrow();
+			expect(await fs.readFile(sentinel, "utf8")).toBe("preserve me");
+		} finally {
+			await fs.rm(parent, { recursive: true, force: true });
+		}
+	});
+
+	test("recovers only stale files from a valid owned spool", async () => {
+		const { parent, root, store } = await testStore();
+		const stale = path.join(root, "4e2e669a-5f8e-44a3-b702-e725c4c106c8");
+		const interrupted = path.join(root, ".delete-7c4476e9-b9e3-471c-8b2b-2a9f3e86bd2f");
+		const markerTemp = path.join(
+			root,
+			".t4-image-upload-store.1d816c9f-2aba-448f-a38b-4c537f99760f.tmp",
+		);
+		try {
+			await store.stop();
+			await fs.writeFile(stale, "stale");
+			await fs.writeFile(interrupted, "interrupted");
+			await fs.writeFile(markerTemp, "partial marker");
+			const recovered = new ImageUploadStore({ root, sweepIntervalMs: 60_000 });
+			await recovered.start();
+			await expect(fs.stat(stale)).rejects.toMatchObject({ code: "ENOENT" });
+			await expect(fs.stat(interrupted)).rejects.toMatchObject({ code: "ENOENT" });
+			await expect(fs.stat(markerTemp)).rejects.toMatchObject({ code: "ENOENT" });
+			await recovered.stop();
+		} finally {
+			await fs.rm(parent, { recursive: true, force: true });
+		}
+	});
+
+	test("does not remove a replacement upload file", async () => {
+		const { parent, root, store } = await testStore();
+		const displaced = path.join(parent, "displaced-upload");
+		try {
+			const input = {
+				connectionId: "connection-a",
+				sessionId: sessionId("session-a"),
+				mimeType: "image/png" as const,
+				size: png.byteLength,
+				sha256: digest(png),
+			};
+			const started = await store.begin(input);
+			const uploadPath = path.join(root, started.imageId);
+			await fs.rename(uploadPath, displaced);
+			await fs.writeFile(uploadPath, "foreign data", { mode: 0o600 });
+			await expect(store.discard(input.connectionId, input.sessionId, started.imageId)).rejects.toThrow(
+				"identity changed",
+			);
+			expect(await fs.readFile(uploadPath, "utf8")).toBe("foreign data");
+			await expect(store.stop()).rejects.toThrow("identity changed");
+		} finally {
+			await fs.rm(parent, { recursive: true, force: true });
+		}
+	});
+
+	test("does not report deletion after the quarantined file moves", async () => {
+		const parent = await fs.mkdtemp(path.join(os.tmpdir(), "omp-image-store-moved-"));
+		const root = path.join(parent, "images");
+		const displaced = path.join(parent, "displaced-upload");
+		const store = new ImageUploadStore({
+			root,
+			sweepIntervalMs: 60_000,
+			unlink: async filePath => {
+				await fs.rename(filePath, displaced);
+				await fs.unlink(filePath);
+			},
+		});
+		try {
+			await store.start();
+			const input = {
+				connectionId: "connection-a",
+				sessionId: sessionId("session-a"),
+				mimeType: "image/png" as const,
+				size: png.byteLength,
+				sha256: digest(png),
+			};
+			const started = await store.begin(input);
+			await store.chunk({ ...input, imageId: started.imageId, offset: 0, data: png });
+			await expect(
+				store.discard(input.connectionId, input.sessionId, started.imageId),
+			).rejects.toMatchObject({ code: "ENOENT" });
+			expect(await fs.readFile(displaced)).toEqual(Buffer.from(png));
+			await expect(store.stop()).rejects.toMatchObject({ code: "ENOENT" });
+		} finally {
+			await fs.rm(parent, { recursive: true, force: true });
+		}
+	});
+
+	test("does not unlink through a replacement root", async () => {
+		const parent = await fs.mkdtemp(path.join(os.tmpdir(), "omp-image-store-replaced-"));
+		const root = path.join(parent, "images");
+		const displaced = path.join(parent, "displaced");
+		const sentinel = path.join(root, "replacement-sentinel");
+		let replaceOnUnlink = true;
+		const store = new ImageUploadStore({
+			root,
+			sweepIntervalMs: 60_000,
+			unlink: async filePath => {
+				if (replaceOnUnlink) {
+					replaceOnUnlink = false;
+					await fs.rename(root, displaced);
+					await fs.mkdir(root, { mode: 0o700 });
+					await fs.writeFile(sentinel, "foreign data");
+				}
+				await fs.unlink(filePath);
+			},
+		});
+		try {
+			await store.start();
+			const input = {
+				connectionId: "connection-a",
+				sessionId: sessionId("session-a"),
+				mimeType: "image/png" as const,
+				size: png.byteLength,
+				sha256: digest(png),
+			};
+			const started = await store.begin(input);
+			await expect(
+				store.discard(input.connectionId, input.sessionId, started.imageId),
+			).rejects.toMatchObject({ code: "ENOENT" });
+			expect(await fs.readFile(sentinel, "utf8")).toBe("foreign data");
+			expect((await fs.readdir(displaced)).filter(name => name.startsWith(".delete-"))).toHaveLength(1);
+			await expect(store.stop()).rejects.toThrow("identity changed");
+		} finally {
+			await fs.rm(parent, { recursive: true, force: true });
+		}
+	});
+
+	test("fails closed when the owned root is replaced during teardown", async () => {
+		const { parent, root, store } = await testStore();
+		const displaced = path.join(parent, "displaced");
+		const sentinel = path.join(root, "replacement-sentinel");
+		try {
+			await fs.rename(root, displaced);
+			await fs.mkdir(root, { mode: 0o700 });
+			await fs.writeFile(sentinel, "foreign data");
+			await expect(store.stop()).rejects.toThrow("identity changed");
+			expect(await fs.readFile(sentinel, "utf8")).toBe("foreign data");
+		} finally {
 			await fs.rm(parent, { recursive: true, force: true });
 		}
 	});

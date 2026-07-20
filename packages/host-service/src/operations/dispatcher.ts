@@ -374,10 +374,14 @@ export class DesktopOperationDispatcher implements OperationCommandHandler {
 					sessionId: context.sessionId,
 					terminalId: decoded.terminalId as TerminalId,
 				};
+				let claimed = false;
 				try {
 					this.terminalOwners.claim(owner);
-				} catch (error) {
+					claimed = true;
 					for (const frame of pendingTerminalFrames.splice(0)) this.publishTerminalOutput(frame, owner);
+				} catch (error) {
+					pendingTerminalFrames.length = 0;
+					if (claimed) this.terminalOwners.release(owner.terminalId);
 					if (this.authority.terminalClose)
 						await this.authority.terminalClose(
 							{

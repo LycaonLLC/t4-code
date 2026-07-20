@@ -17,6 +17,14 @@ function labelFor(artifact: TranscriptArtifactReference): string {
   return artifact.name ?? `${artifact.kind} artifact`;
 }
 
+export function artifactOpensInline(artifact: TranscriptArtifactReference): boolean {
+  return artifact.kind === "image" && artifact.disposition === "inline";
+}
+
+export function artifactDownloadLabel(artifact: TranscriptArtifactReference): string {
+  return artifact.sha256 === undefined ? "Download artifact" : "Download verified artifact";
+}
+
 function ArtifactCard({
   artifact,
   source,
@@ -24,7 +32,7 @@ function ArtifactCard({
   readonly artifact: TranscriptArtifactReference;
   readonly source: TranscriptImageSource;
 }) {
-  const [open, setOpen] = useState(artifact.kind === "image");
+  const [open, setOpen] = useState(() => artifactOpensInline(artifact));
   const [text, setText] = useState<string | null>(null);
   const snapshot = useSyncExternalStore(
     (listener) => source.subscribe(artifact, listener),
@@ -78,13 +86,24 @@ function ArtifactCard({
         <span className="min-w-0 flex-1 truncate text-xs font-medium">{labelFor(artifact)}</span>
         <span className="shrink-0 text-muted-foreground text-xs">{artifact.kind}</span>
       </div>
-      {artifact.kind === "image" && snapshot.status === "ready" && (
+      {artifact.kind === "image" && open && snapshot.status === "ready" && (
         <img
           className="mt-2 max-h-52 max-w-full rounded object-contain"
           src={snapshot.url}
           alt={labelFor(artifact)}
           onError={() => source.reportDecodeFailure(artifact)}
         />
+      )}
+      {artifact.kind === "image" && artifact.disposition === "attachment" && (
+        <Button
+          className="mt-2 min-h-8"
+          size="sm"
+          variant="outline"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+        >
+          {open ? "Close image" : "Open image"}
+        </Button>
       )}
       {snapshot.status === "loading" && open && (
         <p className="mt-2 flex items-center gap-1 text-muted-foreground text-xs" role="status">
@@ -133,7 +152,7 @@ function ArtifactCard({
           href={snapshot.url}
           download={artifact.name ?? "artifact"}
         >
-          Download verified artifact
+          {artifactDownloadLabel(artifact)}
         </a>
       )}
     </article>

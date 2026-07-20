@@ -45,8 +45,8 @@ function boundedBlock(value: unknown): string {
   return `${text.slice(0, EXPORT_TOOL_OUTPUT_MAX_CHARS)}\n… truncated for export`;
 }
 
-function fencedJson(value: unknown): string {
-  const content = boundedBlock(value);
+function fencedJson(value: unknown, bounded = true): string {
+  const content = bounded ? boundedBlock(value) : (JSON.stringify(value, null, 2) ?? "null");
   let longestBacktickRun = 0;
   for (const match of content.matchAll(/`+/g)) {
     longestBacktickRun = Math.max(longestBacktickRun, match[0].length);
@@ -59,6 +59,18 @@ function toolCallStatus(call: TranscriptToolCall): string {
   if (call.state === "ok") return "ok";
   if (call.state === "error") return "error";
   return "running";
+}
+
+function artifactMetadataToMarkdown(
+  artifacts: TranscriptToolCall["artifacts"] | undefined,
+  issue: string | null | undefined,
+): string[] {
+  const parts: string[] = [];
+  if (artifacts !== undefined && artifacts.length > 0) {
+    parts.push(`Artifacts:\n\n${fencedJson(artifacts, false)}`);
+  }
+  if (issue !== null && issue !== undefined) parts.push(`> Artifact issue: ${issue}`);
+  return parts;
 }
 
 function toolCallToMarkdown(call: TranscriptToolCall): string {
@@ -75,6 +87,7 @@ function toolCallToMarkdown(call: TranscriptToolCall): string {
   if (call.images.length > 0) {
     parts.push(`_${call.images.length} image(s) attached_`);
   }
+  parts.push(...artifactMetadataToMarkdown(call.artifacts, call.artifactIssue));
   return parts.join("\n\n");
 }
 
@@ -125,6 +138,7 @@ function rowToMarkdown(row: TranscriptRow): string | null {
       if (row.text !== "") parts.push(row.text);
       if (row.images.length > 0) parts.push(`_${row.images.length} image(s) attached_`);
       if (row.imageIssue !== null) parts.push(`> Image issue: ${row.imageIssue}`);
+      parts.push(...artifactMetadataToMarkdown(row.artifacts, row.artifactIssue));
       return parts.join("\n\n");
     }
     case "tool-group":
