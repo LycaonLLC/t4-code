@@ -170,6 +170,18 @@ void main() {
       await _flush();
 
       final page = channel.sentJson.last;
+      channel.emit(_sessions('host-alpha'));
+      await _flush();
+      expect(
+        channel.sentJson.where(
+          (frame) => frame['command'] == 'transcript.page',
+        ),
+        hasLength(1),
+      );
+      expect(
+        channel.sentJson.where((frame) => frame['command'] == 'session.attach'),
+        isEmpty,
+      );
       expect(page['command'], 'transcript.page');
       expect(page['args'], <String, Object?>{
         'limit': 64,
@@ -339,6 +351,77 @@ void main() {
       expect(controller.state.composer.fastEnabled, isFalse);
       expect(controller.state.composer.modelLabel, 'GPT-5.6-Sol');
       expect(controller.state.composer.thinking, 'high');
+    },
+  );
+
+  test(
+    'keeps observer sessions ready when state hydration is locked',
+    () async {
+      final profile = _profile('alpha');
+      final directory = _MemoryDirectoryStore(
+        directory: const HostDirectory.empty().upsert(profile),
+      );
+      final connector = _FakeConnector();
+      final controller = _controller(
+        directory,
+        _MemoryCredentialStore(),
+        connector,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      final channel = connector.channels.single;
+
+      channel.emit(_welcome('host-alpha'));
+      await _flush();
+      final list = channel.sentJson.last;
+      channel.emit(
+        _response(
+          list,
+          command: 'session.list',
+          result: _sessionListResult('host-alpha'),
+        ),
+      );
+      await _flush();
+      final attach = channel.sentJson.singleWhere(
+        (frame) => frame['command'] == 'session.attach',
+      );
+      channel.emit(
+        _response(
+          attach,
+          command: 'session.attach',
+          result: const <String, Object?>{},
+        ),
+      );
+      await _flush();
+      final stateGet = channel.sentJson.last;
+      expect(stateGet['command'], 'session.state.get');
+
+      channel.emit(
+        _snapshot(
+          'host-alpha',
+          'session-alpha',
+          revision: 'revision-session-alpha',
+        ),
+      );
+      channel.emit(<String, Object?>{
+        'v': 'omp-app/1',
+        'type': 'response',
+        'requestId': stateGet['requestId'],
+        'commandId': stateGet['commandId'],
+        'hostId': stateGet['hostId'],
+        'sessionId': stateGet['sessionId'],
+        'command': 'session.state.get',
+        'ok': false,
+        'error': <String, Object?>{
+          'code': 'session_locked',
+          'message': 'session is locked by another process',
+        },
+      });
+      await _flush();
+
+      expect(controller.state.connectionPhase, ConnectionPhase.ready);
+      expect(controller.state.errorMessage, isNull);
+      expect(controller.state.composer.fastAvailable, isFalse);
     },
   );
 

@@ -3729,6 +3729,11 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       return;
     }
     if (!frame.ok) {
+      if (pending.command == 'session.state.get' &&
+          frame.error?.code == 'session_locked') {
+        _publish();
+        return;
+      }
       if (frame.command == 'catalog.get' || frame.command == 'settings.read') {
         final error = StateError(
           frame.error?.message ?? '${frame.command} failed',
@@ -3908,6 +3913,13 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       _grantedFeatures.contains('transcript.page');
 
   void _primeTranscriptTailThenAttach(String sessionId) {
+    if (_pendingCommands.values.any(
+      (pending) =>
+          pending.command == 'transcript.page' &&
+          pending.sessionId == sessionId,
+    )) {
+      return;
+    }
     if (!_transcriptPageSupported) {
       _sendAttach(sessionId);
       return;
