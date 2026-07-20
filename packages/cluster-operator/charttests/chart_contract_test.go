@@ -129,6 +129,23 @@ func TestNetworkPoliciesDefaultDenyAndAllowOnlyDeclaredFlows(t *testing.T) {
 	}
 }
 
+func TestWoodpeckerCanUseRotatingProjectedServiceAccountIdentity(t *testing.T) {
+	values := append(enabledValues(),
+		"--set", "woodpecker.configMap=woodpecker-config",
+		"--set", "woodpecker.serviceAccountAudience=woodpecker-ci-trigger",
+	)
+	output := helmTemplate(t, values...)
+	server := documentContainingKind(t, output, "Deployment", "name: release-name-t4-cluster-server")
+	assertContains(t, server,
+		"name: T4_WOODPECKER_TOKEN_FILE",
+		"/var/run/secrets/t4-ci/token",
+		"audience: woodpecker-ci-trigger",
+		"expirationSeconds: 600",
+	)
+	host := documentContainingKind(t, output, "T4ClusterHost", "name: t4-cluster")
+	assertContains(t, host, "serviceAccountAudience: woodpecker-ci-trigger", "name: woodpecker-config")
+}
+
 func TestCRDsRemainExplicitAcrossUpgradeAndUninstall(t *testing.T) {
 	withoutCRDs := helmTemplate(t, enabledValues()...)
 	if strings.Contains(withoutCRDs, "kind: CustomResourceDefinition") {

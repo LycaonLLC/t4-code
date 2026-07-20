@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { WoodpeckerProvider, mapWoodpeckerPipeline } from "../src/woodpecker.ts";
 
 const correlation = {
@@ -94,8 +97,34 @@ describe("bounded Woodpecker provider", () => {
 		expect(requests.filter(request => request.init?.method === "POST")).toHaveLength(1);
 	});
 
+	it("re-reads a bounded projected credential for every provider request", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "t4-woodpecker-token-"));
+		try {
+			const tokenFile = join(directory, "token");
+			const seen: string[] = [];
+			const fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+				seen.push(new Headers(init?.headers).get("authorization") ?? "");
+				return Response.json([]);
+			}) as typeof globalThis.fetch;
+			await writeFile(tokenFile, "a".repeat(40), { mode: 0o400 });
+			const woodpecker = new WoodpeckerProvider({
+				baseUrl: "https://ci.example.test",
+				tokenFile,
+				repositories: { "t4-code": { slug: "owner/t4-code" } },
+				fetch,
+			});
+			await woodpecker.query(correlation);
+			await writeFile(tokenFile, "b".repeat(40), { mode: 0o400 });
+			await woodpecker.query(correlation);
+			expect(seen).toEqual([`Bearer ${"a".repeat(40)}`, `Bearer ${"b".repeat(40)}`]);
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
 	it("fails closed for unconfigured repositories, insecure provider URLs, oversized replies, and unknown correlation", async () => {
 		expect(() => new WoodpeckerProvider({ baseUrl: "http://ci.example.test", token: "secret", repositories: {} })).toThrow("HTTPS");
+		expect(() => new WoodpeckerProvider({ baseUrl: "https://ci.example.test", token: "secret", tokenFile: "/run/token", repositories: {} })).toThrow("exactly one");
 		const fetch = (async () => Response.json(Array.from({ length: 101 }, () => pipeline))) as typeof globalThis.fetch;
 		await expect(provider(fetch).query(correlation)).rejects.toThrow("pipeline response limit");
 		await expect(provider(fetch).query({ ...correlation, repositoryId: "not-allowed" })).rejects.toThrow("not allowlisted");

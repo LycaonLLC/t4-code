@@ -41,6 +41,26 @@ describe("cluster server configuration", () => {
 			await rm(directory, { recursive: true, force: true });
 		}
 	});
+	it("accepts exactly one server-side Woodpecker credential source", () => {
+		const common = {
+			...BASE_ENV,
+			T4_WOODPECKER_BASE_URL: "https://ci.example.test",
+			T4_WOODPECKER_REPOSITORIES: '{"t4-code":{"slug":"owner/t4-code"}}',
+		};
+		expect(clusterServerConfigFromEnv({ ...common, T4_WOODPECKER_TOKEN_FILE: "/var/run/secrets/t4-ci/token" }).woodpecker).toMatchObject({
+			tokenFile: "/var/run/secrets/t4-ci/token",
+		});
+		expect(clusterServerConfigFromEnv({ ...common, T4_WOODPECKER_TOKEN: "secret-from-kubernetes" }).woodpecker).toMatchObject({
+			token: "secret-from-kubernetes",
+		});
+		expect(() => clusterServerConfigFromEnv(common)).toThrow("complete");
+		expect(() => clusterServerConfigFromEnv({
+			...common,
+			T4_WOODPECKER_TOKEN: "secret-from-kubernetes",
+			T4_WOODPECKER_TOKEN_FILE: "/var/run/secrets/t4-ci/token",
+		})).toThrow("exactly one");
+	});
+
 });
 
 describe("trusted cluster gateway proxy sources", () => {
