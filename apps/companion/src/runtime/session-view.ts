@@ -10,6 +10,10 @@ export interface CompanionAttentionItem {
   readonly requestedAtMs: number;
 }
 
+export interface TranscriptTextEntry {
+  readonly data: Readonly<Record<string, unknown>>;
+}
+
 export function sessionKey(hostId: string, sessionId: string): string {
   return `${hostId}\u0000${sessionId}`;
 }
@@ -46,10 +50,10 @@ export function warmSession(
 }
 
 export function canWriteSession(session: SessionRef, attached = false): boolean {
-	if (session.liveState?.sessionControl !== undefined) return false;
-	// A live CLI session is read-only until session.attach has warmed its
-	// transcript and the host has confirmed whether another process owns it.
-	return session.status !== "active" || attached;
+  if (session.liveState?.sessionControl !== undefined) return false;
+  // A live CLI session is read-only until session.attach has warmed its
+  // transcript and the host has confirmed whether another process owns it.
+  return session.status !== "active" || attached;
 }
 
 export function projectName(session: SessionRef): string {
@@ -79,6 +83,17 @@ export function entryRole(data: Readonly<Record<string, unknown>>): "You" | "Age
   if (data.role === "user") return "You";
   if (data.role === "assistant") return "Agent";
   return "Update";
+}
+
+export function latestAssistantText(entries: readonly TranscriptTextEntry[]): string | null {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry !== undefined && entryRole(entry.data) === "Agent") {
+      const text = entryText(entry.data);
+      if (text !== null) return text;
+    }
+  }
+  return null;
 }
 
 export function transcriptDisplayState(

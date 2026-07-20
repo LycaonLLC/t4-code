@@ -4,9 +4,9 @@ import { parseCompanionHost } from "./backend";
 
 describe("parseCompanionHost", () => {
   it("creates the default Tailnet WebSocket route", () => {
-    const host = parseCompanionHost("wolfies-macbook.taild04b86.ts.net:8445");
-    expect(host.origin).toBe("https://wolfies-macbook.taild04b86.ts.net:8445");
-    expect(host.wsUrl).toBe("wss://wolfies-macbook.taild04b86.ts.net:8445/v1/ws");
+    const host = parseCompanionHost("mac.example.ts.net:8445");
+    expect(host.origin).toBe("https://mac.example.ts.net:8445");
+    expect(host.wsUrl).toBe("wss://mac.example.ts.net:8445/v1/ws");
     expect(host.profileId).toBe("default");
   });
 

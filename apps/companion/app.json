@@ -10,15 +10,15 @@
     "backgroundColor": "#090b0f",
     "ios": {
       "icon": "./assets/images/icon.png",
-      "bundleIdentifier": "com.roycorp.t4companion",
+      "bundleIdentifier": "com.lycaonsolutions.t4code",
       "supportsTablet": false
     },
     "android": {
-      "package": "com.roycorp.t4companion",
+      "package": "com.lycaonsolutions.t4code",
       "adaptiveIcon": {
-          "backgroundColor": "#090b0f",
-          "foregroundImage": "./assets/images/android-icon-foreground.png",
-          "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#090b0f",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": true
     },
@@ -34,6 +34,12 @@
           "backgroundColor": "#090b0f",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "attention"
         }
       ],
       "expo-secure-store"

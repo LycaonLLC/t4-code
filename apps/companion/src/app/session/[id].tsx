@@ -14,11 +14,13 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { TranscriptSpeechButton } from "@/components/transcript-speech-button";
 import { useCompanionRuntime } from "@/runtime/companion-runtime";
 import {
   canWriteSession,
   entryRole,
   entryText,
+  latestAssistantText,
   projectName,
   sessionsFrom,
   transcriptDisplayState,
@@ -123,6 +125,7 @@ export default function SessionScreen() {
   );
   const confirmations = [...(warm?.confirmations.values() ?? [])] as readonly Record<string, unknown>[];
   const transcriptState = transcriptDisplayState(openedSessionId === id, entries.length);
+  const latestAssistantMessage = latestAssistantText(warm?.entries ?? []);
 
   useEffect(() => {
     if (session === undefined) return;
@@ -173,7 +176,7 @@ export default function SessionScreen() {
             <Text numberOfLines={1} style={styles.headerTitle}>{projectName(session)}</Text>
             <Text style={styles.headerStatus}>{session.status === "active" ? "● Running" : "Idle"} · {runtime.connection === "ready" ? "Live" : "Reconnecting"}</Text>
           </View>
-          <View style={styles.headerSpacer} />
+          <TranscriptSpeechButton onError={setMessage} text={latestAssistantMessage} />
         </View>
 
         <ScrollView
@@ -203,7 +206,7 @@ export default function SessionScreen() {
             );
           })}
 
-			{(session.attention?.pending ?? []).map((item) => <AttentionPanel item={item} key={`${item.kind}:${item.id}`} session={session} writable={writable} />)}
+          {(session.attention?.pending ?? []).map((item) => <AttentionPanel item={item} key={`${item.kind}:${item.id}`} session={session} writable={writable} />)}
           {confirmations.map((confirmation) => {
             const confirmationId = typeof confirmation.confirmationId === "string" ? confirmation.confirmationId : null;
             const commandId = typeof confirmation.commandId === "string" ? confirmation.commandId : null;
@@ -253,7 +256,6 @@ const styles = StyleSheet.create({
   headerCopy: { flex: 1, alignItems: "center", gap: 2 },
   headerTitle: { color: colors.text, fontSize: 17, fontWeight: "700" },
   headerStatus: { color: colors.green, fontSize: 11 },
-  headerSpacer: { width: 44 },
   transcript: { flex: 1 },
   transcriptContent: { paddingBottom: spacing.lg },
   loadingTranscript: { padding: spacing.xxl, alignItems: "center", gap: spacing.sm },

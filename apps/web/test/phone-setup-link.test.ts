@@ -4,8 +4,8 @@ import { companionSetupLink } from "../src/features/targets/phone-setup.ts";
 
 describe("companion phone setup link", () => {
   it("encodes the stable Tailnet origin for one-time native app setup", () => {
-    expect(companionSetupLink("https://wolfies-macbook.example.ts.net:8445")).toBe(
-      "t4companion://?address=https%3A%2F%2Fwolfies-macbook.example.ts.net%3A8445",
+    expect(companionSetupLink("https://mac.example.ts.net:8445")).toBe(
+      "t4companion://?address=https%3A%2F%2Fmac.example.ts.net%3A8445",
     );
   });
 

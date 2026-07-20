@@ -4,7 +4,13 @@ import type { SessionRef } from "@t4-code/protocol";
 import { hostId, projectId, revision, sessionId } from "@t4-code/protocol";
 import { describe, expect, it } from "vite-plus/test";
 
-import { attentionFrom, canWriteSession, relativeTime, transcriptDisplayState } from "./session-view";
+import {
+  attentionFrom,
+  canWriteSession,
+  latestAssistantText,
+  relativeTime,
+  transcriptDisplayState,
+} from "./session-view";
 
 function ref(overrides: Partial<SessionRef> = {}): SessionRef {
   return {
@@ -47,14 +53,24 @@ describe("companion session view", () => {
     expect(attentionFrom(snapshot).map((item) => item.item.id)).toEqual(["a", "b"]);
   });
 
-	it("refuses writes while another app controls the session", () => {
-		expect(canWriteSession(ref())).toBe(false);
-		expect(canWriteSession(ref(), true)).toBe(true);
-		expect(canWriteSession(ref({ status: "idle" }))).toBe(true);
-		expect(canWriteSession(ref({
-			liveState: { sessionControl: { mode: "observer", lockStatus: "live", transcript: "live" } },
-		}), true)).toBe(false);
-	});
+  it("refuses writes while another app controls the session", () => {
+    expect(canWriteSession(ref())).toBe(false);
+    expect(canWriteSession(ref(), true)).toBe(true);
+    expect(canWriteSession(ref({ status: "idle" }))).toBe(true);
+    expect(canWriteSession(ref({
+      liveState: { sessionControl: { mode: "observer", lockStatus: "live", transcript: "live" } },
+    }), true)).toBe(false);
+  });
+
+  it("selects the newest assistant text for speech", () => {
+    expect(latestAssistantText([
+      { data: { role: "assistant", text: "first" } },
+      { data: { role: "user", text: "question" } },
+      { data: { role: "assistant", message: "latest" } },
+      { data: { role: "assistant", text: "   " } },
+    ])).toBe("latest");
+    expect(latestAssistantText([{ data: { role: "user", text: "only user text" } }])).toBeNull();
+  });
 
   it("formats compact relative times", () => {
     const now = Date.parse("2026-07-19T13:00:00.000Z");

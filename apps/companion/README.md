@@ -65,7 +65,7 @@ mise exec node@24.17.0 -- pnpm exec expo run:ios
 ```
 
 The first physical-iPhone build requires an Apple Development certificate and
-a provisioning profile for `com.roycorp.t4companion`. Xcode can create both
+a provisioning profile for `com.lycaonsolutions.t4code`. Xcode can create both
 after the project owner signs in under **Xcode Settings > Accounts**. This is a
 one-time Apple Developer account change; later local installs reuse it.
 

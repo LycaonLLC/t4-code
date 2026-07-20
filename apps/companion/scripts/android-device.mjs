@@ -11,7 +11,7 @@ import { companionDeepLink } from "./ios-device.mjs";
 
 const packageDirectory = resolve(import.meta.dirname, "..");
 const repositoryRoot = resolve(packageDirectory, "../..");
-const applicationId = "com.roycorp.t4companion";
+const applicationId = "com.lycaonsolutions.t4code";
 const defaultAvd = "T4_Pixel_API_36";
 const releaseApk = join(packageDirectory, "android", "app", "build", "outputs", "apk", "release", "app-release.apk");
 

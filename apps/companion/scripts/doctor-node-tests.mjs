@@ -149,8 +149,8 @@ test("Android installer parses the repeatable build workflow", () => {
 
 test("Android installer recognizes a standard SDK", () => {
   const existing = new Set([
-    "/Users/test/Library/Android/sdk/platforms",
+    "/tmp/fixture/Library/Android/sdk/platforms",
   ]);
   const pathExists = (path) => existing.has(path);
-  assert.equal(resolveAndroidSdkRoot({ ANDROID_HOME: "/missing" }, "/Users/test", pathExists), "/Users/test/Library/Android/sdk");
+  assert.equal(resolveAndroidSdkRoot({ ANDROID_HOME: "/missing" }, "/tmp/fixture", pathExists), "/tmp/fixture/Library/Android/sdk");
 });
