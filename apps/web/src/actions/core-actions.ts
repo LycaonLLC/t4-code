@@ -8,7 +8,7 @@ import type {
   ActionId,
   AnyActionDefinition,
 } from "./types.ts";
-import { ACTION_ENABLED, ACTION_HIDDEN } from "./types.ts";
+import { ACTION_COMPLETED, ACTION_ENABLED, ACTION_HIDDEN } from "./types.ts";
 
 const SURFACE_LABELS = {
   agents: "Agents",
@@ -64,6 +64,7 @@ const paletteToggle = defineAction({
   run: (environment) => {
     const workspace = environment.workspace.getState();
     workspace.setPaletteOpen(!workspace.paletteOpen);
+    return ACTION_COMPLETED;
   },
 });
 
@@ -92,6 +93,7 @@ const railToggle = defineAction({
     } else {
       workspace.setRailCollapsed(!workspace.railCollapsed);
     }
+    return ACTION_COMPLETED;
   },
 });
 
@@ -118,7 +120,7 @@ const terminalToggle = defineAction({
   },
   run: (environment) => {
     const current = currentSession(environment);
-    if (current === null) return;
+    if (current === null) return ACTION_COMPLETED;
     const workspace = environment.workspace.getState();
     const view = selectSessionView(workspace, current.sessionId);
     if (workspace.focusMode) {
@@ -127,6 +129,7 @@ const terminalToggle = defineAction({
     } else {
       workspace.setTerminalDrawerOpen(current.sessionId, !view.terminalDrawerOpen);
     }
+    return ACTION_COMPLETED;
   },
 });
 
@@ -142,6 +145,7 @@ const focusToggle = defineAction({
   run: (environment) => {
     const workspace = environment.workspace.getState();
     workspace.setFocusMode(!workspace.focusMode);
+    return ACTION_COMPLETED;
   },
 });
 
@@ -160,6 +164,7 @@ const themeToggle = defineAction({
     const workspace = environment.workspace.getState();
     const current = resolveTheme(workspace.theme);
     workspace.setTheme(current === "dark" ? "light" : "dark");
+    return ACTION_COMPLETED;
   },
 });
 
@@ -172,7 +177,10 @@ const sessionOpen = defineAction({
     "Open session",
   description: () => "Session",
   availability: (environment, args) => sessionAvailability(environment, args.sessionId),
-  run: (environment, args) => environment.navigate({ kind: "session", sessionId: args.sessionId }),
+  run: (environment, args) => {
+    environment.navigate({ kind: "session", sessionId: args.sessionId });
+    return ACTION_COMPLETED;
+  },
 });
 
 const surfaceToggle = defineAction({
@@ -197,9 +205,10 @@ const surfaceToggle = defineAction({
       if (!(view.paneOpen && view.paneFamily === args.surfaceId)) {
         workspace.openSessionSurface(args.sessionId, args.surfaceId);
       }
-      return;
+      return ACTION_COMPLETED;
     }
     workspace.toggleSessionSurface(args.sessionId, args.surfaceId);
+    return ACTION_COMPLETED;
   },
 });
 
@@ -226,11 +235,12 @@ const fileOpen = defineAction({
   },
   run: (environment, args) => {
     const inspector = environment.inspector(args.sessionId);
-    if (inspector === null) return;
+    if (inspector === null) return ACTION_COMPLETED;
     inspector.getState().selectFile(args.path);
     const workspace = environment.workspace.getState();
     if (workspace.focusMode) workspace.setFocusMode(false);
     workspace.openSessionSurface(args.sessionId, "files");
+    return ACTION_COMPLETED;
   },
 });
 
@@ -252,7 +262,10 @@ function routeAction<
     label: () => label,
     description: () => description,
     availability: () => ACTION_ENABLED,
-    run: (environment) => environment.navigate({ kind: "route", route }),
+    run: (environment) => {
+      environment.navigate({ kind: "route", route });
+      return ACTION_COMPLETED;
+    },
   });
 }
 
@@ -265,8 +278,10 @@ const transcriptSearchOpen = defineAction({
   label: () => "Open transcript search",
   description: () => "Prior decisions and code discussions",
   availability: () => ACTION_ENABLED,
-  run: (environment, args) =>
-    environment.navigate({ kind: "transcript-search", query: args.query }),
+  run: (environment, args) => {
+    environment.navigate({ kind: "transcript-search", query: args.query });
+    return ACTION_COMPLETED;
+  },
 });
 
 export const CORE_ACTIONS: readonly AnyActionDefinition[] = Object.freeze([

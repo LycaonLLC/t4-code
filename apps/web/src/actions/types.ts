@@ -58,6 +58,8 @@ export type ActionAvailability =
 
 export const ACTION_ENABLED: ActionAvailability = Object.freeze({ status: "enabled" });
 export const ACTION_HIDDEN: ActionAvailability = Object.freeze({ status: "hidden" });
+export const ACTION_COMPLETED = Object.freeze({ completed: true as const });
+export type ActionRunResult = typeof ACTION_COMPLETED;
 
 export type ActionGroup = "workspace" | "navigate" | "app";
 export type ActionSurface = "quick-open" | "shortcut" | "workspace-menu" | "tool-link";
@@ -112,7 +114,7 @@ export interface ActionDefinition<K extends ActionId> {
     environment: ActionEnvironment,
     args: ActionArguments[K],
   ) => ActionAvailability;
-  readonly run: (environment: ActionEnvironment, args: ActionArguments[K]) => void;
+  readonly run: (environment: ActionEnvironment, args: ActionArguments[K]) => ActionRunResult;
 }
 
 export type AnyActionDefinition = {

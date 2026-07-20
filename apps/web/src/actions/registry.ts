@@ -61,7 +61,8 @@ export function createActionRegistry(
         // rendering. Active session, connection, and loaded files may change.
         const availability = current.availability(environment, args);
         if (availability.status !== "enabled") return { executed: false, availability };
-        current.run(environment, args);
+        const result = current.run(environment, args);
+        if (result.completed !== true) throw new Error(`Action did not complete: ${current.id}`);
         return { executed: true, availability };
       });
     },

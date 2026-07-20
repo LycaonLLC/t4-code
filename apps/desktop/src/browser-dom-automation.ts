@@ -270,7 +270,7 @@ function installDialogs(): void {
   window.prompt = (message?: unknown, defaultValue?: string) => { dialogQueue.push({ type: "prompt", message: bound(String(message ?? "")), defaultValue: bound(defaultValue ?? "") }); return null; };
   void original;
 }
-function designModeStatus(): JsonValue { return { enabled: documentRoot().designMode.toLowerCase() === "on", selection: bound(window.getSelection()?.toString() ?? "", 4_000) }; }
+function designModeStatus(): JsonValue { return { enabled: designModeDocuments.size > 0, selection: bound(window.getSelection()?.toString() ?? "", 4_000) }; }
 function setDesignMode(params: Record<string, unknown>): JsonValue {
   const root = documentRoot();
   const enabled = params.enabled === true;
@@ -281,12 +281,12 @@ function setDesignMode(params: Record<string, unknown>): JsonValue {
     }
     root.designMode = "on";
   } else {
-    const original = designModeOriginals.get(root);
-    if (original !== undefined) {
-      root.designMode = original;
-      designModeOriginals.delete(root);
-      designModeDocuments.delete(root);
+    for (const document of designModeDocuments) {
+      const original = designModeOriginals.get(document);
+      if (original !== undefined) document.designMode = original;
     }
+    designModeDocuments.clear();
+    designModeOriginals = new WeakMap<Document, string>();
   }
   return designModeStatus();
 }

@@ -47,6 +47,7 @@ function hasUnsafeControl(value: string): boolean {
 
 function isUnsafeFormat(codePoint: number): boolean {
   return (
+    codePoint === 0x061c ||
     (codePoint >= 0x200b && codePoint <= 0x200f) ||
     (codePoint >= 0x202a && codePoint <= 0x202e) ||
     (codePoint >= 0x2060 && codePoint <= 0x2069) ||
@@ -84,8 +85,8 @@ function stripAnsiCsi(value: string): string {
 
 function normalizeControls(value: string): string {
   let result = "";
-  for (const character of stripAnsiCsi(value)) {
-    if (character === "\n" || character === "\r" || character === "\t") {
+  for (const character of stripAnsiCsi(value).replace(/\r\n?/gu, "\n")) {
+    if (character === "\n" || character === "\t") {
       result += character;
       continue;
     }
@@ -165,6 +166,7 @@ function redactSensitiveText(value: string): { readonly text: string; readonly r
     .replace(/\bgh[pousr]_[A-Za-z0-9]{20,}\b/gu, "[GitHub token redacted]")
     .replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/gu, "[GitHub token redacted]")
     .replace(/\bxox[baprs]-[A-Za-z0-9-]{20,}\b/gu, "[Slack token redacted]")
+    .replace(/\bsk-(?:proj-|ant-api\d{2}-)?[A-Za-z0-9_-]{20,}\b/gu, "[AI provider token redacted]")
     .replace(doubleQuotedJson, '$1"[secret redacted]"')
     .replace(singleQuotedJson, "$1'[secret redacted]'")
     .replace(doubleQuotedAssignment, '$1$2 "[secret redacted]"')
