@@ -12,23 +12,25 @@
   },
   "publishedAppWire": {
     "package": "@oh-my-pi/app-wire",
-    "version": "0.6.2",
+    "version": "0.7.0",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "04229b1f46547ac7c0617e55a993496ec9725f46",
-    "sourceTreeHash": "8400a3af618e8af11cccf6b20aadcf3a22baf9a1"
+    "sourceCommit": "796bb7dca45027bd4b7b94017cdf41ef214a11f2",
+    "sourceTreeHash": "0c195a01ba0bb98fbf4d4863aee59bf23a6e81b7"
   },
   "publishedRuntime": {
     "package": "omp",
     "version": "17.0.5",
     "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "073506e5ca278d08037beffd9ee78964f659ef12",
-    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/073506e5ca278d08037beffd9ee78964f659ef12",
-    "sourceTag": "t4code-17.0.5-appserver-9",
+    "sourceCommit": "8476f4451ed95c5d5401785d279a93d3c659fac4",
+    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/8476f4451ed95c5d5401785d279a93d3c659fac4",
+    "sourceTag": "t4code-17.0.5-appserver-10",
     "artifacts": {
       "darwin-arm64": {
         "name": "omp-darwin-arm64",
-        "size": 120876496,
-        "sha256": "48138ec0c0329d76d4daa4ddc5ffaf32051c26d8e1ad1898322243d16aac2d5d"
+        "size": 120893008,
+        "sha256": "f7d4438e163aabc4ca624468bf5bd4a243b5e1ab5360e84cef52abe93683ea55",
+        "releaseCodeSignature": "adhoc",
+        "distributionSigningBoundary": "t4-product-package"
       }
     },
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
@@ -99,7 +101,10 @@
       "privacy-safe-local-project-reveal",
       "stale-appserver-owner-recovery",
       "t4-owned-host-package-integration",
-      "bounded-transcript-tail-paging"
+      "bounded-transcript-tail-paging",
+      "thin-omp-authority-bridge",
+      "bounded-authority-bridge-streams",
+      "legacy-appserver-launcher-removal"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },

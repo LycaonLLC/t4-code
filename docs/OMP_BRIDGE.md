@@ -50,12 +50,12 @@ We intentionally skip dual-running hosts, mixed-version client support, live-ses
 
 The simplified rollout does not weaken the hard boundaries. We retain strict protocol versioning, fail-closed lock behavior, secret redaction, process isolation, restart/reconnect tests, signed host packaging, exact artifact provenance, and protection for existing local development session files.
 
-## Current development state
+## Released product state
 
-The already-published T4 v0.1.30 app remains paired with `appserver-9`. The development tree is verified against immutable OMP tag `t4code-17.0.5-appserver-10` at commit `8476f4451ed95c5d5401785d279a93d3c659fac4`. Its published Apple Silicon binary is 120,893,008 bytes with SHA-256 `f7d4438e163aabc4ca624468bf5bd4a243b5e1ab5360e84cef52abe93683ea55`.
+T4 v0.1.30 is paired with immutable OMP tag `t4code-17.0.5-appserver-10` at commit `8476f4451ed95c5d5401785d279a93d3c659fac4`. Its published Apple Silicon binary is 120,893,008 bytes with SHA-256 `f7d4438e163aabc4ca624468bf5bd4a243b5e1ab5360e84cef52abe93683ea55`.
 
 The standalone OMP release carries an ad-hoc integrity signature because the fork release workflow does not have a Developer ID identity. The protected T4 product build remains the distribution-signing boundary: it must sign both the bundled OMP executable and `t4-host` with T4's Developer ID identity before shipping the macOS app.
 
-That bridge release moves the running network host into the standalone T4 executable and removes OMP's public legacy launchers. The thin bridge and standalone host pass a compiled-binary end-to-end smoke test. The compatibility matrix records `appserver-10` as verified while leaving `appserver-9` as the published pairing until a new T4 product build ships the standalone host.
+That bridge release moves the running network host into the standalone T4 executable and removes OMP's public legacy launchers. The thin bridge and standalone host pass a compiled-binary end-to-end smoke test. The compatibility matrix records `appserver-10` as both the verified and published pairing for the T4 product build.
 
 This reduces the fork to the OMP-specific authority adapter and protocol glue, but does not remove the fork entirely. T4 still pins the exact Lycaon OMP source and binary because the bridge is not part of ordinary upstream OMP.
