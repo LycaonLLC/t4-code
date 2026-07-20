@@ -16,7 +16,7 @@ import {
 	TRANSCRIPT_PAGE_MIN_BYTES,
 } from "../src/index.js";
 
-const root = new URL("../fixtures/v1/", import.meta.url);
+const root = new URL("./fixtures/transcript-page/", import.meta.url);
 async function fixture(name: string): Promise<unknown> {
 	return JSON.parse(await Bun.file(new URL(name, root)).text()) as unknown;
 }
