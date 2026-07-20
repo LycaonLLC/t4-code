@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { type AddressInfo } from "node:net";
 import { expect, test, type Page } from "@playwright/test";
-import { decodeServerFrame } from "@t4-code/protocol";
+import { decodeServerFrame } from "../packages/protocol/src/index.ts";
 import WebSocket, { WebSocketServer } from "ws";
 
 import { BuiltWebServer } from "./built-web-server.ts";
