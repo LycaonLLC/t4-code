@@ -43,13 +43,13 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
 
       - name: Check source and types
-        run: pnpm check
+        run: pnpm check:release && pnpm check:provenance && pnpm lint && pnpm --filter '!@t4-code/flutter' -r typecheck
 
       - name: Run tests
-        run: pnpm test
+        run: pnpm --filter '!@t4-code/flutter' -r test
 
       - name: Build all workspaces
-        run: pnpm build
+        run: pnpm --filter '!@t4-code/flutter' -r build
 
       - name: Run built-app end-to-end tests
         run: pnpm test:e2e
@@ -292,7 +292,7 @@ jobs:
         working-directory: apps/flutter
         shell: bash
         run: |
-          DEVICE_ID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(device[\"udid\"] for devices in data[\"devices\"].values() for device in devices if device[\"name\"].startswith(\"iPhone\")))')"
+          DEVICE_ID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(device["udid"] for devices in data["devices"].values() for device in devices if device["name"].startswith("iPhone")))')"
           xcrun simctl boot "$DEVICE_ID" 2>/dev/null || true
           xcrun simctl bootstatus "$DEVICE_ID" -b
           flutter test integration_test/app_smoke_test.dart -d "$DEVICE_ID"
