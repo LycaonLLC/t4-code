@@ -17,7 +17,7 @@ MIGRATION REFERENCE
 
 OBJECTIVE
 
-Replace T4's installed product applications with one Flutter/Dart implementation targeting macOS, Windows, Linux, iOS, Android, and Flutter Web. Flutter Web replaces the authenticated Tailnet browser/PWA client; the public marketing/documentation site remains in its current stack. OMP remains the agent runtime and appserver. Preserve the existing omp-app/1 WebSocket boundary and port T4's client behavior to Dart rather than embedding the old TypeScript client or a hidden JavaScript runtime.
+Replace T4's installed product applications with one Flutter/Dart implementation targeting macOS, Windows, Linux, iOS, Android, and Flutter Web. Flutter Web replaces the authenticated Tailnet browser/PWA client; the public marketing/documentation site remains in its current stack. OMP remains the agent runtime and authority, while T4's standalone host owns the `omp-app/1` network boundary and connects to OMP through its versioned authority bridge. Preserve that WebSocket boundary and port T4's client behavior to Dart rather than embedding the old TypeScript client or a hidden JavaScript runtime.
 
 The rewrite is complete only when the Flutter implementation reaches the existing T4 feature and release gates on every supported target, the old Electron/React/Capacitor product clients can be removed, and deterministic parity evidence exists. Do not relabel a partial proof as the rewrite.
 

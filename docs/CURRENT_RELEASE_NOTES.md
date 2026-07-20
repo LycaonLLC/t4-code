@@ -14,9 +14,9 @@ immutable state and command surface, including onboarding, pairing, and host man
 
 This is still a development migration, not a release cutover. The deterministic fixture suite,
 exact 390x844 and 1440x900 browser checks, iOS and Android target smokes, and an authenticated
-disposable OMP appserver connection pass locally. The existing Electron, React, browser, and
-Capacitor clients remain the released implementation until the complete feature matrix, packaging,
-update, migration, security, and release gates pass.
+disposable T4 host connection backed by OMP's authority bridge pass locally. The existing Electron,
+React, browser, and Capacitor clients remain the released implementation until the complete feature
+matrix, packaging, update, migration, security, and release gates pass.
 
 Stage 3 host parity is now complete on the local migration branch. The Flutter client presents
 negotiated device permissions, deliberate disconnect/reconnect controls, cancellable pre-save host
