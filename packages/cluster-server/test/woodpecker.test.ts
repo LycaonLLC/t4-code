@@ -122,6 +122,23 @@ describe("bounded Woodpecker provider", () => {
 		}
 	});
 
+	it("permits only an exact in-cluster HTTP adapter while keeping deep links on HTTPS", async () => {
+		const woodpecker = new WoodpeckerProvider({
+			baseUrl: "http://woodpecker-ci-trigger.linkedin-ci.svc.cluster.local:8080",
+			webBaseUrl: "https://woodpecker-ci-dev.tail.example.test",
+			token: "server-side-token",
+			repositories: { "t4-code": { slug: "owner/t4-code" } },
+			fetch: (async () => Response.json([pipeline])) as typeof globalThis.fetch,
+		});
+		expect((await woodpecker.query(correlation)).link).toBe("https://woodpecker-ci-dev.tail.example.test/repos/owner/t4-code/pipeline/42");
+		expect(() => new WoodpeckerProvider({
+			baseUrl: "http://ci.example.test",
+			webBaseUrl: "https://ci.example.test",
+			token: "token",
+			repositories: {},
+		})).toThrow("in-cluster");
+	});
+
 	it("fails closed for unconfigured repositories, insecure provider URLs, oversized replies, and unknown correlation", async () => {
 		expect(() => new WoodpeckerProvider({ baseUrl: "http://ci.example.test", token: "secret", repositories: {} })).toThrow("HTTPS");
 		expect(() => new WoodpeckerProvider({ baseUrl: "https://ci.example.test", token: "secret", tokenFile: "/run/token", repositories: {} })).toThrow("exactly one");

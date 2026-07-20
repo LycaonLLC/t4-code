@@ -21,6 +21,7 @@ export interface CiProvider {
 export interface WoodpeckerRepositoryConfig { readonly slug: string; }
 export interface WoodpeckerProviderOptions {
 	readonly baseUrl: string;
+	readonly webBaseUrl?: string;
 	readonly token?: string;
 	readonly tokenFile?: string;
 	readonly repositories: Readonly<Record<string, WoodpeckerRepositoryConfig>>;
@@ -38,11 +39,17 @@ interface WoodpeckerPipeline {
 	readonly variables?: unknown;
 	readonly stages?: unknown;
 }
-
 function httpsBase(value: string): string {
 	const url = new URL(value);
 	if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash)
-		throw new Error("Woodpecker base URL must use HTTPS without credentials");
+		throw new Error("Woodpecker web base URL must use HTTPS without credentials");
+	return url.href.replace(/\/$/u, "");
+}
+function apiBase(value: string): string {
+	const url = new URL(value);
+	const inCluster = url.protocol === "http:" && url.hostname.endsWith(".svc.cluster.local");
+	if (!(url.protocol === "https:" || inCluster) || url.username || url.password || url.search || url.hash || !["", "/"].includes(url.pathname))
+		throw new Error("Woodpecker API base URL must use HTTPS or an exact in-cluster Service URL without credentials");
 	return url.href.replace(/\/$/u, "");
 }
 function bounded(value: unknown, name: string, max: number): string {
@@ -111,6 +118,7 @@ export function mapWoodpeckerPipeline(
 export class WoodpeckerProvider implements CiProvider {
 	readonly name = "woodpecker" as const;
 	readonly #baseUrl: string;
+	readonly #webBaseUrl: string;
 	readonly #token?: string;
 	readonly #tokenFile?: string;
 	readonly #repositories: Readonly<Record<string, WoodpeckerRepositoryConfig>>;
@@ -118,7 +126,8 @@ export class WoodpeckerProvider implements CiProvider {
 	readonly #inflight = new Map<string, Promise<CiRunResult>>();
 
 	constructor(options: WoodpeckerProviderOptions) {
-		this.#baseUrl = httpsBase(options.baseUrl);
+		this.#baseUrl = apiBase(options.baseUrl);
+		this.#webBaseUrl = options.webBaseUrl ? httpsBase(options.webBaseUrl) : httpsBase(options.baseUrl);
 		if (Boolean(options.token) === Boolean(options.tokenFile)) throw new Error("Woodpecker provider requires exactly one credential source");
 		if (options.token) this.#token = bounded(options.token, "Woodpecker token", 16_384);
 		if (options.tokenFile) {
@@ -147,7 +156,7 @@ export class WoodpeckerProvider implements CiProvider {
 			ref: correlation.ref, commit: correlation.commit,
 		};
 		const number = positiveInteger(exact.number);
-		return mapWoodpeckerPipeline(exact, correlation, number ? `${this.#baseUrl}/repos/${repository.slug}/pipeline/${number}` : undefined);
+		return mapWoodpeckerPipeline(exact, correlation, number ? `${this.#webBaseUrl}/repos/${repository.slug}/pipeline/${number}` : undefined);
 	}
 
 	async run(correlation: CiCorrelation, signal?: AbortSignal): Promise<CiRunResult> {

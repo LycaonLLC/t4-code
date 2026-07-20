@@ -238,6 +238,11 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.woodpecker.configMap }}
                   key: {{ .Values.woodpecker.baseURLKey }}
+            - name: T4_WOODPECKER_WEB_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.woodpecker.configMap }}
+                  key: {{ .Values.woodpecker.webBaseURLKey }}
             - name: T4_WOODPECKER_REPOSITORIES
               valueFrom:
                 configMapKeyRef:

@@ -74,6 +74,7 @@ woodpecker:
   tokenExpirationSeconds: 600
   configMap: ""
   baseURLKey: baseURL
+  webBaseURLKey: webBaseURL
   repositoriesKey: repositories
 
 ingress:

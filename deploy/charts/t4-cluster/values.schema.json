@@ -67,13 +67,14 @@
     },
     "woodpecker": {
       "type": "object",
-      "required": ["existingSecret", "tokenKey", "configMap", "baseURLKey", "repositoriesKey", "serviceAccountAudience", "tokenExpirationSeconds"],
+      "required": ["existingSecret", "tokenKey", "configMap", "baseURLKey", "webBaseURLKey", "repositoriesKey", "serviceAccountAudience", "tokenExpirationSeconds"],
       "properties": {
         "existingSecret": { "type": "string", "maxLength": 253 },
         "tokenKey": { "type": "string", "minLength": 1, "maxLength": 253 },
         "configMap": { "type": "string", "maxLength": 253 },
         "baseURLKey": { "type": "string", "minLength": 1, "maxLength": 253 },
         "repositoriesKey": { "type": "string", "minLength": 1, "maxLength": 253 },
+        "webBaseURLKey": { "type": "string", "minLength": 1, "maxLength": 253 },
         "serviceAccountAudience": { "type": "string", "maxLength": 253, "pattern": "^[A-Za-z0-9]*[A-Za-z0-9._:/-]*$" },
         "tokenExpirationSeconds": { "type": "integer", "minimum": 600, "maximum": 3600 }
       },

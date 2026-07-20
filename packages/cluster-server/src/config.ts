@@ -19,6 +19,7 @@ export interface ClusterServerConfig {
 	readonly trustedProxyCidrs: readonly string[];
 	readonly woodpecker?: {
 		readonly baseUrl: string;
+		readonly webBaseUrl?: string;
 		readonly repositories: Readonly<Record<string, { readonly slug: string }>>;
 		readonly token?: string;
 		readonly tokenFile?: string;
@@ -111,6 +112,7 @@ export function clusterServerConfigFromEnv(env: Readonly<Record<string, string |
 	const identityTokenPath = absolutePath(required(env, "T4_CLUSTER_IDENTITY_TOKEN_FILE"), "T4_CLUSTER_IDENTITY_TOKEN_FILE");
 	const serverServiceAccountName = dns(required(env, "T4_CLUSTER_SERVER_SERVICE_ACCOUNT"), "T4_CLUSTER_SERVER_SERVICE_ACCOUNT");
 	const woodpeckerBaseUrl = env.T4_WOODPECKER_BASE_URL;
+	const woodpeckerWebBaseUrl = env.T4_WOODPECKER_WEB_BASE_URL;
 	const woodpeckerRepositories = env.T4_WOODPECKER_REPOSITORIES;
 	const woodpeckerToken = env.T4_WOODPECKER_TOKEN;
 	const woodpeckerTokenFile = env.T4_WOODPECKER_TOKEN_FILE;
@@ -135,6 +137,7 @@ export function clusterServerConfigFromEnv(env: Readonly<Record<string, string |
 		...(woodpeckerConfigured ? {
 			woodpecker: {
 				baseUrl: woodpeckerBaseUrl!,
+				...(woodpeckerWebBaseUrl ? { webBaseUrl: woodpeckerWebBaseUrl } : {}),
 				repositories: repositories(woodpeckerRepositories!),
 				...(woodpeckerToken ? { token: woodpeckerToken } : { tokenFile: absolutePath(woodpeckerTokenFile!, "T4_WOODPECKER_TOKEN_FILE") }),
 			},
