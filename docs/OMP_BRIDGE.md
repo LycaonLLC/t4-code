@@ -34,4 +34,4 @@ The bridge must fail closed when an operation is unavailable or ownership is unc
 
 ## Migration state
 
-The source has moved, but the currently verified OMP integration binary still embeds the legacy host implementation. Until the thin OMP adapter consumes the T4-owned packages, T4 keeps the exact runtime tag and hash in the compatibility matrix. This is a compatibility transition, not a claim that the fork has already disappeared.
+The verified OMP integration now consumes checksum-pinned T4 host artifacts through thin compatibility exports. The duplicated generic host and wire implementation has been removed from the fork; OMP retains the launcher and its private authority adapter. T4 keeps the exact runtime tag, source commit, artifact size, and hash in the compatibility matrix. Ordinary upstream OMP is still not compatible because it does not ship that launcher or adapter.
