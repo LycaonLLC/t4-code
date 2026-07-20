@@ -141,7 +141,7 @@ describe("vendored app-wire distribution", () => {
       package: "@oh-my-pi/app-wire",
       version: "0.7.0",
       sourceRepository: "https://github.com/lyc-aon/oh-my-pi",
-      sourceCommit: "99c61df842400435359ce27b7708c2bbc84c57c0",
+      sourceCommit: "8bbf7469b863522003c8b2b4b2ede75c62195d87",
       sourceTreeHash: "0c195a01ba0bb98fbf4d4863aee59bf23a6e81b7",
       tarball: "oh-my-pi-app-wire-0.7.0.tgz",
       appProtocol: "omp-app/1",
