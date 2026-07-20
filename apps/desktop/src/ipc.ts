@@ -52,9 +52,17 @@ import {
   type SpeechResult,
   type TerminalResult,
 } from "@t4-code/protocol/desktop-ipc";
+import {
+  decodeBrowserCall,
+  decodeBrowserEvent,
+  decodeBrowserResult,
+  type BrowserCall,
+  type BrowserCallResult,
+  type BrowserEvent,
+} from "@t4-code/protocol/browser-ipc";
 import type { ServiceManager } from "@t4-code/service-manager";
 import { redactedMessage } from "@t4-code/client";
-import { trustedSender, type TrustedRenderer } from "./security.ts";
+import { isTrustedNavigation, trustedSender, type TrustedRenderer } from "./security.ts";
 import type { DesktopSpeechService } from "./speech.ts";
 import type { LocalTargetManager } from "./target-manager.ts";
 import type { LocalProfileRuntime } from "./profile-runtime.ts";
@@ -62,6 +70,9 @@ export interface IpcRuntime {
   readonly manager: LocalTargetManager;
   readonly window: BrowserWindow;
   readonly trustedRenderer: TrustedRenderer;
+  readonly browser?: {
+    readonly call: (request: BrowserCall) => Promise<BrowserCallResult>;
+  };
   /** Static manager support is retained for narrow unit runtimes. */
   readonly serviceManager?: ServiceManager;
   /** Dynamic lifecycle access keeps IPC valid after rediscovery or window reopen. */
@@ -109,12 +120,40 @@ function decodeRequest(channel: DesktopInvokeChannel, value: unknown): DesktopIn
   if (request.channel !== channel) throw new Error("channel mismatch");
   return request;
 }
+function decodeBrowserCallEnvelope(value: unknown): BrowserCall {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Object.prototype
+  ) throw new Error("invalid browser call envelope");
+  const input = value as Record<string, unknown>;
+  const keys = Object.keys(input);
+  if (keys.length !== 2 || !keys.includes("channel") || !keys.includes("payload")) {
+    throw new Error("invalid browser call envelope");
+  }
+  if (input.channel !== "browser:call") throw new Error("channel mismatch");
+  return decodeBrowserCall(input.payload);
+}
 export interface IpcMainLike {
   handle(channel: string, listener: (event: IpcMainInvokeEvent, payload: unknown) => unknown): void;
   removeHandler(channel: string): void;
 }
+type BrowserCallTarget = NonNullable<IpcRuntime["browser"]>;
+
+export class BrowserTargetUnavailableError extends Error {
+  readonly code = "invalid_state" as const;
+
+  constructor() {
+    super("Browser runtime is unavailable");
+    this.name = "BrowserTargetUnavailableError";
+    Object.defineProperty(this, "stack", { value: undefined, enumerable: false, configurable: true });
+  }
+}
+
 export class DesktopIpcRegistry {
   private installed = false;
+  private browserTarget: BrowserCallTarget | undefined;
   private readonly runtime: IpcRuntime;
   private readonly serviceQueue = { tail: Promise.resolve() };
   private serviceInspectionPromise: Promise<ServiceInspection> | undefined;
@@ -122,12 +161,29 @@ export class DesktopIpcRegistry {
   private readonly ipc: IpcMainLike;
   constructor(runtime: IpcRuntime, ipc: IpcMainLike = ipcMain) {
     this.runtime = runtime;
+    this.browserTarget = runtime.browser;
     this.ipc = ipc;
   }
 
+  updateBrowserTarget(target: BrowserCallTarget): void {
+    this.browserTarget = target;
+  }
+
+  deactivateBrowserTarget(target?: BrowserCallTarget): void {
+    if (target === undefined || this.browserTarget === target) this.browserTarget = undefined;
+  }
+
   install(): void {
-    this.uninstall();
+    if (this.installed) return;
     this.installed = true;
+    this.ipc.handle("browser:call", async (event, payload: unknown): Promise<BrowserCallResult> => {
+      this.assertSender(event);
+      const call = decodeBrowserCallEnvelope(payload);
+      const target = this.browserTarget;
+      if (target === undefined) throw new BrowserTargetUnavailableError();
+      const result = await target.call(call);
+      return decodeBrowserResult(call.method, result) as BrowserCallResult;
+    });
     this.ipc.handle("omp:bootstrap", async (event, payload: unknown): Promise<BootstrapResult> => {
       this.assertSender(event);
       decodeRequest("omp:bootstrap", payload);
@@ -318,9 +374,11 @@ export class DesktopIpcRegistry {
     return this.runtime.phoneSetup;
   }
   uninstall(): void {
+    if (!this.installed) return;
     this.updateUnsubscribe?.();
     this.updateUnsubscribe = undefined;
     for (const channel of [
+      "browser:call",
       "omp:bootstrap", "omp:connect", "omp:disconnect", "omp:command", "omp:confirm",
       "omp:terminal:input", "omp:terminal:resize", "omp:terminal:close", "omp:pair",
       "omp:speech:speak", "omp:speech:stop",
@@ -350,6 +408,14 @@ export class DesktopIpcRegistry {
   }
   emitOpenUpdateSettings(): void {
     this.emit("app:update:open", { source: "menu" });
+  }
+  emitBrowserEvent(event: BrowserEvent): void {
+    const decoded = decodeBrowserEvent(event);
+    const window = this.runtime.window;
+    if (window.isDestroyed() || window.webContents.isDestroyed()) return;
+    const mainFrame = window.webContents.mainFrame;
+    if (mainFrame === null || mainFrame === undefined || !isTrustedNavigation(mainFrame.url, this.runtime.trustedRenderer)) return;
+    window.webContents.send("browser:event", decoded);
   }
 
   private assertSender(event: IpcMainInvokeEvent): void {

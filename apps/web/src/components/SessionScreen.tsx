@@ -349,6 +349,16 @@ export function SessionScreen({
             <Badge variant="outline">Preview{previewCount === 1 ? "" : ` · ${previewCount}`}</Badge>
           </Link>
         )}
+        {rendererPlatform.browser !== null && (
+          <Link
+            aria-label="Open browser workspace"
+            className="shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            params={{ sessionId: session.id }}
+            to="/sessions/$sessionId/browser"
+          >
+            <Badge variant="outline">Browser</Badge>
+          </Link>
+        )}
         {!archived && !focusMode && (
           <WorkspaceMenu
             paneFamily={viewPaneFamily}

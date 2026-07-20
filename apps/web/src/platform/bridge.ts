@@ -3,7 +3,7 @@
 // backend and nothing more. It has no UI persistence: workspace view state
 // is always renderer-local (localStorage), in both modes. Components never
 // look past this boundary for platform facts.
-import type { DesktopShellPort } from "@t4-code/client";
+import { isBrowserShellPort, type BrowserShellPort, type DesktopShellPort } from "@t4-code/client";
 
 import { createBrowserShellPort } from "./browser-shell-port.ts";
 import { createLocalStoragePersistence, type WorkspacePersistence } from "../state/persistence.ts";
@@ -25,11 +25,14 @@ export interface RendererPlatform {
   readonly persistence: WorkspacePersistence;
   /** The desktop command/event port; null in the browser. */
   readonly shell: DesktopShellPort | null;
+  /** The native browser surface port; only available in the desktop host. */
+  readonly browser: BrowserShellPort | null;
 }
 
 declare global {
   interface Window {
     ompShell?: DesktopShellPort;
+    t4Browser?: BrowserShellPort;
   }
 }
 
@@ -38,6 +41,12 @@ function injectedShell(): DesktopShellPort | null {
   const shell = window.ompShell;
   return shell !== undefined && shell.kind === "desktop" ? shell : null;
 }
+
+function injectedBrowser(): BrowserShellPort | null {
+  if (typeof window === "undefined") return null;
+  return isBrowserShellPort(window.t4Browser) ? window.t4Browser : null;
+}
+
 
 export function resolveRendererPlatform(
   platformOverride?: ShellPlatform,
@@ -63,5 +72,6 @@ export function resolveRendererPlatform(
     platform,
     persistence: createLocalStoragePersistence(WORKSPACE_STORAGE_KEY),
     shell: resolvedShell,
+    browser: shell === null ? null : injectedBrowser(),
   };
 }

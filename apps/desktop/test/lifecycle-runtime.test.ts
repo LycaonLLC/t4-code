@@ -76,10 +76,27 @@ class FakeWindow {
   finishLoad(): void { this.emit("did-finish-load"); }
   close(): void { this.destroyed = true; this.emit("closed"); }
 }
+
+class FakeBrowserRuntime {
+  disposeCount = 0;
+  readonly calls: unknown[] = [];
+
+  async call(call: unknown): Promise<{ surfaces: readonly [] }> {
+    this.calls.push(call);
+    return { surfaces: [] };
+  }
+  async dispose(): Promise<void> {
+    this.disposeCount += 1;
+  }
+}
 class FakeIpc implements IpcMainLike {
   readonly handlers = new Map<string, unknown>();
+  readonly removals = new Map<string, number>();
   handle(channel: string, listener: unknown): void { this.handlers.set(channel, listener); }
-  removeHandler(channel: string): void { this.handlers.delete(channel); }
+  removeHandler(channel: string): void {
+    this.removals.set(channel, (this.removals.get(channel) ?? 0) + 1);
+    this.handlers.delete(channel);
+  }
 }
 function setup(
   serviceManager?: ServiceManager,
@@ -88,6 +105,7 @@ function setup(
     readonly discoverExecutable?: () => Promise<string | undefined>;
     readonly createServiceManager?: NonNullable<DesktopLifecycleOptions["createServiceManager"]>;
     readonly createProjectionCache?: NonNullable<DesktopLifecycleOptions["createProjectionCache"]>;
+    readonly createBrowserRuntime?: NonNullable<DesktopLifecycleOptions["createBrowserRuntime"]>;
   } = {},
 ) {
   const app = new FakeApp();
@@ -95,6 +113,12 @@ function setup(
   const ipc = new FakeIpc();
   const registries: DesktopIpcRegistry[] = [];
   const runtimes: unknown[] = [];
+  const browserRuntimes: FakeBrowserRuntime[] = [];
+  const createBrowserRuntime = overrides.createBrowserRuntime ?? (() => {
+    const runtime = new FakeBrowserRuntime();
+    browserRuntimes.push(runtime);
+    return runtime as never;
+  });
   let managerOptions: TargetManagerOptions | undefined;
   let closeCount = 0;
   let updateScheduleCount = 0;
@@ -128,6 +152,7 @@ function setup(
       windows.push(next);
       return { window: next as never, trustedRenderer: { origin: "file://", url: "file:///trusted/index.html" } };
     },
+    createBrowserRuntime,
     createIpcRegistry: (runtime) => { runtimes.push(runtime); const registry = new DesktopIpcRegistry(runtime, ipc); registries.push(registry); return registry; },
     loadIdentity: () => ({ deviceId: "device-test", deviceName: "Desktop Test" }),
     createCursorStore: () => ({ load: () => [], save: () => {} }),
@@ -144,7 +169,7 @@ function setup(
     createUpdateController: () => updateController as never,
     installMenu: (options) => { menuOptions = options; },
   });
-  return { app, windows, ipc, registries, runtimes, lifecycle, manager, localProfileRegistry, get managerOptions() { return managerOptions; }, get closeCount() { return closeCount; }, get updateScheduleCount() { return updateScheduleCount; }, get updateDisposeCount() { return updateDisposeCount; }, get menuOptions() { return menuOptions; } };
+  return { app, windows, ipc, registries, runtimes, browserRuntimes, lifecycle, manager, localProfileRegistry, get managerOptions() { return managerOptions; }, get closeCount() { return closeCount; }, get updateScheduleCount() { return updateScheduleCount; }, get updateDisposeCount() { return updateDisposeCount; }, get menuOptions() { return menuOptions; } };
 }
 
 describe("desktop Electron lifecycle", () => {
@@ -170,18 +195,258 @@ describe("desktop Electron lifecycle", () => {
     expect(window.focusCount).toBe(1);
     await fixture.lifecycle.stop();
   });
-  it("rebinds a fresh trusted window and IPC registry after close and activate", async () => {
+  it("recreates the browser runtime with each trusted window and disposes it on close and stop", async () => {
     const fixture = setup();
     await fixture.lifecycle.start();
     const first = fixture.windows[0]!;
     first.close();
+    expect(fixture.browserRuntimes[0]?.disposeCount).toBe(1);
     fixture.app.listeners.get("activate")?.();
     expect(fixture.windows).toHaveLength(2);
     expect(fixture.registries).toHaveLength(2);
+    expect(fixture.browserRuntimes).toHaveLength(2);
     expect(fixture.runtimes[0]).toMatchObject({ manager: fixture.manager });
     expect(fixture.runtimes[1]).toMatchObject({ manager: fixture.manager });
     expect(fixture.managerOptions).toBeDefined();
     await fixture.lifecycle.stop();
+    expect(fixture.browserRuntimes[1]?.disposeCount).toBe(1);
+  });
+  it("keeps browser and speech handlers stable while a renderer reload swaps browser targets", async () => {
+    const fixture = setup();
+    await fixture.lifecycle.start();
+    const window = fixture.windows[0]!;
+    const oldRuntime = fixture.browserRuntimes[0]!;
+    const browserCall = fixture.ipc.handlers.get("browser:call") as (
+      event: unknown,
+      payload: unknown,
+    ) => Promise<unknown>;
+    const stopSpeaking = fixture.ipc.handlers.get("omp:speech:stop") as (
+      event: unknown,
+      payload: unknown,
+    ) => Promise<unknown>;
+
+    window.emit("did-start-loading");
+
+    const replacement = fixture.browserRuntimes[1]!;
+    expect(fixture.ipc.handlers.get("browser:call")).toBe(browserCall);
+    expect(fixture.ipc.handlers.get("omp:speech:stop")).toBe(stopSpeaking);
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+    const result = await browserCall(event, {
+      channel: "browser:call",
+      payload: { version: 1, method: "surface.list", request: {} },
+    });
+    expect(result).toEqual({ surfaces: [] });
+    expect(await stopSpeaking(event, {
+      channel: "omp:speech:stop",
+      payload: {},
+    })).toEqual({ accepted: true });
+
+    expect(oldRuntime.disposeCount).toBe(1);
+    expect(oldRuntime.calls).toEqual([]);
+    expect(replacement.calls).toHaveLength(1);
+    await fixture.lifecycle.stop();
+    expect(replacement.disposeCount).toBe(1);
+  });
+  it("contains child WebContents event failures", async () => {
+    let emit: Parameters<NonNullable<DesktopLifecycleOptions["createBrowserRuntime"]>>[0]["emit"] | undefined;
+    let browserCreates = 0;
+    const fixture = setup(undefined, async () => true, {
+      createBrowserRuntime: (options) => {
+        browserCreates += 1;
+        emit = options.emit;
+        return new FakeBrowserRuntime() as never;
+      },
+    });
+    await fixture.lifecycle.start();
+    fixture.registries[0]!.emitBrowserEvent = () => {
+      throw new Error("child browser event failed");
+    };
+
+    expect(emit).toBeDefined();
+    expect(() => emit?.({} as never)).not.toThrow();
+    const window = fixture.windows[0]!;
+    window.emit("did-start-loading");
+    expect(browserCreates).toBe(2);
+    await fixture.lifecycle.stop();
+  });
+  it("keeps the replacement browser IPC target after an earlier runtime finishes disposing", async () => {
+    const disposals: Array<() => void> = [];
+    const browserRuntimes: FakeBrowserRuntime[] = [];
+    const fixture = setup(undefined, async () => true, {
+      createBrowserRuntime: () => {
+        const runtime = new FakeBrowserRuntime();
+        runtime.dispose = () => {
+          runtime.disposeCount += 1;
+          return new Promise<void>((resolve) => { disposals.push(resolve); });
+        };
+        browserRuntimes.push(runtime);
+        return runtime as never;
+      },
+    });
+    await fixture.lifecycle.start();
+    const window = fixture.windows[0]!;
+    window.emit("did-start-loading");
+    const replacement = browserRuntimes[1]!;
+    const browserCall = fixture.ipc.handlers.get("browser:call") as (
+      event: unknown,
+      payload: unknown,
+    ) => Promise<unknown>;
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+    const payload = {
+      channel: "browser:call",
+      payload: { version: 1, method: "surface.list", request: {} },
+    };
+
+    disposals.shift()?.();
+    await Promise.resolve();
+    const result = await browserCall(event, payload);
+    expect(result).toEqual({ surfaces: [] });
+    expect(replacement.calls).toHaveLength(1);
+
+    const stopping = fixture.lifecycle.stop();
+    disposals.shift()?.();
+    await stopping;
+    expect(replacement.disposeCount).toBe(1);
+  });
+  it("keeps close cleanup callable until a deferred browser disposal settles and protects a reopened target", async () => {
+    const disposals: Array<() => void> = [];
+    const browserRuntimes: FakeBrowserRuntime[] = [];
+    const fixture = setup(undefined, async () => true, {
+      createBrowserRuntime: () => {
+        const runtime = new FakeBrowserRuntime();
+        runtime.dispose = () => {
+          runtime.disposeCount += 1;
+          return new Promise<void>((resolve) => { disposals.push(resolve); });
+        };
+        browserRuntimes.push(runtime);
+        return runtime as never;
+      },
+    });
+    await fixture.lifecycle.start();
+    const first = fixture.windows[0]!;
+    const browserCall = fixture.ipc.handlers.get("browser:call") as (
+      event: unknown,
+      payload: unknown,
+    ) => Promise<unknown>;
+    const stopSpeaking = fixture.ipc.handlers.get("omp:speech:stop") as (
+      event: unknown,
+      payload: unknown,
+    ) => Promise<unknown>;
+    const callPayload = {
+      channel: "browser:call",
+      payload: { version: 1, method: "surface.list", request: {} },
+    };
+    const firstEvent = { sender: first.webContents, senderFrame: first.webContents.mainFrame };
+
+    first.close();
+
+    expect(fixture.ipc.handlers.get("browser:call")).toBe(browserCall);
+    expect(fixture.ipc.handlers.get("omp:speech:stop")).toBe(stopSpeaking);
+    let unavailableError: unknown;
+    try {
+      await browserCall(firstEvent, callPayload);
+    } catch (error) {
+      unavailableError = error;
+    }
+    if (
+      typeof unavailableError !== "object" ||
+      unavailableError === null ||
+      !("code" in unavailableError) ||
+      !("message" in unavailableError)
+    ) throw unavailableError;
+    expect(unavailableError.code).toBe("invalid_state");
+    expect(unavailableError.message).toBe("Browser runtime is unavailable");
+    expect(await stopSpeaking(firstEvent, {
+      channel: "omp:speech:stop",
+      payload: {},
+    })).toEqual({ accepted: true });
+
+    fixture.app.listeners.get("activate")?.();
+    const second = fixture.windows[1]!;
+    const reopenedCall = fixture.ipc.handlers.get("browser:call") as (
+      event: unknown,
+      payload: unknown,
+    ) => Promise<unknown>;
+    const secondEvent = { sender: second.webContents, senderFrame: second.webContents.mainFrame };
+    expect(reopenedCall).not.toBe(browserCall);
+    expect(await reopenedCall(secondEvent, callPayload)).toEqual({ surfaces: [] });
+    expect(browserRuntimes[1]?.calls).toHaveLength(1);
+
+    disposals.shift()?.();
+    await Promise.resolve();
+    expect(await reopenedCall(secondEvent, callPayload)).toEqual({ surfaces: [] });
+    expect(browserRuntimes[1]?.calls).toHaveLength(2);
+
+    const stopping = fixture.lifecycle.stop();
+    disposals.shift()?.();
+    await stopping;
+  });
+  it("keeps browser and speech handlers installed during stop, then removes them exactly once", async () => {
+    const fixture = setup();
+    await fixture.lifecycle.start();
+    const window = fixture.windows[0]!;
+    const browserCall = fixture.ipc.handlers.get("browser:call") as (
+      event: unknown,
+      payload: unknown,
+    ) => Promise<unknown>;
+    const stopSpeaking = fixture.ipc.handlers.get("omp:speech:stop") as (
+      event: unknown,
+      payload: unknown,
+    ) => Promise<unknown>;
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+    const stopping = fixture.lifecycle.stop();
+
+    expect(fixture.ipc.handlers.get("browser:call")).toBe(browserCall);
+    expect(fixture.ipc.handlers.get("omp:speech:stop")).toBe(stopSpeaking);
+    let unavailableError: unknown;
+    try {
+      await browserCall(event, {
+        channel: "browser:call",
+        payload: { version: 1, method: "surface.list", request: {} },
+      });
+    } catch (error) {
+      unavailableError = error;
+    }
+    if (typeof unavailableError !== "object" || unavailableError === null || !("code" in unavailableError)) {
+      throw unavailableError;
+    }
+    expect(unavailableError.code).toBe("invalid_state");
+    expect(await stopSpeaking(event, {
+      channel: "omp:speech:stop",
+      payload: {},
+    })).toEqual({ accepted: true });
+
+    await stopping;
+    expect(fixture.ipc.handlers.get("browser:call")).toBeUndefined();
+    expect(fixture.ipc.handlers.get("omp:speech:stop")).toBeUndefined();
+    const browserRemovals = fixture.ipc.removals.get("browser:call");
+    const speechRemovals = fixture.ipc.removals.get("omp:speech:stop");
+    await fixture.lifecycle.stop();
+    expect(fixture.ipc.removals.get("browser:call")).toBe(browserRemovals);
+    expect(fixture.ipc.removals.get("omp:speech:stop")).toBe(speechRemovals);
+  });
+  it("does not recreate a browser runtime when a load completes during shutdown", async () => {
+    let browserCreates = 0;
+    let disposeStarts = 0;
+    let resolveDispose: (() => void) | undefined;
+    const fixture = setup(undefined, async () => true, {
+      createBrowserRuntime: () => {
+        browserCreates += 1;
+        return {
+          dispose: () => {
+            disposeStarts += 1;
+            return new Promise<void>((resolve) => { resolveDispose = resolve; });
+          },
+        } as never;
+      },
+    });
+    await fixture.lifecycle.start();
+    const stopping = fixture.lifecycle.stop();
+    expect(disposeStarts).toBe(1);
+    fixture.windows[0]!.finishLoad();
+    expect(browserCreates).toBe(1);
+    resolveDispose?.();
+    await stopping;
   });
   it("creates one projection cache after readiness and injects it into every IPC binding", async () => {
     const cache = {

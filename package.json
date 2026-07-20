@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vp run --parallel --filter @t4-code/web --filter @t4-code/desktop dev",
+    "dev": "node scripts/dev.mjs",
     "dev:web": "vp run --filter @t4-code/web dev",
     "dev:desktop": "vp run --filter @t4-code/desktop dev",
     "dev:site": "vp run --filter @t4-code/site dev",

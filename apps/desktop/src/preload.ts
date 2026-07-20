@@ -47,6 +47,8 @@ import {
   type ProjectionCacheSaveRequest,
   type ProjectionCacheSaveResult,
 } from "@t4-code/protocol/desktop-ipc";
+import { BROWSER_CHANNELS, decodeBrowserCall, decodeBrowserEvent, decodeBrowserResult, type BrowserCall, type BrowserCallResult, type BrowserEvent } from "@t4-code/protocol/browser-ipc";
+import type { BrowserShellPort } from "@t4-code/client";
  
 export interface OmpShellBridge {
   readonly kind: "desktop";
@@ -139,6 +141,31 @@ function subscribe<C extends "omp:server-event" | "omp:connection-state" | "omp:
   return () => ipcRenderer.removeListener(channel, wrapped);
 }
 
+function createBrowserBridge(): BrowserShellPort {
+  return {
+    kind: "desktop-browser",
+    call: async (request: BrowserCall): Promise<BrowserCallResult> => {
+      const call = decodeBrowserCall(request);
+      const result = await ipcRenderer.invoke(BROWSER_CHANNELS[0], {
+        channel: BROWSER_CHANNELS[0],
+        payload: call,
+      });
+      return decodeBrowserResult(call.method, result) as BrowserCallResult;
+    },
+    subscribe: (listener: (event: BrowserEvent) => void): (() => void) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, value: unknown) => {
+        try {
+          listener(decodeBrowserEvent(value));
+        } catch {
+          // Invalid browser events are dropped at the preload boundary.
+        }
+      };
+      ipcRenderer.on(BROWSER_CHANNELS[1], wrapped);
+      return () => ipcRenderer.removeListener(BROWSER_CHANNELS[1], wrapped);
+    },
+  };
+}
+
 const bridge: OmpShellBridge = {
   kind: "desktop",
   platform: process.platform === "darwin" ? "darwin" : "linux",
@@ -193,3 +220,4 @@ const bridge: OmpShellBridge = {
 };
 
 contextBridge.exposeInMainWorld("ompShell", bridge);
+contextBridge.exposeInMainWorld("t4Browser", createBrowserBridge());
