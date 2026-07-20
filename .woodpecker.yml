@@ -33,7 +33,7 @@ steps:
             ephemeral-storage: 4Gi
 
   upstream-core:
-    depends_on: [dependencies]
+    depends_on: [cluster-ci-contracts]
     image: mirror.gcr.io/library/node:24.13.1-bookworm
     commands:
       - corepack enable
@@ -156,7 +156,7 @@ steps:
             ephemeral-storage: 8Gi
 
   cluster-ci-contracts:
-    depends_on: [android-debug]
+    depends_on: [dependencies]
     image: mirror.gcr.io/library/node:24.13.1-bookworm
     commands:
       - corepack enable
