@@ -1,25 +1,30 @@
 # T4 Hub development tracker
 
-This is the shared source of truth for the first T4 Hub development slice. It tracks decisions and
-proof, not optimistic completion claims. Update a row only when its linked evidence is available.
+This is the shared map for the first T4 Hub development slice. It is designed to keep parallel work
+from colliding, not to add approval steps. There are no live Hub users yet, so temporary breakage,
+database resets, draft protocol changes, and incomplete capabilities are acceptable while the team
+converges on the right design.
+
+Start useful work whenever its assumptions are written down. The convergence map shows where lanes
+eventually meet; it is not a rule that every earlier box must finish before later exploration begins.
 
 ## Status language
 
 | Status | Meaning |
 |---|---|
-| Ready | Its dependencies are complete and the scope is stable enough to start. |
-| Active | An owner and branch are recorded and work is underway. |
-| Blocked | A named dependency or failed proof prevents safe progress. |
+| Ready | Useful work can start with current assumptions or a test double. |
+| Active | Work is underway; recording an owner or branch is helpful when others may overlap. |
+| Waiting | Integration is waiting on another lane, although isolated work may continue. |
 | Review | The implementation and evidence are in a pull request. |
-| Done | The pull request is merged and the acceptance evidence is linked. |
+| Done | The intended result is merged; link evidence when it materially helps later work. |
 
-## Dependency map
+## Convergence map
 
 ```text
 H1 official OMP proof
           |
           v
-H2 contract freeze
+H2 contract draft
     /          |          \
    v           v           v
 H3 Hub core  H4 Node     H5 client provider
@@ -40,18 +45,18 @@ H8 standard Node    H9 managed pool proof
 
 ## Work items
 
-| ID | Status | Scope | Acceptance evidence | Depends on | Lead | Reviewer | Branch/PR |
-|---|---|---|---|---|---|---|---|
-| H1 | Ready | Prove the official pinned OMP seam: durable prompt acceptance identity, replay cursor, cancellation, checkpoint contents, restart, and ambiguous disconnect behavior. | Reproducible harness, captured protocol fixtures, and a written supported/unsupported matrix. | — | Unassigned | Unassigned | — |
-| H2 | Blocked | Freeze the first Hub Wire and Runtime Wire contracts, command state machine, owner epoch rules, cursors, bounds, and version negotiation. | Golden frames, executable decoders, compatibility tests, and failure cases. | H1 | Unassigned | Unassigned | — |
-| H3 | Blocked | Build the Hub command ledger, transactional dispatch queue, session/Node registry, event replay, authentication boundary, and fake runtime. | Focused database and state-machine tests, including crash-before-dispatch and crash-after-dispatch. | H2 | Unassigned | Unassigned | — |
-| H4 | Blocked | Build Node registration, pinned OMP lifecycle, command dispatch, checkpoint reporting, workspace operations, epoch rejection, and fake Hub. | Runtime contract suite passes against the fake Hub and official OMP fixture. | H2 | Unassigned | Unassigned | — |
-| H5 | Blocked | Add a Hub target behind the T4 client provider boundary without coupling UI code to Hub storage or Runtime Wire. | Fixture-driven client tests for connect, reconnect, offline, observer, denied, indeterminate, and stale-owner states. | H2 | Unassigned | Unassigned | — |
-| H6 | Blocked | Connect a physical T4 client to a real Hub and Node, submit one unique command to official OMP, and rebuild the same view after reconnect. | Repeatable end-to-end test plus a redacted run artifact showing identifiers and transitions. | H3, H4, H5 | Unassigned | Unassigned | — |
-| H7 | Blocked | Prove ambiguous-failure handling, ownership transfer, hard write fencing, backup consistency, and Git-safe recovery. | Failure matrix including a network-partitioned old owner that cannot write after replacement. | H6 | Unassigned | Unassigned | — |
-| H8 | Blocked | Package the lightweight standard Node for an ordinary remote Mac or Linux dev box with safe stopped-session degradation. | Install, update, reconnect, stop, repair, and rollback proof without Kubernetes or shared storage. | H7 | Unassigned | Unassigned | — |
-| H9 | Blocked | Evaluate the managed worker-pool profile and select scheduling, storage, artifact, and observability components from measured evidence. | Git/dependency filesystem benchmark, resource floor, failure tests, security review, and restore drill. | H7 | Unassigned | Unassigned | — |
-| H10 | Blocked | Add typed CI, approval, deployment, and notification events after the durable session path is trustworthy. | One integration at a time with scoped credentials, provenance, replay, and revocation tests. | H8 or H9 | Unassigned | Unassigned | — |
+| ID | Status | Scope | Useful finish signal | Converges with | Lead | Branch/PR |
+|---|---|---|---|---|---|---|
+| H1 | Ready | Explore the official pinned OMP seam: prompt acceptance identity, replay cursor, cancellation, checkpoint contents, restart, and ambiguous disconnect behavior. | Reproducible harness, useful protocol fixtures, and a short supported/unsupported note. | H2, H4 | Unassigned | — |
+| H2 | Ready | Draft the first Hub Wire and Runtime Wire contracts, command state machine, owner epoch rules, cursors, bounds, and version negotiation. | Executable draft decoders and representative frames that can evolve with H1. | H1, H3, H4, H5 | Unassigned | — |
+| H3 | Ready | Prototype the Hub command ledger, dispatch queue, session/Node registry, event replay, authentication boundary, and fake runtime. | Focused state-machine tests for the paths implemented so far. | H2, H6 | Unassigned | — |
+| H4 | Ready | Prototype Node registration, pinned OMP lifecycle, command dispatch, checkpoint reporting, workspace operations, epoch rejection, and fake Hub. | Runtime tests against the current draft contract and available OMP behavior. | H1, H2, H6 | Unassigned | — |
+| H5 | Ready | Add a Hub target behind the T4 client provider boundary without coupling UI code to Hub storage or Runtime Wire. | Fixture-driven client states for the behaviors currently implemented. | H2, H6 | Unassigned | — |
+| H6 | Waiting | Join the smallest usable Hub, Node, and client pieces early; grow toward reconnecting one official OMP session. | Repeatable end-to-end command and reconnect path with redacted identifiers. | H3, H4, H5 | Unassigned | — |
+| H7 | Ready | Build fault-injection tools for ambiguous failures, ownership transfer, write fencing, backups, and Git recovery as the relevant pieces appear. | Failure notes and regression tests for each implemented recovery behavior. | H3, H4, H6 | Unassigned | — |
+| H8 | Ready | Package an early lightweight Node for an ordinary remote Mac or Linux dev box and iterate on install/update ergonomics. | A repeatable development install and safe stopped-session behavior. | H4, H6 | Unassigned | — |
+| H9 | Ready | Spike managed scheduling, storage, artifact, and observability options without committing the whole product to one stack. | Comparative measurements and a clear next experiment or selection reason. | H4, H7 | Unassigned | — |
+| H10 | Ready | Prototype typed CI, approval, deployment, and notification events with fake or narrowly scoped integrations. | One useful end-to-end event with credentials and failure behavior appropriate to its environment. | H3, H5, H6 | Unassigned | — |
 
 ## Development lanes
 
@@ -68,20 +73,21 @@ package when that produces a clearer boundary.
 
 ## Two-person starting split
 
-Until H2 is complete, the lowest-conflict split is:
+The lowest-conflict starting split is:
 
 | Developer | Primary work | Test double |
 |---|---|---|
-| Hub lead | Draft H2 command/ownership contracts, then implement H3 | Fake Runtime Wire peer |
-| Runtime lead | Prove H1, then implement H4 against the frozen contract | Fake Hub Wire peer |
+| Hub lead | Draft H2 command/ownership contracts while building H3 | Fake Runtime Wire peer |
+| Runtime lead | Explore H1 while building H4 against the current draft | Fake Hub Wire peer |
 
-H2 can be drafted while H1 runs, but it cannot be frozen until the OMP evidence is known. After H2,
-client-provider work can proceed independently against golden Hub fixtures. The physical slice is
-the planned meeting point; neither lane should bypass the contract to make the demo work.
+H1 and H2 inform each other; neither needs to stop the other lane. Client-provider work can proceed
+against changing fixtures as long as the draft version is explicit. Connect small pieces early and
+fix the contract when reality disagrees with it.
 
 ## Shared-file coordination
 
-Assign one integration owner before touching these paths:
+When two active branches need the same shared paths, name a temporary coordinator or land the
+smaller shared edit first:
 
 - Hub Wire and Runtime Wire schemas and generated bindings;
 - root `package.json`, workspace configuration, and `pnpm-lock.yaml`;
@@ -89,8 +95,10 @@ Assign one integration owner before touching these paths:
 - `docs/adr/**`, `PRODUCT_BRIEF.md`, and `docs/OWNERSHIP.md`;
 - CI workflows and deployment manifests.
 
-Each work row records one lead, one reviewer, one branch or PR, and links to proof. Prefer small PRs
-that merge into `main` behind unavailable capability flags over a long-lived integration branch.
+Fill in a lead and branch when it helps another developer avoid overlap; empty cells do not block
+work. Prefer frequent merges into `main` with incomplete capabilities unavailable or clearly marked.
+A cohesive vertical slice can cross lanes when that is faster than maintaining several artificial
+PRs.
 
 ## First physical slice
 
@@ -104,11 +112,11 @@ The first integrated milestone is intentionally narrow:
 6. Repeating the run with a crash immediately after dispatch produces `indeterminate` unless OMP can
    prove durable acceptance. T4 does not replay the command automatically.
 
-## Explicitly deferred
+## Not required for early progress
 
 - live process migration;
-- automatic failover before hard write fencing is proven;
+- enabling automatic failover before hard write fencing is proven;
 - mandatory Kubernetes or shared storage for a standard Node;
-- selecting CephFS, MinIO, or a full observability stack without comparative proof;
+- committing the product to CephFS, MinIO, or a full observability stack before comparative spikes;
 - coupling the Hub architecture to one client framework;
-- CI/CD integrations before the durable session path passes recovery testing.
+- production credentials or broad deployment authority for early CI/CD event prototypes.

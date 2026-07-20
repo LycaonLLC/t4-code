@@ -2,7 +2,9 @@
 
 These boundaries describe the released T4 repository and reserve low-conflict lanes for the Hub
 work. Assign people to roles in the relevant tracker or pull request; the role names are not
-permanent team titles.
+permanent team titles. A primary owner is a coordination default, not an exclusive write lock.
+Cross a boundary when that is the fastest coherent change, and tell the other active owner when the
+same files are in flight.
 
 ## Current repository paths
 
@@ -29,16 +31,21 @@ one exact compatible OMP artifact.
 | Hub | Future `apps/hub/**` and `packages/hub-*/**` | Owns durable product state and Hub Wire; does not write workspaces directly. |
 | Node/runtime | Future `apps/node/**`, `packages/runtime-wire/**`, and `packages/omp-runtime-adapter/**` | Owns OMP lifecycle and workspace operations; does not connect to the Hub database. |
 | Client | A provider boundary selected during contract work | Consumes Hub Wire; does not consume Runtime Wire or reconstruct OMP truth. |
-| Infrastructure | Future deployment path selected after recovery proof | Packages proven behavior; does not define command or ownership semantics. |
+| Infrastructure | Future deployment path selected as experiments mature | Packages behavior without quietly redefining command or ownership semantics. |
 
 These names reserve collaboration lanes, not mandatory package scaffolding. The contract phase may
 reuse an existing package when that creates a clearer boundary.
 
 ## Shared-file handoffs
 
-Use one integration owner for protocol schemas, generated bindings, database migration allocation,
-root manifests, the lockfile, CI workflows, and final vertical-slice wiring. A change to a shared
-contract should be a small reviewable PR before consumers depend on it.
+When active branches overlap on protocol schemas, generated bindings, database migrations, root
+manifests, the lockfile, CI workflows, or final wiring, use a temporary integration owner or land the
+smaller shared edit first. Early Hub schemas and databases may be reset while there are no live
+users. Add compatibility migrations when an external environment actually needs continuity.
+
+Contract changes can land with their first consumer when that is the fastest clear patch. Split the
+contract into its own PR when several active branches already depend on it or the combined diff
+becomes difficult to review.
 
 Backend-to-client handoff includes protocol version, capabilities, golden fixtures, stable IDs and
 revisions, and loading, empty, stale, reconnecting, denied, indeterminate, and old-owner states. The
