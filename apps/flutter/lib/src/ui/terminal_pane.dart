@@ -668,12 +668,14 @@ final class _TerminalStatusBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final semantic = T4SemanticColors.of(context);
     final status = _terminalStatus(
       session,
       phase,
       writable,
       reconnecting,
       scheme,
+      semantic,
     );
     return Material(
       color: scheme.surfaceContainerLowest,
@@ -856,6 +858,7 @@ _TerminalStatus _terminalStatus(
   bool writable,
   bool reconnecting,
   ColorScheme scheme,
+  T4SemanticColors semantic,
 ) {
   if (!session.running) {
     return _TerminalStatus(
@@ -865,19 +868,27 @@ _TerminalStatus _terminalStatus(
     );
   }
   if (reconnecting || phase == ConnectionPhase.retrying) {
-    return _TerminalStatus('Reconnecting', Icons.sync, scheme.primary);
+    return _TerminalStatus('Reconnecting', Icons.sync, semantic.statusWorking);
   }
   if (phase == ConnectionPhase.connecting ||
       phase == ConnectionPhase.synchronizing) {
-    return _TerminalStatus('Connecting', Icons.sync, scheme.primary);
+    return _TerminalStatus('Connecting', Icons.sync, semantic.statusWorking);
   }
   if (phase != ConnectionPhase.ready) {
-    return _TerminalStatus('Offline', Icons.cloud_off_outlined, scheme.error);
+    return _TerminalStatus(
+      'Offline',
+      Icons.cloud_off_outlined,
+      semantic.statusError,
+    );
   }
   if (!writable) {
-    return _TerminalStatus('Read-only', Icons.lock_outline, scheme.tertiary);
+    return _TerminalStatus(
+      'Read-only',
+      Icons.lock_outline,
+      semantic.warningForeground,
+    );
   }
-  return _TerminalStatus('Connected', Icons.circle, scheme.primary);
+  return _TerminalStatus('Connected', Icons.circle, semantic.statusDone);
 }
 
 String _terminalTitle(TerminalSession session) {

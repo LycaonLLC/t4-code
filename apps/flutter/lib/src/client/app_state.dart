@@ -14,6 +14,31 @@ enum ConnectionPhase {
 
 enum AuthenticationPhase { unknown, local, pairingRequired, pairing, paired }
 
+const List<String> t4RequestedFeatures = <String>[
+  'resume',
+  'host.watch',
+  'session.watch',
+  'session.state',
+  'session.delta',
+  'session.observer',
+  'controller.lease',
+  'prompt.lease',
+  'prompt.images',
+  'transcript.images',
+  'transcript.search',
+  'agent.lifecycle',
+  'agent.progress',
+  'agent.event',
+  'agent.transcript',
+  'terminal.io',
+  'files.list',
+  'files.diff',
+  'audit.tail',
+  'catalog.metadata',
+  'settings.metadata',
+  'preview.control',
+];
+
 const List<String> t4RequestedCapabilities = <String>[
   'sessions.read',
   'sessions.prompt',

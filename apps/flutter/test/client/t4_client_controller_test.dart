@@ -96,7 +96,7 @@ void main() {
       final hello = channel.sentJson.single;
       final requestedFeatures = (hello['requestedFeatures']! as List<Object?>)
           .cast<String>();
-      expect(requestedFeatures, containsAll(<String>['resume', 'host.watch']));
+      expect(requestedFeatures, t4RequestedFeatures);
       channel.emit(_welcome('host-alpha', features: requestedFeatures));
       await _flush();
       expect(

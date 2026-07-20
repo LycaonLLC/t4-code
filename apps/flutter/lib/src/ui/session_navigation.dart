@@ -761,6 +761,7 @@ final class _CreateSessionDialogState extends State<_CreateSessionDialog> {
         children: [
           DropdownButtonFormField<String>(
             initialValue: _projectId,
+            isExpanded: true,
             decoration: const InputDecoration(labelText: 'Project'),
             items: [
               for (final entry in widget.projects.entries)

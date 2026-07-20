@@ -756,7 +756,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       build: 'flutter',
       platform: defaultTargetPlatform.name,
     ),
-    requestedFeatures: const <String>['resume', 'host.watch'],
+    requestedFeatures: t4RequestedFeatures,
     capabilities: t4RequestedCapabilities,
     authentication: credentials == null
         ? null

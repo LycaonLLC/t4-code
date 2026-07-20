@@ -547,16 +547,17 @@ final class _ToolTranscriptCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final semantic = T4SemanticColors.of(context);
     final statusIcon = message.toolRunning
         ? Icons.sync
         : message.toolSucceeded == false
         ? Icons.error_outline
         : Icons.check_circle_outline;
     final statusColor = message.toolRunning
-        ? scheme.primary
+        ? semantic.statusWorking
         : message.toolSucceeded == false
-        ? scheme.error
-        : scheme.onSurfaceVariant;
+        ? semantic.statusError
+        : semantic.statusDone;
     return Align(
       alignment: Alignment.centerLeft,
       child: ConstrainedBox(
@@ -630,9 +631,9 @@ final class _ToolPayload extends StatelessWidget {
               child: SelectionArea(
                 child: Text(
                   value,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontFamily: _T4Typography.monoFamily,
+                  ),
                 ),
               ),
             ),
@@ -1047,7 +1048,13 @@ final class _PromptComposerState extends State<_PromptComposer> {
                       ],
                       child: Chip(
                         avatar: const Icon(Icons.memory, size: 20),
-                        label: Text(composer.modelLabel ?? 'Model'),
+                        label: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 140),
+                          child: Text(
+                            composer.modelLabel ?? 'Model',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                       ),
                     ),
                     PopupMenuButton<String>(

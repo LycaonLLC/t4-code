@@ -33,6 +33,51 @@ void main() {
     await tester.pump();
   }
 
+  group('shared T4 theme', () {
+    testWidgets('applies canonical neutral light tokens and typography', (
+      tester,
+    ) async {
+      await pumpApp(
+        tester,
+        state: const T4ViewState(
+          connectionPhase: ConnectionPhase.disconnected,
+          themePreference: T4ThemePreference.light,
+        ),
+        actions: _FakeActions(),
+        size: compactPhone,
+      );
+
+      final theme = Theme.of(tester.element(find.byType(Scaffold).first));
+      final semantic = theme.extension<T4SemanticColors>()!;
+      expect(theme.colorScheme.primary, const Color(0xffb8245b));
+      expect(theme.colorScheme.surface, const Color(0xffffffff));
+      expect(theme.colorScheme.onSurface, const Color(0xff262626));
+      expect(theme.textTheme.bodyMedium?.fontFamily, 'DM Sans');
+      expect(semantic.brand, const Color(0xffe83174));
+      expect(semantic.statusDone, const Color(0xff009966));
+    });
+
+    testWidgets('applies canonical neutral dark tokens', (tester) async {
+      await pumpApp(
+        tester,
+        state: const T4ViewState(
+          connectionPhase: ConnectionPhase.disconnected,
+          themePreference: T4ThemePreference.dark,
+        ),
+        actions: _FakeActions(),
+        size: compactPhone,
+      );
+
+      final theme = Theme.of(tester.element(find.byType(Scaffold).first));
+      final semantic = theme.extension<T4SemanticColors>()!;
+      expect(theme.colorScheme.primary, const Color(0xfff67399));
+      expect(theme.colorScheme.surface, const Color(0xff161616));
+      expect(theme.colorScheme.onSurface, const Color(0xfff5f5f5));
+      expect(semantic.brand, const Color(0xffe83174));
+      expect(semantic.statusDone, const Color(0xff00d492));
+    });
+  });
+
   group('host onboarding', () {
     testWidgets('shows an empty-host onboarding form', (tester) async {
       await pumpApp(
@@ -430,6 +475,49 @@ void main() {
       expect(actions.restoredSessionIds, <String>['session-archived']);
     },
   );
+  testWidgets('new-session dialog fits compact phones', (tester) async {
+    final profile = HostProfile.parseTailnetAddress(
+      'https://alpha.tailnet-name.ts.net',
+    );
+    final actions = _FakeActions();
+    await pumpApp(
+      tester,
+      state: T4ViewState(
+        connectionPhase: ConnectionPhase.ready,
+        hostDirectory: HostDirectory.empty().upsert(profile),
+        authenticationPhase: AuthenticationPhase.paired,
+        grantedCapabilities: t4RequestedCapabilities.toSet(),
+        sessions: const <SessionSummary>[
+          SessionSummary(
+            hostId: 'host-alpha',
+            sessionId: 'session-alpha',
+            projectId: 'project-alpha',
+            projectName: 'Project Alpha',
+            title: 'First investigation',
+            revision: 'revision-alpha',
+            status: 'idle',
+          ),
+        ],
+      ),
+      actions: actions,
+      size: compactPhone,
+    );
+
+    await tester.tap(find.byTooltip('Open navigation'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('New session'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.enterText(
+      find.byType(TextField).last,
+      'T4_IOS_SIM_ACCEPTANCE_20260719',
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
   testWidgets(
     'composer preserves per-session drafts and exposes turn controls',
     (tester) async {
@@ -452,7 +540,7 @@ void main() {
             sessionId: 'session-alpha',
             projectId: 'project-alpha',
             projectName: 'Project Alpha',
-            title: 'First investigation',
+            title: 'T4_IOS_SIM_ACCEPTANCE_20260719',
             revision: 'revision-alpha',
             status: 'idle',
           ),
@@ -467,7 +555,7 @@ void main() {
           ),
         ],
         composer: SessionComposerState(
-          modelLabel: 'Fixture model',
+          modelLabel: 'openai-codex/gpt-5.6-sol',
           modelSelector: 'fixture/model',
           modelChoices: const <ComposerModelChoice>[
             ComposerModelChoice(
@@ -512,7 +600,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.widgetWithText(TextField, 'Alpha draft'), findsOneWidget);
-      expect(find.text('Fixture model'), findsOneWidget);
+      expect(find.text('openai-codex/gpt-5.6-sol'), findsOneWidget);
       expect(find.text('medium'), findsOneWidget);
       expect(find.text('Fast'), findsOneWidget);
       expect(find.text('Stop'), findsOneWidget);

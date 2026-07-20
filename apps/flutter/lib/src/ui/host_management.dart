@@ -668,7 +668,9 @@ final class _PairingPaneState extends State<_PairingPane> {
                             child: SelectableText(
                               t4PairCommand,
                               style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(fontFamily: 'monospace'),
+                                  ?.copyWith(
+                                    fontFamily: _T4Typography.monoFamily,
+                                  ),
                             ),
                           ),
                           IconButton(

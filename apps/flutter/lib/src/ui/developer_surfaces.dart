@@ -1332,7 +1332,7 @@ final class _SourceViewer extends StatelessWidget {
                   contentPadding: EdgeInsets.all(_T4Space.md),
                 ),
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  fontFamily: 'monospace',
+                  fontFamily: _T4Typography.monoFamily,
                   color: Theme.of(context).colorScheme.onSurface,
                 ),
               ),
@@ -1370,7 +1370,7 @@ final class _CodeViewer extends StatelessWidget {
                 text,
                 semanticsLabel: semanticsLabel,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  fontFamily: 'monospace',
+                  fontFamily: _T4Typography.monoFamily,
                   color: scheme.onSurface,
                 ),
               ),
@@ -1700,9 +1700,9 @@ final class _PreviewInteractionSheetState
               alignLabelWithHint: true,
               errorText: _error,
             ),
-            style: Theme.of(
-              context,
-            ).textTheme.bodyMedium?.copyWith(fontFamily: 'monospace'),
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              fontFamily: _T4Typography.monoFamily,
+            ),
           ),
           const SizedBox(height: _T4Space.md),
           FilledButton.icon(
