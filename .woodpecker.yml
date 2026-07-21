@@ -119,6 +119,8 @@ steps:
   legacy-authority-build:
     depends_on: [legacy-authority-source, bun-runtime]
     image: docker.io/library/rust:1.86-slim-bookworm@sha256:57d415bbd61ce11e2d5f73de068103c7bd9f3188dc132c97cef4a8f62989e944
+    environment:
+      RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
     commands:
       - sh scripts/cluster-ci/install-legacy-authority-toolchain.sh
       - (cd .continuity/omp && bun install --frozen-lockfile)
