@@ -263,7 +263,16 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
       `pipeline 38:64 reproduced unfiltered core workspace traversal as "Failed to find executable flutter": ${command}`,
     );
   }
+  assert.deepEqual(steps["legacy-authority-build"].depends_on, [
+    "legacy-authority-source",
+    "bun-runtime",
+  ]);
+  assert.equal(
+    steps["legacy-authority-build"].image,
+    "docker.io/library/rust:1.86-slim-bookworm@sha256:57d415bbd61ce11e2d5f73de068103c7bd9f3188dc132c97cef4a8f62989e944",
+  );
   assert.deepEqual(steps["legacy-authority-build"].commands, [
+    "sh scripts/cluster-ci/install-legacy-authority-toolchain.sh",
     "(cd .continuity/omp && bun install --frozen-lockfile)",
     "(cd .continuity/omp && bun run build:native)",
   ]);
