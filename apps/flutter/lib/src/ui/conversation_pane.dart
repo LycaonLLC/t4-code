@@ -9,6 +9,7 @@ final class _ConversationPane extends StatelessWidget {
     this.onOpenSessions,
     required this.onOpenAttention,
     required this.onOpenDeveloper,
+    required this.onOpenQuickOpen,
   });
 
   final T4ViewState state;
@@ -18,6 +19,7 @@ final class _ConversationPane extends StatelessWidget {
   final VoidCallback? onOpenSessions;
   final VoidCallback onOpenAttention;
   final VoidCallback onOpenDeveloper;
+  final Future<void> Function() onOpenQuickOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -33,6 +35,7 @@ final class _ConversationPane extends StatelessWidget {
             state: state,
             onOpenAttention: onOpenAttention,
             onOpenDeveloper: onOpenDeveloper,
+            onOpenQuickOpen: onOpenQuickOpen,
           ),
         if (showError)
           _ConnectionErrorBanner(
@@ -60,11 +63,13 @@ final class _ConversationHeader extends StatelessWidget {
     required this.state,
     required this.onOpenAttention,
     required this.onOpenDeveloper,
+    required this.onOpenQuickOpen,
   });
 
   final T4ViewState state;
   final VoidCallback onOpenAttention;
   final VoidCallback onOpenDeveloper;
+  final Future<void> Function() onOpenQuickOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -107,6 +112,18 @@ final class _ConversationHeader extends StatelessWidget {
                   ],
                 ],
               ),
+            ),
+            IconButton(
+              onPressed:
+                  state.connectionPhase == ConnectionPhase.ready &&
+                      state.grantedFeatures.contains('files.search') &&
+                      state.grantedCapabilities.contains('files.list') &&
+                      state.grantedCapabilities.contains('files.read') &&
+                      session != null
+                  ? () => unawaited(onOpenQuickOpen())
+                  : null,
+              tooltip: 'Quick open project file',
+              icon: const Icon(Icons.search),
             ),
             IconButton(
               onPressed: onOpenDeveloper,
@@ -931,6 +948,7 @@ final class _PromptComposerState extends State<_PromptComposer> {
       widget.state.connectionPhase == ConnectionPhase.ready &&
       widget.state.selectedSession != null &&
       widget.state.grantedCapabilities.contains('sessions.prompt') &&
+      !widget.state.composer.isPaused &&
       !_sending;
 
   bool get _canSubmit =>
@@ -1112,6 +1130,14 @@ final class _PromptComposerState extends State<_PromptComposer> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final composer = widget.state.composer;
+    final showControls =
+        widget.state.selectedSession != null &&
+        widget.state.grantedCapabilities.contains('sessions.control');
+    final canControl =
+        showControls &&
+        widget.state.connectionPhase == ConnectionPhase.ready &&
+        widget.state.grantedCapabilities.contains('sessions.control') &&
+        !widget.state.sessionOperationPending;
     final slashQuery = _textController.text.startsWith('/')
         ? _textController.text.split(RegExp(r'\s')).first.toLowerCase()
         : '';
@@ -1257,6 +1283,36 @@ final class _PromptComposerState extends State<_PromptComposer> {
                           ),
                         ),
                       ),
+                    if (showControls && composer.isPaused)
+                      ActionChip(
+                        avatar: const Icon(Icons.play_arrow, size: 20),
+                        label: const Text('Resume'),
+                        onPressed: canControl
+                            ? () => unawaited(
+                                _runControl(widget.actions.resumeSession),
+                              )
+                            : null,
+                      )
+                    else if (showControls && composer.turnActive)
+                      ActionChip(
+                        avatar: const Icon(Icons.pause, size: 20),
+                        label: const Text('Pause'),
+                        onPressed: canControl
+                            ? () => unawaited(
+                                _runControl(widget.actions.pauseSession),
+                              )
+                            : null,
+                      )
+                    else if (showControls)
+                      ActionChip(
+                        avatar: const Icon(Icons.compress, size: 20),
+                        label: const Text('Compact'),
+                        onPressed: canControl
+                            ? () => unawaited(
+                                _runControl(widget.actions.compactSession),
+                              )
+                            : null,
+                      ),
                     if (composer.turnActive) ...[
                       ActionChip(
                         avatar: const Icon(Icons.stop, size: 20),
@@ -1308,6 +1364,8 @@ final class _PromptComposerState extends State<_PromptComposer> {
                             decoration: InputDecoration(
                               hintText: widget.state.selectedSession == null
                                   ? 'Choose a session to begin'
+                                  : composer.isPaused
+                                  ? 'Resume the session to continue'
                                   : composer.turnActive
                                   ? 'Steer the active turn'
                                   : 'Message T4',

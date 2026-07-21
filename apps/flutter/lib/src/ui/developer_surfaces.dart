@@ -4,12 +4,14 @@ final class _DeveloperSurfacesPane extends StatefulWidget {
   const _DeveloperSurfacesPane({
     required this.state,
     required this.actions,
+    required this.initialTab,
     required this.onDone,
     required this.showHeader,
   });
 
   final T4ViewState state;
   final T4Actions actions;
+  final int initialTab;
   final VoidCallback onDone;
   final bool showHeader;
 
@@ -47,7 +49,11 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 5, vsync: this);
+    _tabs = TabController(
+      length: 5,
+      initialIndex: _boundedDeveloperTab(widget.initialTab),
+      vsync: this,
+    );
     _activitySnapshot = List<DeveloperActivity>.of(widget.state.activities);
     final workspace = widget.state.fileWorkspace;
     if (workspace.content != null && workspace.path.isNotEmpty) {
@@ -63,6 +69,10 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
   @override
   void didUpdateWidget(covariant _DeveloperSurfacesPane oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialTab != widget.initialTab &&
+        _tabs.index != widget.initialTab) {
+      _tabs.animateTo(_boundedDeveloperTab(widget.initialTab));
+    }
     if (!_activityPaused &&
         !identical(oldWidget.state.activities, widget.state.activities)) {
       _activitySnapshot = List<DeveloperActivity>.of(widget.state.activities);
@@ -697,6 +707,12 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
     );
   }
 }
+
+int _boundedDeveloperTab(int index) => index < 0
+    ? 0
+    : index > 4
+    ? 4
+    : index;
 
 final class _DeveloperSurfacesHeader extends StatelessWidget {
   const _DeveloperSurfacesHeader({required this.onDone});
