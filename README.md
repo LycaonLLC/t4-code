@@ -145,9 +145,9 @@ native release checks.
 ```
 apps/desktop   Electron main process: window, local OMP discovery,
                host lifecycle, pairing, credential storage
-apps/web       React UI (Vite): sessions, composer, panes, settings
-apps/flutter   Native Android/iOS/macOS client: responsive UI,
+apps/flutter   Canonical Android/iOS/macOS/web UI: responsive workspace,
                secure credentials, lifecycle, updates, OMP service controls
+apps/web       Legacy React compatibility UI for the Electron client
 packages/      client, protocol, host-wire, host-service, remote,
                service-manager, ui
 ```

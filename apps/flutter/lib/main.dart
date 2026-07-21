@@ -6,12 +6,18 @@ import 'package:flutter/foundation.dart';
 import 'src/client/app_state.dart';
 import 'src/client/t4_client_controller.dart';
 import 'src/client/transcript_tail_store.dart';
+import 'src/demo/demo_app.dart';
 import 'src/host/app_preferences.dart';
 import 'src/host/persistent_host_stores.dart';
 import 'src/platform/platform_lifecycle_controller.dart';
 import 'src/ui/t4_app.dart';
 
 void main() {
+  const demoMode = bool.fromEnvironment('T4_DEMO_MODE');
+  if (demoMode) {
+    runApp(T4DemoApp());
+    return;
+  }
   runApp(T4Bootstrap(developmentEndpoint: _developmentEndpoint()));
 }
 

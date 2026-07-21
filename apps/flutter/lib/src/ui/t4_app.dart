@@ -37,6 +37,7 @@ final class T4App extends StatelessWidget {
     required this.state,
     required this.actions,
     required this.credentialsAreVolatile,
+    this.demoMode = false,
     this.platformState = const PlatformLifecycleViewState.initial(),
     this.platformActions,
     super.key,
@@ -45,6 +46,7 @@ final class T4App extends StatelessWidget {
   final T4ViewState state;
   final T4Actions actions;
   final bool credentialsAreVolatile;
+  final bool demoMode;
   final PlatformLifecycleViewState platformState;
   final PlatformLifecycleActions? platformActions;
 
@@ -60,7 +62,16 @@ final class T4App extends StatelessWidget {
         T4ThemePreference.light => ThemeMode.light,
         T4ThemePreference.dark => ThemeMode.dark,
       },
-      home: credentialsAreVolatile
+      home: demoMode
+          ? _DemoModeShell(
+              child: _AdaptiveSessionShell(
+                state: state,
+                actions: actions,
+                platformState: platformState,
+                platformActions: platformActions,
+              ),
+            )
+          : credentialsAreVolatile
           ? _VolatileCredentialsShell(
               child: _AdaptiveSessionShell(
                 state: state,
@@ -75,6 +86,54 @@ final class T4App extends StatelessWidget {
               platformState: platformState,
               platformActions: platformActions,
             ),
+    );
+  }
+}
+
+final class _DemoModeShell extends StatelessWidget {
+  const _DemoModeShell({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Column(
+      children: [
+        Semantics(
+          container: true,
+          label: 'Public preview using sample data. Actions are disabled.',
+          child: Material(
+            color: colors.secondaryContainer,
+            child: SafeArea(
+              bottom: false,
+              child: SizedBox(
+                height: 32,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.visibility_outlined,
+                      size: 16,
+                      color: colors.onSecondaryContainer,
+                    ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        'Public preview · sample data · actions disabled',
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelMedium
+                            ?.copyWith(color: colors.onSecondaryContainer),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        Expanded(child: child),
+      ],
     );
   }
 }
