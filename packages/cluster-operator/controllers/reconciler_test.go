@@ -1818,6 +1818,11 @@ func TestSessionResourcesWithAnyForeignOwnerFailClosed(t *testing.T) {
 				if available == nil || available.Status != metav1.ConditionFalse || !strings.Contains(available.Reason, "OwnershipConflict") {
 					t.Fatalf("foreign owner did not produce stable ownership conflict: %#v", available)
 				}
+				if path == "normal" {
+					assertCurrentSessionConditions(t, &failed, map[string]metav1.ConditionStatus{
+						"HostReady": metav1.ConditionTrue, "WorkspaceReady": metav1.ConditionTrue, "RuntimeConfigured": metav1.ConditionTrue, "Available": metav1.ConditionFalse,
+					})
+				}
 			})
 		}
 	}
