@@ -1801,6 +1801,17 @@ func TestSessionResourcesWithAnyForeignOwnerFailClosed(t *testing.T) {
 						t.Fatalf("Service with foreign OwnerReference was mutated: %#v", got)
 					}
 				}
+				if path == "dependency-cleanup" {
+					var sibling client.Object
+					if kind == "Pod" {
+						sibling = &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: controllers.SessionServiceName(session), Namespace: session.Namespace}}
+					} else {
+						sibling = &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: controllers.SessionPodName(session), Namespace: session.Namespace}}
+					}
+					if err := c.Get(ctx, client.ObjectKeyFromObject(sibling), sibling); !apierrors.IsNotFound(err) {
+						t.Fatalf("exclusively owned sibling remained after dependency cleanup: %v", err)
+					}
+				}
 				var failed clusterv1alpha1.T4Session
 				if err := c.Get(ctx, client.ObjectKeyFromObject(session), &failed); err != nil {
 					t.Fatal(err)
@@ -1813,6 +1824,45 @@ func TestSessionResourcesWithAnyForeignOwnerFailClosed(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkspaceTerminalPVCFailuresRevokePublishedAuthority(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*corev1.PersistentVolumeClaim)
+		reason string
+	}{
+		{name: "Bound without RWX", reason: "PVCNotRWX", mutate: func(pvc *corev1.PersistentVolumeClaim) { pvc.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce} }},
+		{name: "Lost", reason: "PVCLost", mutate: func(pvc *corev1.PersistentVolumeClaim) { pvc.Status.Phase = corev1.ClaimLost }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			scheme := testScheme(t)
+			workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+			workspace.UID = "workspace-uid"
+			pvc := ownedWorkspacePVC(workspace)
+			test.mutate(pvc)
+			c := fake.NewClientBuilder().WithScheme(scheme).
+				WithStatusSubresource(&clusterv1alpha1.T4Workspace{}, &corev1.PersistentVolumeClaim{}).
+				WithObjects(testHost(), rwxStorageClass(), workspace, pvc).Build()
+			r := &controllers.WorkspaceReconciler{Client: c, Scheme: scheme}
+			if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workspace)}); err != nil {
+				t.Fatal(err)
+			}
+			var failed clusterv1alpha1.T4Workspace
+			if err := c.Get(ctx, client.ObjectKeyFromObject(workspace), &failed); err != nil {
+				t.Fatal(err)
+			}
+			storageReady := findCondition(failed.Status.Conditions, "StorageReady")
+			ready := findCondition(failed.Status.Conditions, "Ready")
+			if failed.Status.PVCName != "" || failed.Status.PVCPhase != "" || !failed.Status.Capacity.IsZero() ||
+				storageReady == nil || storageReady.Status != metav1.ConditionFalse || storageReady.Reason != test.reason || storageReady.ObservedGeneration != failed.Generation ||
+				ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != test.reason || ready.ObservedGeneration != failed.Generation {
+				t.Fatalf("terminal PVC failure retained authority: status=%#v StorageReady=%#v Ready=%#v", failed.Status, storageReady, ready)
+			}
+		})
+	}
+}
+
 
 func ownedWorkspacePVC(workspace *clusterv1alpha1.T4Workspace) *corev1.PersistentVolumeClaim {
 	return &corev1.PersistentVolumeClaim{
