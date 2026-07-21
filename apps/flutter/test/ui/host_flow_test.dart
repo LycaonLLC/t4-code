@@ -242,6 +242,8 @@ void main() {
       size: wideDesktop,
     );
 
+    await tester.tap(find.byTooltip('Host menu'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Manage hosts'));
     await tester.pumpAndSettle();
 
@@ -356,7 +358,9 @@ void main() {
       size: wideDesktop,
     );
 
-    await tester.tap(find.widgetWithText(TextButton, 'Disconnect'));
+    await tester.tap(find.byTooltip('Host menu'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Disconnect'));
     await tester.pumpAndSettle();
     expect(actions.disconnectCalls, 1);
   });
@@ -404,7 +408,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Navigation'), findsOneWidget);
-    expect(find.text('Manage hosts'), findsOneWidget);
+    expect(find.byTooltip('Host menu'), findsOneWidget);
     expect(find.byType(Drawer), findsOneWidget);
   });
 
@@ -429,7 +433,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Navigation'), findsOneWidget);
-    expect(find.text('Manage hosts'), findsOneWidget);
+    expect(find.byTooltip('Host menu'), findsOneWidget);
   });
 
   testWidgets('unsigned macOS development mode is visibly identified', (
@@ -472,7 +476,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byTooltip('Open navigation'), findsNothing);
-    expect(find.text('Manage hosts'), findsOneWidget);
+    expect(find.byTooltip('Host menu'), findsOneWidget);
     expect(find.text('T4'), findsOneWidget);
   });
   testWidgets(
@@ -521,8 +525,8 @@ void main() {
       );
       await pumpApp(tester, state: state, actions: actions, size: wideDesktop);
 
-      expect(find.text('Project Alpha'), findsOneWidget);
-      expect(find.text('Project Beta'), findsOneWidget);
+      expect(find.text('PROJECT ALPHA'), findsOneWidget);
+      expect(find.text('PROJECT BETA'), findsOneWidget);
       expect(find.text('Archived investigation'), findsNothing);
 
       await tester.enterText(
@@ -700,11 +704,12 @@ void main() {
       expect(find.widgetWithText(TextField, 'Alpha draft'), findsOneWidget);
       expect(find.text('openai-codex/gpt-5.6-sol'), findsOneWidget);
       expect(find.text('medium'), findsOneWidget);
-      expect(find.text('Fast'), findsOneWidget);
       expect(find.text('Stop'), findsOneWidget);
       expect(find.text('Queue (2)'), findsOneWidget);
 
-      await tester.tap(find.widgetWithText(FilledButton, 'Steer'));
+      // The circular send button doubles as the steer affordance while a
+      // turn is active.
+      await tester.tap(find.byTooltip('Steer'));
       await tester.pumpAndSettle();
       expect(actions.submittedPrompts, <String>['Alpha draft']);
     },
@@ -742,16 +747,17 @@ void main() {
       );
       await tester.enterText(find.byType(TextField).last, 'Cannot send');
       await tester.pump();
-      expect(
-        tester
-            .widget<FilledButton>(find.widgetWithText(FilledButton, 'Send'))
-            .onPressed,
-        isNull,
+      final send = tester.widget<IconButton>(
+        find.ancestor(
+          of: find.byIcon(Icons.arrow_upward),
+          matching: find.byType(IconButton),
+        ),
       );
+      expect(send.onPressed, isNull);
     },
   );
   testWidgets(
-    'Fast toggle reads as an inactive toggle when available and off, and selected when on',
+    'Fast toggles from the model selector menu and reflects the current state',
     (tester) async {
       final profile = HostProfile.parseTailnetAddress(
         'https://alpha.tailnet-name.ts.net',
@@ -790,23 +796,8 @@ void main() {
         ),
       );
 
-      Color? chipBackground(WidgetTester tester) {
-        // The RawChip under the FilterChip paints its resolved background as a
-        // ShapeDecoration on an Ink widget; reading it observes the effective
-        // selected vs unselected appearance without asserting on source text.
-        final ink = tester.widget<Ink>(
-          find
-              .ancestor(of: find.text('Fast'), matching: find.byType(Ink))
-              .first,
-        );
-        final decoration = ink.decoration as ShapeDecoration;
-        return decoration.color;
-      }
-
-      // Available but off: the chip keeps its normal filled surface and
-      // border (unchanged from the other dropdown chips), but the literal
-      // "Fast" label foreground is muted grey so the toggle reads inactive
-      // without the button itself looking selected.
+      // Fast lives inside the model selector menu as a checkable item; it has
+      // no standalone chip in the composer row.
       await pumpApp(
         tester,
         state: stateFor(fastEnabled: false),
@@ -814,27 +805,21 @@ void main() {
         size: compactPhone,
       );
       await tester.pumpAndSettle();
-      final scheme = Theme.of(
-        tester.element(find.widgetWithText(FilterChip, 'Fast')),
-      ).colorScheme;
-      final offChip = tester.widget<FilterChip>(
-        find.widgetWithText(FilterChip, 'Fast'),
-      );
-      expect(offChip.selected, isFalse);
-      // Normal filled chip surface, identical to the other composer chips.
-      expect(chipBackground(tester), scheme.surfaceContainer);
-      // The label foreground is the muted/grey variant color.
-      final offLabel = tester.widget<Text>(find.text('Fast'));
-      expect(offLabel.style?.color, scheme.onSurfaceVariant);
+      expect(find.text('Fast'), findsNothing);
 
-      // Tapping the off toggle requests enabling Fast.
-      await tester.tap(find.widgetWithText(FilterChip, 'Fast'));
+      await tester.tap(find.text('Fixture model'));
+      await tester.pumpAndSettle();
+      final offItem = tester.widget<CheckboxMenuButton>(
+        find.widgetWithText(CheckboxMenuButton, 'Fast'),
+      );
+      expect(offItem.value, isFalse);
+
+      // Activating the unchecked item requests enabling Fast.
+      await tester.tap(find.text('Fast'));
       await tester.pumpAndSettle();
       expect(actions.selectedFastModes, <bool>[true]);
 
-      // On: the selected pink/primary-container surface and the chip's normal
-      // selected label foreground are unchanged (the label style is null, so
-      // the theme's selected label color applies).
+      // On: the menu item reads as checked.
       await tester.pumpWidget(
         T4App(
           state: stateFor(fastEnabled: true),
@@ -843,78 +828,76 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final onChip = tester.widget<FilterChip>(
-        find.widgetWithText(FilterChip, 'Fast'),
+      await tester.tap(find.text('Fixture model'));
+      await tester.pumpAndSettle();
+      final onItem = tester.widget<CheckboxMenuButton>(
+        find.widgetWithText(CheckboxMenuButton, 'Fast'),
       );
-      expect(onChip.selected, isTrue);
-      expect(chipBackground(tester), scheme.primaryContainer);
-      final onLabel = tester.widget<Text>(find.text('Fast'));
-      expect(onLabel.style?.color, isNull);
+      expect(onItem.value, isTrue);
     },
   );
 
-  testWidgets(
-    'slash menu finds aliases and explains terminal-only commands',
-    (tester) async {
-      final profile = HostProfile.parseTailnetAddress(
-        'https://alpha.tailnet-name.ts.net',
-      );
-      final state = T4ViewState(
-        connectionPhase: ConnectionPhase.ready,
-        hostDirectory: HostDirectory.empty().upsert(profile),
-        authenticationPhase: AuthenticationPhase.paired,
-        grantedCapabilities: t4RequestedCapabilities.toSet(),
-        selectedSessionId: 'session-alpha',
-        sessions: const <SessionSummary>[
-          SessionSummary(
-            hostId: 'host-alpha',
-            sessionId: 'session-alpha',
-            projectId: 'project-alpha',
-            projectName: 'Project Alpha',
-            title: 'Capability-aware slash menu',
-            revision: 'revision-alpha',
-            status: 'idle',
+  testWidgets('slash menu finds aliases and explains terminal-only commands', (
+    tester,
+  ) async {
+    final profile = HostProfile.parseTailnetAddress(
+      'https://alpha.tailnet-name.ts.net',
+    );
+    final state = T4ViewState(
+      connectionPhase: ConnectionPhase.ready,
+      hostDirectory: HostDirectory.empty().upsert(profile),
+      authenticationPhase: AuthenticationPhase.paired,
+      grantedCapabilities: t4RequestedCapabilities.toSet(),
+      selectedSessionId: 'session-alpha',
+      sessions: const <SessionSummary>[
+        SessionSummary(
+          hostId: 'host-alpha',
+          sessionId: 'session-alpha',
+          projectId: 'project-alpha',
+          projectName: 'Project Alpha',
+          title: 'Capability-aware slash menu',
+          revision: 'revision-alpha',
+          status: 'idle',
+        ),
+      ],
+      composer: const SessionComposerState(
+        slashCommands: <ComposerSlashCommand>[
+          ComposerSlashCommand(
+            name: '/compact',
+            aliases: <String>['/compress'],
+            description: 'Compact the active conversation',
+            insert: '/compact ',
+          ),
+          ComposerSlashCommand(
+            name: '/plan',
+            description: 'Toggle plan mode',
+            insert: '/plan ',
+            disabledReason: '/plan requires the OMP terminal interface.',
           ),
         ],
-        composer: const SessionComposerState(
-          slashCommands: <ComposerSlashCommand>[
-            ComposerSlashCommand(
-              name: '/compact',
-              aliases: <String>['/compress'],
-              description: 'Compact the active conversation',
-              insert: '/compact ',
-            ),
-            ComposerSlashCommand(
-              name: '/plan',
-              description: 'Toggle plan mode',
-              insert: '/plan ',
-              disabledReason: '/plan requires the OMP terminal interface.',
-            ),
-          ],
-        ),
-      );
+      ),
+    );
 
-      await pumpApp(
-        tester,
-        state: state,
-        actions: _FakeActions(),
-        size: compactPhone,
-      );
-      await tester.enterText(find.byType(TextField).last, '/');
-      await tester.pump();
-      expect(find.text('/compact'), findsOneWidget);
-      expect(find.text('/plan'), findsOneWidget);
-      expect(
-        find.text('/plan requires the OMP terminal interface.'),
-        findsOneWidget,
-      );
+    await pumpApp(
+      tester,
+      state: state,
+      actions: _FakeActions(),
+      size: compactPhone,
+    );
+    await tester.enterText(find.byType(TextField).last, '/');
+    await tester.pump();
+    expect(find.text('/compact'), findsOneWidget);
+    expect(find.text('/plan'), findsOneWidget);
+    expect(
+      find.text('/plan requires the OMP terminal interface.'),
+      findsOneWidget,
+    );
 
-      await tester.enterText(find.byType(TextField).last, '/compress');
-      await tester.pump();
-      expect(find.text('/compact'), findsOneWidget);
-      expect(find.text('/plan'), findsNothing);
-    },
-  );
+    await tester.enterText(find.byType(TextField).last, '/compress');
+    await tester.pump();
+    expect(find.text('/compact'), findsOneWidget);
+    expect(find.text('/plan'), findsNothing);
+  });
   testWidgets('keeps the latest message visible when the keyboard opens', (
     tester,
   ) async {
@@ -1097,6 +1080,127 @@ void main() {
         'Showing encrypted saved messages while the live transcript connects.',
       ),
       findsOneWidget,
+    );
+  });
+
+  testWidgets('collapses completed tool runs into a work group', (
+    tester,
+  ) async {
+    await pumpApp(
+      tester,
+      state: keyboardTranscriptState(
+        messages: const <TranscriptMessage>[
+          TranscriptMessage(
+            id: 'message-user',
+            role: MessageRole.user,
+            text: 'Fix the flaky test.',
+          ),
+          TranscriptMessage(
+            id: 'message-write',
+            role: MessageRole.tool,
+            kind: TranscriptKind.tool,
+            text: '',
+            toolName: 'files.write',
+            toolTitle: 'Write lib/main.dart',
+            toolArguments: '{"path": "lib/main.dart", "content": ""}',
+            toolSucceeded: true,
+          ),
+          TranscriptMessage(
+            id: 'message-test',
+            role: MessageRole.tool,
+            kind: TranscriptKind.tool,
+            text: '',
+            toolName: 'terminal.run',
+            toolTitle: 'Run flutter test',
+            toolArguments: '{"command": "flutter test"}',
+            toolSucceeded: true,
+          ),
+          TranscriptMessage(
+            id: 'message-assistant',
+            role: MessageRole.assistant,
+            text: 'Done.',
+          ),
+        ],
+      ),
+      actions: _FakeActions(),
+      size: compactPhone,
+    );
+
+    expect(find.text('Worked · 2 steps'), findsOneWidget);
+    expect(find.text('Edited 1 file'), findsOneWidget);
+    expect(find.text('main.dart'), findsOneWidget);
+    expect(find.text('Write lib/main.dart'), findsNothing);
+    expect(find.text('Run flutter test'), findsNothing);
+
+    await tester.tap(find.text('Worked · 2 steps'));
+    await tester.pumpAndSettle();
+    expect(find.text('Write lib/main.dart'), findsOneWidget);
+    expect(find.text('Run flutter test'), findsOneWidget);
+  });
+
+  testWidgets('renders actionable approvals inline below the transcript', (
+    tester,
+  ) async {
+    final profile = HostProfile.parseTailnetAddress(
+      'https://alpha.tailnet-name.ts.net',
+    );
+    final actions = _FakeActions();
+    final approval = AttentionItem(
+      key: 'session-alpha:approval:approval-inline',
+      kind: AttentionKind.approval,
+      sessionId: 'session-alpha',
+      sessionTitle: 'First investigation',
+      revision: 'revision-alpha',
+      title: 'Allow file write?',
+      summary: 'OMP wants to update lib/main.dart.',
+      at: DateTime.utc(2026, 7, 21),
+      requestId: 'approval-inline',
+      actionable: true,
+    );
+    await pumpApp(
+      tester,
+      state: T4ViewState(
+        connectionPhase: ConnectionPhase.ready,
+        hostDirectory: HostDirectory.empty().upsert(profile),
+        authenticationPhase: AuthenticationPhase.paired,
+        grantedCapabilities: t4RequestedCapabilities.toSet(),
+        selectedSessionId: 'session-alpha',
+        sessions: const <SessionSummary>[
+          SessionSummary(
+            hostId: 'host-alpha',
+            sessionId: 'session-alpha',
+            projectId: 'project-alpha',
+            projectName: 'Project Alpha',
+            title: 'First investigation',
+            revision: 'revision-alpha',
+            status: 'active',
+          ),
+        ],
+        messages: const <TranscriptMessage>[
+          TranscriptMessage(
+            id: 'message-user',
+            role: MessageRole.user,
+            text: 'Please update main.dart.',
+          ),
+          TranscriptMessage(
+            id: 'message-assistant',
+            role: MessageRole.assistant,
+            text: 'Requesting write access now.',
+          ),
+        ],
+        attentionItems: <AttentionItem>[approval],
+      ),
+      actions: actions,
+      size: compactPhone,
+    );
+
+    expect(find.text('Allow file write?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Approve'));
+    await tester.pump();
+    expect(actions.attentionResponses, hasLength(1));
+    expect(
+      actions.attentionResponses.single.response.decision,
+      AttentionDecision.approve,
     );
   });
 
@@ -1581,6 +1685,9 @@ void main() {
         credentialsAreVolatile: false,
       ),
     );
+    await tester.pumpAndSettle();
+    // Manual compaction moved into the model selector menu.
+    await tester.tap(find.text('Model'));
     await tester.pumpAndSettle();
     expect(find.text('Compact'), findsOneWidget);
     await tester.tap(find.text('Compact'));

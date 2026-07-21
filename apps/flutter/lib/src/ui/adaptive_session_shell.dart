@@ -28,6 +28,7 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
   bool _showSettings = false;
   bool _showSearch = false;
   bool _showUsage = false;
+  bool _showContextPanel = false;
   int _developerInitialTab = 0;
 
   Future<void> _connect() async {
@@ -208,6 +209,298 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
 
   void _closeUsage() => setState(() => _showUsage = false);
 
+  void _toggleContextPanel() =>
+      setState(() => _showContextPanel = !_showContextPanel);
+
+  void _toggleSearch() {
+    if (_showSearch) {
+      _closeSearch();
+    } else {
+      _openSearch(closeDrawer: false);
+    }
+  }
+
+  void _toggleSettings() {
+    if (_showSettings) {
+      _closeSettings();
+    } else {
+      _openSettings(closeDrawer: false);
+    }
+  }
+
+  void _toggleDeveloper() {
+    if (_showDeveloper) {
+      _closeDeveloper();
+    } else {
+      _openDeveloper();
+    }
+  }
+
+  /// Escape: returns to the conversation when any takeover surface is open.
+  void _dismissTakeovers() {
+    if (!_showHostManager &&
+        !_showAttention &&
+        !_showDeveloper &&
+        !_showSettings &&
+        !_showSearch &&
+        !_showUsage) {
+      return;
+    }
+    setState(() {
+      _showHostManager = false;
+      _showAttention = false;
+      _showDeveloper = false;
+      _showSettings = false;
+      _showSearch = false;
+      _showUsage = false;
+    });
+  }
+
+  /// Selects the Nth session of the list the rail renders by default
+  /// (non-archived, unfiltered), using the same select action as the rail.
+  void _selectSessionAt(int index) {
+    final visible = widget.state.sessions
+        .where((session) => !session.archived)
+        .toList(growable: false);
+    if (index < 0 || index >= visible.length) return;
+    unawaited(_selectSession(visible[index].sessionId, closeDrawer: false));
+  }
+
+  /// Same create flow (gate + dialog) as the session rail's new-session
+  /// button, reachable from the keyboard.
+  Future<void> _createSessionFromShortcut() async {
+    final canCreate =
+        widget.state.connectionPhase == ConnectionPhase.ready &&
+        widget.state.grantedCapabilities.contains('sessions.manage') &&
+        !widget.state.sessionOperationPending &&
+        widget.state.sessions.isNotEmpty;
+    if (!canCreate) return;
+    final projects = <String, String>{};
+    for (final session in widget.state.sessions) {
+      projects.putIfAbsent(session.projectId, () => session.projectName);
+    }
+    if (projects.isEmpty) return;
+    await showDialog<bool>(
+      context: context,
+      builder: (context) =>
+          _CreateSessionDialog(actions: widget.actions, projects: projects),
+    );
+  }
+
+  Map<ShortcutActivator, VoidCallback> _shortcutBindings() {
+    final useMeta =
+        defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+    SingleActivator mod(LogicalKeyboardKey key, {bool shift = false}) =>
+        SingleActivator(key, meta: useMeta, control: !useMeta, shift: shift);
+
+    const digits = <LogicalKeyboardKey>[
+      LogicalKeyboardKey.digit1,
+      LogicalKeyboardKey.digit2,
+      LogicalKeyboardKey.digit3,
+      LogicalKeyboardKey.digit4,
+      LogicalKeyboardKey.digit5,
+      LogicalKeyboardKey.digit6,
+      LogicalKeyboardKey.digit7,
+      LogicalKeyboardKey.digit8,
+      LogicalKeyboardKey.digit9,
+    ];
+
+    return <ShortcutActivator, VoidCallback>{
+      mod(LogicalKeyboardKey.keyK): () => unawaited(_openQuickOpen()),
+      mod(LogicalKeyboardKey.keyN): () =>
+          unawaited(_createSessionFromShortcut()),
+      mod(LogicalKeyboardKey.keyF, shift: true): _toggleSearch,
+      mod(LogicalKeyboardKey.comma): _toggleSettings,
+      mod(LogicalKeyboardKey.keyJ): _toggleDeveloper,
+      mod(LogicalKeyboardKey.keyI): _toggleContextPanel,
+      mod(LogicalKeyboardKey.keyP, shift: true): () =>
+          unawaited(_openCommandPalette()),
+      for (var i = 0; i < digits.length; i++)
+        mod(digits[i]): () => _selectSessionAt(i),
+      const SingleActivator(LogicalKeyboardKey.escape): _dismissTakeovers,
+    };
+  }
+
+  /// mod+shift+P: command palette over the shell's global actions. The
+  /// shortcut labels mirror the platform modifier used by [_shortcutBindings].
+  Future<void> _openCommandPalette() async {
+    final useMeta =
+        defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+    final mod = useMeta ? '\u2318' : 'Ctrl+';
+    await showCommandPalette(
+      context,
+      commands: [
+        PaletteCommand(
+          id: 'quick-open',
+          title: 'Quick open project file',
+          shortcutLabel: '${mod}K',
+          enabled: _canQuickOpen,
+          run: () => unawaited(_openQuickOpen()),
+        ),
+        PaletteCommand(
+          id: 'new-session',
+          title: 'New session',
+          shortcutLabel: '${mod}N',
+          enabled:
+              widget.state.connectionPhase == ConnectionPhase.ready &&
+              widget.state.grantedCapabilities.contains('sessions.manage'),
+          run: () => unawaited(_createSessionFromShortcut()),
+        ),
+        PaletteCommand(
+          id: 'search-transcripts',
+          title: 'Search transcripts',
+          shortcutLabel: '$mod\u21e7F',
+          run: _toggleSearch,
+        ),
+        PaletteCommand(
+          id: 'developer-tools',
+          title: 'Toggle developer tools',
+          shortcutLabel: '${mod}J',
+          run: _toggleDeveloper,
+        ),
+        PaletteCommand(
+          id: 'context-panel',
+          title: 'Toggle context panel',
+          shortcutLabel: '${mod}I',
+          run: _toggleContextPanel,
+        ),
+        PaletteCommand(
+          id: 'usage',
+          title: 'Usage and accounts',
+          run: () => _openUsage(closeDrawer: false),
+        ),
+        PaletteCommand(
+          id: 'settings',
+          title: 'Settings',
+          shortcutLabel: '$mod,',
+          run: _toggleSettings,
+        ),
+        PaletteCommand(
+          id: 'manage-hosts',
+          title: 'Manage hosts',
+          run: () => _openHostManager(closeDrawer: false),
+        ),
+      ],
+    );
+  }
+
+  Widget _contextRow(BuildContext context, String label, String value) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: _T4Space.xxs),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 88,
+            child: Text(
+              label,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Section list for the right context panel. Wave 4 extends this with
+  /// richer sections; keep it as the single mount point.
+  List<ContextPanelSection> _buildContextSections(BuildContext context) {
+    final session = widget.state.selectedSession;
+    final profile = widget.state.hostDirectory.activeProfile;
+    final modelLabel = widget.state.composer.modelLabel;
+    final capabilities = widget.state.grantedCapabilities;
+    final ready =
+        widget.state.connectionPhase == ConnectionPhase.ready &&
+        session != null;
+    return [
+      ContextPanelSection(
+        id: 'session',
+        title: 'Session',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _contextRow(context, 'Title', _displaySessionTitle(session)),
+            if (session != null)
+              _contextRow(context, 'Project', session.projectName),
+            if (session != null && session.status.trim().isNotEmpty)
+              _contextRow(context, 'Status', session.status),
+            _contextRow(
+              context,
+              'Connection',
+              widget.state.connectionPhase.label,
+            ),
+            if (profile != null) _contextRow(context, 'Host', profile.label),
+            if (modelLabel != null) _contextRow(context, 'Model', modelLabel),
+          ],
+        ),
+      ),
+      if (ready && capabilities.contains('files.diff'))
+        ContextPanelSection(
+          id: 'review',
+          title: 'Review',
+          child: SizedBox(
+            height: 380,
+            child: ReviewPanelBody(
+              state: widget.state,
+              actions: widget.actions,
+            ),
+          ),
+        ),
+      if (ready &&
+          capabilities.contains('files.list') &&
+          capabilities.contains('files.read'))
+        ContextPanelSection(
+          id: 'files',
+          title: 'Files',
+          initiallyExpanded: false,
+          child: SizedBox(
+            height: 380,
+            child: FilesPanelBody(state: widget.state, actions: widget.actions),
+          ),
+        ),
+      if (ready && capabilities.contains('audit.read'))
+        ContextPanelSection(
+          id: 'activity',
+          title: 'Activity',
+          initiallyExpanded: false,
+          child: SizedBox(
+            height: 320,
+            child: ActivityPanelBody(
+              state: widget.state,
+              actions: widget.actions,
+            ),
+          ),
+        ),
+    ];
+  }
+
+  Widget _contextPanelToggle(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return IconButton(
+      onPressed: _toggleContextPanel,
+      tooltip: 'Toggle context panel',
+      iconSize: _T4Size.indicator,
+      padding: EdgeInsets.zero,
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints.tightFor(width: 28, height: 28),
+      color: scheme.onSurfaceVariant,
+      icon: const Icon(Icons.view_sidebar_outlined),
+    );
+  }
+
   Widget _surfaceNavigationEntries({
     required bool closeDrawer,
     required bool rail,
@@ -360,13 +653,19 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
       return _HostOnboardingPage(state: widget.state, actions: widget.actions);
     }
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth >= _T4Breakpoints.wide) {
-          return _buildWide(context);
-        }
-        return _buildCompact(context);
-      },
+    return CallbackShortcuts(
+      bindings: _shortcutBindings(),
+      child: Focus(
+        autofocus: true,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxWidth >= _T4Breakpoints.wide) {
+              return _buildWide(context);
+            }
+            return _buildCompact(context);
+          },
+        ),
+      ),
     );
   }
 
@@ -400,7 +699,23 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
               ),
             ),
             const VerticalDivider(width: _T4Size.divider),
-            Expanded(child: _primaryContent(showHeader: true)),
+            Expanded(
+              child: Stack(
+                children: [
+                  Positioned.fill(child: _primaryContent(showHeader: true)),
+                  Positioned(
+                    top: _T4Space.sm,
+                    right: _T4Space.sm,
+                    child: _contextPanelToggle(context),
+                  ),
+                ],
+              ),
+            ),
+            if (_showContextPanel)
+              ContextPanel(
+                sections: _buildContextSections(context),
+                onClose: _toggleContextPanel,
+              ),
           ],
         ),
       ),
@@ -512,6 +827,12 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
                       ? Icons.refresh
                       : Icons.power_settings_new,
                 ),
+              ),
+            if (!_showHostManager && !_showSearch && !_showUsage)
+              IconButton(
+                onPressed: _toggleContextPanel,
+                tooltip: 'Toggle context panel',
+                icon: const Icon(Icons.view_sidebar_outlined),
               ),
           ],
         ],
