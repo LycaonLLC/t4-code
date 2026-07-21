@@ -5,7 +5,7 @@
 // f61fa9499d96fee825492aba204593c37b27e0cb). OMP changes: fixture-fed
 // catalog with aliases, argument hints, and capability-gated disabled
 // reasons instead of provider commands.
-import type { CatalogItem } from "@t4-code/protocol";
+import type { CatalogItem, OperationCapability } from "@t4-code/protocol";
 import { scoreQueryMatch } from "./match.ts";
 
 export interface SlashCommand {
@@ -42,6 +42,7 @@ export function slashCommandsFromCatalog(
   items: readonly CatalogItem[],
   context: SlashCatalogContext,
   granted: readonly string[],
+  operations: readonly OperationCapability[] = [],
 ): SlashCommand[] {
   const offlineReason =
     context.link === "cached"
@@ -49,25 +50,71 @@ export function slashCommandsFromCatalog(
       : context.link === "offline"
         ? "Unavailable while the host is unreachable"
         : null;
-  const commands: SlashCommand[] = [];
-  for (const item of items) {
-    if (item.kind !== "command") continue;
-    const bareName = item.name.replace(/^\/+/, "");
+  const commands = new Map<string, SlashCommand>();
+  // Operation capabilities are the authoritative official-OMP command list.
+  // Fall back to legacy command items only when an older host does not expose
+  // the new contract at all; otherwise typed commands such as session.cancel
+  // would be mistaken for slash commands.
+  if (operations.length === 0) {
+    for (const item of items) {
+      if (item.kind !== "command") continue;
+      const bareName = item.name.replace(/^\/+/, "");
+      const name = `/${bareName}`;
+      const metadata = item.metadata ?? {};
+      const rawAliases = Array.isArray(metadata.aliases) ? metadata.aliases : [];
+      const aliases = rawAliases
+        .filter((alias): alias is string => typeof alias === "string" && alias !== "")
+        .map((alias) => `/${alias.replace(/^\/+/, "")}`);
+      const argsHint = typeof metadata.inlineHint === "string" ? metadata.inlineHint : "";
+      const missingCapability = (item.capabilities ?? []).find(
+        (capability) => !granted.includes(capability),
+      );
+      const disabledReason =
+        offlineReason ??
+        context.readOnlyReason ??
+        (item.supported === false
+          ? (item.reason ?? "Not available on this host")
+          : missingCapability !== undefined
+            ? missingCapability === "terminal.io"
+              ? "Needs terminal access on this host"
+              : "Not granted on this host"
+            : context.turnActive && bareName === "compact"
+              ? "Wait for the turn to finish"
+              : context.turnActive && bareName === "retry"
+                ? "A turn is already running"
+                : null);
+      commands.set(name, {
+        name,
+        aliases,
+        description: item.description ?? "",
+        argsHint,
+        disabledReason,
+        insert: `${name} `,
+      });
+    }
+  }
+  for (const operation of operations) {
+    const operationId = String(operation.operationId);
+    if (!operationId.startsWith("slash.")) continue;
+    const bareName = operationId.slice("slash.".length);
+    if (bareName === "") continue;
     const name = `/${bareName}`;
-    const metadata = item.metadata ?? {};
+    const metadata =
+      operation.metadata !== null && typeof operation.metadata === "object"
+        ? (operation.metadata as Record<string, unknown>)
+        : {};
     const rawAliases = Array.isArray(metadata.aliases) ? metadata.aliases : [];
     const aliases = rawAliases
       .filter((alias): alias is string => typeof alias === "string" && alias !== "")
       .map((alias) => `/${alias.replace(/^\/+/, "")}`);
-    const argsHint = typeof metadata.inlineHint === "string" ? metadata.inlineHint : "";
-    const missingCapability = (item.capabilities ?? []).find(
+    const missingCapability = (operation.capabilities ?? []).find(
       (capability) => !granted.includes(capability),
     );
     const disabledReason =
       offlineReason ??
       context.readOnlyReason ??
-      (item.supported === false
-        ? (item.reason ?? "Not available on this host")
+      (!operation.supported
+        ? (operation.disabledReason?.message ?? "Not available on this host")
         : missingCapability !== undefined
           ? missingCapability === "terminal.io"
             ? "Needs terminal access on this host"
@@ -77,16 +124,16 @@ export function slashCommandsFromCatalog(
             : context.turnActive && bareName === "retry"
               ? "A turn is already running"
               : null);
-    commands.push({
+    commands.set(name, {
       name,
       aliases,
-      description: item.description ?? "",
-      argsHint,
+      description: operation.description ?? "",
+      argsHint: "",
       disabledReason,
       insert: `${name} `,
     });
   }
-  return commands;
+  return [...commands.values()];
 }
 
 /**

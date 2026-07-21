@@ -459,6 +459,103 @@ void main() {
     },
   );
 
+  test(
+    'composer uses official OMP operation capabilities and keeps terminal-only commands disabled',
+    () async {
+      final profile = _profile('alpha');
+      final connector = _FakeConnector();
+      final controller = _controller(
+        _MemoryDirectoryStore(
+          directory: const HostDirectory.empty().upsert(profile),
+        ),
+        _MemoryCredentialStore(),
+        connector,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      final channel = connector.channels.single;
+
+      channel.emit(
+        _welcome(
+          'host-alpha',
+          capabilities: const <String>[
+            'sessions.read',
+            'sessions.prompt',
+            'catalog.read',
+          ],
+          features: const <String>['catalog.metadata'],
+        ),
+      );
+      await _flush();
+      final list = channel.sentJson.firstWhere(
+        (frame) => frame['command'] == 'session.list',
+      );
+      channel.emit(
+        _response(
+          list,
+          command: 'session.list',
+          result: _sessionListResult('host-alpha'),
+        ),
+      );
+      channel.emit(<String, Object?>{
+        'v': 'omp-app/1',
+        'type': 'catalog',
+        'hostId': 'host-alpha',
+        'revision': 'catalog-operation-capabilities',
+        'items': <Object?>[
+          <String, Object?>{
+            'id': 'command:session.cancel',
+            'kind': 'command',
+            'name': 'session.cancel',
+          },
+        ],
+        'operations': <Object?>[
+          <String, Object?>{
+            'operationId': 'session.prompt',
+            'label': 'Prompt',
+            'execution': 'typed',
+            'supported': true,
+          },
+          <String, Object?>{
+            'operationId': 'slash.compact',
+            'label': '/compact',
+            'description': 'Compact the active conversation',
+            'execution': 'headless',
+            'supported': true,
+            'capabilities': <Object?>['sessions.prompt'],
+            'metadata': <String, Object?>{
+              'aliases': <Object?>['compress'],
+            },
+          },
+          <String, Object?>{
+            'operationId': 'slash.plan',
+            'label': '/plan',
+            'description': 'Toggle plan mode',
+            'execution': 'terminal-only',
+            'supported': false,
+            'disabledReason': <String, Object?>{
+              'code': 'terminal_only',
+              'message': '/plan requires the OMP terminal interface.',
+            },
+          },
+        ],
+      });
+      await _flush();
+
+      final commands = controller.state.composer.slashCommands;
+      expect(commands.map((command) => command.name), <String>[
+        '/compact',
+        '/plan',
+      ]);
+      expect(commands.first.aliases, <String>['/compress']);
+      expect(commands.first.disabledReason, isNull);
+      expect(
+        commands.last.disabledReason,
+        '/plan requires the OMP terminal interface.',
+      );
+    },
+  );
+
   test('command ids are unique across controller restarts', () async {
     final profile = _profile('alpha');
     final directory = _MemoryDirectoryStore(

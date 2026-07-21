@@ -811,6 +811,69 @@ void main() {
       expect(onLabel.style?.color, isNull);
     },
   );
+
+  testWidgets(
+    'slash menu finds aliases and explains terminal-only commands',
+    (tester) async {
+      final profile = HostProfile.parseTailnetAddress(
+        'https://alpha.tailnet-name.ts.net',
+      );
+      final state = T4ViewState(
+        connectionPhase: ConnectionPhase.ready,
+        hostDirectory: HostDirectory.empty().upsert(profile),
+        authenticationPhase: AuthenticationPhase.paired,
+        grantedCapabilities: t4RequestedCapabilities.toSet(),
+        selectedSessionId: 'session-alpha',
+        sessions: const <SessionSummary>[
+          SessionSummary(
+            hostId: 'host-alpha',
+            sessionId: 'session-alpha',
+            projectId: 'project-alpha',
+            projectName: 'Project Alpha',
+            title: 'Capability-aware slash menu',
+            revision: 'revision-alpha',
+            status: 'idle',
+          ),
+        ],
+        composer: const SessionComposerState(
+          slashCommands: <ComposerSlashCommand>[
+            ComposerSlashCommand(
+              name: '/compact',
+              aliases: <String>['/compress'],
+              description: 'Compact the active conversation',
+              insert: '/compact ',
+            ),
+            ComposerSlashCommand(
+              name: '/plan',
+              description: 'Toggle plan mode',
+              insert: '/plan ',
+              disabledReason: '/plan requires the OMP terminal interface.',
+            ),
+          ],
+        ),
+      );
+
+      await pumpApp(
+        tester,
+        state: state,
+        actions: _FakeActions(),
+        size: compactPhone,
+      );
+      await tester.enterText(find.byType(TextField).last, '/');
+      await tester.pump();
+      expect(find.text('/compact'), findsOneWidget);
+      expect(find.text('/plan'), findsOneWidget);
+      expect(
+        find.text('/plan requires the OMP terminal interface.'),
+        findsOneWidget,
+      );
+
+      await tester.enterText(find.byType(TextField).last, '/compress');
+      await tester.pump();
+      expect(find.text('/compact'), findsOneWidget);
+      expect(find.text('/plan'), findsNothing);
+    },
+  );
   testWidgets('keeps the latest message visible when the keyboard opens', (
     tester,
   ) async {

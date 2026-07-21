@@ -188,12 +188,14 @@ final class ComposerSlashCommand {
     required this.name,
     required this.description,
     required this.insert,
+    this.aliases = const <String>[],
     this.disabledReason,
   });
 
   final String name;
   final String description;
   final String insert;
+  final List<String> aliases;
   final String? disabledReason;
 }
 

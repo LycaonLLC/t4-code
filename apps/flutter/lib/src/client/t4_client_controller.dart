@@ -187,7 +187,9 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     if (session == null) return const SessionComposerState();
     final choices = <ComposerModelChoice>[];
     final seen = <String>{};
-    final slashCommands = <ComposerSlashCommand>[];
+    final slashCommands = <String, ComposerSlashCommand>{};
+    final operationCapabilities =
+        _catalogFrame?.operations ?? const <OperationCapability>[];
     for (final item in _catalogItems) {
       if (item.kind == 'model') {
         final selector = modelItemSelector(item);
@@ -205,7 +207,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         );
         continue;
       }
-      if (item.kind != 'command') continue;
+      if (item.kind != 'command' || operationCapabilities.isNotEmpty) continue;
       final bareName = item.name.replaceFirst(RegExp(r'^/+'), '');
       final missingCapability = item.capabilities
           ?.where((capability) => !_grantedCapabilities.contains(capability))
@@ -215,13 +217,54 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
           : missingCapability == null
           ? null
           : 'Not granted on this host';
-      slashCommands.add(
-        ComposerSlashCommand(
-          name: '/$bareName',
-          description: item.description ?? '',
-          insert: '/$bareName ',
-          disabledReason: disabledReason,
-        ),
+      final name = '/$bareName';
+      slashCommands[name] = ComposerSlashCommand(
+        name: name,
+        description: item.description ?? '',
+        insert: '$name ',
+        disabledReason: disabledReason,
+      );
+    }
+    for (final operation in operationCapabilities) {
+      if (!operation.operationId.startsWith('slash.')) continue;
+      final bareName = operation.operationId.substring('slash.'.length);
+      if (bareName.isEmpty) continue;
+      final name = '/$bareName';
+      final metadata = operation.raw['metadata'];
+      final rawAliases = metadata is Map<String, Object?>
+          ? metadata['aliases']
+          : null;
+      final aliases = rawAliases is List<Object?>
+          ? rawAliases
+                .whereType<String>()
+                .where((alias) => alias.isNotEmpty)
+                .map((alias) => '/${alias.replaceFirst(RegExp(r'^/+'), '')}')
+                .toList(growable: false)
+          : const <String>[];
+      final missingCapability = operation.capabilities
+          ?.where((capability) => !_grantedCapabilities.contains(capability))
+          .firstOrNull;
+      String? disabledReason;
+      if (!operation.supported) {
+        disabledReason =
+            operation.disabledReason?.message ?? 'Not available on this host';
+      } else if (missingCapability != null) {
+        disabledReason = missingCapability == 'terminal.io'
+            ? 'Needs terminal access on this host'
+            : 'Not granted on this host';
+      } else if ((session.turnActive || _submitting) &&
+          bareName == 'compact') {
+        disabledReason = 'Wait for the turn to finish';
+      } else if ((session.turnActive || _submitting) &&
+          bareName == 'retry') {
+        disabledReason = 'A turn is already running';
+      }
+      slashCommands[name] = ComposerSlashCommand(
+        name: name,
+        aliases: List<String>.unmodifiable(aliases),
+        description: operation.description ?? '',
+        insert: '$name ',
+        disabledReason: disabledReason,
       );
     }
     final groups = groupModelChoices(_catalogItems);
@@ -258,7 +301,9 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       modelSelector: session.modelSelector,
       modelChoices: List<ComposerModelChoice>.unmodifiable(choices),
       modelGroups: List<ModelProviderGroup>.unmodifiable(groups),
-      slashCommands: List<ComposerSlashCommand>.unmodifiable(slashCommands),
+      slashCommands: List<ComposerSlashCommand>.unmodifiable(
+        slashCommands.values,
+      ),
       thinking: session.thinking,
       thinkingLevels: List<String>.unmodifiable(levels),
       fastEnabled: session.fast,

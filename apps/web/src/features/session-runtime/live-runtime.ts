@@ -1215,6 +1215,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
                     readOnlyReason: controlGate === null ? null : controlGate.slashReason,
                   },
                   granted,
+                  catalog.operations ?? [],
                 ),
           contextUsedTokens: contextUsage?.used ?? 0,
           contextWindowTokens: contextUsage?.limit ?? 0,

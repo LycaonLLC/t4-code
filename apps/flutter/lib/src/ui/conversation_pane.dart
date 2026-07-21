@@ -1118,7 +1118,11 @@ final class _PromptComposerState extends State<_PromptComposer> {
         ? const <ComposerSlashCommand>[]
         : composer.slashCommands
               .where(
-                (command) => command.name.toLowerCase().contains(slashQuery),
+                (command) =>
+                    command.name.toLowerCase().contains(slashQuery) ||
+                    command.aliases.any(
+                      (alias) => alias.toLowerCase().contains(slashQuery),
+                    ),
               )
               .take(5)
               .toList(growable: false);
@@ -1157,7 +1161,10 @@ final class _PromptComposerState extends State<_PromptComposer> {
                             enabled: command.disabledReason == null,
                             title: Text(command.name),
                             subtitle: Text(
-                              command.disabledReason ?? command.description,
+                              command.disabledReason ??
+                                  (command.aliases.isEmpty
+                                      ? command.description
+                                      : '${command.description} · ${command.aliases.join(' ')}'),
                             ),
                             onTap: command.disabledReason == null
                                 ? () => _selectSlashCommand(command)
