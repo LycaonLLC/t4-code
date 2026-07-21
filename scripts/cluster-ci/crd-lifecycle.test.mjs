@@ -183,8 +183,10 @@ test("failed server preflight leaves CRDs and workloads untouched", async () => 
   );
   assert.notEqual(result.code, 0);
   const log = await commands(value.log);
-  assert.equal(log.length, 1, log.join("\n"));
-  assert.match(log[0], /apply.*--server-side.*--dry-run=server/u);
+  assert.equal(log.length, 2, log.join("\n"));
+  assert.match(log[0], /^validator\tfixtures\t/u);
+  assert.match(log[1], /apply.*--server-side.*--dry-run=server/u);
+  assert.ok(log.every((line) => !line.startsWith("helm\t") && !/kubectl\tapply(?!.*--dry-run=server)/u.test(line)), log.join("\n"));
 });
 
 test("an unexpected stored version stops workload rollout", async () => {
