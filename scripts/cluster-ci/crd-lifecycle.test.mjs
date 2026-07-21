@@ -93,7 +93,7 @@ function findCommand(log, predicate, description) {
   return index;
 }
 
-test("upgrade preflights old objects, establishes CRDs, verifies storage, then upgrades workloads", async () => {
+test("upgrade validates proposed schemas, proves served convergence, verifies storage, then upgrades workloads", async () => {
   const value = await fixture();
   const result = await runLifecycle(
     ["upgrade", "--", "helm", "upgrade", "t4-cluster", "deploy/charts/t4-cluster", "--namespace", "t4-system", "--skip-crds"],
@@ -101,17 +101,22 @@ test("upgrade preflights old objects, establishes CRDs, verifies storage, then u
   );
   assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
   const log = await commands(value.log);
+  const proposedPreflight = findCommand(log, (line) => line.startsWith("validator\tfixtures\t"), "local proposed-schema fixture preflight");
   const crdPreflight = findCommand(log, (line) => line.includes("apply") && line.includes("--server-side") && line.includes("--dry-run=server") && line.includes("deploy/charts/t4-cluster/crds"), "server-side CRD preflight");
-  const oldObjectPreflight = findCommand(log, (line) => line.includes("apply") && line.includes("--dry-run=server") && line.includes("testdata/compat"), "old-object compatibility preflight");
   const crdApply = findCommand(log, (line) => line.includes("apply") && line.includes("--server-side") && !line.includes("--dry-run=server"), "CRD apply");
   const established = findCommand(log, (line) => line.includes("wait") && line.includes("condition=Established") && line.includes("t4clusterhosts.cluster.t4.dev") && line.includes("t4workspaces.cluster.t4.dev") && line.includes("t4sessions.cluster.t4.dev"), "Established wait");
+  const servedChecks = log.map((line, index) => ({ line, index })).filter(({ line }) => line.startsWith("validator\tserved\t"));
+  const admissionPreflight = findCommand(log, (line) => line.includes("apply") && line.includes("--dry-run=server") && line.includes("testdata/compat"), "converged admission preflight");
   const storageChecks = log.map((line, index) => ({ line, index })).filter(({ line }) => line.startsWith("kubectl\tget\tcrd/") && line.includes("status.storedVersions"));
   assert.deepEqual(storageChecks.length, 3);
+  assert.equal(servedChecks.length, 3);
   const workload = findCommand(log, (line) => line.startsWith("helm\tupgrade\t"), "Helm workload upgrade");
-  assert.ok(crdPreflight < oldObjectPreflight);
-  assert.ok(oldObjectPreflight < crdApply);
+  assert.ok(proposedPreflight < crdPreflight);
+  assert.ok(crdPreflight < crdApply);
   assert.ok(crdApply < established);
-  assert.ok(established < storageChecks[0].index);
+  assert.ok(established < servedChecks[0].index);
+  assert.ok(servedChecks.at(-1).index < admissionPreflight);
+  assert.ok(admissionPreflight < storageChecks[0].index);
   assert.ok(storageChecks.every(({ index }) => index < workload));
   assert.ok(log.every((line) => !line.includes("--force") && !line.includes("replace") && !line.includes("delete\tcrd")), log.join("\n"));
 });

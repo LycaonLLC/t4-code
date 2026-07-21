@@ -10,6 +10,8 @@ Environment:
   T4_CRD_DIRECTORY        reviewed CRD directory
   T4_COMPAT_DIRECTORY     old-object compatibility fixture directory
   T4_VALIDATION_NAMESPACE existing namespace used for server dry-runs (default: default)
+  T4_CRD_VALIDATOR        proposed-schema validator executable (default: Go validator)
+  T4_DISCOVERY_OBSERVATIONS consecutive matching OpenAPI observations required (default: 3)
 EOF
   exit 64
 }
@@ -48,16 +50,31 @@ compat_directory=${T4_COMPAT_DIRECTORY:-$repo_root/packages/cluster-operator/api
 validation_namespace=${T4_VALIDATION_NAMESPACE:-default}
 field_manager=t4-crd-lifecycle
 crds="crd/t4clusterhosts.cluster.t4.dev crd/t4workspaces.cluster.t4.dev crd/t4sessions.cluster.t4.dev"
+discovery_observations=${T4_DISCOVERY_OBSERVATIONS:-3}
 
-# Every operation before the first non-dry-run apply is read-only. An upgrade
-# rejects an incompatible CRD or old persisted shape before touching the CRD or
-# any chart-managed workload.
+case "$discovery_observations" in
+  ''|*[!0-9]*|0)
+    echo "T4_DISCOVERY_OBSERVATIONS must be a positive integer" >&2
+    exit 64
+    ;;
+esac
+
+run_validator() {
+  if [ -n "${T4_CRD_VALIDATOR:-}" ]; then
+    "$T4_CRD_VALIDATOR" "$@"
+  else
+    (cd "$repo_root/packages/cluster-operator" && go run ./cmd/crd-preflight "$@")
+  fi
+}
+
+# Validate the persisted compatibility instances, including status and CEL,
+# directly against the proposed structural schemas. This is intentionally the
+# first operation: current-cluster admission cannot prove candidate compatibility.
+run_validator fixtures "$crd_directory" "$compat_directory"
+
+# Every kubectl operation before the first non-dry-run apply is read-only.
 "$kubectl" apply --server-side --dry-run=server --validate=strict \
   --field-manager="$field_manager" -f "$crd_directory" >/dev/null
-if [ "$mode" = upgrade ]; then
-  "$kubectl" apply --dry-run=server --validate=strict \
-    --namespace "$validation_namespace" -f "$compat_directory" >/dev/null
-fi
 
 "$kubectl" apply --server-side --validate=strict \
   --field-manager="$field_manager" -f "$crd_directory"
@@ -65,6 +82,18 @@ fi
 # workload rollout uses the new schema.
 # shellcheck disable=SC2086 # The fixed CRD words are intentional argv entries.
 "$kubectl" wait --for=condition=Established --timeout=120s $crds
+
+# Established can remain True across an update. Require several independently
+# fetched discovery documents to expose exactly the candidate OpenAPI semantics
+# before trusting admission or starting a workload rollout.
+openapi_document=$(mktemp)
+trap 'rm -f "$openapi_document"' EXIT HUP INT TERM
+observation=0
+while [ "$observation" -lt "$discovery_observations" ]; do
+  "$kubectl" get --raw /openapi/v3/apis/cluster.t4.dev/v1alpha1 >"$openapi_document"
+  run_validator served "$crd_directory" <"$openapi_document"
+  observation=$((observation + 1))
+done
 
 "$kubectl" apply --dry-run=server --validate=strict \
   --namespace "$validation_namespace" -f "$compat_directory" >/dev/null
@@ -80,4 +109,6 @@ done
 # Helm is deliberately last and must not manage CRDs. If any earlier gate fails,
 # the existing controller, server, session workloads, and custom resources are
 # untouched by this runner.
+rm -f "$openapi_document"
+trap - EXIT HUP INT TERM
 exec "$@"

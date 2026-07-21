@@ -162,33 +162,40 @@ scripts/cluster-ci/crd-lifecycle.sh upgrade -- \
 
 The command performs this exact order:
 
-1. Server-side dry-run the reviewed CRDs with strict validation.
-2. Server-side dry-run the old-object fixtures against the currently served schema. Upgrades stop here, before any mutation, if either preflight fails.
+1. Before any cluster access, validate every complete compatibility fixture (including `status`) against the proposed structural OpenAPI schema and CEL programs with the Kubernetes apiextensions validators. The check also rejects declared fields that the structural pruner would remove.
+2. Server-side dry-run the reviewed CRDs with strict validation. Upgrades stop before any mutation if either local proposed-schema validation or the CRD dry-run fails.
 3. Apply the CRDs server-side without force conflicts.
 4. Wait for all three CRDs to report `Established`.
-5. Validate the compatibility fixtures again against the newly established schema.
-6. Require each CRD's `status.storedVersions` to be exactly `v1alpha1`.
-7. Execute the supplied Helm command, which must use `--skip-crds`.
+5. Fetch the served `cluster.t4.dev/v1alpha1` OpenAPI v3 document three times and require every published resource schema to match the semantics generated from the proposed CRDs. Retained `Established=True` is not readiness when discovery still serves an old schema.
+6. Server-side dry-run the compatibility fixtures against the converged admission path.
+7. Require each CRD's `status.storedVersions` to be exactly `v1alpha1`.
+8. Execute the supplied Helm command, which must use `--skip-crds`.
 
 The corresponding administrative checks are executable independently:
 
 ```sh
+(cd packages/cluster-operator && \
+  go run ./cmd/crd-preflight fixtures ../../deploy/charts/t4-cluster/crds api/v1alpha1/testdata/compat)
 kubectl apply --server-side --dry-run=server --validate=strict \
   --field-manager=t4-crd-lifecycle -f deploy/charts/t4-cluster/crds/
-kubectl apply --dry-run=server --validate=strict --namespace default \
-  -f packages/cluster-operator/api/v1alpha1/testdata/compat/
 kubectl apply --server-side --validate=strict \
   --field-manager=t4-crd-lifecycle -f deploy/charts/t4-cluster/crds/
 kubectl wait --for=condition=Established --timeout=120s \
   crd/t4clusterhosts.cluster.t4.dev \
   crd/t4workspaces.cluster.t4.dev \
   crd/t4sessions.cluster.t4.dev
+for observation in 1 2 3; do
+  kubectl get --raw /openapi/v3/apis/cluster.t4.dev/v1alpha1 | \
+    (cd packages/cluster-operator && go run ./cmd/crd-preflight served ../../deploy/charts/t4-cluster/crds)
+done
+kubectl apply --dry-run=server --validate=strict --namespace default \
+  -f packages/cluster-operator/api/v1alpha1/testdata/compat/
 for crd in t4clusterhosts.cluster.t4.dev t4workspaces.cluster.t4.dev t4sessions.cluster.t4.dev; do
   test "$(kubectl get "crd/$crd" -o 'jsonpath={.status.storedVersions[*]}')" = v1alpha1
 done
 ```
 
-Do not rely on `helm upgrade` to change CRDs. Never use `kubectl replace --force`, `kubectl apply --force-conflicts`, delete/recreate a CRD, or manually remove a stored version. A preflight failure leaves the live CRDs, custom resources, controller/server workloads, and session workloads untouched. A failure after additive CRD apply but before Helm leaves the prior workloads running against the still-backward-compatible schema; investigate and rerun the gates rather than attempting CRD rollback.
+Do not rely on `helm upgrade` to change CRDs. Never use `kubectl replace --force`, `kubectl apply --force-conflicts`, delete/recreate a CRD, or alter `status.storedVersions` outside the verified migration sequence below. A preflight failure leaves the live CRDs, custom resources, controller/server workloads, and session workloads untouched. A failure after additive CRD apply but before Helm leaves the prior workloads running against the still-backward-compatible schema; investigate and rerun the gates rather than attempting CRD rollback.
 
 ### Future `v1beta1` conversion and storage procedure
 
@@ -198,9 +205,10 @@ There is no `v1beta1` API today. A future proposal is a separate incompatible li
 2. Review separate `v1beta1` schemas, defaults, conversion semantics, downgrade semantics, and old/new/old fixture round-trips. Every field represented in either version must survive conversion; conversion may not manufacture product or runtime state in status.
 3. Deploy a highly available conversion webhook with a PodDisruptionBudget, strict TLS/service identity, readiness checks, failure policy, metrics, and alerts. Prove conversion availability before adding a served version to any CRD.
 4. Add `v1beta1` as served but not storage, retain `v1alpha1` as served and storage, wait for `Established`, and prove reads and writes through both versions plus all compatibility fixtures. Do not advance while any controller, gateway, backup, or recovery tool cannot read both versions.
-5. In a later reviewed CRD apply, set `v1beta1` storage to true and `v1alpha1` storage to false while keeping both served. Reconfirm conversion health before rewriting objects through the Kubernetes API using an approved storage-version migrator.
-6. Compare pre/post object counts and read every object through both served versions. Require each CRD's `status.storedVersions` to become exactly `v1beta1`; merely changing `spec.versions[*].storage` does not migrate stored objects.
-7. Keep `v1alpha1` served, the webhook available, the verified backup, and dual-read binaries for the entire rollback window. Removing the old served version is a later explicit change after the window expires. Removing `v1alpha1` from `status.storedVersions` is allowed only after the migration and exact-version checks pass.
+5. In a later reviewed CRD apply, set `v1beta1` storage to true and `v1alpha1` storage to false while keeping both served. Reconfirm conversion health, then rewrite every object through the Kubernetes API using an approved storage-version migrator; merely changing `spec.versions[*].storage` does not migrate stored objects.
+6. Compare pre/post object counts and read every rewritten object through both served versions. Verify identity, declared spec and status fields, finalizers, and conversion round-trips. Stop on any missing object or lossy read.
+7. Only after that verification, explicitly retire the old storage record through the CRD status subresource for each CRD, for example `kubectl patch customresourcedefinition t4sessions.cluster.t4.dev --subresource=status --type=json -p='[{"op":"replace","path":"/status/storedVersions","value":["v1beta1"]}]'`. Repeat for hosts and workspaces. This status update records completed storage migration; it does not perform migration.
+8. Read each CRD back and require `status.storedVersions` to be exactly `[v1beta1]`. Keep `v1alpha1` served, the webhook available, the verified backup, and dual-read binaries for the entire rollback window. Removing the old served version is a later explicit change after the window expires.
 
 If conversion or migration fails, stop forward rollout. Do not force-replace or downgrade CRDs. While both versions remain served and conversion is healthy, roll workloads back to the prior dual-read image set. If in-place compatibility cannot be proven, stop mutations and restore the verified backup under the reviewed recovery procedure before resuming service.
 
