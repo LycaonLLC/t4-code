@@ -25,6 +25,22 @@ export type RpcResponse =
 			data?: never;
 	  };
 
+export type RpcAvailableSlashCommandSource = "builtin" | "skill" | "extension" | "custom" | "mcp_prompt" | "file";
+
+export interface RpcAvailableSlashCommand {
+	name: string;
+	aliases?: string[];
+	description?: string;
+	input?: { hint?: string };
+	subcommands?: Array<{ name: string; description?: string; usage?: string }>;
+	source: RpcAvailableSlashCommandSource;
+}
+
+export interface RpcAvailableCommandsUpdateFrame {
+	type: "available_commands_update";
+	commands: RpcAvailableSlashCommand[];
+}
+
 export type RpcSessionEntry =
 	| {
 			type: "message";

@@ -1,7 +1,8 @@
 import { dirname, resolve } from "node:path";
-import { parseBounded } from "@t4-code/host-wire";
+import { boundedMap, parseBounded, type OperationCapability } from "@t4-code/host-wire";
 import type { RpcResponse, RpcSessionEntryFrame } from "./omp-rpc-contract.ts";
 import type { ManagedRpcImageRef } from "./image-upload-store.ts";
+import { OfficialOmpCapabilityAdapter } from "./official-omp-capabilities.ts";
 import type { ChildHandle, RpcChildFactory, SessionRecord } from "./types.ts";
 
 const MAX_LINE_BYTES = 1024 * 1024;
@@ -11,6 +12,7 @@ const FAILURE_STOP_GRACE_MS = 2_000;
 export interface ChildCallbacks {
 	entry(frame: RpcSessionEntryFrame): void;
 	event(frame: Record<string, unknown>): void;
+	capabilities?(operations: readonly OperationCapability[]): void;
 	crashed(error: Error): void;
 }
 
@@ -149,6 +151,7 @@ export class RpcChildSupervisor {
 	#stderr = "";
 	#ready = false;
 	#termination?: Promise<void>;
+	#operationCapabilities = new OfficialOmpCapabilityAdapter();
 	constructor(
 		private readonly factory: RpcChildFactory,
 		private readonly session: SessionRecord,
@@ -226,6 +229,15 @@ export class RpcChildSupervisor {
 			signal?.removeEventListener("abort", onAbort);
 		}
 	}
+	/** Refresh the normalized operation catalog from stock OMP's RPC capability endpoint. */
+	async refreshOperationCapabilities(requestId: string, signal?: AbortSignal): Promise<readonly OperationCapability[]> {
+		const result = await this.call({ type: "get_available_commands" }, requestId, signal, undefined, false);
+		if (!result.success) throw new Error(result.error);
+		const data = boundedMap(result.data, "get_available_commands.data", 4);
+		const operations = this.#operationCapabilities.update(data.commands);
+		this.callbacks.capabilities?.(operations);
+		return operations;
+	}
 	async prompt(
 		id: string,
 		message: string,
@@ -233,6 +245,7 @@ export class RpcChildSupervisor {
 		onDispatched?: (internalId: string) => void,
 		appImageRefs?: readonly ManagedRpcImageRef[],
 	): Promise<RpcResponse> {
+		this.#operationCapabilities.assertPromptSupported(message);
 		return this.call(
 			{ type: "prompt", message, ...(appImageRefs ? { appImageRefs } : {}) },
 			id,
@@ -275,6 +288,12 @@ export class RpcChildSupervisor {
 	}
 	child(): ChildHandle | undefined {
 		return this.#child;
+	}
+	operationCapabilities(): readonly OperationCapability[] {
+		return this.#operationCapabilities.operations();
+	}
+	assertOperationSupported(operationId: string): OperationCapability {
+		return this.#operationCapabilities.assertOperationSupported(operationId);
 	}
 	private async readStdout(ready: { resolve: () => void; reject: (error: Error) => void }): Promise<void> {
 		try {
@@ -335,6 +354,10 @@ export class RpcChildSupervisor {
 		// stop() deliberately keeps draining the process handle until exit, but
 		// buffered stdout from that stopped child no longer owns session state.
 		if (this.#closed) return;
+		if (this.#operationCapabilities.consume(value)) {
+			this.callbacks.capabilities?.(this.#operationCapabilities.operations());
+			return;
+		}
 		if (value.type === "response") {
 			if (typeof value.id !== "string" || typeof value.command !== "string" || typeof value.success !== "boolean")
 				throw new Error("malformed rpc response");
