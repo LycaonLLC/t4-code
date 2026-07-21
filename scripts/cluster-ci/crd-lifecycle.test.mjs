@@ -150,4 +150,4 @@ test("force replacement and implicit Helm CRD handling are rejected before clust
     const result = await runLifecycle(args, value.env);
     assert.equal(result.code, 64, `${result.stdout}\n${result.stderr}`);
   }
-}
+});
