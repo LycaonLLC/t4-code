@@ -9,7 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
-import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'transcript_markdown.dart';
 import '../client/app_state.dart';
 import '../client/model_labels.dart';
 import '../platform/platform_lifecycle.dart';
@@ -17,8 +17,11 @@ import '../protocol/protocol.dart';
 import '../platform/platform_lifecycle_controller.dart';
 
 part 'adaptive_session_shell.dart';
+part 'access_mode_selector.dart';
+part 'command_palette.dart';
 part 'attention_pane.dart';
 part 'conversation_pane.dart';
+part 'context_panel.dart';
 part 'developer_surfaces.dart';
 part 'host_management.dart';
 part 'quick_open_dialog.dart';
