@@ -303,15 +303,19 @@ final class _UsageReportList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final generated = DateTime.fromMillisecondsSinceEpoch(result.generatedAt);
+    final generated = result.generatedAt > 0
+        ? DateTime.fromMillisecondsSinceEpoch(result.generatedAt)
+        : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'Updated ${_formatActivityTime(generated)}',
-          style: Theme.of(context).textTheme.labelSmall,
-        ),
-        const SizedBox(height: _T4Space.sm),
+        if (generated != null) ...[
+          Text(
+            'Updated ${_formatActivityTime(generated)}',
+            style: Theme.of(context).textTheme.labelSmall,
+          ),
+          const SizedBox(height: _T4Space.sm),
+        ],
         if (result.reports.isEmpty)
           const _StatusNotice(
             icon: Icons.data_usage,
@@ -426,7 +430,7 @@ final class _UsageLimitMeter extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(top: _T4Space.xxs),
             child: Text(
-              window.resetsAt == null
+              window.resetsAt == null || window.resetsAt! <= 0
                   ? window.label
                   : '${window.label} · resets ${_formatActivityTime(DateTime.fromMillisecondsSinceEpoch(window.resetsAt!))}',
               style: Theme.of(context).textTheme.labelSmall,

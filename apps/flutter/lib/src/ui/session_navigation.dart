@@ -644,7 +644,10 @@ final class _SessionTileState extends State<_SessionTile> {
       child: ListTile(
         selected: widget.selected,
         selectedTileColor: scheme.secondaryContainer,
-        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+        title: Tooltip(
+          message: title,
+          child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
         subtitle: Text(
           session.status.trim().isEmpty ? 'idle' : session.status,
           maxLines: 1,
