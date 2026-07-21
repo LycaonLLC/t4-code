@@ -257,7 +257,7 @@ steps:
             ephemeral-storage: 256Mi
           limits:
             cpu: "1"
-            memory: 2Gi
+            memory: 4Gi
             ephemeral-storage: 2Gi
 
   cluster-chart-tests:
