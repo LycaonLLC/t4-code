@@ -2091,9 +2091,18 @@ client render</code></pre>
       pinned to the reviewed OMP source revision. Local catalog responses expose
       those classifications. Recognized terminal-only prompts such as
       <code>/plan</code> fail with structured <code>terminal_only</code> details
-      before any prompt is written to OMP stdin. The stock-OMP capability smoke
-      and end-to-end host tests pass; Gate 0 remains open for the prompt,
-      control, restart, transcript, and dispatch-crash scenarios above.
+      before any prompt is written to OMP stdin. The checksum-pinned
+      <code>t4code-17.0.5-appserver-10</code> lifecycle harness now runs a
+      deterministic first prompt, kills OMP with <code>SIGKILL</code>, observes
+      the release's stale-lock fencing delay, respawns against the same JSONL,
+      validates the ready watermark against durable entries, and sends a second
+      prompt with the first turn restored in model context. It also verifies
+      that each live <code>session_entry</code> notification already exists on
+      disk. This slice passes on <code>darwin-arm64</code>; immutable
+      <code>linux-arm64</code> and <code>linux-x64</code> release assets are
+      pinned for the required Linux execution. Gate 0 remains open for that
+      Linux proof plus steering or follow-up, approval, cancellation, and
+      dispatch-crash ambiguity scenarios.
     </p>
     <h3 id="gate-1-contract-freeze">Gate 1: contract freeze</h3>
     <p>Freeze the shared contracts that every later workstream consumes:</p>
