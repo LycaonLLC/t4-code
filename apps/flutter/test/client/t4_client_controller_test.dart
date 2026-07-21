@@ -81,6 +81,27 @@ void main() {
     },
   );
 
+  test('saved host takes precedence over bundled local endpoint', () async {
+    final profile = _profile('alpha');
+    final directory = _MemoryDirectoryStore(
+      directory: const HostDirectory.empty().upsert(profile),
+    );
+    final credentials = _MemoryCredentialStore();
+    final connector = _FakeConnector();
+    final controller = T4ClientController(
+      hostDirectoryStore: directory,
+      hostCredentialStore: credentials,
+      webSocketConnector: connector.call,
+      localEndpoint: Uri.parse('ws://127.0.0.1:4555/v1/ws'),
+    );
+    addTearDown(controller.dispose);
+
+    await controller.initialize();
+    await _flush();
+
+    expect(connector.uris, <Uri>[profile.webSocketUrl]);
+  });
+
   test(
     'welcome bootstraps session.list then host.watch with index cursor',
     () async {

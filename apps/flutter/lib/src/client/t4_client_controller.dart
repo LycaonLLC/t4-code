@@ -32,6 +32,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     TranscriptTailStore? transcriptTailStore,
     WebSocketConnector? webSocketConnector,
     this.developmentEndpoint,
+    this.localEndpoint,
   }) : appPreferenceStore = appPreferenceStore ?? InMemoryAppPreferenceStore(),
        transcriptTailStore =
            transcriptTailStore ?? InMemoryTranscriptTailStore(),
@@ -43,6 +44,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   final TranscriptTailStore transcriptTailStore;
   final WebSocketConnector _webSocketConnector;
   final Uri? developmentEndpoint;
+  final Uri? localEndpoint;
 
   final LinkedHashMap<String, TranscriptMessage> _messages = LinkedHashMap();
   final Map<String, TranscriptCursor> _savedCursors =
@@ -140,7 +142,10 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     authenticationPhase: _authenticationPhase,
     grantedCapabilities: Set<String>.unmodifiable(_grantedCapabilities),
     grantedFeatures: Set<String>.unmodifiable(_grantedFeatures),
-    targetConfigured: developmentEndpoint != null || _activeProfile != null,
+    targetConfigured:
+        developmentEndpoint != null ||
+        _activeProfile != null ||
+        localEndpoint != null,
     hostOperationPending: _hostOperationPending,
     submitting: _submitting,
     sessionOperationPending: _sessionOperationPending,
@@ -780,7 +785,8 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
 
   Future<void> _connectCurrent() async {
     final profile = developmentEndpoint == null ? _activeProfile : null;
-    final target = developmentEndpoint ?? profile?.webSocketUrl;
+    final target =
+        developmentEndpoint ?? profile?.webSocketUrl ?? localEndpoint;
     final generation = ++_connectionGeneration;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;

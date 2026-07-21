@@ -25,7 +25,8 @@ void main() {
       : null;
   runApp(
     T4Bootstrap(
-      developmentEndpoint: configuredEndpoint ?? localEndpoint,
+      developmentEndpoint: configuredEndpoint,
+      localEndpoint: localEndpoint,
       manageLocalRuntime: localEndpoint != null,
     ),
   );
@@ -45,11 +46,13 @@ Uri? _developmentEndpoint() {
 final class T4Bootstrap extends StatefulWidget {
   const T4Bootstrap({
     this.developmentEndpoint,
+    this.localEndpoint,
     this.manageLocalRuntime = false,
     super.key,
   });
 
   final Uri? developmentEndpoint;
+  final Uri? localEndpoint;
   final bool manageLocalRuntime;
 
   @override
@@ -76,6 +79,7 @@ final class _T4BootstrapState extends State<T4Bootstrap>
       appPreferenceStore: PersistentAppPreferenceStore(),
       transcriptTailStore: PersistentTranscriptTailStore(),
       developmentEndpoint: widget.developmentEndpoint,
+      localEndpoint: widget.localEndpoint,
     );
     _platformController = PlatformLifecycleController();
     WidgetsBinding.instance.addPostFrameCallback((_) {
