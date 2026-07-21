@@ -709,6 +709,85 @@ describe("child supervision", () => {
 		supervisor.stop();
 	});
 
+	test("discards local-only prompt correlation before the next durable user entry", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-official-local-prompt-"));
+		const path = join(root, "session.jsonl");
+		await writeFile(
+			path,
+			`${JSON.stringify({ type: "session", version: 3, id: "session", timestamp: stamp, cwd: root })}\n`,
+		);
+		const firstWrite = Promise.withResolvers<Record<string, unknown>>();
+		const secondWrite = Promise.withResolvers<Record<string, unknown>>();
+		let writes = 0;
+		const release = Promise.withResolvers<void>();
+		const exited = Promise.withResolvers<number>();
+		const child: ChildHandle = {
+			stdin: {
+				write: data => {
+					writes += 1;
+					(writes === 1 ? firstWrite : secondWrite).resolve(JSON.parse(data) as Record<string, unknown>);
+				},
+			},
+			stdout: (async function* () {
+				yield `${JSON.stringify({ type: "ready" })}\n`;
+				const local = await firstWrite.promise;
+				yield `${JSON.stringify({
+					type: "response",
+					id: local.id,
+					command: "prompt",
+					success: true,
+					data: { agentInvoked: false },
+				})}\n`;
+				const durable = await secondWrite.promise;
+				await appendFile(
+					path,
+					`${JSON.stringify({ type: "message", id: "durable-user", message: { role: "user", content: durable.message } })}\n`,
+				);
+				yield `${JSON.stringify({
+					type: "response",
+					id: durable.id,
+					command: "prompt",
+					success: true,
+					data: { agentInvoked: true },
+				})}\n`;
+				await release.promise;
+			})(),
+			stderr: (async function* () {})(),
+			exited: exited.promise,
+			kill: () => {
+				release.resolve();
+				exited.resolve(0);
+			},
+		};
+		const entries: Array<Record<string, unknown>> = [];
+		const reconciled = Promise.withResolvers<void>();
+		const supervisor = new RpcChildSupervisor(
+			{
+				spawn: () => child,
+				argv: sessionPath => ["omp", "--mode", "rpc", "--session", sessionPath],
+			},
+			{ ...record("official-local-prompt"), path, cwd: root },
+			{
+				entry: frame => {
+					entries.push(frame.entry as Record<string, unknown>);
+					reconciled.resolve();
+				},
+				event: () => {},
+				crashed: error => { throw error; },
+			},
+		);
+		await supervisor.start();
+		await supervisor.prompt("local", "/local-only");
+		await supervisor.prompt("durable", "real prompt");
+		await reconciled.promise;
+		expect(entries).toHaveLength(1);
+		expect(entries[0]).toMatchObject({
+			id: "durable-user",
+			message: { role: "user", content: "real prompt", clientCorrelationId: "durable:2" },
+		});
+		supervisor.stop();
+	});
+
 	test("deduplicates a fork live entry against the same durable JSONL entry", async () => {
 		const root = await mkdtemp(join(tmpdir(), "t4-fork-jsonl-"));
 		const path = join(root, "session.jsonl");

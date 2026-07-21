@@ -828,6 +828,7 @@ export class LocalAppserver implements AppserverHandle {
 	#partialMarker?: { device: number; inode: number };
 	#ompVersion: string;
 	#ompBuild: string;
+	#rpcDialect: NonNullable<AppserverOptions["rpcDialect"]>;
 	#appserverVersion: string;
 	#appserverBuild: string;
 	#supportedFeatures: Set<string>;
@@ -919,6 +920,7 @@ export class LocalAppserver implements AppserverHandle {
 			throw new Error("usageReadTimeoutMs must be between 1 and 60000");
 		this.#ompVersion = options.ompVersion ?? "local";
 		this.#ompBuild = options.ompBuild ?? "local";
+		this.#rpcDialect = options.rpcDialect ?? "fork";
 		this.#baseOperationCapabilities = new OfficialOmpCapabilityAdapter(this.#ompVersion).operations();
 		this.#appserverVersion = options.appserverVersion ?? "0.1.0";
 		this.#appserverBuild = options.appserverBuild ?? "local";
@@ -963,10 +965,65 @@ export class LocalAppserver implements AppserverHandle {
 		if (this.#operations?.hasCommand(command)) return true;
 		return (
 			this.#handlers.has(command) ||
-			DIRECT_SESSION_RPC_COMMANDS.has(command) ||
+			(DIRECT_SESSION_RPC_COMMANDS.has(command) && this.#directRpcCommandSupported(command)) ||
 			command === SESSION_CANCEL_COMMAND ||
 			command === AGENT_CANCEL_COMMAND
 		);
+	}
+
+	#directRpcCommandSupported(command: string): boolean {
+		return (
+			this.#rpcDialect === "fork" ||
+			!["session.retry", "session.pause", "session.resume", "session.fast.set"].includes(command)
+		);
+	}
+
+	#directRpcCommand(command: CommandFrame): Record<string, unknown> | undefined {
+		if (!this.#directRpcCommandSupported(command.command)) return undefined;
+		const type =
+			command.command === "session.retry"
+				? "retry"
+				: command.command === "session.pause"
+					? "pause"
+					: command.command === "session.resume"
+						? "resume"
+						: command.command === "session.compact"
+							? "compact"
+							: command.command === "session.rename"
+								? "set_session_name"
+								: command.command === "session.model.set"
+									? "set_model"
+									: command.command === "session.thinking.set"
+										? "set_thinking_level"
+										: "set_fast";
+		if (command.command === "session.compact") return { type, customInstructions: command.args.instructions };
+		if (command.command === "session.rename") return { type, name: command.args.name };
+		if (command.command === "session.model.set") {
+			if (this.#rpcDialect === "official-17.0.6") {
+				if (
+					command.args.persistence !== "session" ||
+					typeof command.args.selector !== "string" ||
+					command.args.role !== undefined
+				)
+					return undefined;
+				const separator = command.args.selector.indexOf("/");
+				if (separator <= 0 || separator === command.args.selector.length - 1) return undefined;
+				return {
+					type,
+					provider: command.args.selector.slice(0, separator),
+					modelId: command.args.selector.slice(separator + 1),
+				};
+			}
+			return {
+				type,
+				selector: command.args.selector,
+				role: command.args.role,
+				persist: command.args.persistence === "settings",
+			};
+		}
+		if (command.command === "session.thinking.set") return { type, level: command.args.level };
+		if (command.command === "session.fast.set") return { type, enabled: command.args.enabled };
+		return { type };
 	}
 	async start(): Promise<void> {
 		if (this.#started) return;
@@ -1869,40 +1926,18 @@ export class LocalAppserver implements AppserverHandle {
 					outcome = { frame: response(this.hostId, command, true, { accepted: true }) };
 				}
 			} else if (DIRECT_SESSION_RPC_COMMANDS.has(command.command)) {
+				const rpcCommand = this.#directRpcCommand(command);
+				if (!rpcCommand) {
+					outcome = {
+						frame: response(this.hostId, command, false, undefined, {
+							code: "unsupported",
+							message: "command is unavailable in the official OMP RPC runtime",
+						}),
+					};
+					return this.finish(command, outcome, idempotency);
+				}
 				const supervisor = await this.ensureSupervisor(command.sessionId!);
-				const type =
-					command.command === "session.retry"
-						? "retry"
-						: command.command === "session.pause"
-							? "pause"
-							: command.command === "session.resume"
-								? "resume"
-								: command.command === "session.compact"
-									? "compact"
-									: command.command === "session.rename"
-										? "set_session_name"
-										: command.command === "session.model.set"
-											? "set_model"
-											: command.command === "session.thinking.set"
-												? "set_thinking_level"
-												: "set_fast";
-				const args =
-					command.command === "session.compact"
-						? { customInstructions: command.args.instructions }
-						: command.command === "session.rename"
-							? { name: command.args.name }
-							: command.command === "session.model.set"
-								? {
-										selector: command.args.selector,
-										role: command.args.role,
-										persist: command.args.persistence === "settings",
-									}
-								: command.command === "session.thinking.set"
-									? { level: command.args.level }
-									: command.command === "session.fast.set"
-										? { enabled: command.args.enabled }
-										: {};
-				const result = await supervisor.call({ type, ...args }, command.requestId, controller.signal);
+				const result = await supervisor.call(rpcCommand, command.requestId, controller.signal);
 				if (!result.success)
 					outcome = {
 						frame: response(this.hostId, command, false, undefined, {

@@ -10,6 +10,7 @@ const MAX_LINE_BYTES = 1024 * 1024;
 const STDERR_BYTES = 64 * 1024;
 const FAILURE_STOP_GRACE_MS = 2_000;
 const TRANSCRIPT_READ_BYTES = 64 * 1024;
+const MAX_PENDING_DURABLE_CORRELATIONS = 64;
 
 interface PendingDurableCorrelation {
 	readonly internalId: string;
@@ -79,8 +80,11 @@ class DurableJsonlReconciler {
 		if (
 			(command.type === "prompt" || command.type === "steer" || command.type === "follow_up") &&
 			typeof command.message === "string"
-		)
+		) {
+			if (this.#pendingCorrelations.length >= MAX_PENDING_DURABLE_CORRELATIONS)
+				throw new Error("too many pending durable prompt correlations");
 			this.#pendingCorrelations.push({ internalId, message: command.message });
+		}
 	}
 
 	discardCorrelation(internalId: string): void {
@@ -593,7 +597,15 @@ export class RpcChildSupervisor {
 				throw new Error("rpc response has unknown id");
 			}
 			this.#pending.delete(value.id);
-			if (!value.success) this.#transcript.discardCorrelation(value.id);
+			const responseData = value.data;
+			const localOnlyPrompt =
+				value.command === "prompt" &&
+				value.success &&
+				responseData !== null &&
+				typeof responseData === "object" &&
+				!Array.isArray(responseData) &&
+				(responseData as Record<string, unknown>).agentInvoked === false;
+			if (!value.success || localOnlyPrompt) this.#transcript.discardCorrelation(value.id);
 			if (!value.success && typeof value.error !== "string") pending.reject(new Error("rpc response missing error"));
 			else pending.resolve(value as unknown as RpcResponse);
 			return;

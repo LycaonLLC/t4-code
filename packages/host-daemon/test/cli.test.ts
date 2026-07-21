@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { hostDaemonPaths, parseHostDaemonArgs, runHostDaemon } from "../src/cli.ts";
+import { chmod, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  hostDaemonPaths,
+  OFFICIAL_OMP_BUILD,
+  OFFICIAL_OMP_VERSION,
+  parseHostDaemonArgs,
+  runHostDaemon,
+  verifyOfficialRuntime,
+} from "../src/cli.ts";
 
 describe("T4 host daemon CLI", () => {
   test("parses a local direct-replacement service without ambient executable lookup", () => {
@@ -123,5 +133,77 @@ describe("T4 host daemon CLI", () => {
     ).rejects.toThrow("appserver construction failed");
     expect(searchCloses).toBe(1);
     expect(bridgeStops).toBe(1);
+  });
+
+  test("pins and reports the exact official OMP runtime before exposing official authority", async () => {
+    let authorityCloses = 0;
+    let captured: Record<string, unknown> | undefined;
+    const authority = {
+      initialize: async () => {},
+      close: async () => { authorityCloses += 1; },
+      projectRootForProject: async () => "/tmp",
+      projectRootForSession: async () => "/tmp",
+      lockCheck: async () => {},
+      lockStatus: () => "missing",
+      list: async () => [],
+    };
+    await expect(
+      runHostDaemon(
+        {
+          ompExecutable: "/opt/omp",
+          authorityMode: "official",
+          ompSessionsRoot: "/tmp/t4-official-sessions",
+          profileId: "t4",
+          stateRoot: "/tmp/t4-official-state",
+        },
+        {
+          verifyOfficialRuntime: async () => ({
+            ompVersion: OFFICIAL_OMP_VERSION,
+            ompBuild: OFFICIAL_OMP_BUILD,
+          }),
+          createOfficialAuthority: () => authority as never,
+          createTranscriptSearch: () => ({ close: async () => {} }) as never,
+          createLocal: options => {
+            captured = options as unknown as Record<string, unknown>;
+            throw new Error("captured official options");
+          },
+        },
+      ),
+    ).rejects.toThrow("captured official options");
+    expect(captured).toMatchObject({
+      ompVersion: OFFICIAL_OMP_VERSION,
+      ompBuild: OFFICIAL_OMP_BUILD,
+      rpcDialect: "official-17.0.6",
+      claimLocklessSessions: true,
+    });
+    const operations = captured?.operationsAuthority as {
+      catalogGet?: () => Promise<Record<string, unknown>>;
+    };
+    expect(await operations.catalogGet?.()).toMatchObject({
+      revision: `official-omp-${OFFICIAL_OMP_VERSION}`,
+    });
+    const catalog = await operations.catalogGet?.();
+    if (!catalog) throw new Error("official catalog missing");
+    const commandNames = (catalog.items as Array<{ name: string }>).map(item => item.name);
+    expect(commandNames).toContain("session.model.set");
+    expect(commandNames).not.toContain("session.fast.set");
+    expect(commandNames).not.toContain("session.retry");
+    expect(authorityCloses).toBe(1);
+  });
+
+  test("official runtime probe fails closed on version drift", async () => {
+    const root = await mkdtemp(join(tmpdir(), "t4-official-version-"));
+    const exact = join(root, "exact-omp");
+    const drifted = join(root, "drifted-omp");
+    await Promise.all([
+      writeFile(exact, `#!/bin/sh\nprintf 'omp/${OFFICIAL_OMP_VERSION}\\n'\n`),
+      writeFile(drifted, "#!/bin/sh\nprintf 'omp/17.0.7\\n'\n"),
+    ]);
+    await Promise.all([chmod(exact, 0o700), chmod(drifted, 0o700)]);
+    expect(await verifyOfficialRuntime(exact)).toEqual({
+      ompVersion: OFFICIAL_OMP_VERSION,
+      ompBuild: OFFICIAL_OMP_BUILD,
+    });
+    await expect(verifyOfficialRuntime(drifted)).rejects.toThrow(`omp/${OFFICIAL_OMP_VERSION}`);
   });
 });

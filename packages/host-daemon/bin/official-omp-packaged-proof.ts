@@ -69,6 +69,7 @@ async function main(): Promise<void> {
 		});
 		await seed.initialize();
 		const session = await seed.create(project, "Packaged official OMP");
+		await seed.close();
 		const socketPath = profileSocketPath(profile, process.platform, home, runtimeRoot);
 		const environment = {
 			...process.env,
