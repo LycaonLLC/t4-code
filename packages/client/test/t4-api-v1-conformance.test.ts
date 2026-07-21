@@ -164,6 +164,19 @@ describe("generated T4 API v1 client conformance", () => {
     });
     expect(stale.response.status).toBe(409);
     expect(stale.error).toMatchObject({ error: { code: "revision_conflict" } });
+    const targetOne = await owner.http.PATCH("/v1/workspaces/{workspaceId}", {
+      params: { header: mutationHeaders(2, "workspace-shared-0001"), path: { workspaceId: "ws-1" } }, body: { name: "target" },
+    });
+    const targetTwo = await owner.http.PATCH("/v1/workspaces/{workspaceId}", {
+      params: { header: mutationHeaders(1, "workspace-shared-0001"), path: { workspaceId: "ws-2" } }, body: { name: "target" },
+    });
+    expect(targetOne.response.status).toBe(200);
+    expect(targetTwo.response.status).toBe(200);
+    const changedPrecondition = await owner.http.PATCH("/v1/workspaces/{workspaceId}", {
+      params: { header: mutationHeaders(3, "workspace-shared-0001"), path: { workspaceId: "ws-1" } }, body: { name: "target" },
+    });
+    expect(changedPrecondition.response.status).toBe(409);
+    expect(changedPrecondition.error).toMatchObject({ error: { code: "idempotency_conflict" } });
     expect((await owner.http.DELETE("/v1/workspaces/{workspaceId}", {
       params: { header: idempotencyHeaders("workspace-delete-0001"), path: { workspaceId: "ws-1" } },
     })).response.status).toBe(204);
@@ -214,7 +227,7 @@ describe("generated T4 API v1 client conformance", () => {
     expect(stale.error).toMatchObject({ error: { code: "revision_conflict" } });
 
     for (const state of ["accepted", "rejected", "conflict", "unavailable", "indeterminate"] as const) {
-      const command = { command: state } satisfies CommandCreate;
+      const command = { command: state, metadata: {} } satisfies CommandCreate;
       const result = await client.http.POST("/v1/sessions/{sessionId}/commands", {
         params: { header: idempotencyHeaders(`command-${state}-0001`), path: { sessionId: "ses-1" } }, body: command,
       });
@@ -227,22 +240,34 @@ describe("generated T4 API v1 client conformance", () => {
     }
     const oversized = await client.http.POST("/v1/sessions/{sessionId}/commands", {
       params: { header: idempotencyHeaders("command-oversized-0001"), path: { sessionId: "ses-1" } },
-      body: { command: "a".repeat(33) },
+      body: { command: "a".repeat(33), metadata: {} },
     });
     expect(oversized.response.status).toBe(422);
     expect(oversized.error).toMatchObject({ error: { violations: [{ field: "command", rule: "maxBytes" }] } });
+    const multibyteOversized = await client.http.POST("/v1/sessions/{sessionId}/commands", {
+      params: { header: idempotencyHeaders("command-multibyte-0001"), path: { sessionId: "ses-1" } },
+      body: { command: "é".repeat(17), metadata: {} },
+    });
+    expect(multibyteOversized.response.status).toBe(422);
     const metadataOversized = await client.http.POST("/v1/sessions/{sessionId}/commands", {
       params: { header: idempotencyHeaders("command-metadata-0001"), path: { sessionId: "ses-1" } },
       body: { command: "ok", metadata: { source: "é".repeat(17) } },
     });
     expect(metadataOversized.response.status).toBe(422);
-    const defaultedMetadata = await client.http.POST("/v1/sessions/{sessionId}/commands", {
-      params: { header: idempotencyHeaders("command-default-0001"), path: { sessionId: "ses-1" } }, body: { command: "ok" },
+    const requestOversized = await client.http.POST("/v1/sessions/{sessionId}/commands", {
+      params: { header: idempotencyHeaders("command-request-0001"), path: { sessionId: "ses-1" } },
+      body: { command: "ok", metadata: Object.fromEntries(Array.from({ length: 8 }, (_, index) => [`field-${index}`, "x".repeat(32)])) },
+    });
+    expect(requestOversized.response.status).toBe(422);
+    const defaultedMetadataResponse = await service.fetch(`${service.origin}/v1/sessions/ses-1/commands`, {
+      method: "POST",
+      headers: { Authorization: "Bearer token-a", "T4-API-Version": "1", "Idempotency-Key": "command-default-0001", "Content-Type": "application/json" },
+      body: '{"command":"ok"}',
     });
     const explicitMetadata = await client.http.POST("/v1/sessions/{sessionId}/commands", {
       params: { header: idempotencyHeaders("command-default-0001"), path: { sessionId: "ses-1" } }, body: { command: "ok", metadata: {} },
     });
-    expect(explicitMetadata.data).toEqual(defaultedMetadata.data);
+    expect(explicitMetadata.data).toEqual(await defaultedMetadataResponse.json());
     const cancelled = await client.http.POST("/v1/sessions/{sessionId}/cancel", {
       params: { header: idempotencyHeaders("session-cancel-0001"), path: { sessionId: "ses-1" } },
     });
@@ -309,7 +334,7 @@ describe("generated T4 API v1 client conformance", () => {
       ["POST", "/v1/sessions/ses-1/cancel", undefined],
       ["POST", "/v1/sessions/ses-1/commands", '{"command":"ok"}'],
     ] as const) {
-      const response = await service.fetch(`${service.origin}${path}`, { method, headers: { ...baseHeaders, "If-Match": "1" }, body });
+      const response = await service.fetch(`${service.origin}${path}`, { method, headers: { ...baseHeaders, "If-Match": "1" }, ...(body === undefined ? {} : { body }) });
       expect(response.status).toBe(400);
       expect(await response.json()).toMatchObject({ error: { code: "idempotency_key_required" } });
     }
@@ -338,8 +363,9 @@ describe("generated T4 API v1 client conformance", () => {
     for await (const _event of manyClient.watchSession("ses-1", { maxEvents: 1000, maxReconnectAttempts: 0 })) count += 1;
     expect(count).toBe(1000);
 
-    const oversized = `: ${"x".repeat(1024 * 1024)}\ndata: {"type":"heartbeat","cursor":"c1","observedAt":"2026-07-21T00:00:00Z"}\n\n`;
-    const oversizedClient = createT4ApiClient({ baseUrl: "https://large.test", credential: "token-a", majorVersion: 1, fetch: sse([encoder.encode(oversized)]) });
+    const oversized = encoder.encode(`: ${"x".repeat(1024 * 1024)}\ndata: {"type":"heartbeat","cursor":"c1","observedAt":"2026-07-21T00:00:00Z"}\n\n`);
+    const oversizedChunks = Array.from({ length: Math.ceil(oversized.byteLength / 1024) }, (_, index) => oversized.slice(index * 1024, (index + 1) * 1024));
+    const oversizedClient = createT4ApiClient({ baseUrl: "https://large.test", credential: "token-a", majorVersion: 1, fetch: sse(oversizedChunks) });
     await expect(oversizedClient.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ code: "indeterminate", status: 502 });
   });
 
@@ -363,6 +389,27 @@ describe("generated T4 API v1 client conformance", () => {
     const eofClient = createT4ApiClient({ baseUrl: "https://eof.test", credential: "token-a", majorVersion: 1, fetch: eofFetch });
     await expect(eofClient.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 2, retryBackoffMs: 0 }).next()).rejects.toMatchObject({ code: "indeterminate", status: 502 });
     expect(attempts).toBe(3);
+
+    const reconnectHeaders: Array<string | null> = [];
+    let networkAttempt = 0;
+    const networkFetch: typeof globalThis.fetch = async (_input, init) => {
+      reconnectHeaders.push(new Headers(init?.headers).get("Last-Event-ID"));
+      networkAttempt += 1;
+      if (networkAttempt === 1) {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(stream) {
+            stream.enqueue(new TextEncoder().encode('data: {"type":"heartbeat","cursor":"network-1","observedAt":"2026-07-21T00:00:00Z"}\n\n'));
+            stream.error(new TypeError("transient network loss"));
+          },
+        }), { headers: { "Content-Type": "text/event-stream" } });
+      }
+      return new Response('data: {"type":"session","cursor":"network-2","state":"ready","revision":2}\n\n', { headers: { "Content-Type": "text/event-stream" } });
+    };
+    const networkClient = createT4ApiClient({ baseUrl: "https://network.test", credential: "token-a", majorVersion: 1, fetch: networkFetch });
+    const networkEvents: WatchEvent[] = [];
+    for await (const event of networkClient.watchSession("ses-1", { maxEvents: 2, maxReconnectAttempts: 1, retryBackoffMs: 0 })) networkEvents.push(event);
+    expect(networkEvents.map((event) => event.cursor)).toEqual(["network-1", "network-2"]);
+    expect(reconnectHeaders).toEqual([null, "network-1"]);
 
     const controller = new AbortController();
     const abortFetch: typeof globalThis.fetch = async (_input, init) => new Response(new ReadableStream<Uint8Array>({
