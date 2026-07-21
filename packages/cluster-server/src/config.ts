@@ -1,4 +1,4 @@
-import { open } from "node:fs/promises";
+import { open, type FileHandle } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { isIP } from "node:net";
 
@@ -157,15 +157,30 @@ export function clusterServerConfigFromEnv(env: Readonly<Record<string, string |
 	};
 }
 export async function readBoundedRegularFile(path: string, maximumBytes: number, description: string): Promise<string> {
-	const file = await open(path, "r");
+	const invalid = `${description} file is invalid`;
+	let file: FileHandle | undefined;
 	try {
+		file = await open(path, "r");
 		const metadata = await file.stat();
-		if (!metadata.isFile() || metadata.size < 1 || metadata.size > maximumBytes) throw new Error(`${description} file is invalid`);
-		const value = await file.readFile("utf8");
-		if (new TextEncoder().encode(value).byteLength > maximumBytes) throw new Error(`${description} file is invalid`);
-		return value;
+		if (!metadata.isFile() || metadata.size < 1 || metadata.size > maximumBytes) throw new Error(invalid);
+		const buffer = Buffer.allocUnsafe(metadata.size + 1);
+		let bytesRead = 0;
+		while (bytesRead < buffer.byteLength) {
+			const result = await file.read(buffer, bytesRead, buffer.byteLength - bytesRead, bytesRead);
+			if (result.bytesRead === 0) break;
+			bytesRead += result.bytesRead;
+		}
+		if (bytesRead < 1 || bytesRead > metadata.size || bytesRead > maximumBytes) throw new Error(invalid);
+		try {
+			return new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, bytesRead));
+		} catch {
+			throw new Error(invalid);
+		}
+	} catch (error) {
+		if (error instanceof Error && error.message === invalid) throw error;
+		throw new Error(invalid);
 	} finally {
-		await file.close();
+		await file?.close().catch(() => undefined);
 	}
 }
 export async function readClusterIdentityToken(path: string): Promise<string> {
@@ -173,13 +188,13 @@ export async function readClusterIdentityToken(path: string): Promise<string> {
 	if (new TextEncoder().encode(token).byteLength < 32 || /\s/u.test(token)) throw new Error("cluster identity token file is invalid");
 	return token;
 }
-export async function loadKubernetesCredentials(config: ClusterServerConfig): Promise<{ token: string; ca: string }> {
-	const [rawToken, ca] = await Promise.all([
-		readBoundedRegularFile(config.kubernetesTokenPath, 16_384, "Kubernetes token"),
-		readBoundedRegularFile(config.kubernetesCaPath, 1024 * 1024, "Kubernetes CA"),
-	]);
-	const token = rawToken.trim();
+export async function readKubernetesToken(path: string): Promise<string> {
+	const token = (await readBoundedRegularFile(path, 16_384, "Kubernetes token")).trim();
 	if (!token || /\s/u.test(token)) throw new Error("Kubernetes token file is invalid");
+	return token;
+}
+export async function loadKubernetesCa(config: ClusterServerConfig): Promise<string> {
+	const ca = await readBoundedRegularFile(config.kubernetesCaPath, 1024 * 1024, "Kubernetes CA");
 	if (!ca.includes("BEGIN CERTIFICATE")) throw new Error("Kubernetes CA file is invalid");
-	return { token, ca };
+	return ca;
 }
