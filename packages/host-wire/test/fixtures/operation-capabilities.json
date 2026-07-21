@@ -1,0 +1,94 @@
+{
+  "schema": "operation-capabilities/1",
+  "catalog": {
+    "v": "omp-app/1",
+    "type": "response",
+    "requestId": "request-catalog-1",
+    "commandId": "command-catalog-1",
+    "hostId": "host-1",
+    "command": "catalog.get",
+    "ok": true,
+    "result": {
+      "revision": "capabilities-v1",
+      "items": [],
+      "operations": [
+        {
+          "operationId": "session.prompt",
+          "label": "Prompt",
+          "description": "Submit an ordinary user prompt.",
+          "execution": "typed",
+          "supported": true,
+          "capabilities": ["sessions.prompt"]
+        },
+        {
+          "operationId": "slash.compact",
+          "label": "/compact",
+          "description": "Compact the conversation through the verified headless command handler.",
+          "execution": "headless",
+          "supported": true,
+          "capabilities": ["sessions.prompt"]
+        },
+        {
+          "operationId": "slash.plan",
+          "label": "/plan",
+          "description": "Toggle OMP plan mode.",
+          "execution": "terminal-only",
+          "supported": false,
+          "disabledReason": {
+            "code": "terminal_only",
+            "message": "This command requires the OMP terminal interface."
+          }
+        },
+        {
+          "operationId": "goal.create",
+          "label": "Create goal",
+          "description": "Create an OMP goal through a typed runtime operation.",
+          "execution": "unavailable",
+          "supported": false,
+          "disabledReason": {
+            "code": "capability_unavailable",
+            "message": "The connected OMP runtime does not expose this operation."
+          }
+        }
+      ]
+    }
+  },
+  "rejections": [
+    {
+      "v": "omp-app/1",
+      "type": "response",
+      "requestId": "request-plan-1",
+      "commandId": "command-plan-1",
+      "hostId": "host-1",
+      "sessionId": "session-1",
+      "command": "session.prompt",
+      "ok": false,
+      "error": {
+        "code": "terminal_only",
+        "message": "This command requires the OMP terminal interface.",
+        "details": {
+          "operationId": "slash.plan",
+          "execution": "terminal-only"
+        }
+      }
+    },
+    {
+      "v": "omp-app/1",
+      "type": "response",
+      "requestId": "request-goal-1",
+      "commandId": "command-goal-1",
+      "hostId": "host-1",
+      "sessionId": "session-1",
+      "command": "session.prompt",
+      "ok": false,
+      "error": {
+        "code": "capability_unavailable",
+        "message": "The connected OMP runtime does not expose this operation.",
+        "details": {
+          "operationId": "goal.create",
+          "execution": "unavailable"
+        }
+      }
+    }
+  ]
+}

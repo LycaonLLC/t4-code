@@ -1,6 +1,7 @@
 import {
 	decodeAuditEvent,
 	decodeCatalogItem,
+	decodeOperationCapability,
 	decodeFileListEntry,
 	decodePreviewSnapshot,
 	PREVIEW_ACTIONS,
@@ -1296,10 +1297,16 @@ function decodeAuditResult(value: unknown): CommandResult {
 }
 function decodeCatalogResult(value: unknown): CommandResult {
 	const x = result(value);
-	return {
+	const decoded: CommandResult = {
 		...x,
+		revision: revision(x.revision, "result.revision"),
 		items: boundedArray(x.items, "result.items").map((item, i) => decodeCatalogItem(item, `result.items[${i}]`)),
 	};
+	if (x.operations !== undefined)
+		decoded.operations = boundedArray(x.operations, "result.operations").map((item, i) =>
+			decodeOperationCapability(item, `result.operations[${i}]`),
+		);
+	return decoded;
 }
 function decodeTerminalResult(value: unknown): CommandResult {
 	const x = result(value);

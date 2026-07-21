@@ -3826,6 +3826,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         hostId: frame.hostId,
         revision: result.revision,
         items: result.items,
+        operations: result.operations,
         raw: frame.raw,
       );
       _catalogItems = List<CatalogItem>.unmodifiable(result.items);

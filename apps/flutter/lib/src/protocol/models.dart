@@ -545,11 +545,52 @@ final class WireResponseError {
   final Map<String, Object?> raw;
 }
 
+enum OperationExecution { typed, headless, terminalOnly, unavailable }
+
+final class OperationDisabledReason {
+  const OperationDisabledReason({
+    required this.code,
+    required this.message,
+    required this.raw,
+  });
+
+  final String code;
+  final String message;
+  final Map<String, Object?> raw;
+}
+
+final class OperationCapability {
+  const OperationCapability({
+    required this.operationId,
+    required this.label,
+    required this.description,
+    required this.execution,
+    required this.supported,
+    required this.disabledReason,
+    required this.capabilities,
+    required this.raw,
+  });
+
+  final String operationId;
+  final String label;
+  final String? description;
+  final OperationExecution execution;
+  final bool supported;
+  final OperationDisabledReason? disabledReason;
+  final List<String>? capabilities;
+  final Map<String, Object?> raw;
+}
+
 final class CatalogResult {
-  const CatalogResult({required this.revision, required this.items});
+  const CatalogResult({
+    required this.revision,
+    required this.items,
+    this.operations = const <OperationCapability>[],
+  });
 
   final String revision;
   final List<CatalogItem> items;
+  final List<OperationCapability> operations;
 }
 
 final class SettingsResult {
@@ -1194,12 +1235,14 @@ final class CatalogFrame extends WireFrame {
     required this.hostId,
     required this.revision,
     required this.items,
+    this.operations = const <OperationCapability>[],
     required super.raw,
   });
 
   final String hostId;
   final String revision;
   final List<CatalogItem> items;
+  final List<OperationCapability> operations;
 }
 
 final class SettingsFrame extends WireFrame {

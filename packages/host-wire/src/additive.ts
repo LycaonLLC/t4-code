@@ -700,6 +700,31 @@ export function decodeAuditAdditive(input: unknown): AuditTailFrame | AuditEvent
 	return { ...x, type, hostId: host, event, cursor: cur(x.cursor) } as AuditEventFrame;
 }
 
+export const OPERATION_EXECUTIONS = ["typed", "headless", "terminal-only", "unavailable"] as const;
+export type OperationExecution = (typeof OPERATION_EXECUTIONS)[number];
+
+export const OPERATION_DISABLED_REASON_CODES = {
+	terminalOnly: "terminal_only",
+	capabilityUnavailable: "capability_unavailable",
+} as const;
+
+export interface OperationDisabledReason {
+	code: string;
+	message: string;
+	[key: string]: unknown;
+}
+
+export interface OperationCapability {
+	operationId: OperationId;
+	label: string;
+	description?: string;
+	execution: OperationExecution;
+	supported: boolean;
+	disabledReason?: OperationDisabledReason;
+	capabilities?: string[];
+	[key: string]: unknown;
+}
+
 export type CatalogKind = "tool" | "model" | "command" | "setting" | "skill" | "agent" | "provider" | "mode";
 export interface CatalogItem {
 	id: CatalogId;
@@ -718,6 +743,7 @@ export interface CatalogFrame {
 	hostId: HostId;
 	revision: Revision;
 	items: CatalogItem[];
+	operations?: OperationCapability[];
 	[key: string]: unknown;
 }
 export interface SettingsFrame {
@@ -731,6 +757,47 @@ export interface SettingsFrame {
 function metadata(value: unknown, path: string): Record<string, unknown> {
 	return boundedMetadata(value, path, isSecretLikeKey);
 }
+function decodeOperationDisabledReason(value: unknown, path: string): OperationDisabledReason {
+	const x = boundedMap(value, path);
+	return {
+		...x,
+		code: controlFree(x.code, `${path}.code`, 128),
+		message: boundedText(x.message, `${path}.message`, 2048),
+	};
+}
+
+export function decodeOperationCapability(value: unknown, path: string): OperationCapability {
+	const x = boundedMap(value, path);
+	const execution = known(x.execution, `${path}.execution`, OPERATION_EXECUTIONS) as OperationExecution;
+	if (typeof x.supported !== "boolean")
+		fail("INVALID_FRAME", "supported must be boolean", `${path}.supported`);
+	const disabledReason =
+		x.disabledReason === undefined
+			? undefined
+			: decodeOperationDisabledReason(x.disabledReason, `${path}.disabledReason`);
+	if (!x.supported && !disabledReason)
+		fail("INVALID_FRAME", "unsupported operation requires disabledReason", `${path}.disabledReason`);
+	if (x.supported && disabledReason)
+		fail("INVALID_FRAME", "supported operation cannot have disabledReason", `${path}.disabledReason`);
+	if ((execution === "terminal-only" || execution === "unavailable") && x.supported)
+		fail("INVALID_FRAME", `${execution} operation cannot be supported`, `${path}.supported`);
+	const result: OperationCapability = {
+		...x,
+		operationId: operationId(x.operationId, `${path}.operationId`),
+		label: controlFree(x.label, `${path}.label`, 256),
+		execution,
+		supported: x.supported,
+	};
+	if (x.description !== undefined)
+		result.description = boundedText(x.description, `${path}.description`, 4096);
+	if (disabledReason) result.disabledReason = disabledReason;
+	if (x.capabilities !== undefined)
+		result.capabilities = boundedArray(x.capabilities, `${path}.capabilities`, 128).map((v, i) =>
+			controlFree(v, `${path}.capabilities[${i}]`, 128),
+		);
+	return result;
+}
+
 export function decodeCatalogItem(value: unknown, path: string): CatalogItem {
 	const x = boundedMap(value, path),
 		result = {
@@ -766,14 +833,20 @@ export function decodeCatalog(input: unknown): CatalogFrame | SettingsFrame {
 		type = x.type as string,
 		host = hostId(x.hostId),
 		rev = revision(x.revision);
-	if (type === "catalog")
-		return {
+	if (type === "catalog") {
+		const result = {
 			...x,
 			type,
 			hostId: host,
 			revision: rev,
 			items: boundedArray(x.items, "items").map((v, i) => decodeCatalogItem(v, `items[${i}]`)),
 		} as CatalogFrame;
+		if (x.operations !== undefined)
+			result.operations = boundedArray(x.operations, "operations").map((v, i) =>
+				decodeOperationCapability(v, `operations[${i}]`),
+			);
+		return result;
+	}
 	return {
 		...x,
 		type,

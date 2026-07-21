@@ -1232,6 +1232,87 @@ AuditEvent _auditEvent(Object? value, String path) {
   );
 }
 
+OperationExecution _operationExecution(Object? value, String path) {
+  return switch (_enumString(value, path, const {
+    'typed',
+    'headless',
+    'terminal-only',
+    'unavailable',
+  })) {
+    'typed' => OperationExecution.typed,
+    'headless' => OperationExecution.headless,
+    'terminal-only' => OperationExecution.terminalOnly,
+    'unavailable' => OperationExecution.unavailable,
+    _ => throw WireFormatException('unknown operation execution', path),
+  };
+}
+
+OperationDisabledReason _operationDisabledReason(Object? value, String path) {
+  final raw = _map(value, path);
+  return OperationDisabledReason(
+    code: _string(raw['code'], '$path.code', 128),
+    message: _boundedText(raw['message'], '$path.message', 2048),
+    raw: raw,
+  );
+}
+
+OperationCapability _operationCapability(Object? value, String path) {
+  final raw = _map(value, path);
+  final execution = _operationExecution(raw['execution'], '$path.execution');
+  final supported = _bool(raw['supported'], '$path.supported');
+  final disabledReason = raw.containsKey('disabledReason')
+      ? _operationDisabledReason(raw['disabledReason'], '$path.disabledReason')
+      : null;
+  if (!supported && disabledReason == null) {
+    throw WireFormatException(
+      'unsupported operation requires disabledReason',
+      '$path.disabledReason',
+    );
+  }
+  if (supported && disabledReason != null) {
+    throw WireFormatException(
+      'supported operation cannot have disabledReason',
+      '$path.disabledReason',
+    );
+  }
+  if (supported &&
+      (execution == OperationExecution.terminalOnly ||
+          execution == OperationExecution.unavailable)) {
+    throw WireFormatException(
+      'terminal-only and unavailable operations cannot be supported',
+      '$path.supported',
+    );
+  }
+  return OperationCapability(
+    operationId: _id(raw['operationId'], '$path.operationId'),
+    label: _string(raw['label'], '$path.label', 256),
+    description: raw.containsKey('description')
+        ? _boundedText(raw['description'], '$path.description', 4096)
+        : null,
+    execution: execution,
+    supported: supported,
+    disabledReason: disabledReason,
+    capabilities: raw.containsKey('capabilities')
+        ? _stringList(raw['capabilities'], '$path.capabilities', maxItems: 128)
+        : null,
+    raw: raw,
+  );
+}
+
+List<OperationCapability> _operationCapabilities(
+  Map<String, Object?> raw,
+  String path,
+) {
+  if (!raw.containsKey('operations')) {
+    return const <OperationCapability>[];
+  }
+  final values = _list(raw['operations'], path);
+  return List<OperationCapability>.unmodifiable([
+    for (var index = 0; index < values.length; index++)
+      _operationCapability(values[index], '$path[$index]'),
+  ]);
+}
+
 CatalogFrame _decodeCatalog(Map<String, Object?> raw) {
   final values = _list(raw['items'], 'items');
   final items = <CatalogItem>[];
@@ -1242,6 +1323,7 @@ CatalogFrame _decodeCatalog(Map<String, Object?> raw) {
     hostId: _id(raw['hostId'], 'hostId'),
     revision: _id(raw['revision'], 'revision'),
     items: List<CatalogItem>.unmodifiable(items),
+    operations: _operationCapabilities(raw, 'operations'),
     raw: raw,
   );
 }
@@ -1296,6 +1378,7 @@ CatalogResult _decodeCatalogResult(Map<String, Object?> raw) {
   return CatalogResult(
     revision: _id(raw['revision'], 'result.revision'),
     items: List<CatalogItem>.unmodifiable(items),
+    operations: _operationCapabilities(raw, 'result.operations'),
   );
 }
 
