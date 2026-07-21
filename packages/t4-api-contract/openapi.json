@@ -420,7 +420,7 @@
     "headers": {
       "SelectedVersion": {
         "description": "Selected compatible T4 API minor version.",
-        "schema": { "type": "string", "pattern": "^1\\.[0-9]+$" }
+        "schema": { "type": "string", "pattern": "^1\\.[0-9]+$", "maxLength": 16 }
       },
       "IdempotencyReplayed": {
         "description": "True when this response replays a prior identical request.",

@@ -5,6 +5,15 @@ const COMMAND_BYTES_MAX = 32;
 const COMMAND_REQUEST_BYTES_MAX = 256;
 const METADATA_VALUE_BYTES_MAX = 32;
 
+function hasAtMostCodePoints(value: string, maximum: number): boolean {
+  let count = 0;
+  for (const _codePoint of value) {
+    count += 1;
+    if (count > maximum) return false;
+  }
+  return true;
+}
+
 function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
   return Response.json(body, { status, headers: { "T4-API-Version": "1.0", ...headers } });
 }
@@ -98,7 +107,7 @@ export class T4ApiV1ConformanceService {
       const parsed = await this.#jsonBody(request);
       if (parsed instanceof Response) return parsed;
       const body = parsed;
-      if (typeof body.name !== "string" || body.name.length < 1 || body.name.length > 128) return this.#invalid("name", "length", "name must contain 1 to 128 characters");
+      if (typeof body.name !== "string" || body.name === "" || !hasAtMostCodePoints(body.name, 128)) return this.#invalid("name", "length", "name must contain 1 to 128 characters");
       return this.#idempotent(request, tenant, "createWorkspace", [], body, 202, 200, () => {
         const id = `ws-${++this.#workspaceSequence}`;
         const workspace = { id, name: body.name, ...(body.labels === undefined ? {} : { labels: body.labels }), state: "accepted", revision: 1, tenant };
@@ -150,7 +159,7 @@ export class T4ApiV1ConformanceService {
         const parsed = await this.#jsonBody(request);
         if (parsed instanceof Response) return parsed;
         const body = parsed;
-        if (typeof body.title !== "string" || body.title.length < 1 || body.title.length > 128) return this.#invalid("title", "length", "title must contain 1 to 128 characters");
+        if (typeof body.title !== "string" || body.title === "" || !hasAtMostCodePoints(body.title, 128)) return this.#invalid("title", "length", "title must contain 1 to 128 characters");
         return this.#idempotent(request, tenant, "spawnSession", [workspaceId], body, 202, 200, () => {
           const id = `ses-${++this.#sessionSequence}`;
           const session = { id, workspaceId, title: body.title, state: "accepted", revision: 1, tenant };

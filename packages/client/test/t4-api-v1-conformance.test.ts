@@ -48,6 +48,20 @@ function exhaustWatchEvent(event: WatchEvent): string {
 
 const VERSION_HEADERS = { "T4-API-Version": "1" } as const;
 
+function withSelectedVersion(init: ResponseInit = {}): ResponseInit {
+  const headers = new Headers(init.headers);
+  if (!headers.has("T4-API-Version")) headers.set("T4-API-Version", "1.0");
+  return { ...init, headers };
+}
+
+function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
+  return Response.json(body, withSelectedVersion(init));
+}
+
+function apiResponse(body?: BodyInit | null, init: ResponseInit = {}): Response {
+  return new Response(body, withSelectedVersion(init));
+}
+
 function idempotencyHeaders(key: string): Readonly<{ "T4-API-Version": "1"; "Idempotency-Key": string }> {
   return { ...VERSION_HEADERS, "Idempotency-Key": key };
 }
@@ -451,7 +465,7 @@ describe("generated T4 API v1 client conformance", () => {
     let ongoingOversizedCancelled = false;
     const ongoingOversizedClient = createT4ApiClient({
       baseUrl: "https://ongoing-oversized-event.test", credential: "token-a", majorVersion: 1,
-      fetch: async () => new Response(new ReadableStream<Uint8Array>({
+      fetch: async () => apiResponse(new ReadableStream<Uint8Array>({
         pull(controller) { controller.enqueue(new Uint8Array(600 * 1024)); },
         cancel() { ongoingOversizedCancelled = true; },
       }), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
@@ -463,16 +477,16 @@ describe("generated T4 API v1 client conformance", () => {
   });
 
   it("fails closed on unknown watch fields and incomplete typed errors", async () => {
-    const eventFetch: typeof globalThis.fetch = async () => new Response('data: {"type":"heartbeat","cursor":"c1","observedAt":"2026-07-21T00:00:00Z","unknown":true}\n\n', { headers: { "Content-Type": "text/event-stream" } });
+    const eventFetch: typeof globalThis.fetch = async () => apiResponse('data: {"type":"heartbeat","cursor":"c1","observedAt":"2026-07-21T00:00:00Z","unknown":true}\n\n', { headers: { "Content-Type": "text/event-stream" } });
     const eventClient = createT4ApiClient({ baseUrl: "https://unknown.test", credential: "token-a", majorVersion: 1, fetch: eventFetch });
     await expect(eventClient.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ code: "indeterminate", status: 502 });
     for (const [status, code] of [[410, "cursor_expired"], [406, "incompatible_version"], [422, "invalid_request"]] as const) {
-      const fetch: typeof globalThis.fetch = async () => Response.json({ error: { code, message: "incomplete", requestId: "r", retryable: false } }, { status });
+      const fetch: typeof globalThis.fetch = async () => jsonResponse({ error: { code, message: "incomplete", requestId: "r", retryable: false } }, { status });
       const client = createT4ApiClient({ baseUrl: "https://errors.test", credential: "token-a", majorVersion: 1, fetch });
       await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ code: "indeterminate", status: 502, retryable: false });
     }
     for (const [status, code] of [[401, "not_found"], [403, "unauthenticated"], [404, "forbidden"], [409, "unavailable"], [503, "revision_conflict"]] as const) {
-      const fetch: typeof globalThis.fetch = async () => Response.json({ error: { code, message: "wrong status class", requestId: "r", retryable: false } }, { status });
+      const fetch: typeof globalThis.fetch = async () => jsonResponse({ error: { code, message: "wrong status class", requestId: "r", retryable: false } }, { status });
       const client = createT4ApiClient({ baseUrl: "https://status-errors.test", credential: "token-a", majorVersion: 1, fetch });
       await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ code: "indeterminate", status: 502, retryable: false });
     }
@@ -490,48 +504,48 @@ describe("generated T4 API v1 client conformance", () => {
       [503, { error: { code: "unavailable", message: "bad", requestId: "r", retryable: true } }],
     ] as const;
     for (const [status, body] of validErrors) {
-      const fetch: typeof globalThis.fetch = async () => Response.json({ error: { ...body.error, unknown: true } }, { status });
+      const fetch: typeof globalThis.fetch = async () => jsonResponse({ error: { ...body.error, unknown: true } }, { status });
       const client = createT4ApiClient({ baseUrl: "https://ordinary-errors.test", credential: "token-a", majorVersion: 1, fetch });
       await expect(client.http.POST("/v1/workspaces", {
         body: { name: "workspace" }, params: { header: idempotencyHeaders("ordinary-errors-0001") },
-      })).rejects.toMatchObject({ code: "indeterminate", status: status === 503 ? 502 : status });
+      })).rejects.toMatchObject({ code: "indeterminate", status: 502, retryable: false });
     }
 
     const malformedClient = createT4ApiClient({
       baseUrl: "https://malformed-error.test", credential: "token-a", majorVersion: 1,
-      fetch: async () => new Response("{", { status: 404, headers: { "Content-Type": "application/json" } }),
+      fetch: async () => apiResponse("{", { status: 404, headers: { "Content-Type": "application/json" } }),
     });
     await expect(malformedClient.http.GET("/v1/workspaces/{workspaceId}", {
       params: { header: VERSION_HEADERS, path: { workspaceId: "missing" } },
-    })).rejects.toMatchObject({ code: "indeterminate", status: 404 });
+    })).rejects.toMatchObject({ code: "indeterminate", status: 502, retryable: false });
 
     const oversizedClient = createT4ApiClient({
       baseUrl: "https://oversized-error.test", credential: "token-a", majorVersion: 1,
-      fetch: async () => new Response("x".repeat(1024 * 1024 + 1), { status: 404, headers: { "Content-Type": "application/json" } }),
+      fetch: async () => apiResponse("x".repeat(1024 * 1024 + 1), { status: 404, headers: { "Content-Type": "application/json" } }),
     });
     await expect(oversizedClient.http.GET("/v1/workspaces/{workspaceId}", {
       params: { header: VERSION_HEADERS, path: { workspaceId: "missing" } },
-    })).rejects.toMatchObject({ code: "indeterminate", status: 404 });
+    })).rejects.toMatchObject({ code: "indeterminate", status: 502, retryable: false });
 
     const streamedChunk = new Uint8Array(600 * 1024);
     for (const contentType of ["application/json", "text/plain"]) {
       let cancelled = false;
       const streamedClient = createT4ApiClient({
         baseUrl: "https://streamed-error.test", credential: "token-a", majorVersion: 1,
-        fetch: async () => new Response(new ReadableStream<Uint8Array>({
+        fetch: async () => apiResponse(new ReadableStream<Uint8Array>({
           pull(controller) { controller.enqueue(streamedChunk); },
           cancel() { cancelled = true; },
         }), { status: 404, headers: { "Content-Type": contentType } }),
       });
       await expect(streamedClient.http.GET("/v1/workspaces/{workspaceId}", {
         params: { header: VERSION_HEADERS, path: { workspaceId: "missing" } },
-      })).rejects.toMatchObject({ code: "indeterminate", status: 404 });
+      })).rejects.toMatchObject({ code: "indeterminate", status: 502, retryable: false });
       expect(cancelled).toBe(true);
     }
 
     const statusClient = createT4ApiClient({
       baseUrl: "https://undeclared-error.test", credential: "token-a", majorVersion: 1,
-      fetch: async () => Response.json(validErrors[3][1], { status: 404 }),
+      fetch: async () => jsonResponse(validErrors[3][1], { status: 404 }),
     });
     await expect(statusClient.http.GET("/v1", { params: { header: VERSION_HEADERS } })).rejects.toMatchObject({ code: "indeterminate", status: 404 });
   });
@@ -545,7 +559,7 @@ describe("generated T4 API v1 client conformance", () => {
       baseUrl: "https://prefixed.test/api", credential: "token-a", majorVersion: 1,
       fetch: async (input) => {
         expect(new Request(input).url).toBe("https://prefixed.test/api/v1");
-        return Response.json({ ...discovery, unknown: true });
+        return jsonResponse({ ...discovery, unknown: true });
       },
     });
     await expect(prefixed.http.GET("/v1", { params: { header: VERSION_HEADERS } })).rejects.toMatchObject({ code: "indeterminate", status: 502 });
@@ -554,7 +568,7 @@ describe("generated T4 API v1 client conformance", () => {
       baseUrl: "https://snapshot.test/api", credential: "token-a", majorVersion: 1,
       fetch: async (input) => {
         expect(new URL(new Request(input).url).pathname).toBe("/api/v1/sessions/ses-1/snapshot");
-        return Response.json({ sessionId: "ses-1", cursor: "cursor-1", state: "ready", entries: [], unknown: true });
+        return jsonResponse({ sessionId: "ses-1", cursor: "cursor-1", state: "ready", entries: [], unknown: true });
       },
     });
     await expect(invalidSnapshot.http.GET("/v1/sessions/{sessionId}/snapshot", {
@@ -564,7 +578,7 @@ describe("generated T4 API v1 client conformance", () => {
     const astralText = "😀".repeat(524_289);
     const unicodeSnapshot = createT4ApiClient({
       baseUrl: "https://unicode-snapshot.test", credential: "token-a", majorVersion: 1,
-      fetch: async () => Response.json({ sessionId: "ses-1", cursor: "cursor-1", state: "ready", entries: [{ sequence: 0, kind: "output", text: astralText }] }),
+      fetch: async () => jsonResponse({ sessionId: "ses-1", cursor: "cursor-1", state: "ready", entries: [{ sequence: 0, kind: "output", text: astralText }] }),
     });
     const unicode = requireData(await unicodeSnapshot.http.GET("/v1/sessions/{sessionId}/snapshot", {
       params: { header: VERSION_HEADERS, path: { sessionId: "ses-1" } },
@@ -574,7 +588,7 @@ describe("generated T4 API v1 client conformance", () => {
     const astral128 = "😀".repeat(128);
     const unicodeWorkspace = createT4ApiClient({
       baseUrl: "https://unicode-workspace.test", credential: "token-a", majorVersion: 1,
-      fetch: async () => Response.json({ id: "wsp-1", name: astral128, state: "ready", revision: 1, labels: { team: astral128 } }),
+      fetch: async () => jsonResponse({ id: "wsp-1", name: astral128, state: "ready", revision: 1, labels: { team: astral128 } }),
     });
     const workspace = requireData(await unicodeWorkspace.http.GET("/v1/workspaces/{workspaceId}", {
       params: { header: VERSION_HEADERS, path: { workspaceId: "wsp-1" } },
@@ -583,7 +597,7 @@ describe("generated T4 API v1 client conformance", () => {
 
     const unicodeSession = createT4ApiClient({
       baseUrl: "https://unicode-session.test", credential: "token-a", majorVersion: 1,
-      fetch: async () => Response.json({ id: "ses-1", workspaceId: "wsp-1", title: astral128, state: "ready", revision: 1, labels: { team: astral128 } }),
+      fetch: async () => jsonResponse({ id: "ses-1", workspaceId: "wsp-1", title: astral128, state: "ready", revision: 1, labels: { team: astral128 } }),
     });
     const session = requireData(await unicodeSession.http.GET("/v1/sessions/{sessionId}", {
       params: { header: VERSION_HEADERS, path: { sessionId: "ses-1" } },
@@ -596,7 +610,7 @@ describe("generated T4 API v1 client conformance", () => {
     const violationMessage = "😀".repeat(512);
     const unicodeError = createT4ApiClient({
       baseUrl: "https://unicode-error.test", credential: "token-a", majorVersion: 1,
-      fetch: async () => Response.json({ error: {
+      fetch: async () => jsonResponse({ error: {
         code: "invalid_request", message: errorMessage, requestId: errorRequestId, retryable: false,
         violations: [{ field: violationField, rule: "range", message: violationMessage }],
       } }, { status: 422 }),
@@ -607,8 +621,8 @@ describe("generated T4 API v1 client conformance", () => {
     });
 
     for (const response of [
-      new Response(JSON.stringify(discovery), { status: 200, headers: { "Content-Type": "text/plain" } }),
-      Response.json(discovery, { status: 201 }),
+      apiResponse(JSON.stringify(discovery), { status: 200, headers: { "Content-Type": "text/plain" } }),
+      jsonResponse(discovery, { status: 201 }),
     ]) {
       const client = createT4ApiClient({ baseUrl: "https://dispatch.test", credential: "token-a", majorVersion: 1, fetch: async () => response.clone() });
       await expect(client.http.GET("/v1", { params: { header: VERSION_HEADERS } })).rejects.toMatchObject({ code: "indeterminate", status: 502 });
@@ -616,7 +630,7 @@ describe("generated T4 API v1 client conformance", () => {
 
     const unknownRoute = createT4ApiClient({
       baseUrl: "https://dispatch.test", credential: "token-a", majorVersion: 1,
-      fetch: async () => Response.json(discovery),
+      fetch: async () => jsonResponse(discovery),
     });
     await expect(unknownRoute.http.GET("/v1/undeclared" as "/v1", { params: { header: VERSION_HEADERS } })).rejects.toMatchObject({ code: "indeterminate", status: 502 });
   });
@@ -626,7 +640,7 @@ describe("generated T4 API v1 client conformance", () => {
       baseUrl: "https://watch-status.test/api", credential: "token-a", majorVersion: 1,
       fetch: async (input) => {
         expect(new URL(new Request(input).url).pathname).toBe("/api/v1/sessions/ses-1/events");
-        return new Response('data: {"type":"heartbeat","cursor":"prefixed-1","observedAt":"2026-07-21T00:00:00Z"}\n\n', { status: 200, headers: { "Content-Type": "text/event-stream" } });
+        return apiResponse('data: {"type":"heartbeat","cursor":"prefixed-1","observedAt":"2026-07-21T00:00:00Z"}\n\n', { status: 200, headers: { "Content-Type": "text/event-stream" } });
       },
     });
     await expect(prefixed.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).resolves.toMatchObject({ value: { cursor: "prefixed-1" } });
@@ -642,15 +656,15 @@ describe("generated T4 API v1 client conformance", () => {
       [503, { error: { code: "unavailable", message: "bad", requestId: "r", retryable: false } }],
     ] as const;
     for (const [status, body] of declared) {
-      const client = createT4ApiClient({ baseUrl: "https://watch-status.test", credential: "token-a", majorVersion: 1, fetch: async () => Response.json(body, { status }) });
+      const client = createT4ApiClient({ baseUrl: "https://watch-status.test", credential: "token-a", majorVersion: 1, fetch: async () => jsonResponse(body, { status }) });
       await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ status, code: body.error.code });
     }
 
     for (const response of [
-      new Response('data: {"type":"heartbeat","cursor":"wrong-media-1","observedAt":"2026-07-21T00:00:00Z"}\n\n', { status: 200, headers: { "Content-Type": "application/json" } }),
-      new Response('data: {"type":"heartbeat","cursor":"wrong-1","observedAt":"2026-07-21T00:00:00Z"}\n\n', { status: 201, headers: { "Content-Type": "text/event-stream" } }),
-      new Response(null, { status: 204, headers: { "Content-Type": "text/event-stream" } }),
-      Response.json({ error: { code: "revision_conflict", message: "bad", requestId: "r", retryable: false } }, { status: 409 }),
+      apiResponse('data: {"type":"heartbeat","cursor":"wrong-media-1","observedAt":"2026-07-21T00:00:00Z"}\n\n', { status: 200, headers: { "Content-Type": "application/json" } }),
+      apiResponse('data: {"type":"heartbeat","cursor":"wrong-1","observedAt":"2026-07-21T00:00:00Z"}\n\n', { status: 201, headers: { "Content-Type": "text/event-stream" } }),
+      apiResponse(null, { status: 204, headers: { "Content-Type": "text/event-stream" } }),
+      jsonResponse({ error: { code: "revision_conflict", message: "bad", requestId: "r", retryable: false } }, { status: 409 }),
     ]) {
       let attempts = 0;
       const client = createT4ApiClient({
@@ -679,7 +693,7 @@ describe("generated T4 API v1 client conformance", () => {
         baseUrl: "https://invalid-503.test", credential: "token-a", majorVersion: 1,
         fetch: async () => {
           attempts += 1;
-          return new Response(body, { status: 503, headers: { "Content-Type": "application/json", "Retry-After": "0" } });
+          return apiResponse(body, { status: 503, headers: { "Content-Type": "application/json", "Retry-After": "0" } });
         },
       });
       await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 3, retryBackoffMs: 0 }).next()).rejects.toMatchObject({
@@ -692,7 +706,7 @@ describe("generated T4 API v1 client conformance", () => {
     const oversizedChunk = new Uint8Array(600 * 1024);
     const streamedOversizedClient = createT4ApiClient({
       baseUrl: "https://streamed-invalid-503.test", credential: "token-a", majorVersion: 1,
-      fetch: async () => new Response(new ReadableStream<Uint8Array>({
+      fetch: async () => apiResponse(new ReadableStream<Uint8Array>({
         pull(controller) { controller.enqueue(oversizedChunk); },
         cancel() { oversizedCancelled = true; },
       }), { status: 503, headers: { "Content-Type": "application/json" } }),
@@ -705,7 +719,7 @@ describe("generated T4 API v1 client conformance", () => {
     let nonJsonCancelled = false;
     const nonJsonClient = createT4ApiClient({
       baseUrl: "https://invalid-503-media.test", credential: "token-a", majorVersion: 1,
-      fetch: async () => new Response(new ReadableStream<Uint8Array>({
+      fetch: async () => apiResponse(new ReadableStream<Uint8Array>({
         pull(controller) { controller.enqueue(new Uint8Array(1024)); },
         cancel() { nonJsonCancelled = true; },
       }), { status: 503, headers: { "Content-Type": "text/plain" } }),
@@ -765,7 +779,7 @@ describe("generated T4 API v1 client conformance", () => {
     const workspace = { id: "wsp-1", name: "workspace", state: "ready", revision: 1 };
     const missingReplay = createT4ApiClient({
       baseUrl: "https://response-replay.test", credential: "token-a", majorVersion: 1,
-      fetch: async () => Response.json(workspace, { headers: { "T4-API-Version": "1.0" } }),
+      fetch: async () => jsonResponse(workspace, { headers: { "T4-API-Version": "1.0" } }),
     });
     await expect(missingReplay.http.PATCH("/v1/workspaces/{workspaceId}", {
       params: { header: mutationHeaders(1, "response-replay-patch"), path: { workspaceId: "wsp-1" } }, body: { name: "workspace" },
@@ -774,7 +788,7 @@ describe("generated T4 API v1 client conformance", () => {
     for (const replayed of [undefined, "TRUE", "0"]) {
       const client = createT4ApiClient({
         baseUrl: "https://delete-replay-header.test", credential: "token-a", majorVersion: 1,
-        fetch: async () => new Response(null, { status: 204, headers: {
+        fetch: async () => apiResponse(null, { status: 204, headers: {
           "T4-API-Version": "1.0", ...(replayed === undefined ? {} : { "Idempotency-Replayed": replayed }),
         } }),
       });
@@ -804,17 +818,17 @@ describe("generated T4 API v1 client conformance", () => {
     ]) {
       const client = createT4ApiClient({
         baseUrl: "https://duplicate-discovery.test", credential: "token-a", majorVersion: 1,
-        fetch: async () => Response.json(discovery, { headers: { "T4-API-Version": "1.0" } }),
+        fetch: async () => jsonResponse(discovery, { headers: { "T4-API-Version": "1.0" } }),
       });
       await expect(client.http.GET("/v1", { params: { header: VERSION_HEADERS } })).rejects.toMatchObject({ status: 502, retryable: false });
     }
     const duplicateError = createT4ApiClient({
       baseUrl: "https://duplicate-error.test", credential: "token-a", majorVersion: 1,
-      fetch: async () => Response.json({ error: {
+      fetch: async () => jsonResponse({ error: {
         code: "incompatible_version", message: "bad", requestId: "r", retryable: false, supportedMajors: [1, 1],
       } }, { status: 406, headers: { "T4-API-Version": "1.0" } }),
     });
-    await expect(duplicateError.http.GET("/v1", { params: { header: VERSION_HEADERS } })).rejects.toMatchObject({ status: 406, code: "indeterminate", retryable: false });
+    await expect(duplicateError.http.GET("/v1", { params: { header: VERSION_HEADERS } })).rejects.toMatchObject({ status: 502, code: "indeterminate", retryable: false });
   });
 
   it("discards unterminated SSE data at EOF before reconnecting", async () => {
@@ -830,7 +844,7 @@ describe("generated T4 API v1 client conformance", () => {
           const body = attempts === 1
             ? unterminated
             : 'data: {"type":"heartbeat","cursor":"complete","observedAt":"2026-07-21T00:00:00Z"}\n\n';
-          return new Response(body, { headers: { "Content-Type": "text/event-stream", "T4-API-Version": "1.0" } });
+          return apiResponse(body, { headers: { "Content-Type": "text/event-stream", "T4-API-Version": "1.0" } });
         },
       });
       await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 1, retryBackoffMs: 0 }).next()).resolves.toMatchObject({ value: { cursor: "complete" } });
@@ -862,7 +876,7 @@ describe("generated T4 API v1 client conformance", () => {
     let cancelled = false;
     const client = createT4ApiClient({
       baseUrl: "https://invalid-utf8-sse.test", credential: "token-a", majorVersion: 1,
-      fetch: async () => new Response(new ReadableStream<Uint8Array>({
+      fetch: async () => apiResponse(new ReadableStream<Uint8Array>({
         start(controller) { controller.enqueue(new Uint8Array([100, 97, 116, 97, 58, 32, 195, 40, 10, 10])); },
         cancel() { cancelled = true; },
       }), { headers: { "Content-Type": "text/event-stream", "T4-API-Version": "1.0" } }),
@@ -902,7 +916,7 @@ describe("generated T4 API v1 client conformance", () => {
     let attempts = 0;
     const eofFetch: typeof globalThis.fetch = async () => {
       attempts += 1;
-      return new Response(new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } }), { headers: { "Content-Type": "text/event-stream" } });
+      return apiResponse(new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } }), { headers: { "Content-Type": "text/event-stream" } });
     };
     const eofClient = createT4ApiClient({ baseUrl: "https://eof.test", credential: "token-a", majorVersion: 1, fetch: eofFetch });
     await expect(eofClient.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 2, retryBackoffMs: 0 }).next()).rejects.toMatchObject({ code: "indeterminate", status: 502 });
@@ -915,7 +929,7 @@ describe("generated T4 API v1 client conformance", () => {
       networkAttempt += 1;
       if (networkAttempt === 1) {
         let sent = false;
-        return new Response(new ReadableStream<Uint8Array>({
+        return apiResponse(new ReadableStream<Uint8Array>({
           pull(stream) {
             if (sent) stream.error(new TypeError("transient network loss"));
             else {
@@ -925,7 +939,7 @@ describe("generated T4 API v1 client conformance", () => {
           },
         }), { headers: { "Content-Type": "text/event-stream" } });
       }
-      return new Response('data: {"type":"session","cursor":"network-2","state":"ready","revision":2}\n\n', { headers: { "Content-Type": "text/event-stream" } });
+      return apiResponse('data: {"type":"session","cursor":"network-2","state":"ready","revision":2}\n\n', { headers: { "Content-Type": "text/event-stream" } });
     };
     const networkClient = createT4ApiClient({ baseUrl: "https://network.test", credential: "token-a", majorVersion: 1, fetch: networkFetch });
     const networkEvents: WatchEvent[] = [];
@@ -936,8 +950,8 @@ describe("generated T4 API v1 client conformance", () => {
     let retryableAttempts = 0;
     const retryableFetch: typeof globalThis.fetch = async () => {
       retryableAttempts += 1;
-      if (retryableAttempts === 1) return Response.json({ error: { code: "unavailable", message: "retry", requestId: "r", retryable: true } }, { status: 503, headers: { "Retry-After": "0" } });
-      return new Response('data: {"type":"heartbeat","cursor":"retry-1","observedAt":"2026-07-21T00:00:00Z"}\n\n', { headers: { "Content-Type": "text/event-stream" } });
+      if (retryableAttempts === 1) return jsonResponse({ error: { code: "unavailable", message: "retry", requestId: "r", retryable: true } }, { status: 503, headers: { "Retry-After": "0" } });
+      return apiResponse('data: {"type":"heartbeat","cursor":"retry-1","observedAt":"2026-07-21T00:00:00Z"}\n\n', { headers: { "Content-Type": "text/event-stream" } });
     };
     const retryableClient = createT4ApiClient({ baseUrl: "https://retryable.test", credential: "token-a", majorVersion: 1, fetch: retryableFetch });
     expect((await retryableClient.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 1, retryBackoffMs: 0 }).next()).value).toMatchObject({ cursor: "retry-1" });
@@ -948,9 +962,9 @@ describe("generated T4 API v1 client conformance", () => {
       progressAttempts += 1;
       if (progressAttempts === 2 || progressAttempts === 4) {
         const cursor = progressAttempts === 2 ? "progress-1" : "progress-2";
-        return new Response(`data: {"type":"heartbeat","cursor":"${cursor}","observedAt":"2026-07-21T00:00:00Z"}\n\n`, { headers: { "Content-Type": "text/event-stream" } });
+        return apiResponse(`data: {"type":"heartbeat","cursor":"${cursor}","observedAt":"2026-07-21T00:00:00Z"}\n\n`, { headers: { "Content-Type": "text/event-stream" } });
       }
-      return new Response(new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } }), { headers: { "Content-Type": "text/event-stream" } });
+      return apiResponse(new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } }), { headers: { "Content-Type": "text/event-stream" } });
     };
     const progressClient = createT4ApiClient({ baseUrl: "https://progress.test", credential: "token-a", majorVersion: 1, fetch: progressFetch });
     const progressEvents: WatchEvent[] = [];
@@ -964,7 +978,7 @@ describe("generated T4 API v1 client conformance", () => {
       let retryAfterAttempts = 0;
       const retryAfterFetch: typeof globalThis.fetch = async () => {
         retryAfterAttempts += 1;
-        return Response.json({ error: { code: "unavailable", message: "later", requestId: "r", retryable: true } }, { status: 503, headers: { "Retry-After": "30" } });
+        return jsonResponse({ error: { code: "unavailable", message: "later", requestId: "r", retryable: true } }, { status: 503, headers: { "Retry-After": "30" } });
       };
       const retryAfterClient = createT4ApiClient({ baseUrl: "https://retry-after.test", credential: "token-a", majorVersion: 1, fetch: retryAfterFetch });
       const retryAfterPending = retryAfterClient.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 2, retryBackoffMs: 0, signal: retryAfterController.signal }).next();
@@ -978,7 +992,7 @@ describe("generated T4 API v1 client conformance", () => {
     }
 
     const controller = new AbortController();
-    const abortFetch: typeof globalThis.fetch = async (_input, init) => new Response(new ReadableStream<Uint8Array>({
+    const abortFetch: typeof globalThis.fetch = async (_input, init) => apiResponse(new ReadableStream<Uint8Array>({
       start(stream) { init?.signal?.addEventListener("abort", () => stream.close(), { once: true }); },
     }), { headers: { "Content-Type": "text/event-stream" } });
     const abortClient = createT4ApiClient({ baseUrl: "https://abort.test", credential: "token-a", majorVersion: 1, fetch: abortFetch });

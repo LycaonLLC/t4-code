@@ -9,6 +9,8 @@ const MAX_ERROR_BYTES = 1024 * 1024;
 const MAX_EVENT_BYTES = 1024 * 1024;
 const MAX_JSON_RESPONSE_BYTES = 16 * 1024 * 1024;
 const CURSOR_PATTERN = /^[A-Za-z0-9._~-]+$/u;
+const SELECTED_VERSION_MAX_LENGTH = 16;
+const SELECTED_VERSION_PATTERN = /^1\.[0-9]+$/u;
 const ERROR_CODES = {
   invalid_request: true, unauthenticated: true, forbidden: true, not_found: true,
   idempotency_key_required: true, idempotency_conflict: true, revision_conflict: true,
@@ -178,7 +180,7 @@ function apiError(value: unknown, status: number): ApiError | undefined {
     typeof error.requestId !== "string" || error.requestId === "" || !hasAtMostCodePoints(error.requestId, 128) ||
     typeof error.retryable !== "boolean" ||
     (error.violations !== undefined && (!Array.isArray(error.violations) || error.violations.length > 64 || !error.violations.every(validViolation))) ||
-    (error.supportedMajors !== undefined && (!Array.isArray(error.supportedMajors) || error.supportedMajors.length > 8 || !error.supportedMajors.every((major) => Number.isSafeInteger(major) && Number(major) >= 1))) ||
+    (error.supportedMajors !== undefined && (!Array.isArray(error.supportedMajors) || error.supportedMajors.length > 8 || !hasUniqueItems(error.supportedMajors) || !error.supportedMajors.every((major) => Number.isSafeInteger(major) && Number(major) >= 1))) ||
     (error.resync !== undefined && !validResync(error.resync)) ||
     (status === 406 && (error.code !== "incompatible_version" || !Array.isArray(error.supportedMajors) || error.supportedMajors.length < 1)) ||
     (status === 410 && (error.code !== "cursor_expired" || !validResync(error.resync))) ||
@@ -258,6 +260,15 @@ function hasOnlyKeys(value: Record<string, unknown>, keys: Readonly<Record<strin
   return Object.keys(value).every((key) => keys[key] === true);
 }
 
+function hasUniqueItems(value: readonly unknown[]): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    for (let prior = 0; prior < index; prior += 1) {
+      if (value[index] === value[prior]) return false;
+    }
+  }
+  return true;
+}
+
 function validResourceId(value: unknown): value is string {
   return typeof value === "string" && value !== "" && hasAtMostCodePoints(value, 128) && /^[A-Za-z0-9][A-Za-z0-9._~-]*$/u.test(value);
 }
@@ -309,8 +320,8 @@ function validDiscovery(value: unknown): boolean {
   const limits = record(discovery?.limits);
   return discovery !== undefined && hasOnlyKeys(discovery, { apiVersion: true, supportedMajors: true, capabilities: true, limits: true }) &&
     typeof discovery.apiVersion === "string" && /^1\.[0-9]+$/u.test(discovery.apiVersion) &&
-    Array.isArray(discovery.supportedMajors) && discovery.supportedMajors.length >= 1 && discovery.supportedMajors.length <= 8 && discovery.supportedMajors.every((major) => Number.isSafeInteger(major) && Number(major) >= 1) &&
-    Array.isArray(discovery.capabilities) && discovery.capabilities.length <= 128 && discovery.capabilities.every((capability) => typeof capability === "string" && /^[a-z][a-z0-9.-]{0,127}$/u.test(capability)) &&
+    Array.isArray(discovery.supportedMajors) && discovery.supportedMajors.length >= 1 && discovery.supportedMajors.length <= 8 && hasUniqueItems(discovery.supportedMajors) && discovery.supportedMajors.every((major) => Number.isSafeInteger(major) && Number(major) >= 1) &&
+    Array.isArray(discovery.capabilities) && discovery.capabilities.length <= 128 && hasUniqueItems(discovery.capabilities) && discovery.capabilities.every((capability) => typeof capability === "string" && /^[a-z][a-z0-9.-]{0,127}$/u.test(capability)) &&
     limits !== undefined && hasOnlyKeys(limits, { pageSizeDefault: true, pageSizeMax: true, commandBytesMax: true, commandRequestBytesMax: true, commandMetadataValueBytesMax: true, watchEventsMax: true, heartbeatSeconds: true }) &&
     [limits.pageSizeDefault, limits.pageSizeMax, limits.commandBytesMax, limits.commandRequestBytesMax, limits.commandMetadataValueBytesMax, limits.watchEventsMax, limits.heartbeatSeconds].every((limit) => Number.isSafeInteger(limit) && Number(limit) >= 1) &&
     Number(limits.pageSizeDefault) <= Number(limits.pageSizeMax) && Number(limits.commandBytesMax) <= Number(limits.commandRequestBytesMax) && Number(limits.commandMetadataValueBytesMax) <= Number(limits.commandRequestBytesMax) &&
@@ -336,20 +347,21 @@ type SuccessValidator = ((value: unknown) => boolean) | "empty" | "event-stream"
 interface ResponseContract {
   readonly success: Readonly<Record<number, SuccessValidator>>;
   readonly errors: readonly number[];
+  readonly replaySuccess?: readonly number[];
 }
 
 const DISCOVERY_RESPONSE: ResponseContract = { success: { 200: validDiscovery }, errors: [401, 403, 406, 503] };
 const WORKSPACE_LIST_RESPONSE: ResponseContract = { success: { 200: validWorkspacePage }, errors: [400, 401, 403, 406, 422, 503] };
-const WORKSPACE_CREATE_RESPONSE: ResponseContract = { success: { 200: validWorkspace, 202: validWorkspace }, errors: [400, 401, 403, 406, 409, 422, 503] };
+const WORKSPACE_CREATE_RESPONSE: ResponseContract = { success: { 200: validWorkspace, 202: validWorkspace }, errors: [400, 401, 403, 406, 409, 422, 503], replaySuccess: [200, 202] };
 const WORKSPACE_GET_RESPONSE: ResponseContract = { success: { 200: validWorkspace }, errors: [401, 403, 404, 406, 503] };
-const WORKSPACE_MUTATE_RESPONSE: ResponseContract = { success: { 200: validWorkspace }, errors: [400, 401, 403, 404, 406, 409, 422, 503] };
-const DELETE_RESPONSE: ResponseContract = { success: { 204: "empty" }, errors: [400, 401, 403, 404, 406, 409, 503] };
+const WORKSPACE_MUTATE_RESPONSE: ResponseContract = { success: { 200: validWorkspace }, errors: [400, 401, 403, 404, 406, 409, 422, 503], replaySuccess: [200] };
+const DELETE_RESPONSE: ResponseContract = { success: { 204: "empty" }, errors: [400, 401, 403, 404, 406, 409, 503], replaySuccess: [204] };
 const SESSION_LIST_RESPONSE: ResponseContract = { success: { 200: validSessionPage }, errors: [401, 403, 404, 406, 422, 503] };
-const SESSION_CREATE_RESPONSE: ResponseContract = { success: { 200: validSession, 202: validSession }, errors: [400, 401, 403, 404, 406, 409, 422, 503] };
+const SESSION_CREATE_RESPONSE: ResponseContract = { success: { 200: validSession, 202: validSession }, errors: [400, 401, 403, 404, 406, 409, 422, 503], replaySuccess: [200, 202] };
 const SESSION_GET_RESPONSE: ResponseContract = { success: { 200: validSession }, errors: [401, 403, 404, 406, 503] };
-const SESSION_MUTATE_RESPONSE: ResponseContract = { success: { 200: validSession }, errors: [400, 401, 403, 404, 406, 409, 422, 503] };
-const SESSION_CANCEL_RESPONSE: ResponseContract = { success: { 200: validSession, 202: validSession }, errors: [400, 401, 403, 404, 406, 409, 503] };
-const COMMAND_RESPONSE: ResponseContract = { success: { 200: validCommandResult, 202: validCommandResult }, errors: [400, 401, 403, 404, 406, 409, 422, 503] };
+const SESSION_MUTATE_RESPONSE: ResponseContract = { success: { 200: validSession }, errors: [400, 401, 403, 404, 406, 409, 422, 503], replaySuccess: [200] };
+const SESSION_CANCEL_RESPONSE: ResponseContract = { success: { 200: validSession, 202: validSession }, errors: [400, 401, 403, 404, 406, 409, 503], replaySuccess: [200, 202] };
+const COMMAND_RESPONSE: ResponseContract = { success: { 200: validCommandResult, 202: validCommandResult }, errors: [400, 401, 403, 404, 406, 409, 422, 503], replaySuccess: [200, 202] };
 const SNAPSHOT_RESPONSE: ResponseContract = { success: { 200: validSnapshot }, errors: [401, 403, 404, 406, 503] };
 const EVENTS_RESPONSE: ResponseContract = { success: { 200: "event-stream" }, errors: [400, 401, 403, 404, 406, 410, 422, 503] };
 
@@ -408,6 +420,16 @@ function responseContract(method: string, path: string): ResponseContract | unde
   return undefined;
 }
 
+function validSelectedVersion(response: Response): boolean {
+  const selected = response.headers.get("T4-API-Version");
+  return selected !== null && selected.length <= SELECTED_VERSION_MAX_LENGTH && SELECTED_VERSION_PATTERN.test(selected);
+}
+
+function validReplayHeader(response: Response): boolean {
+  const replayed = response.headers.get("Idempotency-Replayed");
+  return replayed === "true" || replayed === "false";
+}
+
 async function validateResponse(request: Request, response: Response, baseUrl: string): Promise<void> {
   const path = relativeApiPath(request, baseUrl);
   const contract = path === undefined ? undefined : responseContract(request.method, path);
@@ -420,9 +442,13 @@ async function validateResponse(request: Request, response: Response, baseUrl: s
       void response.body?.cancel().catch(() => {});
       throw protocolError(response.status, "T4 API returned an undeclared error status");
     }
+    if (response.status !== 401 && !validSelectedVersion(response)) {
+      void response.body?.cancel().catch(() => {});
+      throw protocolError(502, "T4 API returned a missing or invalid selected version");
+    }
     if (await parsedError(response.clone()) === undefined) {
       void response.body?.cancel().catch(() => {});
-      throw protocolError(response.status, "T4 API returned an invalid or oversized error envelope");
+      throw protocolError(502, "T4 API returned an invalid or oversized error envelope");
     }
     return;
   }
@@ -430,6 +456,14 @@ async function validateResponse(request: Request, response: Response, baseUrl: s
   if (validator === undefined) {
     void response.body?.cancel().catch(() => {});
     throw protocolError(502, "T4 API returned an undeclared success status");
+  }
+  if (!validSelectedVersion(response)) {
+    void response.body?.cancel().catch(() => {});
+    throw protocolError(502, "T4 API returned a missing or invalid selected version");
+  }
+  if (contract.replaySuccess?.includes(response.status) === true && !validReplayHeader(response)) {
+    void response.body?.cancel().catch(() => {});
+    throw protocolError(502, "T4 API returned a missing or invalid replay header");
   }
   if (validator === "empty") {
     if (response.body !== null || response.headers.has("content-type")) {
@@ -535,11 +569,8 @@ class SseFrameParser {
       this.#finishLine(this.#pendingCarriageReturn, frames);
       this.#pendingCarriageReturn = -1;
     }
-    if (this.#length > 0) {
-      if (this.#length > MAX_EVENT_BYTES) this.#oversized();
-      frames.push(this.#buffer.slice(0, this.#length));
-      this.#reset();
-    }
+    if (this.#length > MAX_EVENT_BYTES) this.#oversized();
+    this.#reset();
     return frames;
   }
 
@@ -660,12 +691,20 @@ async function* watch(
             void response.body?.cancel().catch(() => {});
             throw protocolError(502, "T4 API returned an undeclared watch error status");
           }
+          if (response.status !== 401 && !validSelectedVersion(response)) {
+            void response.body?.cancel().catch(() => {});
+            throw protocolError(502, "T4 API returned a missing or invalid selected version");
+          }
           const error = await parsedError(response);
           throw error ?? protocolError(502, "T4 API returned an invalid or oversized error envelope");
         }
         if (response.status !== 200) {
           void response.body?.cancel().catch(() => {});
           throw protocolError(502, "T4 API returned an undeclared watch success status");
+        }
+        if (!validSelectedVersion(response)) {
+          void response.body?.cancel().catch(() => {});
+          throw protocolError(502, "T4 API returned a missing or invalid selected version");
         }
         if (response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "text/event-stream") {
           void response.body?.cancel().catch(() => {});
