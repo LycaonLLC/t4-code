@@ -242,6 +242,10 @@ function liveClusterResponses() {
 
 test("Woodpecker keeps upstream gates and serializes bounded cluster publication", async () => {
   const pipeline = yaml.load(await readFile(resolve(repoRoot, ".woodpecker.yml"), "utf8"));
+  const legacyInstaller = await readFile(
+    resolve(repoRoot, "scripts/cluster-ci/install-legacy-authority-toolchain.sh"),
+    "utf8",
+  );
   assert.equal(typeof pipeline, "object");
   const steps = pipeline.steps;
   const coreCommands = steps["upstream-core"].commands;
@@ -271,6 +275,12 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
     steps["legacy-authority-build"].image,
     "docker.io/library/rust:1.86-slim-bookworm@sha256:57d415bbd61ce11e2d5f73de068103c7bd9f3188dc132c97cef4a8f62989e944",
   );
+  assert.equal(
+    steps["legacy-authority-build"].environment.RUSTFLAGS,
+    "-C link-arg=-fuse-ld=lld",
+  );
+  assert.match(legacyInstaller, /apt-get install[^\n]*\blld\b/u);
+  assert.match(legacyInstaller, /command -v ld\.lld >\/dev\/null/u);
   assert.deepEqual(steps["legacy-authority-build"].commands, [
     "sh scripts/cluster-ci/install-legacy-authority-toolchain.sh",
     "(cd .continuity/omp && bun install --frozen-lockfile)",
