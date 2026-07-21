@@ -210,7 +210,11 @@ func (r *WorkspaceReconciler) reconcileDelete(ctx context.Context, workspace *cl
 		}
 	}
 	var sessions clusterv1alpha1.T4SessionList
-	if err := r.List(ctx, &sessions, client.InNamespace(workspace.Namespace)); err != nil {
+	sessionReader := r.APIReader
+	if sessionReader == nil {
+		sessionReader = r.Client
+	}
+	if err := sessionReader.List(ctx, &sessions, client.InNamespace(workspace.Namespace)); err != nil {
 		return ctrl.Result{}, err
 	}
 	remainingSessions := 0
