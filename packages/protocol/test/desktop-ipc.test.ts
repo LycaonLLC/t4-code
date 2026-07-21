@@ -484,10 +484,20 @@ describe("desktop IPC boundary", () => {
       value,
     });
     expect(decodeProjectionCacheSaveResult({ saved: true })).toEqual({ saved: true });
+    const currentValue = JSON.stringify({
+      kind: "t4-code-projection",
+      version: 2,
+      data: { sessions: [], sessionIndex: [], lru: [], freshness: "cached" },
+    });
+    expect(decodeProjectionCacheSaveRequestValue(currentValue)).toBe(currentValue);
+    expect(decodeProjectionCacheLoadResult({ available: true, value: currentValue })).toEqual({
+      available: true,
+      value: currentValue,
+    });
 
     for (const invalid of [
       { channel: "app:projection-cache:load", payload: { storageKey: "renderer-choice" } },
-      { channel: "app:projection-cache:save", payload: { value: JSON.stringify({ kind: "t4-code-projection", version: 2, data: {} }) } },
+      { channel: "app:projection-cache:save", payload: { value: JSON.stringify({ kind: "t4-code-projection", version: 3, data: {} }) } },
       { channel: "app:projection-cache:save", payload: { value: "not-json" } },
     ]) expect(() => decodeDesktopInvokeRequest(invalid)).toThrow();
     expect(() => decodeProjectionCacheLoadResult({ available: false, value })).toThrow();

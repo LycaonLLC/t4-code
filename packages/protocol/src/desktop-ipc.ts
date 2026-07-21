@@ -820,7 +820,7 @@ function projectionCacheSerialized(value: unknown): string {
   const data = root.data;
   if (
     root.kind !== "t4-code-projection" ||
-    root.version !== 1 ||
+    (root.version !== 1 && root.version !== 2) ||
     !data ||
     typeof data !== "object" ||
     Array.isArray(data)
