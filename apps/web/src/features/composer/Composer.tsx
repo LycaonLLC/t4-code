@@ -81,6 +81,21 @@ function filesToCandidates(files: ArrayLike<File>): AttachmentCandidate[] {
   return Array.from(files, (file) => ({ file }));
 }
 
+function attachmentIntakeState(sessionId: string): {
+  readonly existing: readonly StagedAttachment[];
+  readonly stagedBytes: number;
+  readonly stagedCount: number;
+} {
+  const stagedBySession = composerStore.getState().attachmentsBySessionId;
+  let stagedBytes = 0;
+  let stagedCount = 0;
+  for (const staged of Object.values(stagedBySession)) {
+    stagedCount += staged.length;
+    for (const attachment of staged) stagedBytes += attachment.sizeBytes;
+  }
+  return { existing: stagedBySession[sessionId] ?? [], stagedBytes, stagedCount };
+}
+
 // ---------------------------------------------------------------------------
 // Composer
 // ---------------------------------------------------------------------------
@@ -429,17 +444,11 @@ export function Composer({
       setPreparingAttachmentCount((count) => count + 1);
       // Start every picker read now, before this batch waits behind an earlier
       // intake and before the file input is cleared.
-      const materialized = materializeAttachmentCandidates(candidates);
+      const initialState = attachmentIntakeState(sessionId);
+      const materialized = materializeAttachmentCandidates(candidates, initialState);
       const task = attachmentIntakeTailRef.current.then(async () => {
         const prepared = await materialized;
-        const stagedBySession = composerStore.getState().attachmentsBySessionId;
-        const existing = stagedBySession[sessionId] ?? [];
-        let stagedBytes = 0;
-        let stagedCount = 0;
-        for (const staged of Object.values(stagedBySession)) {
-          stagedCount += staged.length;
-          for (const attachment of staged) stagedBytes += attachment.sizeBytes;
-        }
+        const { existing, stagedBytes, stagedCount } = attachmentIntakeState(sessionId);
         const result = admitAttachments(existing, prepared.accepted, { stagedBytes, stagedCount });
         if (result.accepted.length > 0) {
           composerStore.getState().addAttachments(sessionId, result.accepted);

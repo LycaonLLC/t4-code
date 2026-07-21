@@ -7,6 +7,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   admitAttachments,
   materializeAttachmentCandidates,
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENTS,
   MAX_STAGED_ATTACHMENT_BYTES,
   MAX_STAGED_ATTACHMENTS,
   toPromptAttachment,
@@ -121,6 +123,116 @@ describe("slash commands", () => {
 });
 
 describe("attachments", () => {
+  it("rejects oversized and excess picker Files before reading their bytes", async () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0x00, 0x10]);
+    const oversized = new File([jpeg], "oversized.jpg", { type: "image/jpeg" });
+    Object.defineProperty(oversized, "size", {
+      configurable: true,
+      value: MAX_ATTACHMENT_BYTES + 1,
+    });
+    const candidates = [
+      { file: oversized },
+      ...Array.from({ length: MAX_ATTACHMENTS + 1 }, (_, index) => ({
+        file: new File([jpeg], `image-${index}.jpg`, { type: "image/jpeg" }),
+      })),
+    ];
+    const reads: File[] = [];
+
+    const result = await materializeAttachmentCandidates(candidates, {
+      readFile: (file) => {
+        reads.push(file);
+        return Promise.resolve(new Uint8Array(jpeg).buffer);
+      },
+    });
+
+    expect(reads).toHaveLength(MAX_ATTACHMENTS);
+    expect(reads).not.toContain(oversized);
+    expect(result.accepted).toHaveLength(MAX_ATTACHMENTS);
+    expect(result.rejections).toEqual([
+      "oversized.jpg: 20.0 MB is over the 20.0 MB limit.",
+      `image-${MAX_ATTACHMENTS}.jpg: limit of ${MAX_ATTACHMENTS} attachments reached.`,
+    ]);
+  });
+
+  it("reads and materializes a repeated source File only once", async () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0x00, 0x10]);
+    const source = new File([jpeg], "repeat.jpg", { type: "image/jpeg" });
+    const reads: File[] = [];
+
+    const result = await materializeAttachmentCandidates([{ file: source }, { file: source }], {
+      readFile: (file) => {
+        reads.push(file);
+        return Promise.resolve(new Uint8Array(jpeg).buffer);
+      },
+    });
+
+    expect(reads).toEqual([source]);
+    expect(result.accepted).toHaveLength(1);
+    expect(result.rejections).toEqual(["repeat.jpg: already attached."]);
+  });
+
+  it("applies current session and global staging budgets before reading", async () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0x00, 0x10]);
+    const existing = admitAttachments(
+      [],
+      Array.from({ length: MAX_ATTACHMENTS - 1 }, (_, index) => ({
+        file: new File([jpeg], `existing-${index}.jpg`, { type: "image/jpeg" }),
+      })),
+      deterministicAttachmentOptions(),
+    ).accepted;
+    const reads: File[] = [];
+    const readFile = (file: File): Promise<ArrayBuffer> => {
+      reads.push(file);
+      return Promise.resolve(new Uint8Array(jpeg).buffer);
+    };
+
+    const promptBudget = await materializeAttachmentCandidates(
+      [
+        { file: new File([jpeg], "last-slot.jpg", { type: "image/jpeg" }) },
+        { file: new File([jpeg], "no-slot.jpg", { type: "image/jpeg" }) },
+      ],
+      {
+        existing,
+        stagedBytes: existing.reduce((total, attachment) => total + attachment.sizeBytes, 0),
+        stagedCount: existing.length,
+        readFile,
+      },
+    );
+    expect(reads.map((file) => file.name)).toEqual(["last-slot.jpg"]);
+    expect(promptBudget.rejections).toEqual([
+      `no-slot.jpg: limit of ${MAX_ATTACHMENTS} attachments reached.`,
+    ]);
+
+    reads.length = 0;
+    const globalBudget = await materializeAttachmentCandidates(
+      [{ file: new File([jpeg], "global-limit.jpg", { type: "image/jpeg" }) }],
+      {
+        stagedBytes: MAX_STAGED_ATTACHMENT_BYTES,
+        stagedCount: MAX_STAGED_ATTACHMENTS,
+        readFile,
+      },
+    );
+    expect(reads).toEqual([]);
+    expect(globalBudget.accepted).toEqual([]);
+    expect(globalBudget.rejections[0]).toContain(
+      `already has ${MAX_STAGED_ATTACHMENTS} staged images`,
+    );
+
+    const byteBudget = await materializeAttachmentCandidates(
+      [{ file: new File([jpeg], "global-bytes.jpg", { type: "image/jpeg" }) }],
+      {
+        stagedBytes: MAX_STAGED_ATTACHMENT_BYTES,
+        stagedCount: 0,
+        readFile,
+      },
+    );
+    expect(reads).toEqual([]);
+    expect(byteBudget.accepted).toEqual([]);
+    expect(byteBudget.rejections[0]).toContain(
+      "staged images across sessions would exceed 160.0 MB",
+    );
+  });
+
   it("reads Android picker Files immediately and stages an owned byte-backed copy", async () => {
     const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0x00, 0x10]);
     const source = new File([jpeg], "1000049502.jpg", {
