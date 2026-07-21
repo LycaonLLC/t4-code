@@ -479,9 +479,11 @@ export interface components {
                 "application/json": components["schemas"]["InvalidRequestErrorEnvelope"];
             };
         };
-        /** @description Service temporarily unavailable or outcome indeterminate */
+        /** @description Service temporarily unavailable or outcome indeterminate. Retryable watch failures may advertise Retry-After; clients honor it with a 30 second ceiling. */
         Error503: {
             headers: {
+                /** @description RFC 9110 delay in seconds or HTTP date; clients bound the applied delay. */
+                "Retry-After"?: string;
                 "T4-API-Version": components["headers"]["SelectedVersion"];
                 [name: string]: unknown;
             };
@@ -794,7 +796,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Bounded SSE event stream; each data field is a WatchEvent JSON value */
+            /** @description Bounded SSE event stream. Every non-empty SSE data field is one JSON value conforming to WatchEvent; clients MUST reject unknown fields and schema-invalid event payloads before delivery. Transport chunk boundaries do not delimit frames. */
             200: {
                 headers: {
                     "Cache-Control"?: "no-store";
