@@ -1213,9 +1213,15 @@ func TestSessionDeletionRefusesForeignDeterministicResources(t *testing.T) {
 			} else {
 				service.OwnerReferences = nil
 			}
-			beforePod := pod.DeepCopy()
-			beforeService := service.DeepCopy()
 			c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Session{}).WithObjects(session, pod, service).Build()
+			beforePod := &corev1.Pod{}
+			if err := c.Get(context.Background(), client.ObjectKeyFromObject(pod), beforePod); err != nil {
+				t.Fatal(err)
+			}
+			beforeService := &corev1.Service{}
+			if err := c.Get(context.Background(), client.ObjectKeyFromObject(service), beforeService); err != nil {
+				t.Fatal(err)
+			}
 			if err := c.Delete(context.Background(), session); err != nil {
 				t.Fatal(err)
 			}
@@ -1872,8 +1878,9 @@ func TestSessionCreateAlreadyExistsRefetchesForeignWinner(t *testing.T) {
 			base := fake.NewClientBuilder().WithScheme(scheme).
 				WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).
 				WithObjects(objects...).Build()
-			c := &createAlreadyExistsClient{Client: base, raceKind: kind}
+			c := &createAlreadyExistsClient{Client: base, raceKind: kind, hideWinnerFromCache: true}
 			r := configuredSessionReconciler(c, scheme)
+			r.APIReader = base
 			if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
 				t.Fatal(err)
 			}
@@ -2124,8 +2131,25 @@ func hasReadOnlyMount(mounts []corev1.VolumeMount, name, path string) bool {
 
 type createAlreadyExistsClient struct {
 	client.Client
-	raceKind string
-	winner   client.Object
+	raceKind            string
+	winner              client.Object
+	hideWinnerFromCache bool
+}
+
+func (c *createAlreadyExistsClient) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
+	if c.hideWinnerFromCache && c.winner != nil && key == client.ObjectKeyFromObject(c.winner) {
+		switch object.(type) {
+		case *corev1.Pod:
+			if c.raceKind == "Pod" {
+				return apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, key.Name)
+			}
+		case *corev1.Service:
+			if c.raceKind == "Service" {
+				return apierrors.NewNotFound(schema.GroupResource{Resource: "services"}, key.Name)
+			}
+		}
+	}
+	return c.Client.Get(ctx, key, object, options...)
 }
 
 func (c *createAlreadyExistsClient) Create(ctx context.Context, object client.Object, options ...client.CreateOption) error {
