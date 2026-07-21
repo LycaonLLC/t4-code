@@ -36,7 +36,7 @@ import {
   type AttachmentCandidate,
   type StagedAttachment,
 } from "./attachments.ts";
-import { composerStore, useComposer } from "./composer-store.ts";
+import { composerStore, type AttachmentIntakeToken, useComposer } from "./composer-store.ts";
 import { ContextMeter } from "./ContextMeter.tsx";
 import { AttachmentChips, RunOptionsMenu } from "./ComposerControls.tsx";
 import {
@@ -445,19 +445,40 @@ export function Composer({
       // Start every picker read now, before this batch waits behind an earlier
       // intake and before the file input is cleared.
       const initialState = attachmentIntakeState(sessionId);
-      const materialized = materializeAttachmentCandidates(candidates, initialState);
+      const pending = composerStore.getState().pendingAttachmentIntakeUsage();
+      let intakeToken: AttachmentIntakeToken | null = null;
+      const materialized = materializeAttachmentCandidates(candidates, {
+        ...initialState,
+        stagedBytes: initialState.stagedBytes + pending.bytes,
+        stagedCount: initialState.stagedCount + pending.count,
+        onReserve: (reservation) => {
+          intakeToken = composerStore.getState().beginAttachmentIntake(sessionId, reservation);
+        },
+      });
+      const isCurrent = () =>
+        intakeToken !== null &&
+        composerStore.getState().isAttachmentIntakeCurrent(sessionId, intakeToken);
       const task = attachmentIntakeTailRef.current.then(async () => {
         const prepared = await materialized;
+        if (!isCurrent()) return;
         const { existing, stagedBytes, stagedCount } = attachmentIntakeState(sessionId);
         const result = admitAttachments(existing, prepared.accepted, { stagedBytes, stagedCount });
+        if (!isCurrent()) return;
         if (result.accepted.length > 0) {
           composerStore.getState().addAttachments(sessionId, result.accepted);
         }
         setRejections([...prepared.rejections, ...result.rejections]);
       });
       const settled = task
-        .catch(() => setRejections([IMAGE_PREPARATION_FAILED_REASON]))
-        .finally(() => setPreparingAttachmentCount((count) => Math.max(0, count - 1)));
+        .catch(() => {
+          if (isCurrent()) setRejections([IMAGE_PREPARATION_FAILED_REASON]);
+        })
+        .finally(() => {
+          if (intakeToken !== null) {
+            composerStore.getState().finishAttachmentIntake(sessionId, intakeToken);
+          }
+          setPreparingAttachmentCount((count) => Math.max(0, count - 1));
+        });
       attachmentIntakeTailRef.current = settled;
       return settled;
     },

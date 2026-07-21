@@ -66,6 +66,11 @@ export interface AttachmentMaterialization {
   readonly rejections: readonly string[];
 }
 
+export interface AttachmentMaterializationReservation {
+  readonly bytes: number;
+  readonly count: number;
+}
+
 export interface AttachmentMaterializationOptions {
   /**
    * Test seam. Production deliberately starts FileReader synchronously while
@@ -78,6 +83,8 @@ export interface AttachmentMaterializationOptions {
   readonly stagedBytes?: number;
   /** Images already staged across every session. */
   readonly stagedCount?: number;
+  /** Synchronously records pending memory before any FileReader starts. */
+  readonly onReserve?: (reservation: AttachmentMaterializationReservation) => void;
 }
 
 function formatBytes(bytes: number): string {
@@ -119,35 +126,44 @@ export async function materializeAttachmentCandidates(
     options.stagedBytes ?? existing.reduce((total, attachment) => total + attachment.sizeBytes, 0);
   let stagedCount = options.stagedCount ?? existing.length;
   const seenFiles = new Set(existing.map((attachment) => attachment.file));
+  let reservedBytes = 0;
+  let reservedCount = 0;
+  const planned = candidates.map(({ file }) => {
+    const name = file.name || "untitled";
+    let rejection: string | null = null;
+    if (count >= MAX_ATTACHMENTS) {
+      rejection = `${name}: limit of ${MAX_ATTACHMENTS} attachments reached.`;
+    } else if (provisionalImageMediaType(file) === null) {
+      rejection = `${name}: attach a PNG, JPEG, WebP, or GIF image.`;
+    } else if (file.size === 0) {
+      rejection = `${name}: the image is empty.`;
+    } else if (file.size > MAX_ATTACHMENT_BYTES) {
+      rejection = `${name}: ${formatBytes(file.size)} is over the ${formatBytes(MAX_ATTACHMENT_BYTES)} limit.`;
+    } else if (seenFiles.has(file)) {
+      rejection = `${name}: already attached.`;
+    } else if (stagedCount >= MAX_STAGED_ATTACHMENTS) {
+      rejection = `${name}: the app already has ${MAX_STAGED_ATTACHMENTS} staged images. Remove one before adding another.`;
+    } else if (stagedBytes + file.size > MAX_STAGED_ATTACHMENT_BYTES) {
+      rejection = `${name}: staged images across sessions would exceed ${formatBytes(MAX_STAGED_ATTACHMENT_BYTES)}. Remove one before adding another.`;
+    }
+    if (rejection !== null) return { file: null, name, rejection } as const;
+
+    count += 1;
+    stagedBytes += file.size;
+    stagedCount += 1;
+    reservedBytes += file.size;
+    reservedCount += 1;
+    seenFiles.add(file);
+    return { file, name, rejection: null } as const;
+  });
+
+  // The caller owns this reservation until admission or disposal finishes.
+  // This callback runs before any asynchronous file read starts, so another
+  // paste/drop/picker batch sees the pending memory in its own preflight.
+  options.onReserve?.({ bytes: reservedBytes, count: reservedCount });
   const results = await Promise.all(
-    candidates.map(async ({ file }) => {
-      const name = file.name || "untitled";
-      let rejection: string | null = null;
-      if (count >= MAX_ATTACHMENTS) {
-        rejection = `${name}: limit of ${MAX_ATTACHMENTS} attachments reached.`;
-      } else if (provisionalImageMediaType(file) === null) {
-        rejection = `${name}: attach a PNG, JPEG, WebP, or GIF image.`;
-      } else if (file.size === 0) {
-        rejection = `${name}: the image is empty.`;
-      } else if (file.size > MAX_ATTACHMENT_BYTES) {
-        rejection = `${name}: ${formatBytes(file.size)} is over the ${formatBytes(MAX_ATTACHMENT_BYTES)} limit.`;
-      } else if (seenFiles.has(file)) {
-        rejection = `${name}: already attached.`;
-      } else if (stagedCount >= MAX_STAGED_ATTACHMENTS) {
-        rejection = `${name}: the app already has ${MAX_STAGED_ATTACHMENTS} staged images. Remove one before adding another.`;
-      } else if (stagedBytes + file.size > MAX_STAGED_ATTACHMENT_BYTES) {
-        rejection = `${name}: staged images across sessions would exceed ${formatBytes(MAX_STAGED_ATTACHMENT_BYTES)}. Remove one before adding another.`;
-      }
-      if (rejection !== null) return { candidate: null, rejection } as const;
-
-      // Reserve the declared budget before starting another concurrent read.
-      // Final admission rechecks the owned File's actual byte size and current
-      // store state after every read settles.
-      count += 1;
-      stagedBytes += file.size;
-      stagedCount += 1;
-      seenFiles.add(file);
-
+    planned.map(async ({ file, name, rejection }) => {
+      if (file === null) return { candidate: null, rejection } as const;
       let buffer: ArrayBuffer;
       try {
         // This call occurs synchronously for every candidate before the outer

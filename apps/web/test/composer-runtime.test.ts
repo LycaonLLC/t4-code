@@ -15,7 +15,11 @@ import {
   type AttachmentIntakeOptions,
   type StagedAttachment,
 } from "../src/features/composer/attachments.ts";
-import { resolveAskDigit, resolveComposerKey, resolveMenuKey } from "../src/features/composer/keys.ts";
+import {
+  resolveAskDigit,
+  resolveComposerKey,
+  resolveMenuKey,
+} from "../src/features/composer/keys.ts";
 import {
   activeSlashQuery,
   buildSlashCatalog,
@@ -233,6 +237,55 @@ describe("attachments", () => {
     );
   });
 
+  it("counts pending materialization reservations across concurrent batches", async () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0x00, 0x10]);
+    const store = createComposerStore();
+    const reservedFiles = Array.from({ length: MAX_ATTACHMENTS }, (_, index) => {
+      const file = new File([jpeg], `reserved-${index}.jpg`, { type: "image/jpeg" });
+      Object.defineProperty(file, "size", {
+        configurable: true,
+        value: MAX_ATTACHMENT_BYTES,
+      });
+      return { file };
+    });
+    let firstToken: string | null = null;
+    const first = await materializeAttachmentCandidates(reservedFiles, {
+      onReserve: (reservation) => {
+        firstToken = store.getState().beginAttachmentIntake("A", reservation);
+      },
+      readFile: () => Promise.resolve(new Uint8Array(jpeg).buffer),
+    });
+    expect(first.accepted).toHaveLength(MAX_ATTACHMENTS);
+    expect(firstToken).not.toBeNull();
+    expect(store.getState().pendingAttachmentIntakeUsage()).toEqual({
+      bytes: MAX_STAGED_ATTACHMENT_BYTES,
+      count: MAX_ATTACHMENTS,
+    });
+
+    const reads: File[] = [];
+    const pending = store.getState().pendingAttachmentIntakeUsage();
+    const second = await materializeAttachmentCandidates(
+      [{ file: new File([jpeg], "blocked.jpg", { type: "image/jpeg" }) }],
+      {
+        stagedBytes: pending.bytes,
+        stagedCount: pending.count,
+        onReserve: (reservation) => {
+          store.getState().beginAttachmentIntake("B", reservation);
+        },
+        readFile: (file) => {
+          reads.push(file);
+          return Promise.resolve(new Uint8Array(jpeg).buffer);
+        },
+      },
+    );
+    expect(reads).toEqual([]);
+    expect(second.rejections[0]).toContain("staged images across sessions would exceed 160.0 MB");
+
+    if (firstToken === null) throw new Error("first materialization did not reserve its budget");
+    store.getState().finishAttachmentIntake("A", firstToken);
+    expect(store.getState().pendingAttachmentIntakeUsage()).toEqual({ bytes: 0, count: 0 });
+  });
+
   it("reads Android picker Files immediately and stages an owned byte-backed copy", async () => {
     const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0x00, 0x10]);
     const source = new File([jpeg], "1000049502.jpg", {
@@ -376,11 +429,7 @@ describe("attachments", () => {
 
   it("enforces the size cap, count cap, and exact-File duplicate guard", () => {
     const tooLarge = imageFile("big.png", 21 * 1024 * 1024);
-    const oversize = admitAttachments(
-      [],
-      [{ file: tooLarge }],
-      deterministicAttachmentOptions(),
-    );
+    const oversize = admitAttachments([], [{ file: tooLarge }], deterministicAttachmentOptions());
     expect(oversize.accepted.length).toBe(0);
     expect(oversize.rejections[0]).toContain("over the 20.0 MB limit");
 
@@ -403,29 +452,25 @@ describe("attachments", () => {
 
   it("bounds preserved staging across sessions without silently evicting files", () => {
     const candidate = imageFile("next.png", 1);
-    const atByteBudget = admitAttachments(
-      [],
-      [{ file: candidate }],
-      {
-        ...deterministicAttachmentOptions(),
-        stagedBytes: MAX_STAGED_ATTACHMENT_BYTES,
-        stagedCount: 8,
-      },
-    );
+    const atByteBudget = admitAttachments([], [{ file: candidate }], {
+      ...deterministicAttachmentOptions(),
+      stagedBytes: MAX_STAGED_ATTACHMENT_BYTES,
+      stagedCount: 8,
+    });
     expect(atByteBudget.accepted).toEqual([]);
-    expect(atByteBudget.rejections[0]).toContain("staged images across sessions would exceed 160.0 MB");
-
-    const atCountBudget = admitAttachments(
-      [],
-      [{ file: candidate }],
-      {
-        ...deterministicAttachmentOptions(),
-        stagedBytes: MAX_STAGED_ATTACHMENTS,
-        stagedCount: MAX_STAGED_ATTACHMENTS,
-      },
+    expect(atByteBudget.rejections[0]).toContain(
+      "staged images across sessions would exceed 160.0 MB",
     );
+
+    const atCountBudget = admitAttachments([], [{ file: candidate }], {
+      ...deterministicAttachmentOptions(),
+      stagedBytes: MAX_STAGED_ATTACHMENTS,
+      stagedCount: MAX_STAGED_ATTACHMENTS,
+    });
     expect(atCountBudget.accepted).toEqual([]);
-    expect(atCountBudget.rejections[0]).toContain(`already has ${MAX_STAGED_ATTACHMENTS} staged images`);
+    expect(atCountBudget.rejections[0]).toContain(
+      `already has ${MAX_STAGED_ATTACHMENTS} staged images`,
+    );
 
     const empty = admitAttachments(
       [],
@@ -576,6 +621,31 @@ describe("draft continuity A→B→A", () => {
     expect(clears).toBe(0);
     expect(draft).toBe("delete while pending");
     expect(store.getState().pendingSubmissionBySessionId.A).toBe(nextToken);
+  });
+
+  it("invalidates pending attachment intake when its session is deleted", () => {
+    const store = createComposerStore();
+    const token = store
+      .getState()
+      .beginAttachmentIntake("A", { bytes: MAX_ATTACHMENT_BYTES, count: 1 });
+    expect(store.getState().isAttachmentIntakeCurrent("A", token)).toBe(true);
+    expect(store.getState().pendingAttachmentIntakeUsage()).toEqual({
+      bytes: MAX_ATTACHMENT_BYTES,
+      count: 1,
+    });
+
+    store.getState().disposeSession("A");
+
+    expect(store.getState().isAttachmentIntakeCurrent("A", token)).toBe(false);
+    // Deletion invalidates ownership immediately, but the reservation remains
+    // until the reader settles so another session cannot over-allocate memory.
+    expect(store.getState().pendingAttachmentIntakeUsage()).toEqual({
+      bytes: MAX_ATTACHMENT_BYTES,
+      count: 1,
+    });
+    store.getState().finishAttachmentIntake("A", token);
+    expect(store.getState().pendingAttachmentIntakeUsage()).toEqual({ bytes: 0, count: 0 });
+    expect(store.getState().attachmentsBySessionId.A).toBeUndefined();
   });
 
   it("keeps intake warnings scoped to the session that produced them", () => {
