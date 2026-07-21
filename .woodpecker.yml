@@ -258,7 +258,7 @@ steps:
           limits:
             cpu: "1"
             memory: 4Gi
-            ephemeral-storage: 2Gi
+            ephemeral-storage: 6Gi
 
   cluster-chart-tests:
     depends_on: [cluster-operator-tests]

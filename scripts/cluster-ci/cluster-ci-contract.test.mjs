@@ -278,6 +278,12 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
     steps["cluster-operator-tests"].backend_options.kubernetes.resources.limits.memory,
     "4Gi",
   );
+  assert.equal(
+    steps["cluster-operator-tests"].backend_options.kubernetes.resources.limits[
+      "ephemeral-storage"
+    ],
+    "6Gi",
+  );
   assert.ok(
     steps["cluster-chart-tests"].commands.includes("helm lint ../../../deploy/charts/t4-cluster"),
   );
