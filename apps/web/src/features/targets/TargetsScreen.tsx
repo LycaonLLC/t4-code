@@ -32,7 +32,7 @@ import {
   CONNECTION_STATE_META,
   deriveTargetRows,
   pairCommandForTarget,
-  TARGET_CAPABILITY_GROUPS,
+  selectTargetCapabilityGroups,
   type TargetCapabilityGroupId,
   type TargetRow,
 } from "./model.ts";
@@ -721,7 +721,13 @@ function TargetCard({ api, row }: { readonly api: TargetsStoreApi; readonly row:
 
 // ─── Add-host form ──────────────────────────────────────────────────────────
 
-function AddHostForm({ api }: { readonly api: TargetsStoreApi }) {
+function AddHostForm({
+  api,
+  clusterOperatorEnabled,
+}: {
+  readonly api: TargetsStoreApi;
+  readonly clusterOperatorEnabled: boolean;
+}) {
   const draft = useTargets(api, (state) => state.draft);
   const errors = useTargets(api, (state) => state.draftErrors);
   const addError = useTargets(api, (state) => state.addError);
@@ -812,7 +818,7 @@ function AddHostForm({ api }: { readonly api: TargetsStoreApi }) {
         <legend className="pb-1 font-medium text-muted-foreground text-xs uppercase tracking-wide">
           Ask that host for permission to
         </legend>
-        {TARGET_CAPABILITY_GROUPS.map((group) => {
+        {selectTargetCapabilityGroups(clusterOperatorEnabled).map((group) => {
           const locked = group.id === "observe";
           const checked = locked || draft.groups.has(group.id);
           return (
@@ -1031,7 +1037,7 @@ export function TargetsScreen({
             onOpenSession={onOpenSession}
             snapshot={snapshot}
           />
-          <AddHostForm api={api} />
+          <AddHostForm api={api} clusterOperatorEnabled={snapshot.clusterOperatorEnabled === true} />
         </div>
       </div>
       <RemoveDialog api={api} rows={rows} />
