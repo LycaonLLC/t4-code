@@ -168,9 +168,17 @@ export interface components {
             supportedMajors?: number[];
             violations?: components["schemas"]["FieldViolation"][];
         };
+        BadRequestApiError: components["schemas"]["ApiError"] & {
+            /** @enum {unknown} */
+            code?: "invalid_request" | "idempotency_key_required" | "invalid_origin" | "https_required";
+        };
+        BadRequestErrorEnvelope: {
+            error: components["schemas"]["BadRequestApiError"];
+        };
         CommandCreate: {
             command: string;
-            metadata?: {
+            /** @default {} */
+            metadata: {
                 [key: string]: string | number | boolean | null;
             };
         };
@@ -182,11 +190,15 @@ export interface components {
             commandId: components["schemas"]["ResourceId"];
             cursor: components["schemas"]["Cursor"];
             state: components["schemas"]["OperationState"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "CommandWatchEvent";
+            /** @constant */
+            type: "command";
+        };
+        ConflictApiError: components["schemas"]["ApiError"] & {
+            /** @enum {unknown} */
+            code?: "idempotency_conflict" | "revision_conflict";
+        };
+        ConflictErrorEnvelope: {
+            error: components["schemas"]["ConflictApiError"];
         };
         /** @description Opaque server-issued header-safe SSE cursor. */
         Cursor: string;
@@ -203,6 +215,8 @@ export interface components {
             capabilities: string[];
             limits: {
                 commandBytesMax: number;
+                commandMetadataValueBytesMax: number;
+                commandRequestBytesMax: number;
                 heartbeatSeconds: number;
                 pageSizeDefault: number;
                 pageSizeMax: number;
@@ -218,15 +232,19 @@ export interface components {
             message: string;
             rule: string;
         };
+        ForbiddenApiError: components["schemas"]["ApiError"] & {
+            /** @constant */
+            code?: "forbidden";
+        };
+        ForbiddenErrorEnvelope: {
+            error: components["schemas"]["ForbiddenApiError"];
+        };
         HeartbeatWatchEvent: {
             cursor: components["schemas"]["Cursor"];
             /** Format: date-time */
             observedAt: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "HeartbeatWatchEvent";
+            /** @constant */
+            type: "heartbeat";
         };
         IncompatibleVersionApiError: components["schemas"]["ApiError"] & {
             /** @constant */
@@ -246,6 +264,13 @@ export interface components {
         };
         Labels: {
             [key: string]: string;
+        };
+        NotFoundApiError: components["schemas"]["ApiError"] & {
+            /** @constant */
+            code?: "not_found";
+        };
+        NotFoundErrorEnvelope: {
+            error: components["schemas"]["NotFoundApiError"];
         };
         /** @enum {string} */
         OperationState: "accepted" | "rejected" | "conflict" | "unavailable" | "indeterminate";
@@ -287,17 +312,28 @@ export interface components {
             cursor: components["schemas"]["Cursor"];
             revision: components["schemas"]["Revision"];
             state: components["schemas"]["SessionState"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "SessionWatchEvent";
+            /** @constant */
+            type: "session";
         };
         SnapshotEntry: {
             /** @enum {string} */
             kind: "input" | "output" | "status";
             sequence: number;
             text: string;
+        };
+        UnauthenticatedApiError: components["schemas"]["ApiError"] & {
+            /** @constant */
+            code?: "unauthenticated";
+        };
+        UnauthenticatedErrorEnvelope: {
+            error: components["schemas"]["UnauthenticatedApiError"];
+        };
+        UnavailableApiError: components["schemas"]["ApiError"] & {
+            /** @enum {unknown} */
+            code?: "unavailable" | "indeterminate";
+        };
+        UnavailableErrorEnvelope: {
+            error: components["schemas"]["UnavailableApiError"];
         };
         WatchEvent: components["schemas"]["HeartbeatWatchEvent"] | components["schemas"]["SessionWatchEvent"] | components["schemas"]["CommandWatchEvent"];
         Workspace: {
@@ -323,12 +359,6 @@ export interface components {
         WorkspaceState: "accepted" | "provisioning" | "ready" | "deleting" | "deleted" | "failed" | "unavailable" | "indeterminate";
     };
     responses: {
-        BadRequest: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content?: never;
-        };
         /** @description Command intent accepted with a stable outcome state */
         CommandAccepted: {
             headers: {
@@ -351,21 +381,10 @@ export interface components {
                 "application/json": components["schemas"]["CommandResult"];
             };
         };
-        Conflict: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content?: never;
-        };
-        CursorExpired: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content?: never;
-        };
-        /** @description Deletion accepted or resource already absent */
+        /** @description Idempotent deletion accepted or resource already absent */
         Deleted: {
             headers: {
+                "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                 "T4-API-Version": components["headers"]["SelectedVersion"];
                 [name: string]: unknown;
             };
@@ -388,7 +407,7 @@ export interface components {
                 [name: string]: unknown;
             };
             content: {
-                "application/json": components["schemas"]["ErrorEnvelope"];
+                "application/json": components["schemas"]["BadRequestErrorEnvelope"];
             };
         };
         /** @description Missing or invalid opaque bearer credential */
@@ -397,7 +416,7 @@ export interface components {
                 [name: string]: unknown;
             };
             content: {
-                "application/json": components["schemas"]["ErrorEnvelope"];
+                "application/json": components["schemas"]["UnauthenticatedErrorEnvelope"];
             };
         };
         /** @description Credential lacks the deny-by-default operation or resource scope */
@@ -407,7 +426,7 @@ export interface components {
                 [name: string]: unknown;
             };
             content: {
-                "application/json": components["schemas"]["ErrorEnvelope"];
+                "application/json": components["schemas"]["ForbiddenErrorEnvelope"];
             };
         };
         /** @description Resource absent or outside caller scope (scope existence is not disclosed) */
@@ -417,7 +436,7 @@ export interface components {
                 [name: string]: unknown;
             };
             content: {
-                "application/json": components["schemas"]["ErrorEnvelope"];
+                "application/json": components["schemas"]["NotFoundErrorEnvelope"];
             };
         };
         /** @description Requested major is incompatible; no silent downgrade */
@@ -437,7 +456,7 @@ export interface components {
                 [name: string]: unknown;
             };
             content: {
-                "application/json": components["schemas"]["ErrorEnvelope"];
+                "application/json": components["schemas"]["ConflictErrorEnvelope"];
             };
         };
         /** @description Watch cursor expired; resync from the typed snapshot target */
@@ -467,32 +486,8 @@ export interface components {
                 [name: string]: unknown;
             };
             content: {
-                "application/json": components["schemas"]["ErrorEnvelope"];
+                "application/json": components["schemas"]["UnavailableErrorEnvelope"];
             };
-        };
-        Forbidden: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content?: never;
-        };
-        IncompatibleVersion: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content?: never;
-        };
-        InvalidRequest: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content?: never;
-        };
-        NotFound: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content?: never;
         };
         /** @description Session */
         Session: {
@@ -525,7 +520,7 @@ export interface components {
                 "application/json": components["schemas"]["SessionPage"];
             };
         };
-        /** @description Identical session spawn replay */
+        /** @description Identical session mutation replay */
         SessionReplay: {
             headers: {
                 "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
@@ -545,18 +540,6 @@ export interface components {
             content: {
                 "application/json": components["schemas"]["SessionSnapshot"];
             };
-        };
-        Unauthenticated: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content?: never;
-        };
-        Unavailable: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content?: never;
         };
         /** @description Workspace */
         Workspace: {
@@ -605,7 +588,7 @@ export interface components {
         /** @description Requested API major. v1 clients send 1. Unsupported majors fail with 406 instead of silently downgrading. */
         ApiVersion: string;
         HeartbeatSeconds: number;
-        /** @description Opaque caller-generated key scoped to credential, operation, and target. Same key plus same canonical request replays; different content conflicts. */
+        /** @description Opaque caller-generated key scoped by the server to the authenticated principal, operation ID, and target resource IDs. Idempotency is evaluated only after path, query, header, and request-schema validation and application of schema defaults. Request identity is the operation ID, target IDs, relevant precondition headers, and the RFC 8785 JSON Canonicalization Scheme (JCS) bytes of the validated JSON body. JCS object member order is insignificant, array order is significant, omitted fields remain distinct unless the request schema defaulted them, and no Unicode normalization is performed beyond RFC 8785. Reusing a key with identical identity replays the original terminal response and advertises Idempotency-Replayed; reusing it with a different identity returns 409 idempotency_conflict. */
         IdempotencyKey: string;
         /** @description Decimal resource revision for optimistic mutation. */
         IfMatch: string;
@@ -644,10 +627,10 @@ export interface operations {
         requestBody?: never;
         responses: {
             200: components["responses"]["Discovery"];
-            401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Forbidden"];
-            406: components["responses"]["IncompatibleVersion"];
-            503: components["responses"]["Unavailable"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            406: components["responses"]["Error406"];
+            503: components["responses"]["Error503"];
         };
     };
     getSession: {
@@ -665,17 +648,19 @@ export interface operations {
         requestBody?: never;
         responses: {
             200: components["responses"]["Session"];
-            401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-            406: components["responses"]["IncompatibleVersion"];
-            503: components["responses"]["Unavailable"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            406: components["responses"]["Error406"];
+            503: components["responses"]["Error503"];
         };
     };
     deleteSession: {
         parameters: {
             query?: never;
             header: {
+                /** @description Opaque caller-generated key scoped by the server to the authenticated principal, operation ID, and target resource IDs. Idempotency is evaluated only after path, query, header, and request-schema validation and application of schema defaults. Request identity is the operation ID, target IDs, relevant precondition headers, and the RFC 8785 JSON Canonicalization Scheme (JCS) bytes of the validated JSON body. JCS object member order is insignificant, array order is significant, omitted fields remain distinct unless the request schema defaulted them, and no Unicode normalization is performed beyond RFC 8785. Reusing a key with identical identity replays the original terminal response and advertises Idempotency-Replayed; reusing it with a different identity returns 409 idempotency_conflict. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 /** @description Requested API major. v1 clients send 1. Unsupported majors fail with 406 instead of silently downgrading. */
                 "T4-API-Version": components["parameters"]["ApiVersion"];
             };
@@ -687,18 +672,21 @@ export interface operations {
         requestBody?: never;
         responses: {
             204: components["responses"]["Deleted"];
-            401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-            406: components["responses"]["IncompatibleVersion"];
-            409: components["responses"]["Conflict"];
-            503: components["responses"]["Unavailable"];
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            406: components["responses"]["Error406"];
+            409: components["responses"]["Error409"];
+            503: components["responses"]["Error503"];
         };
     };
     mutateSession: {
         parameters: {
             query?: never;
             header: {
+                /** @description Opaque caller-generated key scoped by the server to the authenticated principal, operation ID, and target resource IDs. Idempotency is evaluated only after path, query, header, and request-schema validation and application of schema defaults. Request identity is the operation ID, target IDs, relevant precondition headers, and the RFC 8785 JSON Canonicalization Scheme (JCS) bytes of the validated JSON body. JCS object member order is insignificant, array order is significant, omitted fields remain distinct unless the request schema defaulted them, and no Unicode normalization is performed beyond RFC 8785. Reusing a key with identical identity replays the original terminal response and advertises Idempotency-Replayed; reusing it with a different identity returns 409 idempotency_conflict. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 /** @description Decimal resource revision for optimistic mutation. */
                 "If-Match": components["parameters"]["IfMatch"];
                 /** @description Requested API major. v1 clients send 1. Unsupported majors fail with 406 instead of silently downgrading. */
@@ -716,19 +704,22 @@ export interface operations {
         };
         responses: {
             200: components["responses"]["Session"];
-            401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-            406: components["responses"]["IncompatibleVersion"];
-            409: components["responses"]["Conflict"];
-            422: components["responses"]["InvalidRequest"];
-            503: components["responses"]["Unavailable"];
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            406: components["responses"]["Error406"];
+            409: components["responses"]["Error409"];
+            422: components["responses"]["Error422"];
+            503: components["responses"]["Error503"];
         };
     };
     cancelSession: {
         parameters: {
             query?: never;
             header: {
+                /** @description Opaque caller-generated key scoped by the server to the authenticated principal, operation ID, and target resource IDs. Idempotency is evaluated only after path, query, header, and request-schema validation and application of schema defaults. Request identity is the operation ID, target IDs, relevant precondition headers, and the RFC 8785 JSON Canonicalization Scheme (JCS) bytes of the validated JSON body. JCS object member order is insignificant, array order is significant, omitted fields remain distinct unless the request schema defaulted them, and no Unicode normalization is performed beyond RFC 8785. Reusing a key with identical identity replays the original terminal response and advertises Idempotency-Replayed; reusing it with a different identity returns 409 idempotency_conflict. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 /** @description Requested API major. v1 clients send 1. Unsupported majors fail with 406 instead of silently downgrading. */
                 "T4-API-Version": components["parameters"]["ApiVersion"];
             };
@@ -739,20 +730,22 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            200: components["responses"]["SessionReplay"];
             202: components["responses"]["SessionAccepted"];
-            401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-            406: components["responses"]["IncompatibleVersion"];
-            409: components["responses"]["Conflict"];
-            503: components["responses"]["Unavailable"];
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            406: components["responses"]["Error406"];
+            409: components["responses"]["Error409"];
+            503: components["responses"]["Error503"];
         };
     };
     submitCommand: {
         parameters: {
             query?: never;
             header: {
-                /** @description Opaque caller-generated key scoped to credential, operation, and target. Same key plus same canonical request replays; different content conflicts. */
+                /** @description Opaque caller-generated key scoped by the server to the authenticated principal, operation ID, and target resource IDs. Idempotency is evaluated only after path, query, header, and request-schema validation and application of schema defaults. Request identity is the operation ID, target IDs, relevant precondition headers, and the RFC 8785 JSON Canonicalization Scheme (JCS) bytes of the validated JSON body. JCS object member order is insignificant, array order is significant, omitted fields remain distinct unless the request schema defaulted them, and no Unicode normalization is performed beyond RFC 8785. Reusing a key with identical identity replays the original terminal response and advertises Idempotency-Replayed; reusing it with a different identity returns 409 idempotency_conflict. */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 /** @description Requested API major. v1 clients send 1. Unsupported majors fail with 406 instead of silently downgrading. */
                 "T4-API-Version": components["parameters"]["ApiVersion"];
@@ -770,13 +763,14 @@ export interface operations {
         responses: {
             200: components["responses"]["CommandReplay"];
             202: components["responses"]["CommandAccepted"];
-            401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-            406: components["responses"]["IncompatibleVersion"];
-            409: components["responses"]["Conflict"];
-            422: components["responses"]["InvalidRequest"];
-            503: components["responses"]["Unavailable"];
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            406: components["responses"]["Error406"];
+            409: components["responses"]["Error409"];
+            422: components["responses"]["Error422"];
+            503: components["responses"]["Error503"];
         };
     };
     watchSessionEvents: {
@@ -812,14 +806,14 @@ export interface operations {
                     "text/event-stream": string;
                 };
             };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-            406: components["responses"]["IncompatibleVersion"];
-            410: components["responses"]["CursorExpired"];
-            422: components["responses"]["InvalidRequest"];
-            503: components["responses"]["Unavailable"];
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            406: components["responses"]["Error406"];
+            410: components["responses"]["Error410"];
+            422: components["responses"]["Error422"];
+            503: components["responses"]["Error503"];
         };
     };
     getSessionSnapshot: {
@@ -837,11 +831,11 @@ export interface operations {
         requestBody?: never;
         responses: {
             200: components["responses"]["Snapshot"];
-            401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-            406: components["responses"]["IncompatibleVersion"];
-            503: components["responses"]["Unavailable"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            406: components["responses"]["Error406"];
+            503: components["responses"]["Error503"];
         };
     };
     listWorkspaces: {
@@ -861,19 +855,19 @@ export interface operations {
         requestBody?: never;
         responses: {
             200: components["responses"]["WorkspacePage"];
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Forbidden"];
-            406: components["responses"]["IncompatibleVersion"];
-            422: components["responses"]["InvalidRequest"];
-            503: components["responses"]["Unavailable"];
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            406: components["responses"]["Error406"];
+            422: components["responses"]["Error422"];
+            503: components["responses"]["Error503"];
         };
     };
     createWorkspace: {
         parameters: {
             query?: never;
             header: {
-                /** @description Opaque caller-generated key scoped to credential, operation, and target. Same key plus same canonical request replays; different content conflicts. */
+                /** @description Opaque caller-generated key scoped by the server to the authenticated principal, operation ID, and target resource IDs. Idempotency is evaluated only after path, query, header, and request-schema validation and application of schema defaults. Request identity is the operation ID, target IDs, relevant precondition headers, and the RFC 8785 JSON Canonicalization Scheme (JCS) bytes of the validated JSON body. JCS object member order is insignificant, array order is significant, omitted fields remain distinct unless the request schema defaulted them, and no Unicode normalization is performed beyond RFC 8785. Reusing a key with identical identity replays the original terminal response and advertises Idempotency-Replayed; reusing it with a different identity returns 409 idempotency_conflict. */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 /** @description Requested API major. v1 clients send 1. Unsupported majors fail with 406 instead of silently downgrading. */
                 "T4-API-Version": components["parameters"]["ApiVersion"];
@@ -889,13 +883,13 @@ export interface operations {
         responses: {
             200: components["responses"]["WorkspaceReplay"];
             202: components["responses"]["WorkspaceAccepted"];
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Forbidden"];
-            406: components["responses"]["IncompatibleVersion"];
-            409: components["responses"]["Conflict"];
-            422: components["responses"]["InvalidRequest"];
-            503: components["responses"]["Unavailable"];
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            406: components["responses"]["Error406"];
+            409: components["responses"]["Error409"];
+            422: components["responses"]["Error422"];
+            503: components["responses"]["Error503"];
         };
     };
     getWorkspace: {
@@ -913,17 +907,19 @@ export interface operations {
         requestBody?: never;
         responses: {
             200: components["responses"]["Workspace"];
-            401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-            406: components["responses"]["IncompatibleVersion"];
-            503: components["responses"]["Unavailable"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            406: components["responses"]["Error406"];
+            503: components["responses"]["Error503"];
         };
     };
     deleteWorkspace: {
         parameters: {
             query?: never;
             header: {
+                /** @description Opaque caller-generated key scoped by the server to the authenticated principal, operation ID, and target resource IDs. Idempotency is evaluated only after path, query, header, and request-schema validation and application of schema defaults. Request identity is the operation ID, target IDs, relevant precondition headers, and the RFC 8785 JSON Canonicalization Scheme (JCS) bytes of the validated JSON body. JCS object member order is insignificant, array order is significant, omitted fields remain distinct unless the request schema defaulted them, and no Unicode normalization is performed beyond RFC 8785. Reusing a key with identical identity replays the original terminal response and advertises Idempotency-Replayed; reusing it with a different identity returns 409 idempotency_conflict. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 /** @description Requested API major. v1 clients send 1. Unsupported majors fail with 406 instead of silently downgrading. */
                 "T4-API-Version": components["parameters"]["ApiVersion"];
             };
@@ -935,18 +931,21 @@ export interface operations {
         requestBody?: never;
         responses: {
             204: components["responses"]["Deleted"];
-            401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-            406: components["responses"]["IncompatibleVersion"];
-            409: components["responses"]["Conflict"];
-            503: components["responses"]["Unavailable"];
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            406: components["responses"]["Error406"];
+            409: components["responses"]["Error409"];
+            503: components["responses"]["Error503"];
         };
     };
     mutateWorkspace: {
         parameters: {
             query?: never;
             header: {
+                /** @description Opaque caller-generated key scoped by the server to the authenticated principal, operation ID, and target resource IDs. Idempotency is evaluated only after path, query, header, and request-schema validation and application of schema defaults. Request identity is the operation ID, target IDs, relevant precondition headers, and the RFC 8785 JSON Canonicalization Scheme (JCS) bytes of the validated JSON body. JCS object member order is insignificant, array order is significant, omitted fields remain distinct unless the request schema defaulted them, and no Unicode normalization is performed beyond RFC 8785. Reusing a key with identical identity replays the original terminal response and advertises Idempotency-Replayed; reusing it with a different identity returns 409 idempotency_conflict. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 /** @description Decimal resource revision for optimistic mutation. */
                 "If-Match": components["parameters"]["IfMatch"];
                 /** @description Requested API major. v1 clients send 1. Unsupported majors fail with 406 instead of silently downgrading. */
@@ -964,13 +963,14 @@ export interface operations {
         };
         responses: {
             200: components["responses"]["Workspace"];
-            401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-            406: components["responses"]["IncompatibleVersion"];
-            409: components["responses"]["Conflict"];
-            422: components["responses"]["InvalidRequest"];
-            503: components["responses"]["Unavailable"];
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            406: components["responses"]["Error406"];
+            409: components["responses"]["Error409"];
+            422: components["responses"]["Error422"];
+            503: components["responses"]["Error503"];
         };
     };
     listSessions: {
@@ -992,19 +992,19 @@ export interface operations {
         requestBody?: never;
         responses: {
             200: components["responses"]["SessionPage"];
-            401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-            406: components["responses"]["IncompatibleVersion"];
-            422: components["responses"]["InvalidRequest"];
-            503: components["responses"]["Unavailable"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            406: components["responses"]["Error406"];
+            422: components["responses"]["Error422"];
+            503: components["responses"]["Error503"];
         };
     };
     spawnSession: {
         parameters: {
             query?: never;
             header: {
-                /** @description Opaque caller-generated key scoped to credential, operation, and target. Same key plus same canonical request replays; different content conflicts. */
+                /** @description Opaque caller-generated key scoped by the server to the authenticated principal, operation ID, and target resource IDs. Idempotency is evaluated only after path, query, header, and request-schema validation and application of schema defaults. Request identity is the operation ID, target IDs, relevant precondition headers, and the RFC 8785 JSON Canonicalization Scheme (JCS) bytes of the validated JSON body. JCS object member order is insignificant, array order is significant, omitted fields remain distinct unless the request schema defaulted them, and no Unicode normalization is performed beyond RFC 8785. Reusing a key with identical identity replays the original terminal response and advertises Idempotency-Replayed; reusing it with a different identity returns 409 idempotency_conflict. */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 /** @description Requested API major. v1 clients send 1. Unsupported majors fail with 406 instead of silently downgrading. */
                 "T4-API-Version": components["parameters"]["ApiVersion"];
@@ -1022,13 +1022,14 @@ export interface operations {
         responses: {
             200: components["responses"]["SessionReplay"];
             202: components["responses"]["SessionAccepted"];
-            401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-            406: components["responses"]["IncompatibleVersion"];
-            409: components["responses"]["Conflict"];
-            422: components["responses"]["InvalidRequest"];
-            503: components["responses"]["Unavailable"];
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            406: components["responses"]["Error406"];
+            409: components["responses"]["Error409"];
+            422: components["responses"]["Error422"];
+            503: components["responses"]["Error503"];
         };
     };
 }
