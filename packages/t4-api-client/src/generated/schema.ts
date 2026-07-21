@@ -178,7 +178,7 @@ export interface components {
         CommandCreate: {
             command: string;
             /** @default {} */
-            metadata: {
+            metadata?: {
                 [key: string]: string | number | boolean | null;
             };
         };
