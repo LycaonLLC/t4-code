@@ -1144,7 +1144,7 @@ func TestSessionRestoresRequiredPodSelectorLabelsBeforeAvailability(t *testing.T
 
 func TestWorkspaceDeletionRefusesForeignDeterministicPVC(t *testing.T) {
 	for _, policy := range []clusterv1alpha1.RetentionPolicy{clusterv1alpha1.RetentionPolicyRetain, clusterv1alpha1.RetentionPolicyDelete} {
-		for _, mismatch := range []string{"uid-annotation", "controller-owner"} {
+		for _, mismatch := range []string{"uid-annotation", "controller-owner", "foreign-non-controller-owner"} {
 			t.Run(string(policy)+"/"+mismatch, func(t *testing.T) {
 				scheme := testScheme(t)
 				workspace := testWorkspace(policy)
@@ -1156,9 +1156,13 @@ func TestWorkspaceDeletionRefusesForeignDeterministicPVC(t *testing.T) {
 				}}
 				if mismatch == "uid-annotation" {
 					pvc.Annotations[clusterv1alpha1.WorkspaceUIDAnnotation] = "foreign-workspace-uid"
-				} else {
+				} else if mismatch == "controller-owner" {
 					pvc.OwnerReferences = []metav1.OwnerReference{{
 						APIVersion: clusterv1alpha1.GroupVersion.String(), Kind: "T4Workspace", Name: "foreign", UID: "foreign-workspace-uid", Controller: ptr(true),
+					}}
+				} else {
+					pvc.OwnerReferences = []metav1.OwnerReference{{
+						APIVersion: "example.test/v1", Kind: "Foreign", Name: "foreign", UID: "foreign-uid",
 					}}
 				}
 				expectedOwnerCount := len(pvc.OwnerReferences)
@@ -1555,6 +1559,297 @@ func TestHostDependencyRecoveryReplacesFalseConditions(t *testing.T) {
 			t.Fatalf("static runtime failure retained stale HostReady: %#v", hostReady)
 		}
 	})
+}
+
+func TestWorkspaceFailureRevokesPublishedPVCAuthorityAndRefreshesConditions(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		objects           func(*clusterv1alpha1.T4Workspace) []client.Object
+		wantHostStatus    metav1.ConditionStatus
+		wantStorageReason string
+	}{
+		{
+			name: "missing Host",
+			objects: func(workspace *clusterv1alpha1.T4Workspace) []client.Object {
+				return []client.Object{workspace}
+			},
+			wantHostStatus:    metav1.ConditionFalse,
+			wantStorageReason: "NotEvaluated",
+		},
+		{
+			name: "missing StorageClass",
+			objects: func(workspace *clusterv1alpha1.T4Workspace) []client.Object {
+				return []client.Object{testHost(), workspace}
+			},
+			wantHostStatus:    metav1.ConditionTrue,
+			wantStorageReason: controllers.ReasonStorageClassNotFound,
+		},
+		{
+			name: "non-RWX StorageClass",
+			objects: func(workspace *clusterv1alpha1.T4Workspace) []client.Object {
+				class := rwxStorageClass()
+				class.Annotations = nil
+				return []client.Object{testHost(), class, workspace}
+			},
+			wantHostStatus:    metav1.ConditionTrue,
+			wantStorageReason: controllers.ReasonStorageClassNotRWX,
+		},
+		{
+			name: "PVC class drift",
+			objects: func(workspace *clusterv1alpha1.T4Workspace) []client.Object {
+				pvc := ownedWorkspacePVC(workspace)
+				pvc.Spec.StorageClassName = ptr("old-rwx")
+				return []client.Object{testHost(), rwxStorageClass(), workspace, pvc}
+			},
+			wantHostStatus:    metav1.ConditionTrue,
+			wantStorageReason: controllers.ReasonStorageClassMismatch,
+		},
+		{
+			name: "PVC ownership conflict",
+			objects: func(workspace *clusterv1alpha1.T4Workspace) []client.Object {
+				pvc := ownedWorkspacePVC(workspace)
+				pvc.OwnerReferences = []metav1.OwnerReference{{APIVersion: "example.test/v1", Kind: "Foreign", Name: "foreign", UID: "foreign-uid", Controller: ptr(true)}}
+				return []client.Object{testHost(), rwxStorageClass(), workspace, pvc}
+			},
+			wantHostStatus:    metav1.ConditionTrue,
+			wantStorageReason: "PVCOwnershipConflict",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			scheme := testScheme(t)
+			workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+			workspace.UID = "workspace-uid"
+			workspace.Generation = 7
+			workspace.Status.ObservedGeneration = 6
+			workspace.Status.PVCName = controllers.WorkspacePVCName(workspace)
+			workspace.Status.PVCPhase = corev1.ClaimBound
+			workspace.Status.Capacity = apiresource.MustParse("10Gi")
+			workspace.Status.Phase = clusterv1alpha1.InfrastructureReady
+			workspace.Status.Conditions = []metav1.Condition{
+				{Type: "HostReady", Status: metav1.ConditionTrue, Reason: "Stale", ObservedGeneration: 6},
+				{Type: "StorageReady", Status: metav1.ConditionTrue, Reason: "Stale", ObservedGeneration: 6},
+				{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Stale", ObservedGeneration: 6},
+			}
+			c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Workspace{}, &corev1.PersistentVolumeClaim{}).WithObjects(test.objects(workspace)...).Build()
+			r := &controllers.WorkspaceReconciler{Client: c, Scheme: scheme}
+			if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workspace)}); err != nil {
+				t.Fatal(err)
+			}
+			var failed clusterv1alpha1.T4Workspace
+			if err := c.Get(ctx, client.ObjectKeyFromObject(workspace), &failed); err != nil {
+				t.Fatal(err)
+			}
+			if failed.Status.PVCName != "" || failed.Status.PVCPhase != "" || !failed.Status.Capacity.IsZero() {
+				t.Fatalf("failed Workspace retained PVC authority: %#v", failed.Status)
+			}
+			hostReady := findCondition(failed.Status.Conditions, "HostReady")
+			storageReady := findCondition(failed.Status.Conditions, "StorageReady")
+			ready := findCondition(failed.Status.Conditions, "Ready")
+			if hostReady == nil || hostReady.Status != test.wantHostStatus || hostReady.ObservedGeneration != failed.Generation ||
+				storageReady == nil || storageReady.Status == metav1.ConditionTrue || storageReady.Reason != test.wantStorageReason || storageReady.ObservedGeneration != failed.Generation ||
+				ready == nil || ready.Status != metav1.ConditionFalse || ready.ObservedGeneration != failed.Generation {
+				t.Fatalf("failure conditions are stale: HostReady=%#v StorageReady=%#v Ready=%#v", hostReady, storageReady, ready)
+			}
+		})
+	}
+}
+
+func TestSessionRejectsWorkspacePVCWithoutExactIdentityAndOwnership(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		mutatePVC func(*clusterv1alpha1.T4Workspace, *corev1.PersistentVolumeClaim)
+	}{
+		{name: "foreign deterministic PVC", mutatePVC: func(_ *clusterv1alpha1.T4Workspace, pvc *corev1.PersistentVolumeClaim) {
+			pvc.OwnerReferences = []metav1.OwnerReference{{APIVersion: "example.test/v1", Kind: "Foreign", Name: "foreign", UID: "foreign-uid", Controller: ptr(true)}}
+		}},
+		{name: "tampered Workspace status name", mutatePVC: func(workspace *clusterv1alpha1.T4Workspace, pvc *corev1.PersistentVolumeClaim) {
+			workspace.Status.PVCName = "foreign-data"
+			pvc.Name = workspace.Status.PVCName
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			scheme := testScheme(t)
+			workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+			workspace.UID = "workspace-uid"
+			workspace.Status.PVCName = controllers.WorkspacePVCName(workspace)
+			pvc := ownedWorkspacePVC(workspace)
+			test.mutatePVC(workspace, pvc)
+			session := testSession()
+			session.UID = "session-uid"
+			pod, service := ownedSessionResources(session)
+			c := fake.NewClientBuilder().WithScheme(scheme).
+				WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).
+				WithObjects(testHost(), workspace, pvc, session, pod, service).Build()
+			r := configuredSessionReconciler(c, scheme)
+			if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
+				t.Fatal(err)
+			}
+			assertObjectCounts(t, c, 0, 0)
+			var failed clusterv1alpha1.T4Session
+			if err := c.Get(ctx, client.ObjectKeyFromObject(session), &failed); err != nil {
+				t.Fatal(err)
+			}
+			condition := findCondition(failed.Status.Conditions, "WorkspaceReady")
+			if failed.Status.PodName != "" || failed.Status.ServiceName != "" || condition == nil || condition.Status != metav1.ConditionFalse || condition.ObservedGeneration != failed.Generation {
+				t.Fatalf("untrusted Workspace PVC retained session authority: status=%#v WorkspaceReady=%#v", failed.Status, condition)
+			}
+		})
+	}
+}
+
+func TestSessionFailureAndPendingRefreshEveryCondition(t *testing.T) {
+	t.Run("failure", func(t *testing.T) {
+		ctx := context.Background()
+		scheme := testScheme(t)
+		session := testSession()
+		session.Generation = 8
+		session.Status.ObservedGeneration = 7
+		session.Status.Conditions = staleSessionConditions(7)
+		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Session{}).WithObjects(session).Build()
+		r := configuredSessionReconciler(c, scheme)
+		if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
+			t.Fatal(err)
+		}
+		var failed clusterv1alpha1.T4Session
+		if err := c.Get(ctx, client.ObjectKeyFromObject(session), &failed); err != nil {
+			t.Fatal(err)
+		}
+		assertCurrentSessionConditions(t, &failed, map[string]metav1.ConditionStatus{
+			"HostReady": metav1.ConditionFalse, "WorkspaceReady": metav1.ConditionUnknown, "RuntimeConfigured": metav1.ConditionUnknown, "Available": metav1.ConditionFalse,
+		})
+	})
+
+	t.Run("pending", func(t *testing.T) {
+		ctx := context.Background()
+		scheme := testScheme(t)
+		workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+		workspace.UID = "workspace-uid"
+		workspace.Status.PVCName = controllers.WorkspacePVCName(workspace)
+		pvc := ownedWorkspacePVC(workspace)
+		session := testSession()
+		session.UID = "session-uid"
+		session.Generation = 8
+		session.Status.ObservedGeneration = 7
+		session.Status.Conditions = staleSessionConditions(7)
+		_, service := ownedSessionResources(session)
+		service.Spec.Type = corev1.ServiceTypeNodePort
+		service.Spec.Ports = []corev1.ServicePort{{Name: "host", Port: 8787, NodePort: 32080}}
+		c := fake.NewClientBuilder().WithScheme(scheme).
+			WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).
+			WithObjects(testHost(), workspace, pvc, session, service).Build()
+		r := configuredSessionReconciler(c, scheme)
+		if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
+			t.Fatal(err)
+		}
+		var pending clusterv1alpha1.T4Session
+		if err := c.Get(ctx, client.ObjectKeyFromObject(session), &pending); err != nil {
+			t.Fatal(err)
+		}
+		assertCurrentSessionConditions(t, &pending, map[string]metav1.ConditionStatus{
+			"HostReady": metav1.ConditionTrue, "WorkspaceReady": metav1.ConditionTrue, "RuntimeConfigured": metav1.ConditionTrue, "Available": metav1.ConditionFalse,
+		})
+	})
+}
+
+func TestSessionResourcesWithAnyForeignOwnerFailClosed(t *testing.T) {
+	for _, path := range []string{"normal", "dependency-cleanup"} {
+		for _, kind := range []string{"Pod", "Service"} {
+			t.Run(path+"/"+kind, func(t *testing.T) {
+				ctx := context.Background()
+				scheme := testScheme(t)
+				session := testSession()
+				session.UID = "session-uid"
+				pod, service := ownedSessionResources(session)
+				foreignOwner := metav1.OwnerReference{APIVersion: "example.test/v1", Kind: "Foreign", Name: "foreign", UID: "foreign-uid"}
+				if kind == "Pod" {
+					pod.OwnerReferences = append(pod.OwnerReferences, foreignOwner)
+				} else {
+					service.OwnerReferences = append(service.OwnerReferences, foreignOwner)
+				}
+				objects := []client.Object{session, pod, service}
+				if path == "normal" {
+					workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+					workspace.UID = "workspace-uid"
+					workspace.Status.PVCName = controllers.WorkspacePVCName(workspace)
+					objects = append(objects, testHost(), workspace, ownedWorkspacePVC(workspace))
+				}
+				c := fake.NewClientBuilder().WithScheme(scheme).
+					WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).
+					WithObjects(objects...).Build()
+				r := configuredSessionReconciler(c, scheme)
+				beforePod := pod.DeepCopy()
+				beforeService := service.DeepCopy()
+				if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
+					t.Fatal(err)
+				}
+				if kind == "Pod" {
+					var got corev1.Pod
+					if err := c.Get(ctx, client.ObjectKeyFromObject(pod), &got); err != nil {
+						t.Fatalf("foreign-owned Pod was deleted: %v", err)
+					}
+					if !reflect.DeepEqual(got.ObjectMeta, beforePod.ObjectMeta) || !reflect.DeepEqual(got.Spec, beforePod.Spec) {
+						t.Fatalf("Pod with foreign OwnerReference was mutated: %#v", got)
+					}
+				} else {
+					var got corev1.Service
+					if err := c.Get(ctx, client.ObjectKeyFromObject(service), &got); err != nil {
+						t.Fatalf("foreign-owned Service was deleted: %v", err)
+					}
+					if !reflect.DeepEqual(got.ObjectMeta, beforeService.ObjectMeta) || !reflect.DeepEqual(got.Spec, beforeService.Spec) {
+						t.Fatalf("Service with foreign OwnerReference was mutated: %#v", got)
+					}
+				}
+				var failed clusterv1alpha1.T4Session
+				if err := c.Get(ctx, client.ObjectKeyFromObject(session), &failed); err != nil {
+					t.Fatal(err)
+				}
+				available := findCondition(failed.Status.Conditions, "Available")
+				if available == nil || available.Status != metav1.ConditionFalse || !strings.Contains(available.Reason, "OwnershipConflict") {
+					t.Fatalf("foreign owner did not produce stable ownership conflict: %#v", available)
+				}
+			})
+		}
+	}
+}
+
+func ownedWorkspacePVC(workspace *clusterv1alpha1.T4Workspace) *corev1.PersistentVolumeClaim {
+	return &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: controllers.WorkspacePVCName(workspace), Namespace: workspace.Namespace,
+			Annotations: map[string]string{clusterv1alpha1.WorkspaceUIDAnnotation: string(workspace.UID)},
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: clusterv1alpha1.GroupVersion.String(), Kind: "T4Workspace", Name: workspace.Name, UID: workspace.UID, Controller: ptr(true)}},
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+		Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+	}
+}
+
+func ownedSessionResources(session *clusterv1alpha1.T4Session) (*corev1.Pod, *corev1.Service) {
+	owner := metav1.OwnerReference{APIVersion: clusterv1alpha1.GroupVersion.String(), Kind: "T4Session", Name: session.Name, UID: session.UID, Controller: ptr(true)}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: controllers.SessionPodName(session), Namespace: session.Namespace, OwnerReferences: []metav1.OwnerReference{owner}}}
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: controllers.SessionServiceName(session), Namespace: session.Namespace, OwnerReferences: []metav1.OwnerReference{owner}}}
+	return pod, service
+}
+
+func staleSessionConditions(generation int64) []metav1.Condition {
+	return []metav1.Condition{
+		{Type: "HostReady", Status: metav1.ConditionTrue, Reason: "Stale", ObservedGeneration: generation},
+		{Type: "WorkspaceReady", Status: metav1.ConditionTrue, Reason: "Stale", ObservedGeneration: generation},
+		{Type: "RuntimeConfigured", Status: metav1.ConditionTrue, Reason: "Stale", ObservedGeneration: generation},
+		{Type: "Available", Status: metav1.ConditionTrue, Reason: "Stale", ObservedGeneration: generation},
+	}
+}
+
+func assertCurrentSessionConditions(t *testing.T, session *clusterv1alpha1.T4Session, want map[string]metav1.ConditionStatus) {
+	t.Helper()
+	for conditionType, status := range want {
+		condition := findCondition(session.Status.Conditions, conditionType)
+		if condition == nil || condition.Status != status || condition.ObservedGeneration != session.Generation {
+			t.Fatalf("%s = %#v, want %s at generation %d", conditionType, condition, status, session.Generation)
+		}
+	}
 }
 
 func configuredSessionReconciler(c client.Client, scheme *runtime.Scheme) *controllers.SessionReconciler {
