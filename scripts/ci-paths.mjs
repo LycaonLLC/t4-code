@@ -28,6 +28,13 @@ const GROUP_PATTERNS = Object.freeze({
     /^packages\/host-(?:service|wire)\/(?:src\/|package\.json$)/u,
     /^scripts\/cluster-ci\//u,
   ],
+  official_omp_gate0: [
+    /^\.github\/workflows\/ci\.yml$/u,
+    /^compat\/(?:official-omp-gate0|omp-app-matrix)\.json$/u,
+    /^docs\/(?:OMP_T4_CAPABILITY_AUDIT\.md|OMP_T4_CAPABILITY_TRACKER\.csv|T4_ARCHITECTURE\.html)$/u,
+    /^packages\/host-service\/(?:bin\/official-omp-gate0\.ts|package\.json)$/u,
+    /^scripts\/stage-omp-runtime\.mjs$/u,
+  ],
   tooling: [
     /^\.github\//u,
     /^compat\//u,

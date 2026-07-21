@@ -21,7 +21,7 @@ interface RuntimeArtifact {
 }
 
 interface RuntimeMatrix {
-  readonly verifiedRuntime: {
+  readonly officialRuntime: {
     readonly version: string;
     readonly sourceTag: string;
     readonly sourceCommit: string;
@@ -54,6 +54,12 @@ interface TranscriptWatermark {
 interface DeterministicModel {
   readonly server: Bun.Server<undefined>;
   readonly requests: string[][];
+  readonly gateNextRequest: () => ModelGate;
+}
+
+interface ModelGate {
+  readonly started: Promise<string[]>;
+  readonly release: () => void;
 }
 
 interface RpcHarness {
@@ -61,6 +67,10 @@ interface RpcHarness {
   readonly stderr: Promise<string>;
   readonly waitFor: (predicate: (frame: JsonMap) => boolean, label: string) => Promise<JsonMap[]>;
   readonly send: (frame: JsonMap) => void;
+}
+
+interface LaunchOptions {
+  readonly extensionPath?: string;
 }
 
 function map(value: unknown, label: string): JsonMap {
@@ -91,17 +101,17 @@ function decodeArtifact(value: unknown, label: string): RuntimeArtifact {
 
 function decodeRuntimeMatrix(value: unknown): RuntimeMatrix {
   const root = map(value, "compatibility matrix");
-  const runtime = map(root.verifiedRuntime, "compatibility matrix.verifiedRuntime");
-  const rawArtifacts = map(runtime.artifacts, "compatibility matrix.verifiedRuntime.artifacts");
+  const runtime = map(root.officialRuntime, "compatibility matrix.officialRuntime");
+  const rawArtifacts = map(runtime.artifacts, "compatibility matrix.officialRuntime.artifacts");
   const artifacts: Record<string, RuntimeArtifact> = {};
   for (const [key, artifact] of Object.entries(rawArtifacts))
-    artifacts[key] = decodeArtifact(artifact, `compatibility matrix.verifiedRuntime.artifacts.${key}`);
-  const version = text(runtime.version, "compatibility matrix.verifiedRuntime.version");
-  const sourceTag = text(runtime.sourceTag, "compatibility matrix.verifiedRuntime.sourceTag");
-  const sourceCommit = text(runtime.sourceCommit, "compatibility matrix.verifiedRuntime.sourceCommit");
-  if (!/^\d+\.\d+\.\d+$/u.test(version)) throw new Error("verified runtime version is invalid");
-  if (!/^[a-f0-9]{40}$/u.test(sourceCommit)) throw new Error("verified runtime source commit is invalid");
-  return { verifiedRuntime: { version, sourceTag, sourceCommit, artifacts } };
+    artifacts[key] = decodeArtifact(artifact, `compatibility matrix.officialRuntime.artifacts.${key}`);
+  const version = text(runtime.version, "compatibility matrix.officialRuntime.version");
+  const sourceTag = text(runtime.sourceTag, "compatibility matrix.officialRuntime.sourceTag");
+  const sourceCommit = text(runtime.sourceCommit, "compatibility matrix.officialRuntime.sourceCommit");
+  if (!/^\d+\.\d+\.\d+$/u.test(version)) throw new Error("official runtime version is invalid");
+  if (!/^[a-f0-9]{40}$/u.test(sourceCommit)) throw new Error("official runtime source commit is invalid");
+  return { officialRuntime: { version, sourceTag, sourceCommit, artifacts } };
 }
 
 function decodeRuntimeManifest(value: unknown): RuntimeManifest {
@@ -131,7 +141,8 @@ async function readJson(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, "utf8"));
 }
 
-function decodeWatermark(frame: JsonMap, label: string): TranscriptWatermark {
+function decodeWatermark(frame: JsonMap, label: string): TranscriptWatermark | null {
+  if (frame.transcriptWatermark === undefined) return null;
   const watermark = map(frame.transcriptWatermark, `${label}.transcriptWatermark`);
   const lastEntryId = watermark.lastEntryId;
   if (lastEntryId !== null && typeof lastEntryId !== "string")
@@ -214,6 +225,12 @@ function requestMessages(body: JsonMap): string[] {
 
 function startDeterministicModel(): DeterministicModel {
   const requests: string[][] = [];
+  let nextGate:
+    | {
+        readonly started: ReturnType<typeof Promise.withResolvers<string[]>>;
+        readonly released: ReturnType<typeof Promise.withResolvers<void>>;
+      }
+    | undefined;
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -224,6 +241,10 @@ function startDeterministicModel(): DeterministicModel {
       const body = map(await request.json(), "model request");
       const messages = requestMessages(body);
       requests.push(messages);
+      const gate = nextGate;
+      nextGate = undefined;
+      gate?.started.resolve(messages);
+      if (gate) await gate.released.promise;
       const ordinal = requests.length;
       const model = typeof body.model === "string" ? body.model : "deterministic";
       const id = `chatcmpl-t4-gate0-${ordinal}`;
@@ -257,10 +278,29 @@ function startDeterministicModel(): DeterministicModel {
       return new Response(payload, { headers: { "content-type": "text/event-stream" } });
     },
   });
-  return { server, requests };
+  return {
+    server,
+    requests,
+    gateNextRequest: () => {
+      if (nextGate) throw new Error("a deterministic model request is already gated");
+      const started = Promise.withResolvers<string[]>();
+      const released = Promise.withResolvers<void>();
+      nextGate = { started, released };
+      return { started: started.promise, release: released.resolve };
+    },
+  };
 }
 
-function launchRpc(runtimePath: string, sessionPath: string, workspace: string, profile: string): RpcHarness {
+function launchRpc(
+  runtimePath: string,
+  sessionPath: string,
+  workspace: string,
+  profile: string,
+  options: LaunchOptions = {},
+): RpcHarness {
+  const extensionArgs = options.extensionPath
+    ? ["--extension", options.extensionPath]
+    : ["--no-extensions"];
   const child = Bun.spawn(
     [
       runtimePath,
@@ -273,7 +313,7 @@ function launchRpc(runtimePath: string, sessionPath: string, workspace: string, 
       "--model",
       "gate0/deterministic",
       "--no-tools",
-      "--no-extensions",
+      ...extensionArgs,
       "--no-skills",
       "--no-rules",
       "--no-title",
@@ -284,8 +324,6 @@ function launchRpc(runtimePath: string, sessionPath: string, workspace: string, 
         ...process.env,
         PI_CODING_AGENT_DIR: profile,
         PI_NOTIFICATIONS: "off",
-        OMP_APP_RPC_INLINE_IMAGE_DATA: "omit",
-        OMP_APP_RPC_SESSION_ENTRIES: "1",
       },
       stdin: "pipe",
       stdout: "pipe",
@@ -327,11 +365,18 @@ function launchRpc(runtimePath: string, sessionPath: string, workspace: string, 
   const waitFor = async (predicate: (frame: JsonMap) => boolean, label: string): Promise<JsonMap[]> => {
     const deadline = Date.now() + FRAME_TIMEOUT_MS;
     const frames: JsonMap[] = [];
-    for (;;) {
-      const frame = await nextFrame(deadline);
-      frames.push(frame);
-      if (predicate(frame)) return frames;
-      if (Date.now() >= deadline) throw new Error(`timed out waiting for ${label}`);
+    try {
+      for (;;) {
+        const frame = await nextFrame(deadline);
+        frames.push(frame);
+        if (predicate(frame)) return frames;
+        if (Date.now() >= deadline) throw new Error("deadline reached");
+      }
+    } catch (error) {
+      throw new Error(
+        `timed out waiting for ${label}; observed ${JSON.stringify(frames.map((frame) => frame.type))}`,
+        { cause: error },
+      );
     }
   };
 
@@ -354,19 +399,175 @@ function assertPromptTurn(frames: readonly JsonMap[], requestId: string): string
   });
 }
 
+function assertAccepted(frames: readonly JsonMap[], requestId: string, command: string): void {
+  const response = frames.find((frame) => frame.type === "response" && frame.id === requestId);
+  if (!response || response.command !== command || response.success !== true)
+    throw new Error(`${command} ${requestId} was not accepted`);
+}
+
+async function waitForModelMessage(model: DeterministicModel, expected: string): Promise<string[]> {
+  const deadline = Date.now() + FRAME_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const request = model.requests.find((messages) => messages.some((message) => message.includes(expected)));
+    if (request) return request;
+    await Bun.sleep(10);
+  }
+  throw new Error(`model did not receive ${JSON.stringify(expected)}`);
+}
+
+async function stopRpc(rpc: RpcHarness): Promise<void> {
+  rpc.child.kill("SIGTERM");
+  await rpc.child.exited;
+}
+
+async function runQueuedMessageScenario(input: {
+  readonly behavior: "steer" | "follow_up";
+  readonly runtimePath: string;
+  readonly root: string;
+  readonly workspace: string;
+  readonly profile: string;
+  readonly model: DeterministicModel;
+}): Promise<{ requestObserved: boolean; accepted: boolean }> {
+  const label = input.behavior === "steer" ? "Steering correction" : "Follow-up request";
+  const sessionPath = join(input.root, `${input.behavior}.jsonl`);
+  const rpc = launchRpc(input.runtimePath, sessionPath, input.workspace, input.profile);
+  let stopped = false;
+  const gate = input.model.gateNextRequest();
+  try {
+    await rpc.waitFor((frame) => frame.type === "ready", `${input.behavior} ready`);
+    rpc.send({ type: "prompt", id: `${input.behavior}-base`, message: `${input.behavior} base prompt` });
+    const promptAck = await rpc.waitFor(
+      (frame) => frame.type === "response" && frame.id === `${input.behavior}-base`,
+      `${input.behavior} base prompt acceptance`,
+    );
+    assertAccepted(promptAck, `${input.behavior}-base`, "prompt");
+    await gate.started;
+    rpc.send({ type: input.behavior, id: `${input.behavior}-queued`, message: label });
+    const queueAck = await rpc.waitFor(
+      (frame) => frame.type === "response" && frame.id === `${input.behavior}-queued`,
+      `${input.behavior} acceptance`,
+    );
+    assertAccepted(queueAck, `${input.behavior}-queued`, input.behavior);
+    gate.release();
+    await waitForModelMessage(input.model, label);
+    const entries = await waitForMessages(sessionPath, 4);
+    if (!transcriptMessages(entries).some((message) => message.text.includes(label)))
+      throw new Error(`${input.behavior} message was not durable`);
+    await stopRpc(rpc);
+    stopped = true;
+    return { requestObserved: true, accepted: true };
+  } finally {
+    gate.release();
+    if (!stopped) {
+      rpc.child.kill("SIGKILL");
+      await rpc.child.exited.catch(() => undefined);
+    }
+  }
+}
+
+async function runCancellationScenario(input: {
+  readonly runtimePath: string;
+  readonly root: string;
+  readonly workspace: string;
+  readonly profile: string;
+  readonly model: DeterministicModel;
+}): Promise<{ accepted: boolean; agentSettled: boolean }> {
+  const rpc = launchRpc(input.runtimePath, join(input.root, "cancel.jsonl"), input.workspace, input.profile);
+  let stopped = false;
+  const gate = input.model.gateNextRequest();
+  try {
+    await rpc.waitFor((frame) => frame.type === "ready", "cancellation ready");
+    rpc.send({ type: "prompt", id: "cancel-base", message: "Cancellation base prompt" });
+    const promptAck = await rpc.waitFor(
+      (frame) => frame.type === "response" && frame.id === "cancel-base",
+      "cancellation prompt acceptance",
+    );
+    assertAccepted(promptAck, "cancel-base", "prompt");
+    await gate.started;
+    rpc.send({ type: "abort", id: "cancel-abort" });
+    const abortFrames = await rpc.waitFor(
+      (frame) => frame.type === "response" && frame.id === "cancel-abort",
+      "abort acceptance",
+    );
+    assertAccepted(abortFrames, "cancel-abort", "abort");
+    const agentSettled = abortFrames.some((frame) => frame.type === "agent_end");
+    if (!agentSettled) throw new Error("abort acknowledgment arrived before agent settlement");
+    gate.release();
+    await stopRpc(rpc);
+    stopped = true;
+    return { accepted: true, agentSettled };
+  } finally {
+    gate.release();
+    if (!stopped) {
+      rpc.child.kill("SIGKILL");
+      await rpc.child.exited.catch(() => undefined);
+    }
+  }
+}
+
+async function runApprovalScenario(input: {
+  readonly runtimePath: string;
+  readonly root: string;
+  readonly workspace: string;
+  readonly profile: string;
+}): Promise<{ requestObserved: boolean; approvedValueReturned: boolean }> {
+  const extensionPath = join(input.root, "gate0-approval.ts");
+  await writeFile(
+    extensionPath,
+    `export default function (pi) {\n  pi.registerCommand("gate0-confirm", {\n    description: "Gate 0 confirmation proof",\n    handler: async (_args, ctx) => {\n      const confirmed = await ctx.ui.confirm("Gate 0 approval", "Approve this deterministic request?");\n      ctx.ui.notify(\`gate0-confirmed=\${confirmed}\`, "info");\n    },\n  });\n}\n`,
+  );
+  const rpc = launchRpc(
+    input.runtimePath,
+    join(input.root, "approval.jsonl"),
+    input.workspace,
+    input.profile,
+    { extensionPath },
+  );
+  let stopped = false;
+  try {
+    await rpc.waitFor((frame) => frame.type === "ready", "approval ready");
+    rpc.send({ type: "prompt", id: "approval-prompt", message: "/gate0-confirm" });
+    const requestFrames = await rpc.waitFor(
+      (frame) => frame.type === "extension_ui_request" && frame.method === "confirm",
+      "extension confirmation request",
+    );
+    const request = requestFrames.at(-1)!;
+    const requestId = text(request.id, "extension confirmation request id");
+    rpc.send({ type: "extension_ui_response", id: requestId, confirmed: true });
+    const notifyFrames = await rpc.waitFor(
+      (frame) =>
+        frame.type === "extension_ui_request" &&
+        frame.method === "notify" &&
+        frame.message === "gate0-confirmed=true",
+      "extension confirmation result",
+    );
+    await stopRpc(rpc);
+    stopped = true;
+    return {
+      requestObserved: request.method === "confirm",
+      approvedValueReturned: notifyFrames.at(-1)?.message === "gate0-confirmed=true",
+    };
+  } finally {
+    if (!stopped) {
+      rpc.child.kill("SIGKILL");
+      await rpc.child.exited.catch(() => undefined);
+    }
+  }
+}
+
 async function verifyRuntime(repoRoot: string): Promise<VerifiedRuntime> {
   const matrix = decodeRuntimeMatrix(await readJson(join(repoRoot, "compat", "omp-app-matrix.json")));
-  const manifestPath = join(repoRoot, ".artifacts", "omp-runtime", "manifest.json");
+  const manifestPath = join(repoRoot, ".artifacts", "omp-runtime-official", "manifest.json");
   const manifest = decodeRuntimeManifest(await readJson(manifestPath));
   const key = `${process.platform}-${process.arch}`;
-  const artifact = matrix.verifiedRuntime.artifacts[key];
+  const artifact = matrix.officialRuntime.artifacts[key];
   if (!artifact) throw new Error(`verified OMP runtime has no ${key} artifact`);
-  const runtimePath = join(repoRoot, ".artifacts", "omp-runtime", manifest.executable);
+  const runtimePath = join(repoRoot, ".artifacts", "omp-runtime-official", manifest.executable);
   const runtimeStat = await stat(runtimePath);
   const digest = await sha256(runtimePath);
   if (
     manifest.version !== 1 ||
-    manifest.tag !== matrix.verifiedRuntime.sourceTag ||
+    manifest.tag !== matrix.officialRuntime.sourceTag ||
     manifest.platform !== process.platform ||
     manifest.arch !== process.arch ||
     basename(runtimePath) !== manifest.executable ||
@@ -383,8 +584,8 @@ async function verifyRuntime(repoRoot: string): Promise<VerifiedRuntime> {
     versionProcess.exited,
   ]);
   if (versionExit !== 0) throw new Error(`OMP version check failed: ${versionError.trim()}`);
-  if (!version.includes(matrix.verifiedRuntime.version))
-    throw new Error(`OMP version ${JSON.stringify(version.trim())} does not match ${matrix.verifiedRuntime.version}`);
+  if (!version.includes(matrix.officialRuntime.version))
+    throw new Error(`OMP version ${JSON.stringify(version.trim())} does not match ${matrix.officialRuntime.version}`);
   return { path: runtimePath, matrix, manifest, version: version.trim() };
 }
 
@@ -409,7 +610,7 @@ async function main(): Promise<void> {
     active = launchRpc(runtime.path, sessionPath, workspace, profile);
     const initialFrames = await active.waitFor((frame) => frame.type === "ready", "initial ready watermark");
     const initialWatermark = decodeWatermark(initialFrames.at(-1)!, "initial ready");
-    assertWatermark("initial ready watermark", initialWatermark, await readSession(sessionPath));
+    if (initialWatermark) assertWatermark("initial ready watermark", initialWatermark, await readSession(sessionPath));
     active.send({ type: "prompt", id: "gate0-prompt-1", message: "First prompt" });
     const firstFrames = await active.waitFor((frame) => frame.type === "agent_end", "first prompt completion");
     const firstLiveEntryIds = assertPromptTurn(firstFrames, "gate0-prompt-1");
@@ -428,7 +629,7 @@ async function main(): Promise<void> {
     active = launchRpc(runtime.path, sessionPath, workspace, profile);
     const restartFrames = await active.waitFor((frame) => frame.type === "ready", "restart ready watermark");
     const restartWatermark = decodeWatermark(restartFrames.at(-1)!, "restart ready");
-    assertWatermark("restart ready watermark", restartWatermark, restartEntries);
+    if (restartWatermark) assertWatermark("restart ready watermark", restartWatermark, restartEntries);
     active.send({ type: "prompt", id: "gate0-prompt-2", message: "Second prompt" });
     const secondFrames = await active.waitFor((frame) => frame.type === "agent_end", "second prompt completion");
     const secondLiveEntryIds = assertPromptTurn(secondFrames, "gate0-prompt-2");
@@ -455,28 +656,66 @@ async function main(): Promise<void> {
     active.child.kill("SIGTERM");
     await active.child.exited;
     active = undefined;
-    console.log(
-      JSON.stringify(
-        {
-          runtime: {
-            version: runtime.version,
-            tag: runtime.matrix.verifiedRuntime.sourceTag,
-            commit: runtime.matrix.verifiedRuntime.sourceCommit,
-            sha256: runtime.manifest.sha256,
-          },
-          initialWatermark,
-          restartWatermark,
+    const steer = await runQueuedMessageScenario({
+      behavior: "steer",
+      runtimePath: runtime.path,
+      root,
+      workspace,
+      profile,
+      model,
+    });
+    const followUp = await runQueuedMessageScenario({
+      behavior: "follow_up",
+      runtimePath: runtime.path,
+      root,
+      workspace,
+      profile,
+      model,
+    });
+    const approval = await runApprovalScenario({ runtimePath: runtime.path, root, workspace, profile });
+    const cancellation = await runCancellationScenario({
+      runtimePath: runtime.path,
+      root,
+      workspace,
+      profile,
+      model,
+    });
+    const result = {
+      schemaVersion: 1,
+      runtime: {
+        version: runtime.version,
+        tag: runtime.matrix.officialRuntime.sourceTag,
+        commit: runtime.matrix.officialRuntime.sourceCommit,
+        sha256: runtime.manifest.sha256,
+      },
+      platform: { os: process.platform, arch: process.arch },
+      scenarios: {
+        lifecycle: {
           durableMessages: messages.length,
-          liveSessionEntries: firstLiveEntryIds.length + secondLiveEntryIds.length,
-          modelRequests: model.requests.map((messagesForRequest) => messagesForRequest.length),
           crashSignal: "SIGKILL",
           lockRecoveryWaitMs,
           resumedSameSession: true,
         },
-        null,
-        2,
-      ),
+        steer,
+        followUp,
+        approval,
+        cancellation,
+      },
+      observedStockSeams: {
+        readyTranscriptWatermark: initialWatermark !== null && restartWatermark !== null,
+        liveSessionEntries: firstLiveEntryIds.length + secondLiveEntryIds.length > 0,
+        durableCommandKey: false,
+      },
+      modelRequestCount: model.requests.length,
+      passed: true,
+    };
+    const evidenceRoot = join(repoRoot, "artifacts", "official-omp-gate0");
+    await mkdir(evidenceRoot, { recursive: true });
+    await writeFile(
+      join(evidenceRoot, `${process.platform}-${process.arch}.json`),
+      `${JSON.stringify(result, null, 2)}\n`,
     );
+    console.log(JSON.stringify(result, null, 2));
   } finally {
     if (active) {
       active.child.kill("SIGKILL");

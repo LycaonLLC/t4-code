@@ -823,6 +823,50 @@ describe("child supervision", () => {
 		expect(writes).toEqual([]);
 		supervisor.stop();
 	});
+	test("a child crash after command dispatch rejects the unknown outcome without replay", async () => {
+		const written = Promise.withResolvers<void>();
+		const exited = Promise.withResolvers<number>();
+		const writes: Record<string, unknown>[] = [];
+		const crashErrors: Error[] = [];
+		let spawnCount = 0;
+		const child: ChildHandle = {
+			stdin: {
+				write: data => {
+					writes.push(JSON.parse(data) as Record<string, unknown>);
+					written.resolve();
+				},
+			},
+			stdout: (async function* () {
+				yield `${JSON.stringify({ type: "ready" })}\n`;
+				await written.promise;
+				exited.resolve(137);
+			})(),
+			stderr: (async function* () {})(),
+			exited: exited.promise,
+			kill: () => exited.resolve(137),
+		};
+		const supervisor = new RpcChildSupervisor(
+			{
+				spawn: () => {
+					spawnCount += 1;
+					return child;
+				},
+				argv: path => ["omp", "--mode", "rpc", "--session", path],
+			},
+			record("s"),
+			{ entry: () => {}, event: () => {}, crashed: error => crashErrors.push(error) },
+		);
+		await supervisor.start();
+		let internalId: string | undefined;
+		await expect(supervisor.prompt("outer", "run once", undefined, id => (internalId = id))).rejects.toThrow(
+			/rpc child (?:stdout EOF|exited)/u,
+		);
+		expect(internalId).toBe("outer:1");
+		expect(writes).toEqual([{ type: "prompt", message: "run once", id: "outer:1" }]);
+		expect(supervisor.hasPendingCalls()).toBe(false);
+		expect(spawnCount).toBe(1);
+		expect(crashErrors).toHaveLength(1);
+	});
 	test("buffered child frames are discarded after an explicit stop", async () => {
 		const releaseBuffered = Promise.withResolvers<void>();
 		const bufferedDrained = Promise.withResolvers<void>();
