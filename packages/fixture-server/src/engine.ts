@@ -484,7 +484,13 @@ export class FixtureEngine {
         "sessions.control",
         "sessions.manage",
       ],
-      grantedFeatures: ["catalog.metadata", "preview.control", "resume", "settings.metadata"],
+      grantedFeatures: [
+        "catalog.metadata",
+        "files.search",
+        "preview.control",
+        "resume",
+        "settings.metadata",
+      ],
       negotiatedLimits: { maxInputBytes: 1_048_576 },
       authentication: "local",
       resumed,
@@ -1144,6 +1150,18 @@ export class FixtureEngine {
     )
       return { ...base, ok: true, result: {} };
     if (frame.command === "files.list") return { ...base, ok: true, result: { entries: [] } };
+    if (frame.command === "files.search")
+      return {
+        ...base,
+        ok: true,
+        result: {
+          matches: [
+            { path: "src/app.ts" },
+            { path: "apps/web/src/components/CommandPalette.tsx" },
+          ],
+          truncated: false,
+        },
+      };
     if (frame.command === "files.diff") return { ...base, ok: true, result: { diff: "" } };
     if (frame.command === "term.open")
       return { ...base, ok: true, result: { terminalId: "terminal-fixture" } };

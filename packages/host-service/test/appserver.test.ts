@@ -275,6 +275,19 @@ describe("appserver lifecycle", () => {
 		expect(appserverSupportedCapabilities({ operationsAuthority: inputOnly })).toContain("preview.input");
 		expect(appserverSupportedCapabilities({ operationsAuthority: inputOnly })).not.toContain("preview.read");
 	});
+	test("advertises project file search only when its concrete authority exists", () => {
+		expect(appserverSupportedFeatures({ operationsAuthority: {} })).not.toContain("files.search");
+		expect(
+			appserverSupportedFeatures({
+				operationsAuthority: { filesSearch: async () => ({ matches: [], truncated: false }) },
+			}),
+		).toContain("files.search");
+		expect(
+			appserverSupportedCapabilities({
+				operationsAuthority: { filesSearch: async () => ({ matches: [], truncated: false }) },
+			}),
+		).toContain("files.list");
+	});
 	test("advertises usage reads only when a concrete read authority exists", () => {
 		expect(appserverSupportedCapabilities({})).not.toContain("usage.read");
 		expect(

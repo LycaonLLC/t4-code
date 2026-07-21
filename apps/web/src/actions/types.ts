@@ -41,7 +41,11 @@ export interface ActionArguments {
     readonly sessionId: string;
     readonly surfaceId: ActionSessionSurface;
   };
-  readonly "file.open": { readonly sessionId: string; readonly path: string };
+  readonly "file.open": {
+    readonly sessionId: string;
+    readonly path: string;
+    readonly source?: "loaded" | "project-search";
+  };
   readonly "agent.open": { readonly sessionId: string; readonly agentId: string };
   readonly "review.open": { readonly sessionId: string; readonly turnId: string };
   readonly "preview.open": { readonly sessionId: string };
@@ -137,7 +141,12 @@ export interface ActionRegistry {
 }
 
 export type QuickOpenGroup = "recent" | "files" | "workspace" | "navigate" | "app";
-export type QuickOpenProviderId = "actions" | "sessions" | "loaded-files" | "transcript-fallback";
+export type QuickOpenProviderId =
+  | "actions"
+  | "sessions"
+  | "project-files"
+  | "loaded-files"
+  | "transcript-fallback";
 
 export type QuickOpenStatus =
   | { readonly kind: "icon"; readonly icon: ActionIcon }
@@ -156,14 +165,18 @@ export interface QuickOpenItem {
   readonly status: QuickOpenStatus;
   /** Lower is a better match; used only inside the item's display group. */
   readonly score: number;
-  /** Files are only from directory listings already loaded for this session. */
-  readonly indexScope?: "loaded";
+  readonly indexScope?: "loaded" | "project";
+}
+
+export interface QuickOpenProjectFileMatch {
+  readonly path: string;
 }
 
 export interface QuickOpenProviderContext {
   readonly registry: ActionRegistry;
   readonly groups: readonly ProjectGroup[];
   readonly activeSessionFiles: readonly FileRefEntry[];
+  readonly projectFileMatches?: readonly QuickOpenProjectFileMatch[];
 }
 
 export interface QuickOpenProvider {

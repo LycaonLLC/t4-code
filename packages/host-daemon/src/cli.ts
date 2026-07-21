@@ -8,6 +8,7 @@ import {
   createRemoteAppserver,
   OmpAuthorityBridgeClient,
   profileSocketPath,
+  ProjectFileSearchAuthority,
   TranscriptSearchIndex,
   type AppserverHandle,
   type AppserverOptions,
@@ -169,6 +170,9 @@ export async function runHostDaemon(
     const transcriptSearchAuthority =
       dependencies.createTranscriptSearch?.(paths.transcriptSearchPath) ??
       new TranscriptSearchIndex(paths.transcriptSearchPath);
+    const projectFileSearchAuthority = new ProjectFileSearchAuthority(
+      authorities.projectRootForSession,
+    );
     const identity = bridge.identity;
     const options: AppserverOptions = {
       ...identity,
@@ -179,7 +183,10 @@ export async function runHostDaemon(
       attentionOutcomePath: paths.attentionOutcomePath,
       sessionAuthority: authorities.sessionAuthority,
       discovery: authorities.discovery,
-      operationsAuthority: authorities.operationsAuthority,
+      operationsAuthority: {
+        ...authorities.operationsAuthority,
+        ...projectFileSearchAuthority.operations(),
+      },
       usageAuthority: authorities.usageAuthority,
       transcriptSearchAuthority,
       projectRootForProject: authorities.projectRootForProject,

@@ -2,6 +2,11 @@
 // Cmd/Ctrl+K opens it; arrows move, Enter runs, Escape closes and restores
 // focus (dialog primitive owns the focus contract).
 import { cn, Dialog, DialogPopup, StatusPill } from "@t4-code/ui";
+import {
+  ProjectFileSearchError,
+  searchProjectFiles,
+  type ProjectFileSearchMatch,
+} from "@t4-code/client";
 import { CornerDownLeft, Search, SquareTerminal } from "lucide-react";
 import {
   Fragment,
@@ -17,12 +22,14 @@ import { buildQuickOpenItems, type ActionRegistry, type QuickOpenItem } from "..
 import { flattenFileIndex, type FileRefEntry } from "../features/composer/file-refs.ts";
 import { getInspectorStore, type FileChildren } from "../features/panes/inspector-store.ts";
 import type { ProjectGroup } from "../lib/session-tree.ts";
+import { desktopRuntime, useDesktopRuntimeSnapshot } from "../platform/desktop-runtime.ts";
+import { resolveLiveSession } from "../platform/live-workspace.ts";
 import { useWorkspace, workspaceStore } from "../state/store-instance.ts";
 import { SESSION_SURFACES } from "./pane-families.tsx";
 
 const GROUP_LABEL = {
   recent: "Recent work",
-  files: "Files in this session",
+  files: "Files",
   workspace: "Workspace",
   navigate: "Navigate",
   app: "App",
@@ -30,6 +37,10 @@ const GROUP_LABEL = {
 
 const EMPTY_FILE_CHILDREN: Readonly<Record<string, FileChildren>> = Object.freeze({});
 const EMPTY_FILE_ENTRIES: readonly FileRefEntry[] = Object.freeze([]);
+const EMPTY_PROJECT_MATCHES: readonly ProjectFileSearchMatch[] = Object.freeze([]);
+const PROJECT_SEARCH_DEBOUNCE_MS = 140;
+
+type ProjectSearchState = "idle" | "loading" | "ready" | "unsupported" | "offline" | "error";
 
 function ItemStatus({ item }: { readonly item: QuickOpenItem }) {
   if (item.status === null) return null;
@@ -58,8 +69,13 @@ export function CommandPalette({
 }) {
   const open = useWorkspace((state) => state.paletteOpen);
   const activeSessionId = useWorkspace((state) => state.activeSessionId);
+  const runtimeSnapshot = useDesktopRuntimeSnapshot();
   const [query, setQuery] = useState("");
   const [highlighted, setHighlighted] = useState(0);
+  const [projectMatches, setProjectMatches] = useState(EMPTY_PROJECT_MATCHES);
+  const [projectSearchState, setProjectSearchState] = useState<ProjectSearchState>("idle");
+  const [projectSearchTruncated, setProjectSearchTruncated] = useState(false);
+  const searchGeneration = useRef(0);
   const listRef = useRef<HTMLUListElement | null>(null);
   const inspector = activeSessionId === null ? null : getInspectorStore(activeSessionId);
   const fileChildren = useSyncExternalStore(
@@ -76,9 +92,81 @@ export function CommandPalette({
     () => (activeSessionId === null ? EMPTY_FILE_ENTRIES : flattenFileIndex(fileChildren)),
     [activeSessionId, fileChildren],
   );
+  const liveAddress =
+    runtimeSnapshot === null || activeSessionId === null
+      ? null
+      : resolveLiveSession(runtimeSnapshot, activeSessionId);
+  const searchTargetId = liveAddress?.targetId ?? null;
+  const searchHostId = liveAddress?.hostId ?? null;
+  const searchSessionId = liveAddress?.sessionId ?? null;
+  useEffect(() => {
+    const generation = ++searchGeneration.current;
+    const trimmed = query.trim();
+    setProjectSearchTruncated(false);
+    if (!open || trimmed.length < 2 || activeSessionId === null) {
+      setProjectMatches(EMPTY_PROJECT_MATCHES);
+      setProjectSearchState("idle");
+      return;
+    }
+    const controller = desktopRuntime();
+    if (
+      controller === null ||
+      searchTargetId === null ||
+      searchHostId === null ||
+      searchSessionId === null
+    ) {
+      setProjectMatches(EMPTY_PROJECT_MATCHES);
+      setProjectSearchState(runtimeSnapshot === null ? "unsupported" : "offline");
+      return;
+    }
+    setProjectMatches(EMPTY_PROJECT_MATCHES);
+    setProjectSearchState("loading");
+    const timeout = window.setTimeout(() => {
+      void searchProjectFiles(
+        controller,
+        { targetId: searchTargetId, hostId: searchHostId, sessionId: searchSessionId },
+        { query: trimmed },
+      ).then(
+        (result) => {
+          if (searchGeneration.current !== generation) return;
+          setProjectMatches(result.matches);
+          setProjectSearchTruncated(result.truncated);
+          setProjectSearchState("ready");
+        },
+        (error: unknown) => {
+          if (searchGeneration.current !== generation) return;
+          setProjectMatches(EMPTY_PROJECT_MATCHES);
+          setProjectSearchState(
+            error instanceof ProjectFileSearchError &&
+              (error.code === "unsupported" || error.code === "offline")
+              ? error.code
+              : "error",
+          );
+        },
+      );
+    }, PROJECT_SEARCH_DEBOUNCE_MS);
+    return () => {
+      window.clearTimeout(timeout);
+      if (searchGeneration.current === generation) searchGeneration.current += 1;
+    };
+  }, [
+    activeSessionId,
+    open,
+    query,
+    runtimeSnapshot === null,
+    searchHostId,
+    searchSessionId,
+    searchTargetId,
+  ]);
   const filtered = useMemo(
-    () => buildQuickOpenItems(query, { registry, groups, activeSessionFiles }),
-    [activeSessionFiles, groups, query, registry],
+    () =>
+      buildQuickOpenItems(query, {
+        registry,
+        groups,
+        activeSessionFiles,
+        projectFileMatches: projectMatches,
+      }),
+    [activeSessionFiles, groups, projectMatches, query, registry],
   );
   const needle = query.trim().toLowerCase();
   const activeIndex = Math.min(highlighted, Math.max(0, filtered.length - 1));
@@ -113,7 +201,7 @@ export function CommandPalette({
   return (
     <Dialog onOpenChange={(next) => workspaceStore.getState().setPaletteOpen(next)} open={open}>
       <DialogPopup
-        aria-label="Search sessions, transcripts, and commands"
+        aria-label="Search files, sessions, transcripts, and commands"
         className="w-full max-w-lg overflow-hidden p-0"
         showCloseButton={false}
       >
@@ -141,7 +229,7 @@ export function CommandPalette({
                 runItem(filtered[activeIndex]);
               }
             }}
-            placeholder="Search sessions, transcripts, and commands"
+            placeholder="Search files, sessions, transcripts, and commands"
             role="combobox"
             type="text"
             value={query}
@@ -215,6 +303,19 @@ export function CommandPalette({
             Open
           </span>
           <span className="ml-auto flex items-center gap-1">
+            {query.trim().length >= 2 && projectSearchState === "loading" && (
+              <span>Searching current project…</span>
+            )}
+            {query.trim().length >= 2 &&
+              (projectSearchState === "unsupported" || projectSearchState === "offline") && (
+                <span>Project search unavailable · showing loaded files</span>
+              )}
+            {query.trim().length >= 2 && projectSearchState === "error" && (
+              <span>Project search failed · showing loaded files</span>
+            )}
+            {projectSearchState === "ready" && projectSearchTruncated && (
+              <span>Best matches from a bounded scan</span>
+            )}
             <kbd className="font-mono text-foreground/80">Esc</kbd>
             Close
           </span>

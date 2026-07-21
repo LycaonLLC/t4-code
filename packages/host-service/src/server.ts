@@ -709,6 +709,7 @@ export function appserverSupportedFeatures(
 	if (authority?.termOpen && authority.terminalInput && authority.terminalResize && authority.terminalClose)
 		implementedFeatures.add("terminal.io");
 	if (authority?.filesList) implementedFeatures.add("files.list");
+	if (authority?.filesSearch) implementedFeatures.add("files.search");
 	if (authority?.filesDiff) implementedFeatures.add("files.diff");
 	for (const feature of operationFeatures(authority)) implementedFeatures.add(feature);
 	return [...(options.supportedFeatures ?? implementedFeatures)].filter(
@@ -1445,7 +1446,8 @@ export class LocalAppserver implements AppserverHandle {
 			command.command === "session.image.read" ||
 			command.command === "transcript.page" ||
 			command.command === "transcript.search" ||
-			command.command === "transcript.context";
+			command.command === "transcript.context" ||
+			command.command === "files.search";
 		const acceptedLifecycle = this.#messageLifecyclesByCommandId.get(command.commandId);
 		if (acceptedLifecycle?.accepted)
 			return acceptedLifecycle.commandHash === payloadHash(command)

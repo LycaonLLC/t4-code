@@ -17,6 +17,7 @@ T3 Code at `reference/t3code` is the primary presentation, interaction, desktop-
 - Optional right pane extends the T3 pattern with five calm surface families: Agents, Activity (including events), Review, Files, and Agent Terminals. The user terminal remains a bottom drawer. Context is a popover/dialog, not a permanent tab.
 - Browser/app preview is available through the focused host Preview and the separate native desktop Browser workspace rather than becoming a sixth permanent right-pane family.
 - Keyboard shortcuts, Quick Open, the workspace menu, and transcript tool links use one shared action registry so the same operation has one availability rule and one implementation.
+- Quick Open searches filenames across the active project through a bounded desktop-host operation. OMP supplies the trusted session root; the renderer never receives or chooses an absolute path. Older or limited hosts fall back honestly to files already loaded in the inspector.
 - A visible text-file preview can be deliberately staged as bounded, reviewed context for the next new prompt. It is temporary renderer state compiled into ordinary prompt text; it does not create a second runtime authority.
 - Light and dark themes use neutral surfaces. Accent use is minimal and semantic.
 - OMP identity uses the existing pi/connector mark from the upstream Oh My Pi repository and the Pi Pink `#e83174` accent.
@@ -54,16 +55,16 @@ as small generic upstream seams.
 - `apps/web`: T3-derived React renderer and desktop/web client shell.
 - `apps/mobile`: the current native Android wrapper around the web client.
 - `packages/host-wire`: T4-owned, dependency-free `omp-app/1` wire schema.
-- `packages/host-service`: persistent host service, projections, workspaces, policy, replay, files, PTY, audit, and OMP authority-bridge supervision.
+- `packages/host-service`: persistent host service, projections, bounded indexes, workspaces, policy, replay, files, PTY, audit, and OMP authority-bridge supervision.
 - `packages/host-daemon`: standalone T4 Host executable.
 - `packages/protocol`: consumes the workspace-owned host wire schema and adds desktop-only IPC schemas.
-- `packages/client`: connection, replay, cache, optimistic-state rules, host/session stores.
+- `packages/client`: connection, replay, cache, optimistic-state rules, host/session stores, and strictly decoded host-search coordinators.
 - `packages/remote`: remote target discovery, identity pinning, pairing, and transport helpers.
 - `packages/service-manager`: desktop-side T4 Host installation and lifecycle support.
 - future `packages/omp-runtime-adapter`: shared official-OMP lifecycle, capability, and translation boundary for local T4 Hosts and T4 Nodes.
 - `packages/ui`: T3-derived design primitives, tokens, icons, motion, virtualization.
 - `packages/fixture-server`: deterministic seeded sessions, faults, and load scenarios.
-- OMP authority bridge: versioned runtime boundary for session persistence, locks, workers, configuration, credentials, tools, and execution.
+- OMP authority bridge: versioned runtime boundary for session persistence, project roots, locks, workers, configuration, credentials, tools, and execution.
 
 ## Proof standard
 

@@ -1148,7 +1148,7 @@ test("shows verified session context and groups command-palette actions", async 
 
   await page.keyboard.press("Control+k");
   const palette = page.getByRole("dialog", {
-    name: "Search sessions, transcripts, and commands",
+    name: "Search files, sessions, transcripts, and commands",
   });
   await expect(palette.getByText("Recent work", { exact: true })).toBeVisible();
   await expect(palette.getByText("Workspace", { exact: true })).toBeVisible();
@@ -1159,6 +1159,14 @@ test("shows verified session context and groups command-palette actions", async 
   );
 
   const search = palette.getByRole("combobox");
+  await search.fill("CommandPalette");
+  await expect(
+    palette.getByRole("option", { name: /apps\/web\/src\/components\/CommandPalette\.tsx.*Current project/u }),
+  ).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("complementary", { name: "Files", exact: true })).toBeVisible();
+
+  await page.keyboard.press("Control+k");
   await search.fill("open terminal");
   await expect(palette.getByText("Workspace", { exact: true })).toBeVisible();
   await page.keyboard.press("Enter");
@@ -1193,7 +1201,7 @@ test("finds loaded files and stages reviewed file context", async ({ page }) => 
 
   await page.keyboard.press("Control+k");
   const palette = page.getByRole("dialog", {
-    name: "Search sessions, transcripts, and commands",
+    name: "Search files, sessions, transcripts, and commands",
   });
   await palette.getByRole("combobox").fill("README");
   await expect(

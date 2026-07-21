@@ -17,6 +17,7 @@ export * from "./hello.js";
 export * from "./ids.js";
 export * from "./limits.js";
 export * from "./pairing-confirm.js";
+export * from "./project-file-search.js";
 export * from "./result.js";
 export * from "./session-index.js";
 export * from "./session-state.js";

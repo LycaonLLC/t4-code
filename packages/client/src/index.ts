@@ -175,6 +175,17 @@ export {
   createDesktopRuntimeController,
 } from "./desktop-runtime.ts";
 export { deriveAttentionInbox, readSessionAttention } from "./attention-projection.ts";
+export {
+  ProjectFileSearchError,
+  searchProjectFiles,
+} from "./project-file-search.ts";
+export type {
+  ProjectFileSearchAddress,
+  ProjectFileSearchArguments,
+  ProjectFileSearchMatch,
+  ProjectFileSearchResult,
+  ProjectFileSearchRuntime,
+} from "./project-file-search.ts";
 export type {
   AttentionActionability,
   AttentionActionabilityInputs,
