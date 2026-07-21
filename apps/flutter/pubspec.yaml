@@ -16,6 +16,7 @@ dependencies:
   flutter_markdown_plus: ^1.0.12
   file_selector: ^1.1.0
   xterm: ^4.0.0
+  re_highlight: ^0.0.3
 
 dev_dependencies:
   flutter_test:

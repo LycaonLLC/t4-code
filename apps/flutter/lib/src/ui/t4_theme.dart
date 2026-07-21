@@ -270,6 +270,22 @@ abstract final class _T4Theme {
   static ThemeData dark() =>
       _build(scheme: _T4Palette.darkScheme, semantic: _T4Palette.darkSemantic);
 
+  /// Compact density on desktop targets (native and desktop web); standard on
+  /// touch platforms. On web, [defaultTargetPlatform] reflects the host OS, so
+  /// desktop browsers resolve to macOS/Windows/Linux and stay compact.
+  static VisualDensity get _adaptiveDensity {
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+      case TargetPlatform.linux:
+        return VisualDensity.compact;
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+      case TargetPlatform.fuchsia:
+        return VisualDensity.standard;
+    }
+  }
+
   static ThemeData _build({
     required ColorScheme scheme,
     required T4SemanticColors semantic,
@@ -280,57 +296,83 @@ abstract final class _T4Theme {
       colorScheme: scheme,
       fontFamily: _T4Typography.sansFamily,
     );
-    final textTheme = base.textTheme
-        .apply(
-          fontFamily: _T4Typography.sansFamily,
-          bodyColor: scheme.onSurface,
-          displayColor: scheme.onSurface,
-        )
-        .copyWith(
-          headlineSmall: base.textTheme.headlineSmall?.copyWith(
-            fontFamily: _T4Typography.sansFamily,
-            fontWeight: FontWeight.w600,
-          ),
-          titleLarge: base.textTheme.titleLarge?.copyWith(
-            fontFamily: _T4Typography.sansFamily,
-            fontWeight: FontWeight.w600,
-          ),
-          titleMedium: base.textTheme.titleMedium?.copyWith(
-            fontFamily: _T4Typography.sansFamily,
-            fontWeight: FontWeight.w600,
-          ),
-          titleSmall: base.textTheme.titleSmall?.copyWith(
-            fontFamily: _T4Typography.sansFamily,
-            fontWeight: FontWeight.w600,
-          ),
-          labelLarge: base.textTheme.labelLarge?.copyWith(
-            fontFamily: _T4Typography.sansFamily,
-            fontWeight: FontWeight.w500,
-          ),
-          labelMedium: base.textTheme.labelMedium?.copyWith(
-            fontFamily: _T4Typography.sansFamily,
-            fontWeight: FontWeight.w500,
-          ),
-          labelSmall: base.textTheme.labelSmall?.copyWith(
-            fontFamily: _T4Typography.sansFamily,
-            fontWeight: FontWeight.w500,
-            letterSpacing: 0.3,
-          ),
-        );
-    final minimumSize = WidgetStatePropertyAll<Size>(
-      Size.square(_T4Layout.minimumTouchTarget),
+    final baseText = base.textTheme.apply(
+      fontFamily: _T4Typography.sansFamily,
+      bodyColor: scheme.onSurface,
+      displayColor: scheme.onSurface,
     );
+    final textTheme = baseText.copyWith(
+      headlineSmall: baseText.headlineSmall?.copyWith(
+        fontSize: 20,
+        fontWeight: FontWeight.w600,
+        fontVariations: const <FontVariation>[FontVariation('wght', 650)],
+      ),
+      titleLarge: baseText.titleLarge?.copyWith(
+        fontSize: 17,
+        fontWeight: FontWeight.w600,
+        fontVariations: const <FontVariation>[FontVariation('wght', 650)],
+      ),
+      titleMedium: baseText.titleMedium?.copyWith(
+        fontSize: 15,
+        fontWeight: FontWeight.w600,
+      ),
+      titleSmall: baseText.titleSmall?.copyWith(
+        fontSize: 13,
+        fontWeight: FontWeight.w600,
+      ),
+      bodyLarge: baseText.bodyLarge?.copyWith(fontSize: 14),
+      bodyMedium: baseText.bodyMedium?.copyWith(fontSize: 13, height: 1.45),
+      bodySmall: baseText.bodySmall?.copyWith(fontSize: 12),
+      labelLarge: baseText.labelLarge?.copyWith(
+        fontSize: 13,
+        fontWeight: FontWeight.w600,
+      ),
+      labelMedium: baseText.labelMedium?.copyWith(
+        fontSize: 12,
+        fontWeight: FontWeight.w500,
+      ),
+      labelSmall: baseText.labelSmall?.copyWith(
+        fontSize: 11,
+        fontWeight: FontWeight.w500,
+        letterSpacing: 0.2,
+      ),
+    );
+    const minimumSize = WidgetStatePropertyAll<Size>(Size(0, 32));
     final controlShape = WidgetStatePropertyAll<OutlinedBorder>(
-      RoundedRectangleBorder(borderRadius: BorderRadius.circular(_T4Radius.md)),
+      RoundedRectangleBorder(borderRadius: BorderRadius.circular(_T4Radius.sm)),
     );
-    final controlPadding = WidgetStatePropertyAll<EdgeInsetsGeometry>(
-      const EdgeInsets.symmetric(horizontal: 12),
+    const controlPadding = WidgetStatePropertyAll<EdgeInsetsGeometry>(
+      EdgeInsets.symmetric(horizontal: 14, vertical: 8),
     );
+    final menuShape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(_T4Radius.md),
+      side: BorderSide(color: scheme.outlineVariant),
+    );
+    final menuStyle = MenuStyle(
+      backgroundColor: WidgetStatePropertyAll<Color>(
+        scheme.surfaceContainerLowest,
+      ),
+      surfaceTintColor: const WidgetStatePropertyAll<Color>(Colors.transparent),
+      elevation: const WidgetStatePropertyAll<double>(6),
+      shape: WidgetStatePropertyAll<OutlinedBorder>(menuShape),
+      minimumSize: const WidgetStatePropertyAll<Size>(Size(180, 0)),
+      padding: const WidgetStatePropertyAll<EdgeInsetsGeometry>(
+        EdgeInsets.symmetric(vertical: _T4Space.xxs),
+      ),
+    );
+    final isDark = scheme.brightness == Brightness.dark;
+    final tooltipBackground = isDark
+        ? scheme.surfaceContainerHighest
+        : scheme.inverseSurface;
+    final tooltipForeground = isDark
+        ? scheme.onSurface
+        : scheme.onInverseSurface;
 
     return base.copyWith(
       scaffoldBackgroundColor: scheme.surface,
       textTheme: textTheme,
-      visualDensity: VisualDensity.standard,
+      visualDensity: _adaptiveDensity,
+      iconTheme: base.iconTheme.copyWith(size: 20),
       extensions: <ThemeExtension<dynamic>>[semantic],
       appBarTheme: AppBarTheme(
         backgroundColor: scheme.surface,
@@ -347,28 +389,28 @@ abstract final class _T4Theme {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: scheme.surfaceContainerLowest,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: _T4Space.md,
-          vertical: _T4Space.sm,
+        fillColor: scheme.onSurface.withValues(alpha: 0.03),
+        isDense: true,
+        floatingLabelBehavior: FloatingLabelBehavior.never,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+        hintStyle: textTheme.bodyMedium?.copyWith(
+          fontSize: 13,
+          color: scheme.onSurfaceVariant.withValues(alpha: 0.75),
         ),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(_T4Radius.md),
-          borderSide: BorderSide(color: scheme.outline),
+          borderRadius: BorderRadius.circular(_T4Radius.sm),
+          borderSide: BorderSide(color: scheme.outlineVariant),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(_T4Radius.md),
-          borderSide: BorderSide(color: scheme.outline),
+          borderRadius: BorderRadius.circular(_T4Radius.sm),
+          borderSide: BorderSide(color: scheme.outlineVariant),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(_T4Radius.md),
-          borderSide: BorderSide(
-            color: scheme.primary,
-            width: _T4Size.thinStroke,
-          ),
+          borderRadius: BorderRadius.circular(_T4Radius.sm),
+          borderSide: BorderSide(color: scheme.primary, width: 1.5),
         ),
         disabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(_T4Radius.md),
+          borderRadius: BorderRadius.circular(_T4Radius.sm),
           borderSide: BorderSide(color: scheme.outlineVariant),
         ),
         floatingLabelStyle: TextStyle(color: scheme.primary),
@@ -402,7 +444,15 @@ abstract final class _T4Theme {
         ),
       ),
       iconButtonTheme: IconButtonThemeData(
-        style: ButtonStyle(minimumSize: minimumSize, shape: controlShape),
+        style: ButtonStyle(
+          iconSize: const WidgetStatePropertyAll<double>(19),
+          minimumSize: const WidgetStatePropertyAll<Size>(Size(28, 28)),
+          padding: const WidgetStatePropertyAll<EdgeInsetsGeometry>(
+            EdgeInsets.all(4),
+          ),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: controlShape,
+        ),
       ),
       cardTheme: CardThemeData(
         color: scheme.surfaceContainerLowest,
@@ -419,10 +469,10 @@ abstract final class _T4Theme {
         surfaceTintColor: Colors.transparent,
         elevation: 16,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(_T4Radius.lg),
+          borderRadius: BorderRadius.circular(12),
           side: BorderSide(color: scheme.outlineVariant),
         ),
-        titleTextStyle: textTheme.headlineSmall,
+        titleTextStyle: textTheme.titleMedium,
         contentTextStyle: textTheme.bodyMedium,
       ),
       bottomSheetTheme: BottomSheetThemeData(
@@ -450,7 +500,10 @@ abstract final class _T4Theme {
         padding: const EdgeInsets.symmetric(horizontal: _T4Space.xs),
       ),
       listTileTheme: ListTileThemeData(
-        minTileHeight: _T4Layout.minimumTouchTarget,
+        dense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: _T4Space.sm),
+        minVerticalPadding: 6,
+        horizontalTitleGap: _T4Space.xs,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(_T4Radius.sm),
         ),
@@ -469,15 +522,30 @@ abstract final class _T4Theme {
           borderRadius: BorderRadius.circular(_T4Radius.sm),
         ),
       ),
+      menuTheme: MenuThemeData(style: menuStyle),
+      menuButtonTheme: MenuButtonThemeData(
+        style: ButtonStyle(
+          minimumSize: const WidgetStatePropertyAll<Size>(Size(0, 34)),
+          padding: const WidgetStatePropertyAll<EdgeInsetsGeometry>(
+            EdgeInsets.symmetric(
+              horizontal: _T4Space.sm,
+              vertical: _T4Space.xxs,
+            ),
+          ),
+          textStyle: WidgetStatePropertyAll<TextStyle?>(textTheme.labelMedium),
+        ),
+      ),
+      dropdownMenuTheme: DropdownMenuThemeData(
+        textStyle: textTheme.labelMedium,
+        menuStyle: menuStyle,
+      ),
       popupMenuTheme: PopupMenuThemeData(
         color: scheme.surfaceContainerLowest,
         surfaceTintColor: Colors.transparent,
-        elevation: 8,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(_T4Radius.sm),
-          side: BorderSide(color: scheme.outlineVariant),
-        ),
-        textStyle: textTheme.bodyMedium,
+        elevation: 6,
+        shape: menuShape,
+        textStyle: textTheme.labelMedium,
+        menuPadding: const EdgeInsets.symmetric(vertical: _T4Space.xxs),
       ),
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
@@ -490,13 +558,14 @@ abstract final class _T4Theme {
         ),
       ),
       tooltipTheme: TooltipThemeData(
-        waitDuration: _T4Motion.short,
+        waitDuration: const Duration(milliseconds: 450),
         decoration: BoxDecoration(
-          color: scheme.inverseSurface,
-          borderRadius: BorderRadius.circular(_T4Radius.sm),
+          color: tooltipBackground,
+          borderRadius: BorderRadius.circular(_T4Radius.xs),
         ),
         textStyle: textTheme.labelSmall?.copyWith(
-          color: scheme.onInverseSurface,
+          fontSize: 11.5,
+          color: tooltipForeground,
         ),
       ),
       scrollbarTheme: ScrollbarThemeData(
