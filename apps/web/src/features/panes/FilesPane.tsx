@@ -2,7 +2,7 @@
 // preview surface that stays honest about what it can show — code, images,
 // binaries, read failures, and offline hosts each get their own state.
 import { Badge, Button, cn, Skeleton } from "@t4-code/ui";
-import { ChevronRight, FileText, Folder, ImageIcon, WifiOff } from "lucide-react";
+import { ChevronRight, FilePlus2, FileText, Folder, ImageIcon, WifiOff } from "lucide-react";
 import { useEffect, useMemo } from "react";
 import type * as React from "react";
 
@@ -10,6 +10,10 @@ import { FamilyEmpty } from "./FamilyEmpty.tsx";
 import { PaneHeading } from "./PaneHeading.tsx";
 import { useInspector, type FileDraft, type InspectorStoreApi } from "./inspector-store.ts";
 import type { FilePreview, FileTreeNode } from "./model.ts";
+import { composerStore, useComposer } from "../composer/composer-store.ts";
+import { captureFileContext } from "../context-packet/context-packet.ts";
+
+const EMPTY_CONTEXT_ITEMS = [] as const;
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -247,7 +251,15 @@ function EditorBody({
   );
 }
 
-export function FilesPane({ api, trailing }: { readonly api: InspectorStoreApi; readonly trailing?: React.ReactNode | undefined }) {
+export function FilesPane({
+  api,
+  sessionId,
+  trailing,
+}: {
+  readonly api: InspectorStoreApi;
+  readonly sessionId: string;
+  readonly trailing?: React.ReactNode | undefined;
+}) {
   const query = useInspector(api, (state) => state.files.query);
   const selectedPath = useInspector(api, (state) => state.files.selectedPath);
   const preview = useInspector(api, (state) => state.files.preview);
@@ -255,12 +267,21 @@ export function FilesPane({ api, trailing }: { readonly api: InspectorStoreApi; 
   const draftsByPath = useInspector(api, (state) => state.files.draftsByPath);
   const fileWrite = useInspector(api, (state) => state.actions.fileWrite);
   const draft = selectedPath === null ? undefined : draftsByPath[selectedPath];
+  const stagedContext = useComposer(
+    (state) => state.contextItemsBySessionId[sessionId] ?? EMPTY_CONTEXT_ITEMS,
+  );
   const editablePreview =
-    preview !== null &&
-    preview !== "loading" &&
-    preview.kind === "code" &&
-    !preview.truncated;
+    preview !== null && preview !== "loading" && preview.kind === "code" && !preview.truncated;
   const rootKnown = useInspector(api, (state) => state.files.childrenByPath[""] !== undefined);
+  const contextPreview: FilePreview | null =
+    draft !== undefined
+      ? { kind: "code", path: draft.path, text: draft.text, truncated: false }
+      : preview !== null && preview !== "loading" && preview.kind === "code"
+        ? preview
+        : null;
+  const contextAlreadyAdded =
+    selectedPath !== null &&
+    stagedContext.some((item) => item.source.kind === "file" && item.source.path === selectedPath);
 
   // Root loads lazily on first open, like every other directory.
   useEffect(() => {
@@ -309,6 +330,20 @@ export function FilesPane({ api, trailing }: { readonly api: InspectorStoreApi; 
             <span className="min-w-0 flex-1 truncate font-mono text-xs" dir="rtl">
               <bdi>{selectedPath}</bdi>
             </span>
+            {contextPreview !== null && (
+              <Button
+                onClick={() => {
+                  const item = captureFileContext(sessionId, contextPreview);
+                  if (item !== null) composerStore.getState().addContextItem(sessionId, item);
+                }}
+                size="xs"
+                title="Add the visible excerpt to the next new message"
+                variant="outline"
+              >
+                <FilePlus2 aria-hidden="true" />
+                {contextAlreadyAdded ? "Refresh context" : "Add context"}
+              </Button>
+            )}
             {draft === undefined ? (
               <>
                 <Badge size="sm" variant="outline">
@@ -322,7 +357,7 @@ export function FilesPane({ api, trailing }: { readonly api: InspectorStoreApi; 
                     title={
                       preview.truncated
                         ? "The host returned only part of this file."
-                        : fileWrite.reason ?? undefined
+                        : (fileWrite.reason ?? undefined)
                     }
                     variant="outline"
                   >
@@ -365,12 +400,10 @@ export function FilesPane({ api, trailing }: { readonly api: InspectorStoreApi; 
               <Skeleton className="h-3.5 w-4/5" />
               <Skeleton className="h-3.5 w-3/5" />
             </div>
+          ) : draft === undefined ? (
+            <PreviewBody preview={preview} />
           ) : (
-            draft === undefined ? (
-              <PreviewBody preview={preview} />
-            ) : (
-              <EditorBody api={api} draft={draft} saveEnabled={fileWrite.enabled} />
-            )
+            <EditorBody api={api} draft={draft} saveEnabled={fileWrite.enabled} />
           )}
         </section>
       )}

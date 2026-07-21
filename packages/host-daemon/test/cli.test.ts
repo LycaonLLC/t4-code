@@ -97,4 +97,45 @@ describe("T4 host daemon CLI", () => {
     expect(searchCloses).toBe(1);
     expect(bridgeStops).toBe(1);
   });
+
+  test("stops the appserver and exits when the bridge dies after startup", async () => {
+    const closeGate = Promise.withResolvers<Error>();
+    let bridgeStops = 0;
+    let appserverStarts = 0;
+    let appserverStops = 0;
+    const bridge = {
+      start: async () => {},
+      createAuthorities: () => ({
+        hostInfo: async () => ({ transcriptImageRoot: "/tmp/images" }),
+        sessionAuthority: {},
+        discovery: {},
+        operationsAuthority: {},
+        projectRootForProject: async () => "/tmp",
+        lockCheck: async () => {},
+        lockStatus: async () => "missing",
+      }),
+      identity: { ompVersion: "17.0.5", ompBuild: "test" },
+      stop: async () => { bridgeStops += 1; },
+      closed: closeGate.promise,
+    };
+    const appserver = {
+      start: async () => { appserverStarts += 1; },
+      stop: async () => { appserverStops += 1; },
+    };
+    const run = runHostDaemon(
+      { ompExecutable: "/opt/omp", profileId: "test", stateRoot: "/tmp/t4-host-test" },
+      {
+        createBridge: () => bridge as never,
+        createTranscriptSearch: () => ({ close: async () => {} }) as never,
+        createLocal: () => appserver as never,
+        onSignal: () => {},
+        removeSignal: () => {},
+      },
+    );
+    closeGate.resolve(new Error("OMP authority bridge exited (1): boom"));
+    await expect(run).rejects.toThrow("bridge exited (1): boom");
+    expect(appserverStarts).toBe(1);
+    expect(appserverStops).toBe(1);
+    expect(bridgeStops).toBe(1);
+  });
 });

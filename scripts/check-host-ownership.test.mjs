@@ -32,6 +32,21 @@ test("T4 owns the active host wire and generic host packages", () => {
   assert.equal(protocol.dependencies["@oh-my-pi/app-wire"], undefined);
 });
 
+test("planning documents describe the released T4-owned host boundary", () => {
+  const brief = readFileSync(join(root, "PRODUCT_BRIEF.md"), "utf8");
+  const ownership = readFileSync(join(root, "docs", "OWNERSHIP.md"), "utf8");
+
+  assert.match(brief, /persistent T4 Host/u);
+  assert.match(brief, /packages\/host-service/u);
+  assert.doesNotMatch(brief, /persistent OMP appserver/u);
+  assert.doesNotMatch(brief, /OMP `packages\/appserver`/u);
+  assert.match(ownership, /packages\/host-wire/u);
+  assert.match(ownership, /packages\/host-service/u);
+  assert.match(brief, /shared OMP runtime adapter/u);
+  assert.match(ownership, /reused by the local T4 Host and\s+future T4 Nodes/u);
+  assert.doesNotMatch(ownership, /OMP `packages\/appserver`/u);
+});
+
 test("generic host source has no private OMP source-tree dependency", () => {
   const roots = [join(root, "packages", "host-wire"), join(root, "packages", "host-service")];
   const forbidden = ["@oh-my-pi/app-wire", "@oh-my-pi/appserver", "../../coding-agent", "../coding-agent"];

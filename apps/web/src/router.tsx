@@ -59,7 +59,6 @@ import { useShellData } from "./state/shell-data.ts";
 import { RAIL_OVERLAY_QUERY, useMediaQuery } from "./hooks/useMediaQuery.ts";
 import { fixtureSettingsStore } from "./state/settings-instance.ts";
 import { rendererPlatform, useWorkspace, workspaceStore } from "./state/store-instance.ts";
-import { selectSessionView } from "./state/workspace-store.ts";
 
 const rootRoute = createRootRoute({ component: AppShell });
 
@@ -267,11 +266,12 @@ function SessionRoute() {
     <SessionRouteGate previewRoute={false} sessionId={sessionId}>
       {(session, project, nowMs) => (
         <SessionScreen
-          key={session.id}
+          key={sessionId}
           nowMs={nowMs}
           onOpenHostHealth={() => void navigate({ to: "/hosts" })}
           project={project}
           session={session}
+          sessionId={sessionId}
         />
       )}
     </SessionRouteGate>
@@ -347,10 +347,7 @@ function AgentViewRoute() {
         ) {
           inspector.getState().selectAgent(agentId);
         }
-        const state = workspaceStore.getState();
-        const view = selectSessionView(state, sessionId);
-        if (view.paneFamily === "agents") state.setPaneOpen(sessionId, true);
-        else state.togglePaneFamily(sessionId, "agents");
+        workspaceStore.getState().openSessionSurface(sessionId, "agents");
         void navigate({ params: { sessionId }, to: "/sessions/$sessionId" });
       }}
       snapshot={snapshot}

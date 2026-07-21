@@ -33,11 +33,8 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import type {
-  WorkspaceHost,
-  WorkspaceProject,
-  WorkspaceSession,
-} from "../lib/workspace-data.ts";
+import { useActionRegistry } from "../actions/index.ts";
+import type { WorkspaceHost, WorkspaceProject, WorkspaceSession } from "../lib/workspace-data.ts";
 import { PaneContent } from "../features/panes/PaneContent.tsx";
 import { TerminalDrawer } from "../features/terminal/TerminalDrawer.tsx";
 import {
@@ -59,11 +56,12 @@ import { useDesktopRuntimeSnapshot } from "../platform/desktop-runtime.ts";
 import { resolveLiveSession } from "../platform/live-workspace.ts";
 import { useShellData } from "../state/shell-data.ts";
 import {
-  type PaneFamily,
   RIGHT_PANE_WIDTH,
+  type SessionSurfaceId,
   selectSessionView,
+  selectSessionWorkspaceLayout,
 } from "../state/workspace-store.ts";
-import { PANE_FAMILY_META } from "./pane-families.tsx";
+import { SESSION_SURFACES } from "./pane-families.tsx";
 import { ResizeHandle } from "./ResizeHandle.tsx";
 
 const FRESHNESS_LABEL = {
@@ -105,7 +103,9 @@ function SessionContextMenu({
           <Popover.Popup className="w-[min(19rem,calc(100vw-1rem))] rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-(--overlay-shadow) outline-none transition-[scale,opacity] duration-(--motion-duration-fast) data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0">
             <div className="flex items-start gap-2 px-1.5 pt-1 pb-2">
               <div className="min-w-0 flex-1">
-                <Popover.Title className="truncate font-medium text-sm">{project.name}</Popover.Title>
+                <Popover.Title className="truncate font-medium text-sm">
+                  {project.name}
+                </Popover.Title>
                 <Popover.Description className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
                   {project.path}
                 </Popover.Description>
@@ -125,7 +125,9 @@ function SessionContextMenu({
               <div className="flex min-h-9 items-center gap-2 border-border border-b">
                 <HostIcon aria-hidden="true" className="size-3.5 text-muted-foreground" />
                 <dt className="text-muted-foreground text-xs">Host</dt>
-                <dd className="ml-auto max-w-40 truncate text-xs">{host?.name ?? "Unknown host"}</dd>
+                <dd className="ml-auto max-w-40 truncate text-xs">
+                  {host?.name ?? "Unknown host"}
+                </dd>
               </div>
               <div className="flex min-h-9 items-center gap-2 border-border border-b">
                 <Cpu aria-hidden="true" className="size-3.5 text-muted-foreground" />
@@ -190,9 +192,10 @@ function WorkspaceMenu({
 }: {
   sessionId: string;
   paneOpen: boolean;
-  paneFamily: PaneFamily;
+  paneFamily: SessionSurfaceId;
   terminalOpen: boolean;
 }) {
+  const actionRegistry = useActionRegistry();
   const [open, setOpen] = useState(false);
   const workspaceActive = paneOpen || terminalOpen;
   return (
@@ -212,27 +215,35 @@ function WorkspaceMenu({
       <Popover.Portal>
         <Popover.Positioner align="end" className="z-50" side="bottom" sideOffset={6}>
           <Popover.Popup className="w-[min(17rem,calc(100vw-1rem))] rounded-xl border border-border bg-popover p-1.5 text-popover-foreground shadow-(--overlay-shadow) outline-none transition-[scale,opacity] duration-(--motion-duration-fast) data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0">
-            <Popover.Title className="px-2 pt-1 pb-2 font-medium text-sm">
-              Workspace
-            </Popover.Title>
+            <Popover.Title className="px-2 pt-1 pb-2 font-medium text-sm">Workspace</Popover.Title>
             <p className="px-2 pb-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
               Open on the right
             </p>
             <ul>
-              {PANE_FAMILY_META.map((meta) => {
+              {SESSION_SURFACES.map((meta) => {
                 const active = paneOpen && paneFamily === meta.id;
                 const Icon = meta.icon;
                 const label = meta.id === "terminals" ? "Agent terminals" : meta.label;
+                const invocation = {
+                  id: "surface.toggle" as const,
+                  args: { sessionId, surfaceId: meta.id },
+                };
+                const presentation = actionRegistry.present(invocation);
                 return (
                   <li key={meta.id}>
                     <button
-                      aria-label={`${active ? "Close" : "Open"} ${label} panel`}
+                      aria-label={`${presentation.label} panel`}
                       aria-pressed={active}
-                      className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-9"
+                      className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
+                      disabled={presentation.availability.status !== "enabled"}
                       onClick={() => {
-                        workspaceStore.getState().togglePaneFamily(sessionId, meta.id);
-                        setOpen(false);
+                        if (actionRegistry.execute(invocation).executed) setOpen(false);
                       }}
+                      title={
+                        presentation.availability.status === "disabled"
+                          ? presentation.availability.reason
+                          : undefined
+                      }
                       type="button"
                     >
                       <Icon aria-hidden="true" className="size-4 text-muted-foreground" />
@@ -249,12 +260,17 @@ function WorkspaceMenu({
               Open below
             </p>
             <button
-              aria-label={terminalOpen ? "Close terminal below" : "Open terminal below"}
+              aria-label={`${actionRegistry.present({ id: "terminal.toggle", args: undefined }).label} below`}
               aria-pressed={terminalOpen}
-              className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-9"
+              className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
+              disabled={
+                actionRegistry.present({ id: "terminal.toggle", args: undefined }).availability
+                  .status !== "enabled"
+              }
               onClick={() => {
-                workspaceStore.getState().setTerminalDrawerOpen(sessionId, !terminalOpen);
-                setOpen(false);
+                if (actionRegistry.execute({ id: "terminal.toggle", args: undefined }).executed) {
+                  setOpen(false);
+                }
               }}
               type="button"
             >
@@ -268,11 +284,12 @@ function WorkspaceMenu({
               Layout
             </p>
             <button
-              aria-label="Enter focus mode"
+              aria-label={actionRegistry.present({ id: "focus.toggle", args: undefined }).label}
               className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none transition-colors duration-(--motion-duration-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-9"
               onClick={() => {
-                workspaceStore.getState().setFocusMode(true);
-                setOpen(false);
+                if (actionRegistry.execute({ id: "focus.toggle", args: undefined }).executed) {
+                  setOpen(false);
+                }
               }}
               type="button"
             >
@@ -292,11 +309,13 @@ function WorkspaceMenu({
 // at its final coordinates on the first frame.
 
 export function SessionScreen({
+  sessionId,
   session,
   project,
   nowMs,
   onOpenHostHealth,
 }: {
+  sessionId: string;
   session: WorkspaceSession;
   project: WorkspaceProject;
   nowMs: number;
@@ -307,11 +326,14 @@ export function SessionScreen({
   // object: its identity changes on every scroll-anchor write (each scroll
   // event while reading history) and every composer keystroke (draft), and
   // a whole-view subscription re-renders this entire surface per frame.
-  const viewPaneFamily = useWorkspace((state) => selectSessionView(state, session.id).paneFamily);
-  const viewPaneOpen = useWorkspace((state) => selectSessionView(state, session.id).paneOpen);
-  const viewPaneWidth = useWorkspace((state) => selectSessionView(state, session.id).paneWidth);
+  const viewPaneFamily = useWorkspace((state) => selectSessionView(state, sessionId).paneFamily);
+  const secondarySurfaceId = useWorkspace(
+    (state) => selectSessionWorkspaceLayout(state, sessionId).secondary,
+  );
+  const viewPaneOpen = secondarySurfaceId !== null;
+  const viewPaneWidth = useWorkspace((state) => selectSessionView(state, sessionId).paneWidth);
   const terminalDrawerOpen = useWorkspace(
-    (state) => selectSessionView(state, session.id).terminalDrawerOpen,
+    (state) => selectSessionView(state, sessionId).terminalDrawerOpen,
   );
   const focusMode = useWorkspace((state) => state.focusMode);
   const paneDocks = useMediaQuery(RIGHT_PANE_DOCK_QUERY);
@@ -350,7 +372,7 @@ export function SessionScreen({
   };
   const runtimeSnapshot = useDesktopRuntimeSnapshot();
   const previewAddress =
-    runtimeSnapshot === null ? null : resolveLiveSession(runtimeSnapshot, session.id);
+    runtimeSnapshot === null ? null : resolveLiveSession(runtimeSnapshot, sessionId);
   const previewCount = rendererPlatform.demo
     ? 1
     : previewAddress === null
@@ -364,7 +386,7 @@ export function SessionScreen({
   // scroller: number = reading anchor, null = following the tail). This
   // wrapper never scrolls and never writes the session scroll key.
 
-  const activeMeta = PANE_FAMILY_META.find((entry) => entry.id === viewPaneFamily);
+  const activeMeta = SESSION_SURFACES.find((entry) => entry.id === viewPaneFamily);
   const paneWidth = panePreviewWidth ?? viewPaneWidth;
 
   // Docked pane enter/exit: the wrapper's measured width tweens between 0
@@ -382,16 +404,18 @@ export function SessionScreen({
     const state = workspaceStore.getState();
     state.setSessionListView(archived ? "archived" : "current");
     if (!archived) return;
-    state.setPaneOpen(session.id, false);
-    state.setTerminalDrawerOpen(session.id, false);
-  }, [archived, session.id]);
+    state.closeSessionSurface(sessionId, viewPaneFamily);
+    state.setTerminalDrawerOpen(sessionId, false);
+  }, [archived, sessionId, viewPaneFamily]);
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="surface-subheader gap-1.5 px-1.5 sm:gap-2 sm:px-3">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <span className="min-w-0 truncate font-medium text-sm">{session.title}</span>
-          <span aria-hidden="true" className="hidden shrink-0 text-border sm:inline">/</span>
+          <span aria-hidden="true" className="hidden shrink-0 text-border sm:inline">
+            /
+          </span>
           <span className="shrink-0 sm:min-w-0 sm:shrink">
             <SessionContextMenu
               host={host}
@@ -418,7 +442,7 @@ export function SessionScreen({
           <Link
             aria-label={`Open browser preview${previewCount === 1 ? "" : ` (${previewCount})`}`}
             className="shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            params={{ sessionId: session.id }}
+            params={{ sessionId }}
             to="/sessions/$sessionId/preview"
           >
             <Badge variant="outline">Preview{previewCount === 1 ? "" : ` · ${previewCount}`}</Badge>
@@ -428,7 +452,7 @@ export function SessionScreen({
           <Link
             aria-label="Open browser workspace"
             className="shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            params={{ sessionId: session.id }}
+            params={{ sessionId }}
             to="/sessions/$sessionId/browser"
           >
             <Badge variant="outline">Browser</Badge>
@@ -438,7 +462,7 @@ export function SessionScreen({
           <WorkspaceMenu
             paneFamily={viewPaneFamily}
             paneOpen={viewPaneOpen}
-            sessionId={session.id}
+            sessionId={sessionId}
             terminalOpen={terminalDrawerOpen}
           />
         )}
@@ -448,16 +472,17 @@ export function SessionScreen({
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="min-h-0 flex-1 overflow-hidden">
             <SessionMain
-              key={session.id}
+              key={sessionId}
               exportRowsRef={exportRowsRef}
               nowMs={nowMs}
               onOpenHostHealth={onOpenHostHealth}
               project={project}
               session={session}
+              sessionId={sessionId}
             />
           </div>
           {!archived && (
-            <TerminalDrawer open={!focusMode && terminalDrawerOpen} sessionId={session.id} />
+            <TerminalDrawer open={!focusMode && terminalDrawerOpen} sessionId={sessionId} />
           )}
         </div>
 
@@ -466,7 +491,11 @@ export function SessionScreen({
             aria-hidden={paneOpen ? undefined : "true"}
             className="pane-dock flex min-h-0 shrink-0"
             onTransitionEnd={(event) => {
-              if (event.target === event.currentTarget && event.propertyName === "width" && !paneOpen) {
+              if (
+                event.target === event.currentTarget &&
+                event.propertyName === "width" &&
+                !paneOpen
+              ) {
                 setPaneRendered(false);
               }
             }}
@@ -480,7 +509,7 @@ export function SessionScreen({
               bounds={RIGHT_PANE_WIDTH}
               edge="left"
               label={`Resize ${activeMeta.label} panel`}
-              onCommit={(width) => workspaceStore.getState().setPaneWidth(session.id, width)}
+              onCommit={(width) => workspaceStore.getState().setPaneWidth(sessionId, width)}
               onPreview={setPanePreviewWidth}
               width={paneWidth}
             />
@@ -492,14 +521,19 @@ export function SessionScreen({
               <ScrollArea className="min-h-0 flex-1">
                 <div className="pane-content-enter" key={viewPaneFamily}>
                   <PaneContent
-                    family={viewPaneFamily}
+                    sessionId={sessionId}
+                    surfaceId={viewPaneFamily}
                     trailing={
                       <Tooltip>
                         <TooltipTrigger
                           render={
                             <IconButton
                               aria-label={`Close ${activeMeta.label}`}
-                              onClick={() => workspaceStore.getState().setPaneOpen(session.id, false)}
+                              onClick={() =>
+                                workspaceStore
+                                  .getState()
+                                  .closeSessionSurface(sessionId, viewPaneFamily)
+                              }
                               size="icon-xs"
                             >
                               <X />
@@ -519,11 +553,15 @@ export function SessionScreen({
 
       {!archived && !focusMode && !paneDocks && activeMeta !== undefined && (
         <Sheet
-          onOpenChange={(open) => workspaceStore.getState().setPaneOpen(session.id, open)}
+          onOpenChange={(open) => {
+            const state = workspaceStore.getState();
+            if (open) state.openSessionSurface(sessionId, viewPaneFamily);
+            else state.closeSessionSurface(sessionId, viewPaneFamily);
+          }}
           open={viewPaneOpen}
         >
           <SheetPopup aria-label={activeMeta.label} side="right">
-            <PaneContent family={viewPaneFamily} />
+            <PaneContent sessionId={sessionId} surfaceId={viewPaneFamily} />
           </SheetPopup>
         </Sheet>
       )}

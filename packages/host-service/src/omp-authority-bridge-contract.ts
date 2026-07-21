@@ -92,7 +92,10 @@ export type OmpAuthorityBridgeServerFrame =
 const METHOD_SET = new Set<string>(OMP_AUTHORITY_BRIDGE_METHODS);
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const ERROR_CODE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u;
-const MAX_TEXT_BYTES = 256 * 1024;
+// A single frame is already capped at OMP_AUTHORITY_BRIDGE_MAX_LINE_BYTES, and cumulative text is a
+// subset of the serialized line. A stricter text budget would reject frames the line cap accepts —
+// e.g. a ~450 KiB transcript from discovery.load — so keep the two coherent.
+const MAX_TEXT_BYTES = OMP_AUTHORITY_BRIDGE_MAX_LINE_BYTES;
 const MAX_VALUE_DEPTH = 32;
 const MAX_VALUE_NODES = 50_000;
 

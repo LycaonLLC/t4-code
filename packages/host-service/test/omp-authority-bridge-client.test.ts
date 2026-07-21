@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { hostId, sessionId } from "@t4-code/host-wire";
 import { OmpAuthorityBridgeClient, type OmpAuthorityBridgeChild } from "../src/omp-authority-bridge-client.ts";
+import type { SessionRecord } from "../src/types.ts";
 import {
 	decodeOmpAuthorityBridgeClientFrame,
 	encodeOmpAuthorityBridgeFrame,
 	OMP_AUTHORITY_BRIDGE_MAX_LINE_BYTES,
 	OMP_AUTHORITY_BRIDGE_PROTOCOL,
+	type OmpAuthorityBridgeMethod,
 } from "../src/omp-authority-bridge-contract.ts";
 
 class AsyncQueue implements AsyncIterable<string> {
@@ -143,5 +145,37 @@ describe("OMP authority bridge client", () => {
 		child.output.push("x".repeat(OMP_AUTHORITY_BRIDGE_MAX_LINE_BYTES + 1));
 		await expect(started).rejects.toThrow("bridge output exceeds the line limit");
 		expect(child.killed).toBe(true);
+	});
+
+	test("strips the loaded transcript from session references sent to the bridge", async () => {
+		const child = new FakeBridgeChild();
+		const client = new OmpAuthorityBridgeClient({ executable: "/opt/omp" }, () => child);
+		const started = client.start();
+		const methods = [...ready.methods, "discovery.page"] as OmpAuthorityBridgeMethod[];
+		child.server({ ...ready, methods });
+		await started;
+		// A record whose 400 KiB transcript would overflow the peer's request-param budget and crash it.
+		const loaded = {
+			sessionId: sessionId("s"),
+			path: "/tmp/s.jsonl",
+			cwd: "/tmp",
+			projectId: "project-1",
+			title: "big",
+			updatedAt: "2026-01-01T00:00:00.000Z",
+			status: "idle",
+			entriesLoaded: true,
+			entries: [{ id: "e1", role: "assistant", text: "y".repeat(400 * 1024) }],
+		} as unknown as SessionRecord;
+		const paging = client.createAuthorities().discovery.page!(loaded, { limit: 10 });
+		await Bun.sleep(0);
+		const request = child.request();
+		expect(request).toMatchObject({
+			type: "request",
+			method: "discovery.page",
+			params: { session: { sessionId: "s", entries: [] }, args: { limit: 10 } },
+		});
+		child.server({ v: OMP_AUTHORITY_BRIDGE_PROTOCOL, type: "response", id: request.id, ok: true, result: { entries: [] } });
+		await paging;
+		await client.stop();
 	});
 });

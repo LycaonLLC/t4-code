@@ -158,6 +158,7 @@ function commandFeature(command: string): string | undefined {
 	if (command.startsWith("controller.lease.")) return "controller.lease";
 	if (command.startsWith("prompt.lease.")) return "prompt.lease";
 	if (command === "files.list") return "files.list";
+	if (command === "files.search") return "files.search";
 	if (command === "files.diff") return "files.diff";
 	if (command === "transcript.search" || command === "transcript.context") return "transcript.search";
 	if (command === "transcript.page") return "transcript.page";
