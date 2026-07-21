@@ -31,6 +31,19 @@ fi
 `,
   );
   await writeFile(
+    join(bin, "crd-preflight"),
+    `#!/bin/sh
+set -eu
+printf 'validator' >>"$COMMAND_LOG"
+for argument in "$@"; do printf '\\t%s' "$argument" >>"$COMMAND_LOG"; done
+printf '\\n' >>"$COMMAND_LOG"
+case "\${1:-}:\${FAIL_PROPOSED_VALIDATION:-}" in
+  fixtures:spec|fixtures:status|served:stale) exit 43 ;;
+esac
+cat >/dev/null
+`,
+  );
+  await writeFile(
     join(bin, "helm"),
     `#!/bin/sh
 set -eu
@@ -41,10 +54,11 @@ printf '\\n' >>"$COMMAND_LOG"
   );
   await chmod(join(bin, "kubectl"), 0o755);
   await chmod(join(bin, "helm"), 0o755);
+  await chmod(join(bin, "crd-preflight"), 0o755);
   return {
     root,
     log,
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, COMMAND_LOG: log },
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, COMMAND_LOG: log, T4_CRD_VALIDATOR: join(bin, "crd-preflight") },
   };
 }
 
@@ -117,6 +131,45 @@ test("fresh install establishes and validates CRDs before Helm installs with CRD
   assert.ok(established < fixtureValidation && fixtureValidation < storage && storage < workload);
 });
 
+test("candidate schema tightening fails locally before any cluster or workload mutation", async () => {
+  const value = await fixture();
+  const result = await runLifecycle(
+    ["upgrade", "--", "helm", "upgrade", "t4-cluster", "chart", "--skip-crds"],
+    { ...value.env, FAIL_PROPOSED_VALIDATION: "spec" },
+  );
+  assert.notEqual(result.code, 0);
+  assert.deepEqual(await commands(value.log), [
+    `validator\tfixtures\t${join(repoRoot, "deploy/charts/t4-cluster/crds")}\t${join(repoRoot, "packages/cluster-operator/api/v1alpha1/testdata/compat")}`,
+  ]);
+});
+
+test("persisted status is validated against the proposed status schema before mutation", async () => {
+  const value = await fixture();
+  const result = await runLifecycle(
+    ["upgrade", "--", "helm", "upgrade", "t4-cluster", "chart", "--skip-crds"],
+    { ...value.env, FAIL_PROPOSED_VALIDATION: "status" },
+  );
+  assert.notEqual(result.code, 0);
+  assert.deepEqual(await commands(value.log), [
+    `validator\tfixtures\t${join(repoRoot, "deploy/charts/t4-cluster/crds")}\t${join(repoRoot, "packages/cluster-operator/api/v1alpha1/testdata/compat")}`,
+  ]);
+});
+
+test("retained Established cannot pass readiness while served OpenAPI is stale", async () => {
+  const value = await fixture();
+  const result = await runLifecycle(
+    ["upgrade", "--", "helm", "upgrade", "t4-cluster", "chart", "--skip-crds"],
+    { ...value.env, FAIL_PROPOSED_VALIDATION: "stale" },
+  );
+  assert.notEqual(result.code, 0);
+  const log = await commands(value.log);
+  const apply = findCommand(log, (line) => line.includes("kubectl\tapply") && !line.includes("--dry-run=server"), "non-dry-run CRD apply");
+  const established = findCommand(log, (line) => line.includes("condition=Established"), "Established wait");
+  const served = findCommand(log, (line) => line.startsWith("validator\tserved\t"), "served-schema semantic verification");
+  assert.ok(apply < established && established < served, log.join("\n"));
+  assert.ok(log.every((line) => !line.startsWith("helm\t")), log.join("\n"));
+});
+
 test("failed server preflight leaves CRDs and workloads untouched", async () => {
   const value = await fixture();
   const result = await runLifecycle(
@@ -150,4 +203,19 @@ test("force replacement and implicit Helm CRD handling are rejected before clust
     const result = await runLifecycle(args, value.env);
     assert.equal(result.code, 64, `${result.stdout}\n${result.stderr}`);
   }
+});
+
+test("future storage migration explicitly retires the old stored version only after rewrite and dual-version reads", async () => {
+  const docs = await readFile(join(repoRoot, "docs/CLUSTER_OPERATOR.md"), "utf8");
+  const migration = docs.slice(docs.indexOf("### Future `v1beta1`"), docs.indexOf("### Workload rollback"));
+  const storageFlip = migration.indexOf("`v1beta1` storage to true");
+  const rewrite = migration.indexOf("rewrite every object");
+  const verifyReads = migration.indexOf("read every rewritten object through both served versions");
+  const statusUpdate = migration.indexOf("/status");
+  const exactAssertion = migration.indexOf("exactly `[v1beta1]`");
+  const oldStillServed = migration.indexOf("Keep `v1alpha1` served");
+  assert.ok(storageFlip >= 0 && storageFlip < rewrite, migration);
+  assert.ok(rewrite < verifyReads && verifyReads < statusUpdate, migration);
+  assert.ok(statusUpdate < exactAssertion && exactAssertion < oldStillServed, migration);
+  assert.match(migration, /patch customresourcedefinition[^\n]*--subresource=status/u);
 });
