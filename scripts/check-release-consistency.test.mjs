@@ -106,11 +106,15 @@ test("pins official OMP artifacts and the Gate 0 proof contract", () => {
     const snapshot = JSON.parse(text);
     snapshot.runtime.commit = "0".repeat(40);
     snapshot.requiredScenarios = snapshot.requiredScenarios.filter((item) => item !== "approval");
+    snapshot.t4AdapterCoverage.liveEntryDeduplication = false;
+    snapshot.packagedHostProof.requiredScenarios = ["prompt"];
     return JSON.stringify(snapshot);
   });
   const errors = collectReleaseConsistencyErrors(snapshotDrift);
   assert.ok(errors.some((error) => error.includes("runtime commit must match")));
   assert.ok(errors.some((error) => error.includes("requiredScenarios must match")));
+  assert.ok(errors.some((error) => error.includes("liveEntryDeduplication must be true")));
+  assert.ok(errors.some((error) => error.includes("packagedHostProof.requiredScenarios")));
 });
 
 test("rejects a tag that differs from the package version", () => {

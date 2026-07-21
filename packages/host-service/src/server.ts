@@ -835,6 +835,7 @@ export class LocalAppserver implements AppserverHandle {
 	#supportedCapabilities: Set<string>;
 	#projectRootForProject?: AppserverOptions["projectRootForProject"];
 	#projectRevealer?: AppserverOptions["projectRevealer"];
+	#claimLocklessSessions: boolean;
 	#runtimeAdapters?: RuntimeAdapterRegistry;
 	#workspaceAuthority?: WorkspaceAuthority;
 	#workspaceTargetPathForProject?: AppserverOptions["workspaceTargetPathForProject"];
@@ -883,6 +884,7 @@ export class LocalAppserver implements AppserverHandle {
 		this.#transcriptSearch = options.transcriptSearchAuthority;
 		this.#projectRootForProject = options.projectRootForProject;
 		this.#projectRevealer = options.projectRevealer;
+		this.#claimLocklessSessions = options.claimLocklessSessions === true;
 		this.#runtimeAdapters = options.runtimeAdapters;
 		this.#workspaceAuthority = options.workspaceAuthority;
 		this.#workspaceTargetPathForProject = options.workspaceTargetPathForProject;
@@ -893,7 +895,8 @@ export class LocalAppserver implements AppserverHandle {
 			? new TranscriptImageReader({ root: options.transcriptImageRoot })
 			: undefined;
 		this.#lockStatus = options.lockStatus ?? (() => "missing");
-		this.#factory = options.childFactory ?? new BunRpcChildFactory(options.rpcChildInvocation, this.#imageUploads.root);
+		this.#factory = options.childFactory ??
+			new BunRpcChildFactory(options.rpcChildInvocation, this.#imageUploads.root, options.rpcChildEnvironment);
 		this.#ringSize = options.ringSize ?? 256;
 		if (options.lockStatus && !options.lockCheck)
 			this.#lockCheck = () => {
@@ -4327,7 +4330,8 @@ export class LocalAppserver implements AppserverHandle {
 		}
 		let observer = this.#observers.get(sessionId);
 		if (!observer) {
-			const lockless = status === "missing" && !projection.value.ref.liveState?.sessionControl;
+			const lockless =
+				!this.#claimLocklessSessions && status === "missing" && !projection.value.ref.liveState?.sessionControl;
 			observer = new SessionTranscriptObserver(record.path, this.hostId);
 			this.#observers.set(sessionId, observer);
 			if (lockless) this.#locklessObservers.add(observer);
@@ -4377,7 +4381,26 @@ export class LocalAppserver implements AppserverHandle {
 			this.#promotionFailures.set(sessionId, this.promotionFingerprint(record, projection, poll));
 			return;
 		}
-		const final = await observer.poll();
+		let final = await observer.poll();
+		let loaded = await supervisor.reconcileTranscript();
+		for (
+			let attempt = 0;
+			attempt < 4 &&
+			(!final.stable ||
+				final.transcript !== "live" ||
+				final.unresolvedPendingCount !== 0 ||
+				final.watermark.entryCount !== loaded?.entryCount ||
+				final.watermark.lastEntryId !== loaded.lastEntryId);
+			attempt += 1
+		) {
+			if (!this.observerIsCurrent(sessionId, observer, record, projection)) {
+				await this.discardPromotionSupervisor(sessionId, supervisor);
+				return;
+			}
+			await Bun.sleep(10);
+			final = await observer.poll();
+			loaded = await supervisor.reconcileTranscript();
+		}
 		if (!this.observerIsCurrent(sessionId, observer, record, projection)) {
 			await this.discardPromotionSupervisor(sessionId, supervisor);
 			return;
@@ -4388,7 +4411,6 @@ export class LocalAppserver implements AppserverHandle {
 			return;
 		}
 		await this.applyObserverPoll(sessionId, projection, final);
-		const loaded = supervisor.loadedWatermark();
 		if (!this.observerIsCurrent(sessionId, observer, record, projection)) {
 			await this.discardPromotionSupervisor(sessionId, supervisor);
 			return;

@@ -14,7 +14,7 @@ The largest problem is no longer a missing transport layer. T4 now has a shared 
 
 1. **Operation truth is implemented in the host but was not yet reaching the UI.** PR #111 added `typed`, `headless`, `terminal-only`, and `unavailable`; PR #113 classifies stock OMP commands and rejects known terminal-only text before it reaches the model. This sprint carries that result into desktop/web and Flutter.
 2. **Important daily workflows still lack a typed app action:** plan and goal modes, session branch/fork/tree, handoff, provider login/logout, queue control, and child-agent steering.
-3. **The official-OMP Gate 0 proof is complete.** Unmodified OMP 17.0.6 passed restart continuity, steering, follow-up, approval, cancellation, and the no-replay failure policy on macOS ARM64 plus native Linux x64 and ARM64.
+3. **The official-OMP Gate 0 proof is complete, and the first packaged-host proof passes.** Unmodified OMP 17.0.6 passed restart continuity, steering, follow-up, approval, cancellation, and the no-replay failure policy on macOS ARM64 plus native Linux x64 and ARM64. The compiled `t4-host` now also passes discovery, attach, prompt, durable JSONL, and T4-wire projection against official OMP on macOS ARM64; the same packaged proof is wired into the native Linux jobs.
 4. **The Lycaon fork is transitional, not the desired product center.** The current public package still pins its thin authority bridge, but new compatibility work should prefer the T4-owned official-OMP adapter and add only small, extractable bridge methods when stock OMP has no usable seam.
 5. **Protocol vocabulary is not UI coverage.** Every tracker row needs an explicit client disposition: direct control, palette action, read-only view, disabled explanation, terminal handoff, or unavailable.
 6. **Source is ahead of the public release.** Flutter and the latest adapter work are on `main`; the latest public GitHub release remains v0.1.28.
@@ -30,6 +30,8 @@ The truthful-command foundation is split cleanly between merged host work and th
 - **Merged:** PRs #118 and #120 make web/Electron and Flutter build truthful slash menus from the runtime capability contract and fail closed when that contract is absent or unavailable.
 - **This sprint:** the official OMP 17.0.6 harness passes lifecycle, crash/resume, steer, follow-up, approval, and cancellation on macOS ARM64; the host/client failure tests prove a dispatched command becomes `outcome_unknown` and is never automatically replayed.
 - **This sprint:** `compat/official-omp-gate0.json` records the exact runtime, required platforms/scenarios, direct RPC support, and three missing stock seams. Linux x64 and ARM64 CI jobs pass and retain per-platform evidence.
+- **This sprint:** the shared supervisor synthesizes the missing ready watermark from official JSONL, projects complete durable records, conservatively correlates matching user prompts, and deduplicates the Lycaon fallback's richer live frames.
+- **This sprint:** `t4-host --omp-authority official --omp-sessions-root <absolute-path>` adds an opt-in, exclusive-profile cutover path. The compiled macOS ARM64 host passes the real Unix-socket proof; native Linux proof is now a required CI scenario. The released/default desktop path remains the Lycaon bridge.
 - **This sprint:** Flutter adds project Quick Open plus visible pause, resume, and manual compaction controls over existing typed commands. No new fork behavior is required.
 
 The tracker distinguishes merged source, work in this sprint, and public release state. None of the new adapter/client work is claimed as packaged desktop, Android, or iOS proof yet.
@@ -40,7 +42,7 @@ The tracker distinguishes merged source, work in this sprint, and public release
 |---|---|---|---|---|---|
 | Operation capability contract | Merged | Decodes shared contract | Same web client | Dart decoder merged | PR #111 green |
 | Official OMP command discovery and rejection | Merged | Receives through host | Receives through host | Receives through host | PR #113 green |
-| Official OMP Gate 0 behavior | macOS ARM64 and native Linux x64/ARM64 pass | Shared host behavior | Shared host behavior | Shared host behavior | Stock 17.0.6 passes lifecycle, steer/follow-up, approval, cancellation, and crash/no-replay behavior |
+| Official OMP Gate 0 behavior | Direct RPC passes macOS ARM64 and native Linux x64/ARM64; compiled local host passes macOS ARM64 and is required in Linux CI | Adapter path proven, packaged desktop default unchanged | Shared host behavior | Shared host behavior | Stock 17.0.6 passes lifecycle, steer/follow-up, approval, cancellation, crash/no-replay, JSONL reconciliation, and the local T4 wire |
 | Preserve `catalog.get.operations` | Merged host response | Merged in PR #117 | Merged in PR #117 | Already decoded | Response and live-frame client tests pass |
 | Capability-aware slash menu | Host rejects unsafe fallback | Implemented on `main` | Implemented on `main` | Implemented on `main` | PRs #118 and #120 are green and merged |
 | Project Quick Open | `files.search` merged | Implemented on `main` | Implemented on `main` | Implemented this sprint | Flutter analysis and the full 168-test suite pass locally; platform CI pending |
@@ -60,7 +62,7 @@ This matrix is intentionally stricter than “the protocol supports it.” A row
 | Flutter merge | [`LycaonLLC/t4-code#104`](https://github.com/LycaonLLC/t4-code/pull/104) | New shared desktop/mobile client now on `main` |
 | Public T4 release | [`v0.1.28`](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.28) | Latest public release visible during the audit |
 
-This is primarily a source audit, supplemented by merged official-adapter smokes and focused TypeScript tests in this sprint. It does not prove that every path works in a packaged app. Live Flutter desktop, Android, iOS, web, and Electron round trips remain a separate verification pass.
+This is primarily a source audit, supplemented by merged official-adapter smokes, focused TypeScript tests, and one compiled-host proof. It does not prove that every path works in a packaged desktop or mobile app. Live Flutter desktop, Android, iOS, web, and Electron round trips remain a separate verification pass.
 
 Relevant planning and implementation changes:
 
@@ -152,7 +154,8 @@ Fork PR [#22](https://github.com/lyc-aon/oh-my-pi/pull/22) removed more than 37,
 
 | Priority | Gap | Why it matters | Best patch path |
 |---|---|---|---|
-| T0 | Packaged official-OMP cutover is not proven | Gate 0 now passes on macOS ARM64 and native Linux x64/ARM64, but released builds still use the Lycaon fallback | Reconcile stock JSONL through the shared adapter, then run packaged local and managed cutover proofs |
+| T0 | Managed and shipped official-OMP cutover is not proven | Stock JSONL reconciliation and the compiled local host now pass on macOS ARM64; Linux packaged-host CI, managed-session proof, and an actual desktop release still remain | Land native packaged-host evidence, prove the same authority in managed sessions, then change release packaging deliberately |
+| T0 | A fresh official-OMP profile has no project bootstrap flow | The current authority derives projects from existing sessions, so the opt-in proof seeds one session before discovery | Add a small T4-owned project registry or explicit project-add command, then prove first-run create without prewriting OMP state |
 | T0 | Release state is ambiguous | Source says v0.1.30 while public GitHub release remains v0.1.28 | Separate `on main`, `verified package`, and `publicly released` in the tracker/release gate |
 | T0 | Plan, goal, branch/fork/tree, handoff, and provider auth lack complete typed app flows | These are central OMP workflows, not decorative terminal features | Typed T4 commands backed by existing OMP RPC where possible |
 | T1 | Queue and pause/resume controls are not consistently exposed outside Flutter | Cross-device control needs explicit, predictable behavior | Add equally visible controls to web/Capacitor over the same typed commands |
@@ -252,7 +255,7 @@ Do not send a giant T4 product PR to original OMP. A suitable upstream contribut
 
 ## Capability manifest and drift control
 
-The checked snapshot at `compat/official-omp-gate0.json` now records the Gate 0 runtime, platform/scenario contract, direct RPC support, missing stock seams, and no-replay policy. Each native run writes `artifacts/official-omp-gate0/<platform>-<arch>.json` as evidence. The broader capability snapshot should next add:
+The checked snapshot at `compat/official-omp-gate0.json` now records the Gate 0 runtime, platform/scenario contract, direct RPC support, missing stock seams, T4's JSONL coverage, packaged-host contract, and no-replay policy. Native runs write both `artifacts/official-omp-gate0/<platform>-<arch>.json` and `artifacts/official-omp-packaged-host/<platform>-<arch>.json` as evidence. The broader capability snapshot should next add:
 
 - Official OMP version and exact commit; when the fallback bridge is exercised, its fork commit and tag too.
 - Operations and aliases using `typed`, `headless`, `terminal-only`, or `unavailable`.
@@ -279,9 +282,10 @@ official OMP version + commit
 
 ### Phase 0: finish the official-OMP foundation
 
-1. Reconcile stock JSONL without depending on fork-only ready watermarks or live `session_entry` frames.
-2. Run packaged local and managed cutover proofs while preserving the released fallback.
-3. Track source, verified package, and public release status separately, then retire fallback use only after those proofs pass.
+1. Land the completed stock-JSONL reconciliation and native packaged-local proof without changing the released default.
+2. Add a first-run project registry or explicit project-add flow so an empty exclusive profile can create its first session.
+3. Apply the same exclusive-profile authority contract to managed session hosts and prove it on native Linux x64/ARM64.
+4. Track source, verified package, and public release status separately, then retire fallback use only after packaged desktop and managed proofs pass.
 
 ### Phase 1: close the daily-workflow gaps
 
@@ -320,7 +324,7 @@ For each future sprint:
 
 ## Audit limitations and next proof pass
 
-- This pass did not run packaged OMP or T4 binaries.
+- This pass ran the compiled `t4-host` against the pinned official OMP binary on macOS ARM64, but did not run a packaged Electron/Flutter application bundle.
 - It did not visually inspect every desktop, Android, or iOS screen.
 - Optional protocol features may not be negotiated by every host instance.
 - The shared adapter is currently an official-OMP seam, not proof that T4 is a generic multi-runtime product.

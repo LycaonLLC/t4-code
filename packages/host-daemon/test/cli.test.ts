@@ -9,6 +9,7 @@ describe("T4 host daemon CLI", () => {
     );
     expect(config).toEqual({
       ompExecutable: "/opt/t4/runtime/omp",
+      authorityMode: "bridge",
       profileId: "default",
       stateRoot: "/home/test/.t4-code/host",
     });
@@ -49,6 +50,32 @@ describe("T4 host daemon CLI", () => {
         "/home/test",
       ),
     ).toThrow("HTTP origin");
+    expect(() =>
+      parseHostDaemonArgs(
+        ["serve", "--omp", "/opt/omp", "--omp-authority", "official"],
+        "/home/test",
+      ),
+    ).toThrow("--omp-sessions-root");
+    expect(
+      parseHostDaemonArgs(
+        [
+          "serve",
+          "--omp",
+          "/opt/omp",
+          "--omp-authority",
+          "official",
+          "--omp-sessions-root",
+          "/home/test/.omp/t4/sessions",
+          "--profile",
+          "t4",
+        ],
+        "/home/test",
+      ),
+    ).toMatchObject({
+      authorityMode: "official",
+      ompSessionsRoot: "/home/test/.omp/t4/sessions",
+      profileId: "t4",
+    });
   });
 
   test("stops the OMP bridge when authority startup fails", async () => {

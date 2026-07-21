@@ -33,6 +33,8 @@ const GROUP_PATTERNS = Object.freeze({
     /^compat\/(?:official-omp-gate0|omp-app-matrix)\.json$/u,
     /^docs\/(?:OMP_T4_CAPABILITY_AUDIT\.md|OMP_T4_CAPABILITY_TRACKER\.csv|T4_ARCHITECTURE\.html)$/u,
     /^packages\/host-service\/(?:bin\/official-omp-gate0\.ts|package\.json)$/u,
+    /^packages\/host-service\/src\/(?:official-omp-profile-authority|rpc-child|server|types)\.ts$/u,
+    /^packages\/host-daemon\/(?:bin\/official-omp-packaged-proof\.ts|package\.json|src\/cli\.ts)$/u,
     /^scripts\/stage-omp-runtime\.mjs$/u,
   ],
   tooling: [

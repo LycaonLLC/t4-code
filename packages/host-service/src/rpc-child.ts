@@ -64,6 +64,7 @@ class DurableJsonlReconciler {
 	#lastEntryId: string | null = null;
 	readonly #projectedEntryIds = new Set<string>();
 	readonly #pendingCorrelations: PendingDurableCorrelation[] = [];
+	#reconcileTail: Promise<void> = Promise.resolve();
 
 	constructor(
 		private readonly path: string,
@@ -110,6 +111,12 @@ class DurableJsonlReconciler {
 	}
 
 	async reconcile(): Promise<void> {
+		const next = this.#reconcileTail.then(() => this.#reconcile());
+		this.#reconcileTail = next.catch(() => undefined);
+		await next;
+	}
+
+	async #reconcile(): Promise<void> {
 		let info;
 		try {
 			info = await stat(this.path);
@@ -239,8 +246,13 @@ export class BunRpcChildFactory implements RpcChildFactory {
 	#executable: string;
 	#prefixArgv: readonly string[];
 	#imageRoot: string | undefined;
+	#environment: Readonly<Record<string, string>>;
 
-	constructor(invocation: string | RpcChildInvocation = resolveRpcChildInvocation(), imageRoot?: string) {
+	constructor(
+		invocation: string | RpcChildInvocation = resolveRpcChildInvocation(),
+		imageRoot?: string,
+		environment: Readonly<Record<string, string>> = {},
+	) {
 		const resolved = typeof invocation === "string" ? { executable: invocation, prefixArgv: [] } : invocation;
 		if (typeof resolved.executable !== "string" || resolved.executable.trim().length === 0) {
 			throw new Error("rpc child executable is empty");
@@ -254,6 +266,7 @@ export class BunRpcChildFactory implements RpcChildFactory {
 		this.#executable = resolved.executable;
 		this.#prefixArgv = Object.freeze([...resolved.prefixArgv]);
 		this.#imageRoot = imageRoot;
+		this.#environment = Object.freeze({ ...environment });
 	}
 
 	spawn(spec: { session: SessionRecord; argv: string[]; cwd: string }): ChildHandle {
@@ -261,6 +274,7 @@ export class BunRpcChildFactory implements RpcChildFactory {
 			cwd: spec.cwd,
 			env: {
 				...process.env,
+				...this.#environment,
 				OMP_APP_RPC_INLINE_IMAGE_DATA: "omit",
 				OMP_APP_RPC_SESSION_ENTRIES: "1",
 				OMP_APP_SUBAGENT_SUBSCRIPTION: "progress",
@@ -482,6 +496,11 @@ export class RpcChildSupervisor {
 	}
 	loadedWatermark(): RpcLoadedTranscriptWatermark | undefined {
 		return this.#ready ? this.#transcript.watermark() : undefined;
+	}
+	async reconcileTranscript(): Promise<RpcLoadedTranscriptWatermark | undefined> {
+		if (!this.#ready || this.#closed) return undefined;
+		await this.#transcript.reconcile();
+		return this.#transcript.watermark();
 	}
 	child(): ChildHandle | undefined {
 		return this.#child;

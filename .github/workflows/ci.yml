@@ -210,15 +210,23 @@ jobs:
         with:
           bun-version: 1.3.14
 
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Prove the pinned unmodified official OMP runtime
         run: pnpm --filter @t4-code/host-service verify:official-omp-lifecycle
+
+      - name: Prove the packaged T4 host against official OMP
+        run: pnpm --filter @t4-code/host-daemon verify:official-omp-packaged
 
       - name: Upload official OMP Gate 0 evidence
         if: ${{ success() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: official-omp-gate0-${{ matrix.platform }}-${{ github.run_id }}
-          path: artifacts/official-omp-gate0/${{ matrix.platform }}.json
+          path: |
+            artifacts/official-omp-gate0/${{ matrix.platform }}.json
+            artifacts/official-omp-packaged-host/${{ matrix.platform }}.json
           if-no-files-found: error
           retention-days: 14
 

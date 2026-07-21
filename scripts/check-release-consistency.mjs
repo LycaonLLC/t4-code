@@ -348,6 +348,40 @@ function validateOfficialGate0Snapshot(snapshot, officialRuntime, path, errors) 
       errors.push(`${path} missingOfficialSeams.${seam} must remain explicit`);
     }
   }
+  for (const capability of [
+    "jsonlTranscriptReconciliation",
+    "synthesizedReadyWatermark",
+    "durableEntryProjection",
+    "liveEntryDeduplication",
+    "conservativePromptCorrelation",
+  ]) {
+    if (snapshot?.t4AdapterCoverage?.[capability] !== true) {
+      errors.push(`${path} t4AdapterCoverage.${capability} must be true`);
+    }
+  }
+  if (snapshot?.t4AdapterCoverage?.durableCommandKey !== false) {
+    errors.push(`${path} t4AdapterCoverage.durableCommandKey must remain false`);
+  }
+  if (!isDeepStrictEqual(snapshot?.packagedHostProof?.requiredPlatforms, requiredPlatforms)) {
+    errors.push(`${path} packagedHostProof.requiredPlatforms must cover macOS ARM64 and Linux x64/ARM64`);
+  }
+  if (
+    !isDeepStrictEqual(snapshot?.packagedHostProof?.requiredScenarios, [
+      "discovery",
+      "attach",
+      "prompt",
+      "durable-jsonl",
+      "t4-wire-projection",
+    ])
+  ) {
+    errors.push(`${path} packagedHostProof.requiredScenarios must match the packaged host contract`);
+  }
+  if (snapshot?.packagedHostProof?.authorityMode !== "official-exclusive-profile") {
+    errors.push(`${path} packagedHostProof.authorityMode must be official-exclusive-profile`);
+  }
+  if (snapshot?.packagedHostProof?.releasedDefault !== "lycaon-authority-bridge") {
+    errors.push(`${path} packagedHostProof.releasedDefault must preserve the Lycaon fallback`);
+  }
   if (snapshot?.t4Policy?.ambiguousDispatch !== "outcome-unknown-no-auto-replay") {
     errors.push(`${path} ambiguous dispatch policy must fail closed without automatic replay`);
   }
@@ -913,7 +947,9 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "official-omp-gate0:",
     "runner: ubuntu-24.04-arm",
     "run: pnpm --filter @t4-code/host-service verify:official-omp-lifecycle",
-    "path: artifacts/official-omp-gate0/${{ matrix.platform }}.json",
+    "run: pnpm --filter @t4-code/host-daemon verify:official-omp-packaged",
+    "artifacts/official-omp-gate0/${{ matrix.platform }}.json",
+    "artifacts/official-omp-packaged-host/${{ matrix.platform }}.json",
     "tooling:",
     "cluster:",
     "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16",
