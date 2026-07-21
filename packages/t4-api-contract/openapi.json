@@ -23,10 +23,10 @@
         "parameters": [{ "$ref": "#/components/parameters/ApiVersion" }],
         "responses": {
           "200": { "$ref": "#/components/responses/Discovery" },
-          "401": { "$ref": "#/components/responses/Unauthenticated" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "406": { "$ref": "#/components/responses/IncompatibleVersion" },
-          "503": { "$ref": "#/components/responses/Unavailable" }
+          "401": {"$ref": "#/components/responses/Error401"},
+          "403": {"$ref": "#/components/responses/Error403"},
+          "406": {"$ref": "#/components/responses/Error406"},
+          "503": {"$ref": "#/components/responses/Error503"}
         }
       }
     },
@@ -41,12 +41,12 @@
         ],
         "responses": {
           "200": { "$ref": "#/components/responses/WorkspacePage" },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthenticated" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "406": { "$ref": "#/components/responses/IncompatibleVersion" },
-          "422": { "$ref": "#/components/responses/InvalidRequest" },
-          "503": { "$ref": "#/components/responses/Unavailable" }
+          "400": {"$ref": "#/components/responses/Error400"},
+          "401": {"$ref": "#/components/responses/Error401"},
+          "403": {"$ref": "#/components/responses/Error403"},
+          "406": {"$ref": "#/components/responses/Error406"},
+          "422": {"$ref": "#/components/responses/Error422"},
+          "503": {"$ref": "#/components/responses/Error503"}
         }
       },
       "post": {
@@ -63,13 +63,13 @@
         "responses": {
           "200": { "$ref": "#/components/responses/WorkspaceReplay" },
           "202": { "$ref": "#/components/responses/WorkspaceAccepted" },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthenticated" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "406": { "$ref": "#/components/responses/IncompatibleVersion" },
-          "409": { "$ref": "#/components/responses/Conflict" },
-          "422": { "$ref": "#/components/responses/InvalidRequest" },
-          "503": { "$ref": "#/components/responses/Unavailable" }
+          "400": {"$ref": "#/components/responses/Error400"},
+          "401": {"$ref": "#/components/responses/Error401"},
+          "403": {"$ref": "#/components/responses/Error403"},
+          "406": {"$ref": "#/components/responses/Error406"},
+          "409": {"$ref": "#/components/responses/Error409"},
+          "422": {"$ref": "#/components/responses/Error422"},
+          "503": {"$ref": "#/components/responses/Error503"}
         }
       }
     },
@@ -81,11 +81,11 @@
         "parameters": [{ "$ref": "#/components/parameters/ApiVersion" }],
         "responses": {
           "200": { "$ref": "#/components/responses/Workspace" },
-          "401": { "$ref": "#/components/responses/Unauthenticated" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "406": { "$ref": "#/components/responses/IncompatibleVersion" },
-          "503": { "$ref": "#/components/responses/Unavailable" }
+          "401": {"$ref": "#/components/responses/Error401"},
+          "403": {"$ref": "#/components/responses/Error403"},
+          "404": {"$ref": "#/components/responses/Error404"},
+          "406": {"$ref": "#/components/responses/Error406"},
+          "503": {"$ref": "#/components/responses/Error503"}
         }
       },
       "patch": {
@@ -93,35 +93,41 @@
         "tags": ["Workspaces"],
         "parameters": [
           { "$ref": "#/components/parameters/ApiVersion" },
-          { "$ref": "#/components/parameters/IfMatch" }
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
         ],
         "requestBody": {
           "required": true,
           "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceMutation" } } }
         },
         "responses": {
+          "400": { "$ref": "#/components/responses/Error400" },
           "200": { "$ref": "#/components/responses/Workspace" },
-          "401": { "$ref": "#/components/responses/Unauthenticated" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "406": { "$ref": "#/components/responses/IncompatibleVersion" },
-          "409": { "$ref": "#/components/responses/Conflict" },
-          "422": { "$ref": "#/components/responses/InvalidRequest" },
-          "503": { "$ref": "#/components/responses/Unavailable" }
+          "401": {"$ref": "#/components/responses/Error401"},
+          "403": {"$ref": "#/components/responses/Error403"},
+          "404": {"$ref": "#/components/responses/Error404"},
+          "406": {"$ref": "#/components/responses/Error406"},
+          "409": {"$ref": "#/components/responses/Error409"},
+          "422": {"$ref": "#/components/responses/Error422"},
+          "503": {"$ref": "#/components/responses/Error503"}
         }
       },
       "delete": {
         "operationId": "deleteWorkspace",
         "tags": ["Workspaces"],
-        "parameters": [{ "$ref": "#/components/parameters/ApiVersion" }],
+        "parameters": [
+          { "$ref": "#/components/parameters/ApiVersion" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
         "responses": {
           "204": { "$ref": "#/components/responses/Deleted" },
-          "401": { "$ref": "#/components/responses/Unauthenticated" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "406": { "$ref": "#/components/responses/IncompatibleVersion" },
-          "409": { "$ref": "#/components/responses/Conflict" },
-          "503": { "$ref": "#/components/responses/Unavailable" }
+          "400": { "$ref": "#/components/responses/Error400" },
+          "401": {"$ref": "#/components/responses/Error401"},
+          "403": {"$ref": "#/components/responses/Error403"},
+          "404": {"$ref": "#/components/responses/Error404"},
+          "406": {"$ref": "#/components/responses/Error406"},
+          "409": {"$ref": "#/components/responses/Error409"},
+          "503": {"$ref": "#/components/responses/Error503"}
         }
       }
     },
@@ -137,12 +143,12 @@
         ],
         "responses": {
           "200": { "$ref": "#/components/responses/SessionPage" },
-          "401": { "$ref": "#/components/responses/Unauthenticated" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "406": { "$ref": "#/components/responses/IncompatibleVersion" },
-          "422": { "$ref": "#/components/responses/InvalidRequest" },
-          "503": { "$ref": "#/components/responses/Unavailable" }
+          "401": {"$ref": "#/components/responses/Error401"},
+          "403": {"$ref": "#/components/responses/Error403"},
+          "404": {"$ref": "#/components/responses/Error404"},
+          "406": {"$ref": "#/components/responses/Error406"},
+          "422": {"$ref": "#/components/responses/Error422"},
+          "503": {"$ref": "#/components/responses/Error503"}
         }
       },
       "post": {
@@ -159,13 +165,14 @@
         "responses": {
           "200": { "$ref": "#/components/responses/SessionReplay" },
           "202": { "$ref": "#/components/responses/SessionAccepted" },
-          "401": { "$ref": "#/components/responses/Unauthenticated" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "406": { "$ref": "#/components/responses/IncompatibleVersion" },
-          "409": { "$ref": "#/components/responses/Conflict" },
-          "422": { "$ref": "#/components/responses/InvalidRequest" },
-          "503": { "$ref": "#/components/responses/Unavailable" }
+          "400": { "$ref": "#/components/responses/Error400" },
+          "401": {"$ref": "#/components/responses/Error401"},
+          "403": {"$ref": "#/components/responses/Error403"},
+          "404": {"$ref": "#/components/responses/Error404"},
+          "406": {"$ref": "#/components/responses/Error406"},
+          "409": {"$ref": "#/components/responses/Error409"},
+          "422": {"$ref": "#/components/responses/Error422"},
+          "503": {"$ref": "#/components/responses/Error503"}
         }
       }
     },
@@ -177,11 +184,11 @@
         "parameters": [{ "$ref": "#/components/parameters/ApiVersion" }],
         "responses": {
           "200": { "$ref": "#/components/responses/Session" },
-          "401": { "$ref": "#/components/responses/Unauthenticated" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "406": { "$ref": "#/components/responses/IncompatibleVersion" },
-          "503": { "$ref": "#/components/responses/Unavailable" }
+          "401": {"$ref": "#/components/responses/Error401"},
+          "403": {"$ref": "#/components/responses/Error403"},
+          "404": {"$ref": "#/components/responses/Error404"},
+          "406": {"$ref": "#/components/responses/Error406"},
+          "503": {"$ref": "#/components/responses/Error503"}
         }
       },
       "patch": {
@@ -189,35 +196,41 @@
         "tags": ["Sessions"],
         "parameters": [
           { "$ref": "#/components/parameters/ApiVersion" },
-          { "$ref": "#/components/parameters/IfMatch" }
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
         ],
         "requestBody": {
           "required": true,
           "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionMutation" } } }
         },
         "responses": {
+          "400": { "$ref": "#/components/responses/Error400" },
           "200": { "$ref": "#/components/responses/Session" },
-          "401": { "$ref": "#/components/responses/Unauthenticated" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "406": { "$ref": "#/components/responses/IncompatibleVersion" },
-          "409": { "$ref": "#/components/responses/Conflict" },
-          "422": { "$ref": "#/components/responses/InvalidRequest" },
-          "503": { "$ref": "#/components/responses/Unavailable" }
+          "401": {"$ref": "#/components/responses/Error401"},
+          "403": {"$ref": "#/components/responses/Error403"},
+          "404": {"$ref": "#/components/responses/Error404"},
+          "406": {"$ref": "#/components/responses/Error406"},
+          "409": {"$ref": "#/components/responses/Error409"},
+          "422": {"$ref": "#/components/responses/Error422"},
+          "503": {"$ref": "#/components/responses/Error503"}
         }
       },
       "delete": {
         "operationId": "deleteSession",
         "tags": ["Sessions"],
-        "parameters": [{ "$ref": "#/components/parameters/ApiVersion" }],
+        "parameters": [
+          { "$ref": "#/components/parameters/ApiVersion" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
         "responses": {
           "204": { "$ref": "#/components/responses/Deleted" },
-          "401": { "$ref": "#/components/responses/Unauthenticated" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "406": { "$ref": "#/components/responses/IncompatibleVersion" },
-          "409": { "$ref": "#/components/responses/Conflict" },
-          "503": { "$ref": "#/components/responses/Unavailable" }
+          "400": { "$ref": "#/components/responses/Error400" },
+          "401": {"$ref": "#/components/responses/Error401"},
+          "403": {"$ref": "#/components/responses/Error403"},
+          "404": {"$ref": "#/components/responses/Error404"},
+          "406": {"$ref": "#/components/responses/Error406"},
+          "409": {"$ref": "#/components/responses/Error409"},
+          "503": {"$ref": "#/components/responses/Error503"}
         }
       }
     },
@@ -227,16 +240,19 @@
         "tags": ["Sessions"],
         "parameters": [
           { "$ref": "#/components/parameters/SessionId" },
-          { "$ref": "#/components/parameters/ApiVersion" }
+          { "$ref": "#/components/parameters/ApiVersion" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
         ],
         "responses": {
+          "200": { "$ref": "#/components/responses/SessionReplay" },
+          "400": { "$ref": "#/components/responses/Error400" },
           "202": { "$ref": "#/components/responses/SessionAccepted" },
-          "401": { "$ref": "#/components/responses/Unauthenticated" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "406": { "$ref": "#/components/responses/IncompatibleVersion" },
-          "409": { "$ref": "#/components/responses/Conflict" },
-          "503": { "$ref": "#/components/responses/Unavailable" }
+          "401": {"$ref": "#/components/responses/Error401"},
+          "403": {"$ref": "#/components/responses/Error403"},
+          "404": {"$ref": "#/components/responses/Error404"},
+          "406": {"$ref": "#/components/responses/Error406"},
+          "409": {"$ref": "#/components/responses/Error409"},
+          "503": {"$ref": "#/components/responses/Error503"}
         }
       }
     },
@@ -256,13 +272,14 @@
         "responses": {
           "200": { "$ref": "#/components/responses/CommandReplay" },
           "202": { "$ref": "#/components/responses/CommandAccepted" },
-          "401": { "$ref": "#/components/responses/Unauthenticated" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "406": { "$ref": "#/components/responses/IncompatibleVersion" },
-          "409": { "$ref": "#/components/responses/Conflict" },
-          "422": { "$ref": "#/components/responses/InvalidRequest" },
-          "503": { "$ref": "#/components/responses/Unavailable" }
+          "400": { "$ref": "#/components/responses/Error400" },
+          "401": {"$ref": "#/components/responses/Error401"},
+          "403": {"$ref": "#/components/responses/Error403"},
+          "404": {"$ref": "#/components/responses/Error404"},
+          "406": {"$ref": "#/components/responses/Error406"},
+          "409": {"$ref": "#/components/responses/Error409"},
+          "422": {"$ref": "#/components/responses/Error422"},
+          "503": {"$ref": "#/components/responses/Error503"}
         }
       }
     },
@@ -276,11 +293,11 @@
         ],
         "responses": {
           "200": { "$ref": "#/components/responses/Snapshot" },
-          "401": { "$ref": "#/components/responses/Unauthenticated" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "406": { "$ref": "#/components/responses/IncompatibleVersion" },
-          "503": { "$ref": "#/components/responses/Unavailable" }
+          "401": {"$ref": "#/components/responses/Error401"},
+          "403": {"$ref": "#/components/responses/Error403"},
+          "404": {"$ref": "#/components/responses/Error404"},
+          "406": {"$ref": "#/components/responses/Error406"},
+          "503": {"$ref": "#/components/responses/Error503"}
         }
       }
     },
@@ -312,14 +329,14 @@
               }
             }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthenticated" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "406": { "$ref": "#/components/responses/IncompatibleVersion" },
-          "410": { "$ref": "#/components/responses/CursorExpired" },
-          "422": { "$ref": "#/components/responses/InvalidRequest" },
-          "503": { "$ref": "#/components/responses/Unavailable" }
+          "400": {"$ref": "#/components/responses/Error400"},
+          "401": {"$ref": "#/components/responses/Error401"},
+          "403": {"$ref": "#/components/responses/Error403"},
+          "404": {"$ref": "#/components/responses/Error404"},
+          "406": {"$ref": "#/components/responses/Error406"},
+          "410": {"$ref": "#/components/responses/Error410"},
+          "422": {"$ref": "#/components/responses/Error422"},
+          "503": {"$ref": "#/components/responses/Error503"}
         }
       }
     }
@@ -344,7 +361,7 @@
         "name": "Idempotency-Key",
         "in": "header",
         "required": true,
-        "description": "Opaque caller-generated key scoped to credential, operation, and target. Same key plus same canonical request replays; different content conflicts.",
+        "description": "Opaque caller-generated key scoped by the server to the authenticated principal, operation ID, and target resource IDs. Idempotency is evaluated only after path, query, header, and request-schema validation and application of schema defaults. Request identity is the operation ID, target IDs, relevant precondition headers, and the RFC 8785 JSON Canonicalization Scheme (JCS) bytes of the validated JSON body. JCS object member order is insignificant, array order is significant, omitted fields remain distinct unless the request schema defaulted them, and no Unicode normalization is performed beyond RFC 8785. Reusing a key with identical identity replays the original terminal response and advertises Idempotency-Replayed; reusing it with a different identity returns 409 idempotency_conflict.",
         "schema": { "type": "string", "minLength": 16, "maxLength": 128, "pattern": "^[A-Za-z0-9._~-]+$" }
       },
       "IfMatch": {
@@ -428,11 +445,13 @@
           "limits": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["pageSizeDefault", "pageSizeMax", "commandBytesMax", "watchEventsMax", "heartbeatSeconds"],
+            "required": ["pageSizeDefault", "pageSizeMax", "commandBytesMax", "commandRequestBytesMax", "commandMetadataValueBytesMax", "watchEventsMax", "heartbeatSeconds"],
             "properties": {
               "pageSizeDefault": { "type": "integer", "minimum": 1, "maximum": 100 },
               "pageSizeMax": { "type": "integer", "minimum": 1, "maximum": 100 },
-              "commandBytesMax": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+              "commandBytesMax": { "type": "integer", "minimum": 1, "maximum": 262144 },
+              "commandRequestBytesMax": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+              "commandMetadataValueBytesMax": { "type": "integer", "minimum": 1, "maximum": 262144 },
               "watchEventsMax": { "type": "integer", "minimum": 1, "maximum": 1000 },
               "heartbeatSeconds": { "type": "integer", "minimum": 5, "maximum": 60 }
             }
@@ -528,9 +547,23 @@
         "type": "object",
         "additionalProperties": false,
         "required": ["command"],
+        "x-t4-maxUtf8Bytes": 1048576,
         "properties": {
-          "command": { "type": "string", "minLength": 1, "maxLength": 262144 },
-          "metadata": { "type": "object", "maxProperties": 32, "additionalProperties": { "type": ["string", "number", "boolean", "null"] } }
+          "command": { "type": "string", "minLength": 1, "maxLength": 262144, "x-t4-maxUtf8Bytes": 262144 },
+          "metadata": {
+            "type": "object",
+            "default": {},
+            "maxProperties": 32,
+            "propertyNames": { "pattern": "^[a-z][a-z0-9.-]{0,62}$" },
+            "additionalProperties": {
+              "oneOf": [
+                { "type": "string", "maxLength": 262144, "x-t4-maxUtf8Bytes": 262144 },
+                { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+                { "type": "boolean" },
+                { "type": "null" }
+              ]
+            }
+          }
         }
       },
       "CommandResult": {
@@ -600,8 +633,7 @@
           { "$ref": "#/components/schemas/HeartbeatWatchEvent" },
           { "$ref": "#/components/schemas/SessionWatchEvent" },
           { "$ref": "#/components/schemas/CommandWatchEvent" }
-        ],
-        "discriminator": { "propertyName": "type" }
+        ]
       },
       "FieldViolation": {
         "type": "object",
@@ -639,6 +671,42 @@
           "resync": { "$ref": "#/components/schemas/Resync" }
         }
       },
+      "BadRequestApiError": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ApiError" },
+          { "type": "object", "properties": { "code": { "enum": ["invalid_request", "idempotency_key_required", "invalid_origin", "https_required"] } } }
+        ]
+      },
+      "UnauthenticatedApiError": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ApiError" },
+          { "type": "object", "properties": { "code": { "const": "unauthenticated" } } }
+        ]
+      },
+      "ForbiddenApiError": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ApiError" },
+          { "type": "object", "properties": { "code": { "const": "forbidden" } } }
+        ]
+      },
+      "NotFoundApiError": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ApiError" },
+          { "type": "object", "properties": { "code": { "const": "not_found" } } }
+        ]
+      },
+      "ConflictApiError": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ApiError" },
+          { "type": "object", "properties": { "code": { "enum": ["idempotency_conflict", "revision_conflict"] } } }
+        ]
+      },
+      "UnavailableApiError": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ApiError" },
+          { "type": "object", "properties": { "code": { "enum": ["unavailable", "indeterminate"] } } }
+        ]
+      },
       "IncompatibleVersionApiError": {
         "allOf": [
           { "$ref": "#/components/schemas/ApiError" },
@@ -662,6 +730,42 @@
         "additionalProperties": false,
         "required": ["error"],
         "properties": { "error": { "$ref": "#/components/schemas/ApiError" } }
+      },
+      "BadRequestErrorEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": { "error": { "$ref": "#/components/schemas/BadRequestApiError" } }
+      },
+      "UnauthenticatedErrorEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": { "error": { "$ref": "#/components/schemas/UnauthenticatedApiError" } }
+      },
+      "ForbiddenErrorEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": { "error": { "$ref": "#/components/schemas/ForbiddenApiError" } }
+      },
+      "NotFoundErrorEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": { "error": { "$ref": "#/components/schemas/NotFoundApiError" } }
+      },
+      "ConflictErrorEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": { "error": { "$ref": "#/components/schemas/ConflictApiError" } }
+      },
+      "UnavailableErrorEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": { "error": { "$ref": "#/components/schemas/UnavailableApiError" } }
       },
       "IncompatibleVersionErrorEnvelope": {
         "type": "object",
@@ -690,30 +794,21 @@
       "WorkspacePage": { "description": "Bounded workspace page", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspacePage" } } } },
       "Session": { "description": "Session", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Session" } } } },
       "SessionAccepted": { "description": "Session intent accepted", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Session" } } } },
-      "SessionReplay": { "description": "Identical session spawn replay", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Session" } } } },
+      "SessionReplay": { "description": "Identical session mutation replay", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Session" } } } },
       "SessionPage": { "description": "Bounded session page", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionPage" } } } },
       "CommandAccepted": { "description": "Command intent accepted with a stable outcome state", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CommandResult" } } } },
       "CommandReplay": { "description": "Identical command request replay", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CommandResult" } } } },
       "Snapshot": { "description": "Bounded session snapshot and reconnect cursor", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionSnapshot" } } } },
-      "Deleted": { "description": "Deletion accepted or resource already absent", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } } },
-      "BadRequest": { "$ref": "#/components/responses/Error400" },
-      "Unauthenticated": { "$ref": "#/components/responses/Error401" },
-      "Forbidden": { "$ref": "#/components/responses/Error403" },
-      "NotFound": { "$ref": "#/components/responses/Error404" },
-      "IncompatibleVersion": { "$ref": "#/components/responses/Error406" },
-      "Conflict": { "$ref": "#/components/responses/Error409" },
-      "CursorExpired": { "$ref": "#/components/responses/Error410" },
-      "InvalidRequest": { "$ref": "#/components/responses/Error422" },
-      "Unavailable": { "$ref": "#/components/responses/Error503" },
-      "Error400": { "description": "Malformed request or missing idempotency key", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
-      "Error401": { "description": "Missing or invalid opaque bearer credential", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
-      "Error403": { "description": "Credential lacks the deny-by-default operation or resource scope", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
-      "Error404": { "description": "Resource absent or outside caller scope (scope existence is not disclosed)", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+      "Deleted": { "description": "Idempotent deletion accepted or resource already absent", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" } } },
+      "Error400": { "description": "Malformed request or missing idempotency key", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BadRequestErrorEnvelope" } } } },
+      "Error401": { "description": "Missing or invalid opaque bearer credential", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UnauthenticatedErrorEnvelope" } } } },
+      "Error403": { "description": "Credential lacks the deny-by-default operation or resource scope", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ForbiddenErrorEnvelope" } } } },
+      "Error404": { "description": "Resource absent or outside caller scope (scope existence is not disclosed)", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotFoundErrorEnvelope" } } } },
       "Error406": { "description": "Requested major is incompatible; no silent downgrade", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncompatibleVersionErrorEnvelope" } } } },
-      "Error409": { "description": "Idempotency or resource revision conflict", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+      "Error409": { "description": "Idempotency or resource revision conflict", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConflictErrorEnvelope" } } } },
       "Error410": { "description": "Watch cursor expired; resync from the typed snapshot target", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CursorExpiredErrorEnvelope" } } } },
       "Error422": { "description": "Bounded semantic validation failure with stable field violations", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InvalidRequestErrorEnvelope" } } } },
-      "Error503": { "description": "Service temporarily unavailable or outcome indeterminate", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } }
+      "Error503": { "description": "Service temporarily unavailable or outcome indeterminate", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UnavailableErrorEnvelope" } } } }
     }
   }
 }
