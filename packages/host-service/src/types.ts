@@ -243,6 +243,8 @@ export interface AppserverOptions {
 	/** Categorizes external ownership without weakening the write lock gate. */
 	lockStatus?: SessionLockInspector;
 	/** Final write-lock gate, retained for every child/lifecycle mutation. */ lockCheck?: LockCheckHook;
+	/** Permit promotion of lockless transcripts only when their whole profile root is exclusively T4-owned. */
+	claimLocklessSessions?: boolean;
 	runtimeAdapters?: RuntimeAdapterRegistry;
 	workspaceAuthority?: WorkspaceAuthority;
 	workspaceTargetPathForProject?: (projectId: ProjectId, name: string) => Promise<string> | string;
@@ -254,6 +256,10 @@ export interface AppserverOptions {
 	childFactory?: RpcChildFactory;
 	/** OMP RPC executable used when the host owns the generic child factory. */
 	rpcChildInvocation?: RpcChildInvocation;
+	/** Bounded profile environment applied only to per-session OMP children. */
+	rpcChildEnvironment?: Readonly<Record<string, string>>;
+	/** Exact child RPC command dialect; official OMP intentionally exposes a narrower command set. */
+	rpcDialect?: "fork" | "official-17.0.6";
 	appserverVersion?: string;
 	appserverBuild?: string;
 	supportedFeatures?: readonly string[];

@@ -51,7 +51,7 @@ interface TranscriptWatermark {
   readonly entryCount: number;
 }
 
-interface DeterministicModel {
+export interface DeterministicModel {
   readonly server: Bun.Server<undefined>;
   readonly requests: string[][];
   readonly gateNextRequest: () => ModelGate;
@@ -223,7 +223,7 @@ function requestMessages(body: JsonMap): string[] {
   });
 }
 
-function startDeterministicModel(): DeterministicModel {
+export function startDeterministicModel(): DeterministicModel {
   const requests: string[][] = [];
   let nextGate:
     | {
@@ -555,7 +555,7 @@ async function runApprovalScenario(input: {
   }
 }
 
-async function verifyRuntime(repoRoot: string): Promise<VerifiedRuntime> {
+export async function verifyRuntime(repoRoot: string): Promise<VerifiedRuntime> {
   const matrix = decodeRuntimeMatrix(await readJson(join(repoRoot, "compat", "omp-app-matrix.json")));
   const manifestPath = join(repoRoot, ".artifacts", "omp-runtime-official", "manifest.json");
   const manifest = decodeRuntimeManifest(await readJson(manifestPath));
@@ -728,4 +728,4 @@ async function main(): Promise<void> {
   }
 }
 
-await main();
+if (import.meta.main) await main();

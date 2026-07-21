@@ -18,6 +18,7 @@ test("host runtime source runs host gates without unrelated platform builds", ()
     ...none,
     continuity: true,
     cluster: true,
+    official_omp_gate0: true,
     tooling: true,
   });
 });
@@ -70,6 +71,12 @@ test("host wire changes run every dependent client and continuity gate", () => {
 test("host daemon changes run the Apple packaging leg", () => {
   assert.deepEqual(classifyCiPaths(["packages/host-daemon/src/main.ts"]), {
     ...none,
+    tooling: true,
+    flutter_apple: true,
+  });
+  assert.deepEqual(classifyCiPaths(["packages/host-daemon/src/cli.ts"]), {
+    ...none,
+    official_omp_gate0: true,
     tooling: true,
     flutter_apple: true,
   });

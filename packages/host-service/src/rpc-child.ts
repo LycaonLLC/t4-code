@@ -1,3 +1,4 @@
+import { open, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { boundedMap, parseBounded, type OperationCapability } from "@t4-code/host-wire";
 import type { RpcResponse, RpcSessionEntryFrame } from "./omp-rpc-contract.ts";
@@ -8,6 +9,206 @@ import type { ChildHandle, RpcChildFactory, SessionRecord } from "./types.ts";
 const MAX_LINE_BYTES = 1024 * 1024;
 const STDERR_BYTES = 64 * 1024;
 const FAILURE_STOP_GRACE_MS = 2_000;
+const TRANSCRIPT_READ_BYTES = 64 * 1024;
+const MAX_PENDING_DURABLE_CORRELATIONS = 64;
+
+interface PendingDurableCorrelation {
+	readonly internalId: string;
+	readonly message: string;
+}
+
+function rawEntryId(value: unknown): string | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const id = (value as Record<string, unknown>).id;
+	return typeof id === "string" && id.length > 0 && id.length <= 256 ? id : undefined;
+}
+
+function durableEntryId(value: unknown): string | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const entry = value as Record<string, unknown>;
+	if (entry.type === "title" || entry.type === "session") return undefined;
+	return rawEntryId(entry);
+}
+
+function rawUserMessage(
+	value: unknown,
+): { readonly text: string; readonly entry: Record<string, unknown> } | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const entry = value as Record<string, unknown>;
+	if (entry.type !== "message" || !entry.message || typeof entry.message !== "object" || Array.isArray(entry.message))
+		return undefined;
+	const message = entry.message as Record<string, unknown>;
+	if (message.role !== "user") return undefined;
+	const content = message.content;
+	if (typeof content === "string") return { text: content, entry };
+	if (!Array.isArray(content)) return undefined;
+	const text = content
+		.flatMap(part => {
+			if (typeof part === "string") return [part];
+			if (!part || typeof part !== "object" || Array.isArray(part)) return [];
+			const item = part as Record<string, unknown>;
+			return item.type === "text" && typeof item.text === "string" ? [item.text] : [];
+		})
+		.join("");
+	return { text, entry };
+}
+
+/**
+ * Reconciles the authoritative OMP JSONL after every RPC frame. Official OMP
+ * does not publish the fork-only ready watermark or live `session_entry`
+ * projection, while the released fallback publishes both. Tracking raw entry
+ * IDs lets one implementation support either runtime without double emission.
+ */
+class DurableJsonlReconciler {
+	#offset = 0;
+	#entryCount = 0;
+	#lastEntryId: string | null = null;
+	readonly #projectedEntryIds = new Set<string>();
+	readonly #pendingCorrelations: PendingDurableCorrelation[] = [];
+	#reconcileTail: Promise<void> = Promise.resolve();
+
+	constructor(
+		private readonly path: string,
+		private readonly emit: (frame: RpcSessionEntryFrame) => void,
+	) {}
+
+	watermark(): RpcLoadedTranscriptWatermark {
+		return { lastEntryId: this.#lastEntryId, entryCount: this.#entryCount };
+	}
+
+	recordCorrelation(internalId: string, command: Record<string, unknown>): void {
+		if (
+			(command.type === "prompt" || command.type === "steer" || command.type === "follow_up") &&
+			typeof command.message === "string"
+		) {
+			if (this.#pendingCorrelations.length >= MAX_PENDING_DURABLE_CORRELATIONS)
+				throw new Error("too many pending durable prompt correlations");
+			this.#pendingCorrelations.push({ internalId, message: command.message });
+		}
+	}
+
+	discardCorrelation(internalId: string): void {
+		const index = this.#pendingCorrelations.findIndex(item => item.internalId === internalId);
+		if (index >= 0) this.#pendingCorrelations.splice(index, 1);
+	}
+
+	observeLiveEntry(value: unknown): Record<string, unknown> | undefined {
+		const id = durableEntryId(value);
+		if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+		if (!id) return value as Record<string, unknown>;
+		if (this.#projectedEntryIds.has(id)) return undefined;
+		this.#projectedEntryIds.add(id);
+		return this.#correlate(value as Record<string, unknown>);
+	}
+
+	async initialize(): Promise<void> {
+		let size: number;
+		try {
+			const info = await stat(this.path);
+			if (!info.isFile()) throw new Error("session transcript is not a file");
+			size = info.size;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+			throw error;
+		}
+		await this.#scan(size, false);
+	}
+
+	async reconcile(): Promise<void> {
+		const next = this.#reconcileTail.then(() => this.#reconcile());
+		this.#reconcileTail = next.catch(() => undefined);
+		await next;
+	}
+
+	async #reconcile(): Promise<void> {
+		let info;
+		try {
+			info = await stat(this.path);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+			throw error;
+		}
+		if (!info.isFile()) throw new Error("session transcript is not a file");
+		if (info.size < this.#offset) {
+			this.#offset = 0;
+			this.#entryCount = 0;
+			this.#lastEntryId = null;
+			this.#projectedEntryIds.clear();
+			await this.initialize();
+			return;
+		}
+		if (info.size === this.#offset) return;
+		await this.#scan(info.size, true);
+	}
+
+	async #scan(size: number, publish: boolean): Promise<void> {
+		const handle = await open(this.path, "r");
+		let position = this.#offset;
+		let pending = Buffer.alloc(0);
+		try {
+			while (position < size) {
+				const length = Math.min(TRANSCRIPT_READ_BYTES, size - position);
+				const bytes = Buffer.allocUnsafe(length);
+				const result = await handle.read(bytes, 0, length, position);
+				if (result.bytesRead === 0) throw new Error("session transcript changed during reconciliation");
+				position += result.bytesRead;
+				const buffered = pending.byteLength === 0
+					? bytes.subarray(0, result.bytesRead)
+					: Buffer.concat([pending, bytes.subarray(0, result.bytesRead)]);
+				let start = 0;
+				let newline = buffered.indexOf(0x0a, start);
+				while (newline >= 0) {
+					const line = buffered.subarray(start, newline);
+					if (line.byteLength > MAX_LINE_BYTES) throw new Error("session transcript line exceeds 1 MiB");
+					if (line.byteLength > 0)
+						this.#observeLine(new TextDecoder("utf-8", { fatal: true }).decode(line), publish);
+					start = newline + 1;
+					newline = buffered.indexOf(0x0a, start);
+				}
+				pending = Buffer.from(buffered.subarray(start));
+				if (pending.byteLength > MAX_LINE_BYTES) throw new Error("session transcript line exceeds 1 MiB");
+			}
+		} finally {
+			await handle.close();
+		}
+		this.#offset = position - pending.byteLength;
+	}
+
+	#observeLine(line: string, publish: boolean): void {
+		let value: unknown;
+		try {
+			value = parseBounded(line);
+		} catch {
+			throw new Error("malformed session transcript");
+		}
+		const id = durableEntryId(value);
+		if (!id) return;
+		this.#entryCount += 1;
+		this.#lastEntryId = id;
+		if (!publish || !value || typeof value !== "object" || Array.isArray(value)) return;
+		if (this.#projectedEntryIds.has(id)) return;
+		this.#projectedEntryIds.add(id);
+		this.emit({ type: "session_entry", entry: this.#correlate(value as Record<string, unknown>) as never });
+	}
+
+	#correlate(entry: Record<string, unknown>): Record<string, unknown> {
+		const user = rawUserMessage(entry);
+		const correlation = this.#pendingCorrelations[0];
+		if (user && correlation && user.text === correlation.message) {
+			this.#pendingCorrelations.shift();
+			return {
+				...entry,
+				message: {
+					...(entry.message as Record<string, unknown>),
+					...((entry.message as Record<string, unknown>).clientCorrelationId === undefined
+						? { clientCorrelationId: correlation.internalId }
+						: {}),
+				},
+			};
+		}
+		return entry;
+	}
+}
 
 export interface ChildCallbacks {
 	entry(frame: RpcSessionEntryFrame): void;
@@ -49,8 +250,13 @@ export class BunRpcChildFactory implements RpcChildFactory {
 	#executable: string;
 	#prefixArgv: readonly string[];
 	#imageRoot: string | undefined;
+	#environment: Readonly<Record<string, string>>;
 
-	constructor(invocation: string | RpcChildInvocation = resolveRpcChildInvocation(), imageRoot?: string) {
+	constructor(
+		invocation: string | RpcChildInvocation = resolveRpcChildInvocation(),
+		imageRoot?: string,
+		environment: Readonly<Record<string, string>> = {},
+	) {
 		const resolved = typeof invocation === "string" ? { executable: invocation, prefixArgv: [] } : invocation;
 		if (typeof resolved.executable !== "string" || resolved.executable.trim().length === 0) {
 			throw new Error("rpc child executable is empty");
@@ -64,6 +270,7 @@ export class BunRpcChildFactory implements RpcChildFactory {
 		this.#executable = resolved.executable;
 		this.#prefixArgv = Object.freeze([...resolved.prefixArgv]);
 		this.#imageRoot = imageRoot;
+		this.#environment = Object.freeze({ ...environment });
 	}
 
 	spawn(spec: { session: SessionRecord; argv: string[]; cwd: string }): ChildHandle {
@@ -71,6 +278,7 @@ export class BunRpcChildFactory implements RpcChildFactory {
 			cwd: spec.cwd,
 			env: {
 				...process.env,
+				...this.#environment,
 				OMP_APP_RPC_INLINE_IMAGE_DATA: "omit",
 				OMP_APP_RPC_SESSION_ENTRIES: "1",
 				OMP_APP_SUBAGENT_SUBSCRIPTION: "progress",
@@ -152,6 +360,7 @@ export class RpcChildSupervisor {
 	#ready = false;
 	#termination?: Promise<void>;
 	#operationCapabilities: OfficialOmpCapabilityAdapter;
+	#transcript: DurableJsonlReconciler;
 	constructor(
 		private readonly factory: RpcChildFactory,
 		private readonly session: SessionRecord,
@@ -161,6 +370,7 @@ export class RpcChildSupervisor {
 		private readonly runtimeVersion?: string,
 	) {
 		this.#operationCapabilities = new OfficialOmpCapabilityAdapter(runtimeVersion);
+		this.#transcript = new DurableJsonlReconciler(session.path, frame => this.callbacks.entry(frame));
 		if (!Number.isSafeInteger(failureStopGraceMs) || failureStopGraceMs <= 0 || failureStopGraceMs > 60_000)
 			throw new Error("failureStopGraceMs must be between 1 and 60000");
 	}
@@ -202,11 +412,13 @@ export class RpcChildSupervisor {
 		const internalId = `${requestId}:${++this.#counter}`;
 		const promise = Promise.withResolvers<RpcResponse>();
 		this.#pending.set(internalId, promise);
+		this.#transcript.recordCorrelation(internalId, command);
 		const onAbort = () => {
 			const pending = this.#pending.get(internalId);
 			if (!pending) return;
 			this.#pending.delete(internalId);
 			this.#ignoredResponses.add(internalId);
+			this.#transcript.discardCorrelation(internalId);
 			pending.reject(new Error("rpc call aborted"));
 			if (abortChild) void this.cancel(`${requestId}:cancel`).catch(() => undefined);
 		};
@@ -226,6 +438,7 @@ export class RpcChildSupervisor {
 			return response;
 		} catch (error) {
 			this.#pending.delete(internalId);
+			this.#transcript.discardCorrelation(internalId);
 			throw error;
 		} finally {
 			signal?.removeEventListener("abort", onAbort);
@@ -286,7 +499,12 @@ export class RpcChildSupervisor {
 		// here would let lifecycle retries lose track of a signal-resistant child.
 	}
 	loadedWatermark(): RpcLoadedTranscriptWatermark | undefined {
-		return this.#loadedWatermark;
+		return this.#ready ? this.#transcript.watermark() : undefined;
+	}
+	async reconcileTranscript(): Promise<RpcLoadedTranscriptWatermark | undefined> {
+		if (!this.#ready || this.#closed) return undefined;
+		await this.#transcript.reconcile();
+		return this.#transcript.watermark();
 	}
 	child(): ChildHandle | undefined {
 		return this.#child;
@@ -325,11 +543,21 @@ export class RpcChildSupervisor {
 							this.#loadedWatermark = { lastEntryId, entryCount };
 					}
 					if (this.#ready) throw new Error("duplicate rpc ready");
+					await this.#transcript.initialize();
+					const reconciled = this.#transcript.watermark();
+					if (
+						this.#loadedWatermark &&
+						(this.#loadedWatermark.entryCount !== reconciled.entryCount ||
+							this.#loadedWatermark.lastEntryId !== reconciled.lastEntryId)
+					)
+						throw new Error("rpc ready watermark does not match durable transcript");
+					this.#loadedWatermark = reconciled;
 					this.#ready = true;
 					ready.resolve();
 					continue;
 				}
 				this.dispatch(frame);
+				await this.#transcript.reconcile();
 			}
 			if (!this.#closed) this.fail(new Error("rpc child stdout EOF"), true);
 		} catch (error) {
@@ -369,6 +597,15 @@ export class RpcChildSupervisor {
 				throw new Error("rpc response has unknown id");
 			}
 			this.#pending.delete(value.id);
+			const responseData = value.data;
+			const localOnlyPrompt =
+				value.command === "prompt" &&
+				value.success &&
+				responseData !== null &&
+				typeof responseData === "object" &&
+				!Array.isArray(responseData) &&
+				(responseData as Record<string, unknown>).agentInvoked === false;
+			if (!value.success || localOnlyPrompt) this.#transcript.discardCorrelation(value.id);
 			if (!value.success && typeof value.error !== "string") pending.reject(new Error("rpc response missing error"));
 			else pending.resolve(value as unknown as RpcResponse);
 			return;
@@ -376,7 +613,8 @@ export class RpcChildSupervisor {
 		if (value.type === "session_entry") {
 			if (!value.entry || typeof value.entry !== "object" || Array.isArray(value.entry))
 				throw new Error("malformed rpc session entry");
-			this.callbacks.entry(value as unknown as RpcSessionEntryFrame);
+			const entry = this.#transcript.observeLiveEntry(value.entry);
+			if (entry) this.callbacks.entry({ ...value, entry } as unknown as RpcSessionEntryFrame);
 			return;
 		}
 		if (typeof value.type !== "string") throw new Error("rpc frame type is missing");

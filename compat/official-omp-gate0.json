@@ -29,14 +29,30 @@
     "liveSessionEntries": true,
     "durableCommandKey": true
   },
+  "t4AdapterCoverage": {
+    "jsonlTranscriptReconciliation": true,
+    "synthesizedReadyWatermark": true,
+    "durableEntryProjection": true,
+    "liveEntryDeduplication": true,
+    "conservativePromptCorrelation": true,
+    "durableCommandKey": false
+  },
+  "packagedHostProof": {
+    "requiredPlatforms": ["darwin-arm64", "linux-x64", "linux-arm64"],
+    "requiredScenarios": ["discovery", "attach", "prompt", "durable-jsonl", "t4-wire-projection"],
+    "authorityMode": "official-exclusive-profile",
+    "releasedDefault": "lycaon-authority-bridge"
+  },
   "t4Policy": {
     "transcriptAuthority": "official-omp-jsonl",
     "ambiguousDispatch": "outcome-unknown-no-auto-replay",
-    "releasedFallback": "lycaon-authority-bridge-until-packaged-cutover"
+    "releasedFallback": "lycaon-authority-bridge-until-local-and-managed-cutover"
   },
   "evidence": {
     "runtimeHarness": "packages/host-service/bin/official-omp-gate0.ts",
+    "packagedHostHarness": "packages/host-daemon/bin/official-omp-packaged-proof.ts",
     "platformOutput": "artifacts/official-omp-gate0/<platform>-<arch>.json",
+    "packagedPlatformOutput": "artifacts/official-omp-packaged-host/<platform>-<arch>.json",
     "dispatchCrashTest": "packages/host-service/test/hardening.test.ts",
     "clientNoReplayTest": "packages/client/test/client.test.ts"
   }

@@ -6,20 +6,55 @@ import { isAbsolute, join, resolve } from "node:path";
 import {
   createAppserver,
   createRemoteAppserver,
+  OfficialOmpProfileAuthority,
   OmpAuthorityBridgeClient,
   profileSocketPath,
   ProjectFileSearchAuthority,
   TranscriptSearchIndex,
   type AppserverHandle,
   type AppserverOptions,
+  type DesktopOperationsAuthority,
+  type SessionAuthority,
+  type SessionDiscovery,
 } from "@t4-code/host-service";
+import { COMMAND_DESCRIPTORS, type ProjectId, type SessionId } from "@t4-code/protocol";
 
 export const T4_HOST_VERSION = "0.1.30";
+export const OFFICIAL_OMP_VERSION = "17.0.6";
+export const OFFICIAL_OMP_BUILD = "89d6a8f6d14286f32f09ec9c8aa8af7b3451d2d6";
 const PROFILE = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
 const ORIGIN_LIMIT = 32;
+const VERSION_OUTPUT_BYTES = 4 * 1024;
+const VERSION_TIMEOUT_MS = 5_000;
+const OFFICIAL_CATALOG_COMMANDS = Object.freeze([
+  "session.create",
+  "session.rename",
+  "session.archive",
+  "session.restore",
+  "session.delete",
+  "session.model.set",
+  "session.thinking.set",
+  "session.cancel",
+  "session.close",
+]);
+
+function officialCatalogItems(): Record<string, unknown>[] {
+  const commands = process.platform === "darwin"
+    ? ["project.reveal", ...OFFICIAL_CATALOG_COMMANDS]
+    : OFFICIAL_CATALOG_COMMANDS;
+  return commands.map(name => ({
+    id: `cmd-${name.replaceAll(".", "-")}`,
+    kind: "command",
+    name,
+    capabilities: [COMMAND_DESCRIPTORS[name]!.capability],
+    supported: true,
+  }));
+}
 
 export interface HostDaemonConfig {
   readonly ompExecutable: string;
+  readonly authorityMode?: "bridge" | "official";
+  readonly ompSessionsRoot?: string;
   readonly profileId: string;
   readonly stateRoot: string;
   readonly remote?: {
@@ -36,6 +71,7 @@ export interface HostDaemonPaths {
   readonly hostIdPath: string;
   readonly attentionOutcomePath: string;
   readonly transcriptSearchPath: string;
+  readonly officialMetadataPath: string;
   readonly remoteStateRoot: string;
   readonly socketPath: string;
 }
@@ -65,6 +101,8 @@ function boundedOrigin(input: string): string {
 export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): HostDaemonConfig {
   if (argv[0] !== "serve") throw new Error("t4-host requires the serve action");
   let ompExecutable: string | undefined;
+  let authorityMode: "bridge" | "official" = "bridge";
+  let ompSessionsRoot: string | undefined;
   let profileId = "default";
   let stateRoot = join(home, ".t4-code", "host");
   let remoteMode: "direct" | "serve" | undefined;
@@ -75,6 +113,12 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
   for (let index = 1; index < argv.length; index += 1) {
     const flag = argv[index]!;
     if (flag === "--omp") ompExecutable = value(argv, index++, flag);
+    else if (flag === "--omp-authority") {
+      const mode = value(argv, index++, flag);
+      if (mode !== "bridge" && mode !== "official")
+        throw new Error("--omp-authority must be bridge or official");
+      authorityMode = mode;
+    } else if (flag === "--omp-sessions-root") ompSessionsRoot = value(argv, index++, flag);
     else if (flag === "--profile") profileId = value(argv, index++, flag);
     else if (flag === "--state-root") stateRoot = value(argv, index++, flag);
     else if (flag === "--remote-mode") {
@@ -97,6 +141,10 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
     throw new Error("--omp must name an absolute executable path");
   if (!PROFILE.test(profileId)) throw new Error("--profile is invalid");
   if (!isAbsolute(stateRoot)) throw new Error("--state-root must be absolute");
+  if (authorityMode === "official" && (!ompSessionsRoot || !isAbsolute(ompSessionsRoot)))
+    throw new Error("official OMP authority requires an absolute --omp-sessions-root");
+  if (authorityMode === "bridge" && ompSessionsRoot)
+    throw new Error("--omp-sessions-root requires official OMP authority");
   if (!remoteMode && (remoteAddress || origins.length || trustedServeProxy || remotePort !== 8787))
     throw new Error("remote flags require --remote-mode");
   if (remoteMode && !remoteAddress) throw new Error("remote mode requires --remote-address");
@@ -108,6 +156,8 @@ export function parseHostDaemonArgs(argv: readonly string[], home = homedir()): 
     throw new Error("trusted Serve proxy is invalid in direct mode");
   return {
     ompExecutable: resolve(ompExecutable),
+    authorityMode,
+    ...(ompSessionsRoot ? { ompSessionsRoot: resolve(ompSessionsRoot) } : {}),
     profileId,
     stateRoot: resolve(stateRoot),
     ...(remoteMode
@@ -137,6 +187,7 @@ export function hostDaemonPaths(
     hostIdPath: join(profileStateRoot, "host-id"),
     attentionOutcomePath: join(profileStateRoot, "attention-outcomes.json"),
     transcriptSearchPath: join(profileStateRoot, "transcript-search.sqlite"),
+    officialMetadataPath: join(profileStateRoot, "official-omp-sessions.json"),
     remoteStateRoot: join(profileStateRoot, "remote"),
     socketPath: profileSocketPath(config.profileId),
   };
@@ -144,11 +195,66 @@ export function hostDaemonPaths(
 
 export interface HostDaemonDependencies {
   readonly createBridge?: (config: HostDaemonConfig) => OmpAuthorityBridgeClient;
+  readonly createOfficialAuthority?: (
+    config: HostDaemonConfig,
+    paths: HostDaemonPaths,
+  ) => OfficialOmpProfileAuthority;
   readonly createTranscriptSearch?: (path: string) => TranscriptSearchIndex;
   readonly createLocal?: (options: AppserverOptions) => AppserverHandle;
   readonly createRemote?: typeof createRemoteAppserver;
+  readonly verifyOfficialRuntime?: (executable: string) => Promise<Pick<AppserverOptions, "ompVersion" | "ompBuild">>;
   readonly onSignal?: (signal: "SIGINT" | "SIGTERM", listener: () => void) => void;
   readonly removeSignal?: (signal: "SIGINT" | "SIGTERM", listener: () => void) => void;
+}
+
+async function boundedProcessOutput(stream: ReadableStream<Uint8Array>, maxBytes: number): Promise<string> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) throw new Error("official OMP version output exceeds 4 KiB");
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const output = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder("utf-8", { fatal: true }).decode(output);
+}
+
+export async function verifyOfficialRuntime(
+  executable: string,
+): Promise<Pick<AppserverOptions, "ompVersion" | "ompBuild">> {
+  const child = Bun.spawn([executable, "--version"], {
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {},
+  });
+  const timer = setTimeout(() => child.kill(), VERSION_TIMEOUT_MS);
+  try {
+    const [stdout, stderr, exitCode] = await Promise.all([
+      boundedProcessOutput(child.stdout, VERSION_OUTPUT_BYTES),
+      boundedProcessOutput(child.stderr, VERSION_OUTPUT_BYTES),
+      child.exited,
+    ]);
+    if (exitCode !== 0) throw new Error(`official OMP version probe failed (${exitCode}): ${stderr.trim()}`);
+    if (stdout.trim() !== `omp/${OFFICIAL_OMP_VERSION}`)
+      throw new Error(`official OMP runtime must report omp/${OFFICIAL_OMP_VERSION}`);
+    return { ompVersion: OFFICIAL_OMP_VERSION, ompBuild: OFFICIAL_OMP_BUILD };
+  } finally {
+    clearTimeout(timer);
+    if (child.exitCode === null) child.kill();
+  }
 }
 
 export async function runHostDaemon(
@@ -157,23 +263,73 @@ export async function runHostDaemon(
 ): Promise<void> {
   const paths = hostDaemonPaths(config);
   await mkdir(paths.profileStateRoot, { recursive: true, mode: 0o700 });
-  const bridge =
-    dependencies.createBridge?.(config) ??
-    new OmpAuthorityBridgeClient({
-      executable: config.ompExecutable,
-      environment: { OMP_PROFILE: config.profileId },
-    });
-  await bridge.start();
+  let bridge: OmpAuthorityBridgeClient | undefined;
+  let officialAuthority: OfficialOmpProfileAuthority | undefined;
+  let sessionAuthority: SessionAuthority;
+  let discovery: SessionDiscovery;
+  let operationsAuthority: DesktopOperationsAuthority = {};
+  let usageAuthority: AppserverOptions["usageAuthority"];
+  let transcriptImageRoot: string | undefined;
+  let identity: Pick<AppserverOptions, "ompVersion" | "ompBuild"> = {};
+  let projectRootForProject: (projectId: ProjectId) => Promise<string> | string;
+  let projectRootForSession: (sessionId: SessionId) => Promise<string>;
+  let lockCheck: NonNullable<AppserverOptions["lockCheck"]>;
+  let lockStatus: NonNullable<AppserverOptions["lockStatus"]>;
+  if (config.authorityMode === "official") {
+    identity = await (dependencies.verifyOfficialRuntime ?? verifyOfficialRuntime)(config.ompExecutable);
+    const official =
+      dependencies.createOfficialAuthority?.(config, paths) ??
+      new OfficialOmpProfileAuthority({
+        sessionsRoot: config.ompSessionsRoot!,
+        metadataPath: paths.officialMetadataPath,
+      });
+    await official.initialize();
+    officialAuthority = official;
+    sessionAuthority = official;
+    discovery = official;
+    operationsAuthority = {
+      catalogGet: async () => ({
+        revision: `official-omp-${OFFICIAL_OMP_VERSION}`,
+        items: officialCatalogItems(),
+      }),
+    };
+    projectRootForProject = projectId => official.projectRootForProject(projectId);
+    projectRootForSession = sessionId => official.projectRootForSession(sessionId);
+    lockCheck = session => official.lockCheck(session);
+    lockStatus = () => official.lockStatus();
+  } else {
+    bridge =
+      dependencies.createBridge?.(config) ??
+      new OmpAuthorityBridgeClient({
+        executable: config.ompExecutable,
+        environment: { OMP_PROFILE: config.profileId },
+      });
+    try {
+      await bridge.start();
+      const authorities = bridge.createAuthorities();
+      const hostInfo = await authorities.hostInfo();
+      sessionAuthority = authorities.sessionAuthority;
+      discovery = authorities.discovery;
+      operationsAuthority = authorities.operationsAuthority;
+      usageAuthority = authorities.usageAuthority;
+      transcriptImageRoot = hostInfo.transcriptImageRoot;
+      identity = bridge.identity;
+      projectRootForProject = authorities.projectRootForProject;
+      projectRootForSession = authorities.projectRootForSession;
+      lockCheck = authorities.lockCheck;
+      lockStatus = authorities.lockStatus;
+    } catch (error) {
+      await bridge.stop();
+      throw error;
+    }
+  }
   try {
-    const authorities = bridge.createAuthorities();
-    const hostInfo = await authorities.hostInfo();
     const transcriptSearchAuthority =
       dependencies.createTranscriptSearch?.(paths.transcriptSearchPath) ??
       new TranscriptSearchIndex(paths.transcriptSearchPath);
     const projectFileSearchAuthority = new ProjectFileSearchAuthority(
-      authorities.projectRootForSession,
+      projectRootForSession,
     );
-    const identity = bridge.identity;
     const options: AppserverOptions = {
       ...identity,
       appserverVersion: T4_HOST_VERSION,
@@ -181,19 +337,22 @@ export async function runHostDaemon(
       socketPath: paths.socketPath,
       hostIdPath: paths.hostIdPath,
       attentionOutcomePath: paths.attentionOutcomePath,
-      sessionAuthority: authorities.sessionAuthority,
-      discovery: authorities.discovery,
+      sessionAuthority,
+      discovery,
       operationsAuthority: {
-        ...authorities.operationsAuthority,
+        ...operationsAuthority,
         ...projectFileSearchAuthority.operations(),
       },
-      usageAuthority: authorities.usageAuthority,
+      ...(usageAuthority ? { usageAuthority } : {}),
       transcriptSearchAuthority,
-      projectRootForProject: authorities.projectRootForProject,
-      lockCheck: authorities.lockCheck,
-      lockStatus: authorities.lockStatus,
-      transcriptImageRoot: hostInfo.transcriptImageRoot,
+      projectRootForProject,
+      lockCheck,
+      lockStatus,
+      ...(config.authorityMode === "official" ? { claimLocklessSessions: true } : {}),
+      ...(transcriptImageRoot ? { transcriptImageRoot } : {}),
       rpcChildInvocation: { executable: config.ompExecutable, prefixArgv: [] },
+      rpcChildEnvironment: { OMP_PROFILE: config.profileId },
+      ...(config.authorityMode === "official" ? { rpcDialect: "official-17.0.6" as const } : {}),
       ...(process.platform === "darwin"
         ? {
             projectRevealer: async (root: string): Promise<boolean> => {
@@ -246,7 +405,8 @@ export async function runHostDaemon(
       if (!stopping) await appserver.stop().catch(() => undefined);
     }
   } finally {
-    await bridge.stop();
+    await bridge?.stop();
+    await officialAuthority?.close();
   }
 }
 

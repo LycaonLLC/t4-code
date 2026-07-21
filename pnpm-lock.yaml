@@ -332,9 +332,9 @@ importers:
       '@t4-code/host-service':
         specifier: workspace:*
         version: link:../host-service
-      '@t4-code/host-wire':
+      '@t4-code/protocol':
         specifier: workspace:*
-        version: link:../host-wire
+        version: link:../protocol
     devDependencies:
       '@types/bun':
         specifier: 1.3.5

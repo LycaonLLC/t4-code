@@ -73,6 +73,14 @@ class CapabilityRpcChild implements ChildHandle {
             ],
           },
         });
+      else if (command.type === "set_model")
+        this.push({
+          type: "response",
+          id,
+          command: "set_model",
+          success: true,
+          data: {},
+        });
     },
   };
 
@@ -213,6 +221,7 @@ test("attached catalog refresh and terminal-only rejection stay on the runtime b
     ompVersion: "17.0.6",
     discovery: { list: async () => [session] },
     childFactory: factory,
+    rpcDialect: "official-17.0.6",
     lockCheck: () => {},
     lockStatus: () => "missing",
     operationsAuthority: {
@@ -228,14 +237,32 @@ test("attached catalog refresh and terminal-only rejection stay on the runtime b
       protocol: { min: "omp-app/1", max: "omp-app/1" },
       client: { name: "live-catalog-test", version: "1", build: "test", platform: "linux" },
       requestedFeatures: [],
-      capabilities: { client: ["sessions.read", "sessions.prompt", "catalog.read"] },
+      capabilities: {
+        client: [
+          "sessions.read",
+          "sessions.prompt",
+          "sessions.control",
+          "sessions.manage",
+          "catalog.read",
+        ],
+      },
       savedCursors: [],
     });
     expect(await client.nextServer()).toMatchObject({
       type: "welcome",
-      grantedCapabilities: ["sessions.read", "sessions.prompt", "catalog.read"],
+      grantedCapabilities: [
+        "sessions.read",
+        "sessions.manage",
+        "sessions.prompt",
+        "sessions.control",
+        "catalog.read",
+      ],
     });
-    expect((await client.nextServer()).type).toBe("sessions");
+    const sessionsFrame = await client.nextServer();
+    expect(sessionsFrame.type).toBe("sessions");
+    if (sessionsFrame.type !== "sessions") throw new Error("session inventory missing");
+    const revision = sessionsFrame.sessions[0]?.revision;
+    if (!revision) throw new Error("session revision missing");
     let commandOrdinal = 0;
     const sendCommand = (
       request: string,
@@ -291,6 +318,39 @@ test("attached catalog refresh and terminal-only rejection stay on the runtime b
     const rpcCommandTypes = factory.children[0]?.writes.map((command) => command.type) ?? [];
     expect(rpcCommandTypes.slice(0, 2)).toEqual(["get_state", "get_available_commands"]);
     expect(rpcCommandTypes).not.toContain("prompt");
+
+    sendCommand("retry-stale", "session.retry", {}, { expectedRevision: revision });
+    const staleRetry = await responseFor(client, "retry-stale");
+    expect(staleRetry).toMatchObject({ ok: false, error: { code: "stale_revision" } });
+    if (staleRetry.ok) throw new Error("stale retry unexpectedly succeeded");
+    const currentRevision = (staleRetry.error?.details as { actualRevision?: string } | undefined)
+      ?.actualRevision;
+    if (!currentRevision) throw new Error("current session revision missing");
+    sendCommand("retry", "session.retry", {}, { expectedRevision: currentRevision });
+    expect(await responseFor(client, "retry")).toMatchObject({
+      ok: false,
+      error: {
+        code: "unsupported",
+        message: "command is unavailable in the official OMP RPC runtime",
+      },
+    });
+    expect(factory.children[0]?.writes.map((command) => command.type)).not.toContain("retry");
+
+    sendCommand(
+      "model",
+      "session.model.set",
+      { selector: "anthropic/claude-sonnet", persistence: "session" },
+      { expectedRevision: currentRevision },
+    );
+    expect(await responseFor(client, "model")).toMatchObject({ ok: true, result: { accepted: true } });
+    expect(factory.children[0]?.writes.find((command) => command.type === "set_model")).toMatchObject({
+      type: "set_model",
+      provider: "anthropic",
+      modelId: "claude-sonnet",
+    });
+    expect(factory.children[0]?.writes.find((command) => command.type === "set_model")).not.toHaveProperty(
+      "selector",
+    );
   } finally {
     client.destroy();
     await client.closed();
