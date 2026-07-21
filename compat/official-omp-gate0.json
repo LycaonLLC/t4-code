@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "gate": "official-omp-gate0",
+  "runtime": {
+    "version": "17.0.6",
+    "tag": "v17.0.6",
+    "commit": "89d6a8f6d14286f32f09ec9c8aa8af7b3451d2d6"
+  },
+  "requiredPlatforms": ["darwin-arm64", "linux-x64", "linux-arm64"],
+  "requiredScenarios": [
+    "lifecycle",
+    "crash-resume",
+    "steer",
+    "follow-up",
+    "approval",
+    "cancellation",
+    "crash-after-dispatch-no-replay"
+  ],
+  "officialRpcSupport": {
+    "prompt": true,
+    "steer": true,
+    "followUp": true,
+    "approvalRoundTrip": true,
+    "abort": true,
+    "sessionResume": true
+  },
+  "missingOfficialSeams": {
+    "readyTranscriptWatermark": true,
+    "liveSessionEntries": true,
+    "durableCommandKey": true
+  },
+  "t4Policy": {
+    "transcriptAuthority": "official-omp-jsonl",
+    "ambiguousDispatch": "outcome-unknown-no-auto-replay",
+    "releasedFallback": "lycaon-authority-bridge-until-packaged-cutover"
+  },
+  "evidence": {
+    "runtimeHarness": "packages/host-service/bin/official-omp-gate0.ts",
+    "platformOutput": "artifacts/official-omp-gate0/<platform>-<arch>.json",
+    "dispatchCrashTest": "packages/host-service/test/hardening.test.ts",
+    "clientNoReplayTest": "packages/client/test/client.test.ts"
+  }
+}

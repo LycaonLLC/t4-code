@@ -14,7 +14,7 @@ The largest problem is no longer a missing transport layer. T4 now has a shared 
 
 1. **Operation truth is implemented in the host but was not yet reaching the UI.** PR #111 added `typed`, `headless`, `terminal-only`, and `unavailable`; PR #113 classifies stock OMP commands and rejects known terminal-only text before it reaches the model. This sprint carries that result into desktop/web and Flutter.
 2. **Important daily workflows still lack a typed app action:** plan and goal modes, session branch/fork/tree, handoff, provider login/logout, queue control, and child-agent steering.
-3. **The official-OMP path is real but Gate 0 is not complete.** Restart continuity is tested on macOS, while Linux execution, steering/follow-up, approval, cancellation, and ambiguous dispatch-crash behavior still need proof.
+3. **The official-OMP path now passes the complete behavioral proof on macOS ARM64.** Unmodified OMP 17.0.6 passed restart continuity, steering, follow-up, approval, cancellation, and the no-replay failure policy. Native Linux x64 and ARM64 jobs are wired into CI and remain the final platform evidence before Gate 0 closes.
 4. **The Lycaon fork is transitional, not the desired product center.** The current public package still pins its thin authority bridge, but new compatibility work should prefer the T4-owned official-OMP adapter and add only small, extractable bridge methods when stock OMP has no usable seam.
 5. **Protocol vocabulary is not UI coverage.** Every tracker row needs an explicit client disposition: direct control, palette action, read-only view, disabled explanation, terminal handoff, or unavailable.
 6. **Source is ahead of the public release.** Flutter and the latest adapter work are on `main`; the latest public GitHub release remains v0.1.28.
@@ -25,9 +25,11 @@ The truthful-command foundation is split cleanly between merged host work and th
 
 - **Merged:** PR #111 defines one operation contract for every runtime and client.
 - **Merged:** PR #113 queries official OMP's bounded `get_available_commands`, supplements omitted terminal-only commands from a pinned reviewed manifest, and blocks known terminal-only slash text before prompt dispatch.
-- **Merged:** PR #114 proves restart continuity through the official adapter on macOS.
+- **Corrected boundary:** PR #114 proved restart continuity with the released Lycaon fallback artifact, despite the harness's old official-OMP name. This sprint adds a separate official OMP 17.0.6 pin and runs the proof against that unmodified binary.
 - **Merged:** PR #117 preserves `catalog.get.result.operations` through the desktop runtime.
 - **Merged:** PRs #118 and #120 make web/Electron and Flutter build truthful slash menus from the runtime capability contract and fail closed when that contract is absent or unavailable.
+- **This sprint:** the official OMP 17.0.6 harness passes lifecycle, crash/resume, steer, follow-up, approval, and cancellation on macOS ARM64; the host/client failure tests prove a dispatched command becomes `outcome_unknown` and is never automatically replayed.
+- **This sprint:** `compat/official-omp-gate0.json` records the exact runtime, required platforms/scenarios, direct RPC support, and three missing stock seams. Linux x64 and ARM64 CI jobs produce per-platform evidence.
 - **This sprint:** Flutter adds project Quick Open plus visible pause, resume, and manual compaction controls over existing typed commands. No new fork behavior is required.
 
 The tracker distinguishes merged source, work in this sprint, and public release state. None of the new adapter/client work is claimed as packaged desktop, Android, or iOS proof yet.
@@ -38,7 +40,7 @@ The tracker distinguishes merged source, work in this sprint, and public release
 |---|---|---|---|---|---|
 | Operation capability contract | Merged | Decodes shared contract | Same web client | Dart decoder merged | PR #111 green |
 | Official OMP command discovery and rejection | Merged | Receives through host | Receives through host | Receives through host | PR #113 green |
-| Restart continuity | macOS proof merged | Shared host behavior | Shared host behavior | Shared host behavior | PR #114 green; other Gate 0 rows open |
+| Official OMP Gate 0 behavior | macOS ARM64 proof passes; Linux CI wired | Shared host behavior | Shared host behavior | Shared host behavior | Stock 17.0.6 passes lifecycle, steer/follow-up, approval, cancellation; native Linux evidence pending |
 | Preserve `catalog.get.operations` | Merged host response | Merged in PR #117 | Merged in PR #117 | Already decoded | Response and live-frame client tests pass |
 | Capability-aware slash menu | Host rejects unsafe fallback | Implemented on `main` | Implemented on `main` | Implemented on `main` | PRs #118 and #120 are green and merged |
 | Project Quick Open | `files.search` merged | Implemented on `main` | Implemented on `main` | Implemented this sprint | Flutter analysis and the full 168-test suite pass locally; platform CI pending |
@@ -54,7 +56,7 @@ This matrix is intentionally stricter than “the protocol supports it.” A row
 | Original OMP | [`can1357/oh-my-pi@89d6a8f6`](https://github.com/can1357/oh-my-pi/commit/89d6a8f6d14286f32f09ec9c8aa8af7b3451d2d6), version 17.0.6 | Current original product surface |
 | Lycaon OMP fork | [`lyc-aon/oh-my-pi@8476f445`](https://github.com/lyc-aon/oh-my-pi/commit/8476f4451ed95c5d5401785d279a93d3c659fac4), tag [`t4code-17.0.5-appserver-10`](https://github.com/lyc-aon/oh-my-pi/releases/tag/t4code-17.0.5-appserver-10) | Current released thin authority bridge; transitional compatibility input |
 | Shared upstream base | [`can1357/oh-my-pi@9fd6e971`](https://github.com/can1357/oh-my-pi/commit/9fd6e97113f5ed3a847e66d346970efdf8afcad9), version 17.0.5 | Last shared OMP point |
-| T4 `main` | [`298165bc`](https://github.com/LycaonLLC/t4-code/commit/298165bce4e6f57c19f9814798d50c4aa28b4bd8), version 0.1.30 in source | Official-OMP classification, restart proof, capability-aware clients, and contract hardening are merged |
+| T4 `main` | [`210ddfcb`](https://github.com/LycaonLLC/t4-code/commit/210ddfcb11b84da89b2c4b079a9517901168fa37), version 0.1.30 in source | Official-OMP classification, capability-aware clients, Flutter controls, and cluster foundations are merged |
 | Flutter merge | [`LycaonLLC/t4-code#104`](https://github.com/LycaonLLC/t4-code/pull/104) | New shared desktop/mobile client now on `main` |
 | Public T4 release | [`v0.1.28`](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.28) | Latest public release visible during the audit |
 
@@ -65,7 +67,7 @@ Relevant planning and implementation changes:
 - [#109: canonical local and managed architecture](https://github.com/LycaonLLC/t4-code/pull/109) — merged; makes the shared T4-owned official-OMP adapter the intended path.
 - [#111: operation capability contract](https://github.com/LycaonLLC/t4-code/pull/111) — merged.
 - [#113: official OMP operation classification](https://github.com/LycaonLLC/t4-code/pull/113) — merged.
-- [#114: official OMP restart continuity](https://github.com/LycaonLLC/t4-code/pull/114) — merged.
+- [#114: lifecycle continuity harness](https://github.com/LycaonLLC/t4-code/pull/114) — merged; its artifact came from the Lycaon fallback, so this sprint supersedes that proof boundary with a separately pinned official release.
 - [#117: preserve OMP operation capabilities in the desktop runtime](https://github.com/LycaonLLC/t4-code/pull/117) — merged.
 - [#98: standard OMP view-only compatibility](https://github.com/LycaonLLC/t4-code/pull/98) — still open, but its older read-only approach must not become a second long-term adapter beside the architecture in #109.
 
@@ -150,7 +152,7 @@ Fork PR [#22](https://github.com/lyc-aon/oh-my-pi/pull/22) removed more than 37,
 
 | Priority | Gap | Why it matters | Best patch path |
 |---|---|---|---|
-| T0 | Official adapter Gate 0 is incomplete | A clean command catalog is not enough to prove all lifecycle and failure behavior | Finish Linux, steer/follow-up, approval, cancellation, and dispatch-crash scenarios |
+| T0 | Official adapter Gate 0 needs native Linux evidence | The full behavior set passes on macOS ARM64, but the product also runs Linux x64 and ARM64 | Require both native Linux CI jobs and retain their generated evidence |
 | T0 | Release state is ambiguous | Source says v0.1.30 while public GitHub release remains v0.1.28 | Separate `on main`, `verified package`, and `publicly released` in the tracker/release gate |
 | T0 | Plan, goal, branch/fork/tree, handoff, and provider auth lack complete typed app flows | These are central OMP workflows, not decorative terminal features | Typed T4 commands backed by existing OMP RPC where possible |
 | T1 | Queue and pause/resume controls are not consistently exposed outside Flutter | Cross-device control needs explicit, predictable behavior | Add equally visible controls to web/Capacitor over the same typed commands |
@@ -250,7 +252,7 @@ Do not send a giant T4 product PR to original OMP. A suitable upstream contribut
 
 ## Capability manifest and drift control
 
-Persist a generated compatibility snapshot from the T4 official-OMP Gate 0 run. It should contain:
+The checked snapshot at `compat/official-omp-gate0.json` now records the Gate 0 runtime, platform/scenario contract, direct RPC support, missing stock seams, and no-replay policy. Each native run writes `artifacts/official-omp-gate0/<platform>-<arch>.json` as evidence. The broader capability snapshot should next add:
 
 - Official OMP version and exact commit; when the fallback bridge is exercised, its fork commit and tag too.
 - Operations and aliases using `typed`, `headless`, `terminal-only`, or `unavailable`.
@@ -277,9 +279,9 @@ official OMP version + commit
 
 ### Phase 0: finish the official-OMP foundation
 
-1. Finish the open Gate 0 scenarios: Linux, steer/follow-up, approval, cancellation, and ambiguous dispatch-crash recovery.
-2. Generate a compatibility snapshot from the official adapter smoke.
-3. Track source, verified package, and public release status separately.
+1. Land and observe green Linux x64 and ARM64 Gate 0 jobs.
+2. Reconcile stock JSONL without depending on fork-only ready watermarks or live `session_entry` frames.
+3. Track source, verified package, and public release status separately, then plan the packaged cutover from the fallback bridge.
 
 ### Phase 1: close the daily-workflow gaps
 

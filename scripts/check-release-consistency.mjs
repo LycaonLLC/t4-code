@@ -19,6 +19,7 @@ export const RELEASE_CONTRACT_PATHS = [
   "apps/site/src/docs/content.ts",
   "apps/site/src/release.ts",
   "apps/web/src/platform/browser-shell-port.ts",
+  "compat/official-omp-gate0.json",
   "compat/omp-app-matrix.json",
   "docs/CURRENT_RELEASE_NOTES.md",
   "docs/MACOS_SIGNING.md",
@@ -260,6 +261,98 @@ function validateRuntimeMetadata(value, label, matrixPath, errors) {
   });
 }
 
+function validateOfficialRuntimeMetadata(value, matrixPath, errors) {
+  const prefix = `${matrixPath} official runtime`;
+  const version = value?.version;
+  const sourceCommit = value?.sourceCommit;
+  if (value?.package !== "omp") errors.push(`${prefix} package must be omp`);
+  if (typeof version !== "string" || !VERSION_PATTERN.test(version)) {
+    errors.push(`${prefix} version must be a stable x.y.z version`);
+  }
+  if (value?.sourceRepository !== OMP_UPSTREAM_REPOSITORY) {
+    errors.push(`${prefix} repository must be ${OMP_UPSTREAM_REPOSITORY}`);
+  }
+  if (typeof sourceCommit !== "string" || !SHA_PATTERN.test(sourceCommit)) {
+    errors.push(`${prefix} commit must be a lowercase 40-character Git SHA`);
+  }
+  if (value?.sourceUrl !== `${OMP_UPSTREAM_REPOSITORY}/commit/${sourceCommit ?? ""}`) {
+    errors.push(`${prefix} URL must match its source commit`);
+  }
+  if (typeof version === "string" && value?.sourceTag !== `v${version}`) {
+    errors.push(`${prefix} tag must be v${version}`);
+  }
+  const expectedArtifacts = {
+    "darwin-arm64": "omp-darwin-arm64",
+    "darwin-x64": "omp-darwin-x64",
+    "linux-arm64": "omp-linux-arm64",
+    "linux-x64": "omp-linux-x64",
+    "win32-x64": "omp-windows-x64.exe",
+  };
+  const artifacts = value?.artifacts;
+  if (!artifacts || typeof artifacts !== "object" || Array.isArray(artifacts)) {
+    errors.push(`${prefix} artifacts must be an object`);
+    return;
+  }
+  const actualKeys = Object.keys(artifacts).sort();
+  const expectedKeys = Object.keys(expectedArtifacts).sort();
+  if (!isDeepStrictEqual(actualKeys, expectedKeys)) {
+    errors.push(`${prefix} artifacts must pin ${expectedKeys.join(", ")}`);
+  }
+  for (const [platform, expectedName] of Object.entries(expectedArtifacts)) {
+    const artifact = artifacts[platform];
+    if (artifact?.name !== expectedName) errors.push(`${prefix} ${platform} artifact name must be ${expectedName}`);
+    if (!Number.isSafeInteger(artifact?.size) || artifact.size <= 0) {
+      errors.push(`${prefix} ${platform} artifact size must be a positive integer`);
+    }
+    if (typeof artifact?.sha256 !== "string" || !SHA256_PATTERN.test(artifact.sha256)) {
+      errors.push(`${prefix} ${platform} artifact SHA-256 must be a lowercase digest`);
+    }
+  }
+}
+
+function validateOfficialGate0Snapshot(snapshot, officialRuntime, path, errors) {
+  if (snapshot?.schemaVersion !== 1) errors.push(`${path} schemaVersion must be 1`);
+  if (snapshot?.gate !== "official-omp-gate0") errors.push(`${path} gate must be official-omp-gate0`);
+  for (const [field, expected] of [
+    ["version", officialRuntime?.version],
+    ["tag", officialRuntime?.sourceTag],
+    ["commit", officialRuntime?.sourceCommit],
+  ]) {
+    if (snapshot?.runtime?.[field] !== expected) {
+      errors.push(`${path} runtime ${field} must match compat/omp-app-matrix.json officialRuntime`);
+    }
+  }
+  const requiredPlatforms = ["darwin-arm64", "linux-x64", "linux-arm64"];
+  if (!isDeepStrictEqual(snapshot?.requiredPlatforms, requiredPlatforms)) {
+    errors.push(`${path} requiredPlatforms must cover macOS ARM64 and Linux x64/ARM64`);
+  }
+  const requiredScenarios = [
+    "lifecycle",
+    "crash-resume",
+    "steer",
+    "follow-up",
+    "approval",
+    "cancellation",
+    "crash-after-dispatch-no-replay",
+  ];
+  if (!isDeepStrictEqual(snapshot?.requiredScenarios, requiredScenarios)) {
+    errors.push(`${path} requiredScenarios must match the Gate 0 proof contract`);
+  }
+  for (const capability of ["prompt", "steer", "followUp", "approvalRoundTrip", "abort", "sessionResume"]) {
+    if (snapshot?.officialRpcSupport?.[capability] !== true) {
+      errors.push(`${path} officialRpcSupport.${capability} must be true`);
+    }
+  }
+  for (const seam of ["readyTranscriptWatermark", "liveSessionEntries", "durableCommandKey"]) {
+    if (snapshot?.missingOfficialSeams?.[seam] !== true) {
+      errors.push(`${path} missingOfficialSeams.${seam} must remain explicit`);
+    }
+  }
+  if (snapshot?.t4Policy?.ambiguousDispatch !== "outcome-unknown-no-auto-replay") {
+    errors.push(`${path} ambiguous dispatch policy must fail closed without automatic replay`);
+  }
+}
+
 export function collectReleaseConsistencyErrors(files, releaseTag) {
   const errors = [];
   const rootManifest = parseJson(files, "package.json", errors);
@@ -356,6 +449,10 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
 
   const matrixPath = "compat/omp-app-matrix.json";
   const matrix = parseJson(files, matrixPath, errors);
+  validateOfficialRuntimeMetadata(matrix?.officialRuntime, matrixPath, errors);
+  const officialGatePath = "compat/official-omp-gate0.json";
+  const officialGate = parseJson(files, officialGatePath, errors);
+  validateOfficialGate0Snapshot(officialGate, matrix?.officialRuntime, officialGatePath, errors);
   if (matrix?.desktop?.version !== version) {
     errors.push(`${matrixPath} desktop version must be ${version}`);
   }
@@ -813,6 +910,10 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "run: pnpm test:legacy-bridge-continuity",
     "path: artifacts/legacy-bridge-continuity/",
     "if-no-files-found: error",
+    "official-omp-gate0:",
+    "runner: ubuntu-24.04-arm",
+    "run: pnpm --filter @t4-code/host-service verify:official-omp-lifecycle",
+    "path: artifacts/official-omp-gate0/${{ matrix.platform }}.json",
     "tooling:",
     "cluster:",
     "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16",
@@ -831,7 +932,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "test -x apps/flutter/build/macos/Build/Products/Debug/t4code.app/Contents/Resources/runtime/t4-host",
     "name: verify",
     "if: ${{ always() }}",
-    "needs: [changes, core, legacy-bridge-continuity, cluster, tooling, android-debug, flutter, flutter-android, flutter-apple]",
+    "needs: [changes, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug, flutter, flutter-android, flutter-apple]",
     'test "$CHANGES_RESULT" = success',
     'test "$CORE_RESULT" = success',
     "for result in \\",

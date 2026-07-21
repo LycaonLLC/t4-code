@@ -2089,10 +2089,11 @@ client render</code></pre>
       Prove the highest-risk dependency before building the control plane. A
       small T4-owned harness launches an unmodified official OMP release through
       <code>omp --mode rpc --session &lt;path&gt;</code>, waits for its ready
-      watermark, executes a prompt, steering or follow-up, approval response,
+      event, executes a prompt, steering or follow-up, approval response,
       cancellation, and a second prompt, then kills and respawns OMP against the
       same JSONL session on Linux. Transcript order and continuation must be
-      reconstructed from durable session entries and the ready watermark.
+      reconstructed from durable session entries. A ready watermark may improve
+      this later, but stock OMP 17.0.6 does not provide one.
     </p>
     <p>
       This gate also resolves the dispatch crash window. Current stock OMP RPC
@@ -2105,25 +2106,28 @@ client render</code></pre>
       execution.
     </p>
     <p>
-      Implementation status (2026-07-20): the T4-owned supervisor now queries
+      Implementation status (2026-07-21): the T4-owned supervisor now queries
       stock OMP's bounded <code>get_available_commands</code> RPC, normalizes
       typed and verified headless operations into the shared catalog, and
       supplements commands omitted from headless discovery with a manifest
       pinned to the reviewed OMP source revision. Local catalog responses expose
       those classifications. Recognized terminal-only prompts such as
       <code>/plan</code> fail with structured <code>terminal_only</code> details
-      before any prompt is written to OMP stdin. The checksum-pinned
-      <code>t4code-17.0.5-appserver-10</code> lifecycle harness now runs a
-      deterministic first prompt, kills OMP with <code>SIGKILL</code>, observes
-      the release's stale-lock fencing delay, respawns against the same JSONL,
-      validates the ready watermark against durable entries, and sends a second
-      prompt with the first turn restored in model context. It also verifies
-      that each live <code>session_entry</code> notification already exists on
-      disk. This slice passes on <code>darwin-arm64</code>; immutable
-      <code>linux-arm64</code> and <code>linux-x64</code> release assets are
-      pinned for the required Linux execution. Gate 0 remains open for that
-      Linux proof plus steering or follow-up, approval, cancellation, and
-      dispatch-crash ambiguity scenarios.
+      before any prompt is written to OMP stdin. The earlier lifecycle harness
+      used the released <code>t4code-17.0.5-appserver-10</code> Lycaon fallback
+      artifact, despite its official-OMP name. The corrected harness separately
+      pins unmodified official OMP <code>v17.0.6</code> and its per-platform
+      release hashes. On <code>darwin-arm64</code> it now passes deterministic
+      lifecycle, <code>SIGKILL</code> and same-session recovery, steering,
+      follow-up, extension approval, and cancellation scenarios. Focused host
+      and client tests prove that a crash after stdin dispatch produces an
+      unknown outcome and never automatically replays the prompt. The checked
+      Gate 0 snapshot records three missing stock seams: no ready transcript
+      watermark, no live <code>session_entry</code> projection, and no durable
+      command key. T4 therefore reconciles official OMP's JSONL and fails closed
+      across ambiguity instead of pretending to provide exactly-once execution.
+      Native <code>linux-arm64</code> and <code>linux-x64</code> CI jobs are the
+      remaining platform evidence before Gate 0 closes.
     </p>
     <h3 id="gate-1-contract-freeze">Gate 1: contract freeze</h3>
     <p>Freeze the shared contracts that every later workstream consumes:</p>

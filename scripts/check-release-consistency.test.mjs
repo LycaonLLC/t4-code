@@ -92,6 +92,27 @@ test("promotes the verified runtime into the product release", () => {
   assert.deepEqual(matrix.publishedRuntime, matrix.verifiedRuntime);
 });
 
+test("pins official OMP artifacts and the Gate 0 proof contract", () => {
+  const officialDrift = changedRuntime("officialRuntime", (runtime) => {
+    runtime.artifacts["linux-arm64"].sha256 = "invalid";
+  });
+  assert.ok(
+    collectReleaseConsistencyErrors(officialDrift).some((error) =>
+      error.includes("official runtime linux-arm64 artifact SHA-256"),
+    ),
+  );
+
+  const snapshotDrift = changed("compat/official-omp-gate0.json", (text) => {
+    const snapshot = JSON.parse(text);
+    snapshot.runtime.commit = "0".repeat(40);
+    snapshot.requiredScenarios = snapshot.requiredScenarios.filter((item) => item !== "approval");
+    return JSON.stringify(snapshot);
+  });
+  const errors = collectReleaseConsistencyErrors(snapshotDrift);
+  assert.ok(errors.some((error) => error.includes("runtime commit must match")));
+  assert.ok(errors.some((error) => error.includes("requiredScenarios must match")));
+});
+
 test("rejects a tag that differs from the package version", () => {
   assert.ok(
     collectReleaseConsistencyErrors(files, "v9.9.9").some((error) =>
@@ -250,14 +271,14 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, core, legacy-bridge-continuity, cluster, tooling, android-debug, flutter, flutter-android, flutter-apple]",
+          "needs: [changes, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug, flutter, flutter-android, flutter-apple]",
           "needs: [changes, core, tooling, android-debug]",
         ),
     ],
     [
       ".github/workflows/ci.yml",
       (text) =>
-        text.replace(
+        text.replaceAll(
           "ref: ${{ github.event.pull_request.head.sha || github.sha }}",
           "ref: ${{ github.ref }}",
         ),
@@ -555,7 +576,7 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("if: ${{ always() }}"));
   assert.ok(
     ciWorkflow.includes(
-      "needs: [changes, core, legacy-bridge-continuity, cluster, tooling, android-debug, flutter, flutter-android, flutter-apple]",
+      "needs: [changes, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug, flutter, flutter-android, flutter-apple]",
     ),
   );
   assert.ok(ciWorkflow.includes('test "$CHANGES_RESULT" = success'));
