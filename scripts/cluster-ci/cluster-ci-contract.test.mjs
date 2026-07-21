@@ -263,6 +263,10 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
       `pipeline 38:64 reproduced unfiltered core workspace traversal as "Failed to find executable flutter": ${command}`,
     );
   }
+  assert.deepEqual(steps["legacy-authority-build"].commands, [
+    "(cd .continuity/omp && bun install --frozen-lockfile)",
+    "(cd .continuity/omp && bun run build:native)",
+  ]);
   assert.ok(steps["legacy-bridge-continuity"].commands.includes("pnpm test:legacy-bridge-continuity"));
   assert.equal(steps["legacy-bridge-continuity"].environment.T4_OMP_SOURCE_DIR, ".continuity/omp");
   assert.ok(
