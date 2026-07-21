@@ -57,6 +57,44 @@ jobs:
           [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
           git diff --name-only -z "$BASE_SHA...$HEAD_SHA" | node scripts/ci-paths.mjs >> "$GITHUB_OUTPUT"
 
+  t4-api-generation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install pinned pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.10.0
+
+      - name: Install pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.13.1
+
+      - name: Resolve lockfile and generation dependencies for artifact recovery
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Validate and generate the T4 API contract artifact
+        run: |
+          pnpm --filter @t4-code/t4-api-contract validate
+          pnpm --filter @t4-code/t4-api-contract generate:ci
+
+      - name: Upload deterministic T4 API generation inputs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: t4-api-generation-${{ github.run_id }}
+          path: |
+            pnpm-lock.yaml
+            artifacts/t4-api/generated/schema.ts
+          if-no-files-found: error
+          retention-days: 14
+
   core:
     runs-on: ubuntu-24.04
     timeout-minutes: 25

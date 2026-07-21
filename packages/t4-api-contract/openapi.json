@@ -338,7 +338,7 @@
         "in": "header",
         "required": true,
         "description": "Requested API major. v1 clients send 1. Unsupported majors fail with 406 instead of silently downgrading.",
-        "schema": { "type": "string", "pattern": "^1(?:\\.[0-9]+)?$", "maxLength": 16 }
+        "schema": { "type": "string", "pattern": "^[1-9][0-9]{0,3}(?:\\.[0-9]+)?$", "maxLength": 16 }
       },
       "IdempotencyKey": {
         "name": "Idempotency-Key",
@@ -412,7 +412,7 @@
     },
     "schemas": {
       "ResourceId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
-      "Cursor": { "type": "string", "minLength": 1, "maxLength": 512, "description": "Opaque server-issued cursor." },
+      "Cursor": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[A-Za-z0-9._~-]+$", "description": "Opaque server-issued header-safe SSE cursor." },
       "Revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
       "OperationState": { "type": "string", "enum": ["accepted", "rejected", "conflict", "unavailable", "indeterminate"] },
       "WorkspaceState": { "type": "string", "enum": ["accepted", "provisioning", "ready", "deleting", "deleted", "failed", "unavailable", "indeterminate"] },
@@ -639,11 +639,47 @@
           "resync": { "$ref": "#/components/schemas/Resync" }
         }
       },
+      "IncompatibleVersionApiError": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ApiError" },
+          { "type": "object", "required": ["supportedMajors"], "properties": { "code": { "const": "incompatible_version" }, "supportedMajors": { "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": { "type": "integer", "minimum": 1 } } } }
+        ]
+      },
+      "CursorExpiredApiError": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ApiError" },
+          { "type": "object", "required": ["resync"], "properties": { "code": { "const": "cursor_expired" }, "resync": { "$ref": "#/components/schemas/Resync" } } }
+        ]
+      },
+      "InvalidRequestApiError": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ApiError" },
+          { "type": "object", "required": ["violations"], "properties": { "code": { "const": "invalid_request" }, "violations": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/components/schemas/FieldViolation" } } } }
+        ]
+      },
       "ErrorEnvelope": {
         "type": "object",
         "additionalProperties": false,
         "required": ["error"],
         "properties": { "error": { "$ref": "#/components/schemas/ApiError" } }
+      },
+      "IncompatibleVersionErrorEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": { "error": { "$ref": "#/components/schemas/IncompatibleVersionApiError" } }
+      },
+      "CursorExpiredErrorEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": { "error": { "$ref": "#/components/schemas/CursorExpiredApiError" } }
+      },
+      "InvalidRequestErrorEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": { "error": { "$ref": "#/components/schemas/InvalidRequestApiError" } }
       }
     },
     "responses": {
@@ -673,10 +709,10 @@
       "Error401": { "description": "Missing or invalid opaque bearer credential", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
       "Error403": { "description": "Credential lacks the deny-by-default operation or resource scope", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
       "Error404": { "description": "Resource absent or outside caller scope (scope existence is not disclosed)", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
-      "Error406": { "description": "Requested major is incompatible; no silent downgrade", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+      "Error406": { "description": "Requested major is incompatible; no silent downgrade", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncompatibleVersionErrorEnvelope" } } } },
       "Error409": { "description": "Idempotency or resource revision conflict", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
-      "Error410": { "description": "Watch cursor expired; resync from the typed snapshot target", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
-      "Error422": { "description": "Bounded semantic validation failure with stable field violations", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+      "Error410": { "description": "Watch cursor expired; resync from the typed snapshot target", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CursorExpiredErrorEnvelope" } } } },
+      "Error422": { "description": "Bounded semantic validation failure with stable field violations", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InvalidRequestErrorEnvelope" } } } },
       "Error503": { "description": "Service temporarily unavailable or outcome indeterminate", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } }
     }
   }

@@ -7,23 +7,24 @@ export type { components, operations, paths } from "./generated/schema.ts";
 const MAX_CREDENTIAL_LENGTH = 4096;
 const MAX_ERROR_BYTES = 1024 * 1024;
 const MAX_EVENT_BYTES = 1024 * 1024;
-const SESSION_STATES = new Set<components["schemas"]["SessionState"]>([
-  "accepted",
-  "provisioning",
-  "ready",
-  "cancelling",
-  "cancelled",
-  "failed",
-  "unavailable",
-  "indeterminate",
-]);
-const OPERATION_STATES = new Set<components["schemas"]["OperationState"]>([
-  "accepted",
-  "rejected",
-  "conflict",
-  "unavailable",
-  "indeterminate",
-]);
+const CURSOR_PATTERN = /^[A-Za-z0-9._~-]+$/u;
+const ERROR_CODES = {
+  invalid_request: true, unauthenticated: true, forbidden: true, not_found: true,
+  idempotency_key_required: true, idempotency_conflict: true, revision_conflict: true,
+  incompatible_version: true, cursor_expired: true, unavailable: true, indeterminate: true,
+  invalid_origin: true, https_required: true,
+} as const satisfies Record<components["schemas"]["ApiError"]["code"], true>;
+const ERROR_FIELDS: Record<string, true> = {
+  code: true, message: true, requestId: true, retryable: true,
+  violations: true, supportedMajors: true, resync: true,
+};
+const SESSION_STATES = {
+  accepted: true, provisioning: true, ready: true, cancelling: true,
+  cancelled: true, failed: true, unavailable: true, indeterminate: true,
+} as const satisfies Record<components["schemas"]["SessionState"], true>;
+const OPERATION_STATES = {
+  accepted: true, rejected: true, conflict: true, unavailable: true, indeterminate: true,
+} as const satisfies Record<components["schemas"]["OperationState"], true>;
 
 type ApiError = components["schemas"]["ApiError"];
 type Resync = components["schemas"]["Resync"];
@@ -129,22 +130,70 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function validViolation(value: unknown): boolean {
+  const violation = record(value);
+  return violation !== undefined &&
+    Object.keys(violation).every((key) => key === "field" || key === "rule" || key === "message") &&
+    typeof violation.field === "string" && violation.field.length >= 1 && violation.field.length <= 256 &&
+    typeof violation.rule === "string" && /^[A-Za-z][A-Za-z0-9._-]{0,63}$/u.test(violation.rule) &&
+    typeof violation.message === "string" && violation.message.length >= 1 && violation.message.length <= 512;
+}
+
+function validResync(value: unknown): value is Resync {
+  const resync = record(value);
+  return resync !== undefined && Object.keys(resync).every((key) => key === "snapshotUrl" || key === "cursor") &&
+    typeof resync.snapshotUrl === "string" && /^\/v1\/sessions\/[A-Za-z0-9._~-]+\/snapshot$/u.test(resync.snapshotUrl) &&
+    typeof resync.cursor === "string" && resync.cursor.length <= 512 && CURSOR_PATTERN.test(resync.cursor);
+}
+
 function apiError(value: unknown): ApiError | undefined {
   const envelope = record(value);
   const error = record(envelope?.error);
   if (
-    error === undefined ||
-    typeof error.code !== "string" ||
-    typeof error.message !== "string" ||
-    typeof error.requestId !== "string" ||
-    typeof error.retryable !== "boolean"
+    envelope === undefined || Object.keys(envelope).some((key) => key !== "error") ||
+    error === undefined || Object.keys(error).some((key) => ERROR_FIELDS[key] !== true) ||
+    typeof error.code !== "string" || ERROR_CODES[error.code as ApiError["code"]] !== true ||
+    typeof error.message !== "string" || error.message.length < 1 || error.message.length > 1024 ||
+    typeof error.requestId !== "string" || error.requestId.length < 1 || error.requestId.length > 128 ||
+    typeof error.retryable !== "boolean" ||
+    (error.violations !== undefined && (!Array.isArray(error.violations) || error.violations.length > 64 || !error.violations.every(validViolation))) ||
+    (error.supportedMajors !== undefined && (!Array.isArray(error.supportedMajors) || error.supportedMajors.length > 8 || !error.supportedMajors.every((major) => Number.isSafeInteger(major) && Number(major) >= 1))) ||
+    (error.resync !== undefined && !validResync(error.resync))
   ) return undefined;
   return error as ApiError;
 }
 
+async function boundedResponseText(response: Response): Promise<string | undefined> {
+  if (response.body === null) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      length += chunk.value.byteLength;
+      if (length > MAX_ERROR_BYTES) {
+        await reader.cancel();
+        return undefined;
+      }
+      chunks.push(chunk.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { return undefined; }
+}
+
 async function boundedError(response: Response): Promise<T4ApiError> {
-  const text = await response.text();
-  if (new TextEncoder().encode(text).byteLength <= MAX_ERROR_BYTES) {
+  const text = await boundedResponseText(response);
+  if (text !== undefined) {
     try {
       const decoded = apiError(JSON.parse(text));
       if (decoded !== undefined) return new T4ApiError(response.status, decoded);
@@ -168,15 +217,16 @@ function watchEvent(value: unknown, eventId: string | undefined): WatchEvent {
     typeof event.cursor !== "string" ||
     event.cursor.length < 1 ||
     event.cursor.length > 512 ||
+    !CURSOR_PATTERN.test(event.cursor) ||
     (eventId !== undefined && eventId !== event.cursor)
   ) throw new T4ApiError(502, { code: "indeterminate", message: "T4 API returned an invalid watch event", requestId: "unavailable", retryable: true });
-  if (event.type === "heartbeat" && typeof event.observedAt === "string" && event.observedAt.length <= 64) {
+  if (event.type === "heartbeat" && typeof event.observedAt === "string" && event.observedAt.length <= 64 && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.test(event.observedAt) && Number.isFinite(Date.parse(event.observedAt))) {
     return event as WatchEvent;
   }
   if (
     event.type === "session" &&
     typeof event.state === "string" &&
-    SESSION_STATES.has(event.state as components["schemas"]["SessionState"]) &&
+    SESSION_STATES[event.state as components["schemas"]["SessionState"]] === true &&
     Number.isSafeInteger(event.revision) && Number(event.revision) >= 1
   ) return event as WatchEvent;
   if (
@@ -184,7 +234,7 @@ function watchEvent(value: unknown, eventId: string | undefined): WatchEvent {
     typeof event.commandId === "string" &&
     event.commandId.length >= 1 && event.commandId.length <= 128 &&
     typeof event.state === "string" &&
-    OPERATION_STATES.has(event.state as components["schemas"]["OperationState"])
+    OPERATION_STATES[event.state as components["schemas"]["OperationState"]] === true
   ) return event as WatchEvent;
   throw new T4ApiError(502, { code: "indeterminate", message: "T4 API returned an invalid watch event", requestId: "unavailable", retryable: true });
 }
@@ -192,8 +242,8 @@ function watchEvent(value: unknown, eventId: string | undefined): WatchEvent {
 function decodeSseFrame(frame: string): WatchEvent | undefined {
   let eventId: string | undefined;
   const data: string[] = [];
-  for (const rawLine of frame.split("\n")) {
-    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+  for (const rawLine of frame.split(/\r\n|\r|\n/u)) {
+    const line = rawLine;
     if (line === "" || line.startsWith(":")) continue;
     const separator = line.indexOf(":");
     const field = separator < 0 ? line : line.slice(0, separator);
@@ -211,6 +261,11 @@ function decodeSseFrame(frame: string): WatchEvent | undefined {
   }
 }
 
+function nextSseBoundary(buffer: string): { readonly index: number; readonly length: number } | undefined {
+  const match = /(?:\r\n|\r|\n)(?:\r\n|\r|\n)/u.exec(buffer);
+  return match?.index === undefined ? undefined : { index: match.index, length: match[0].length };
+}
+
 async function* watch(
   baseUrl: string,
   credential: string,
@@ -222,8 +277,8 @@ async function* watch(
   const sessionId = requiredSessionId(sessionIdValue);
   const maxEvents = boundedInteger(options.maxEvents, 100, 1, 1000, "maxEvents");
   const heartbeatSeconds = boundedInteger(options.heartbeatSeconds, 15, 5, 60, "heartbeatSeconds");
-  if (options.cursor !== undefined && (options.cursor.length < 1 || options.cursor.length > 512)) {
-    throw new TypeError("cursor must contain between 1 and 512 characters");
+  if (options.cursor !== undefined && (options.cursor.length < 1 || options.cursor.length > 512 || !CURSOR_PATTERN.test(options.cursor))) {
+    throw new TypeError("cursor must be a header-safe token containing between 1 and 512 characters");
   }
   const url = new URL(`${baseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/events`);
   url.searchParams.set("maxEvents", String(maxEvents));
@@ -271,16 +326,18 @@ async function* watch(
       if (new TextEncoder().encode(buffer).byteLength > MAX_EVENT_BYTES) {
         throw new T4ApiError(502, { code: "indeterminate", message: "T4 API watch event exceeds the client bound", requestId: "unavailable", retryable: true });
       }
-      let boundary = buffer.indexOf("\n\n");
-      while (boundary >= 0 && delivered < maxEvents) {
-        const frame = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
+      let boundary = nextSseBoundary(buffer);
+      while (boundary !== undefined && delivered < maxEvents) {
+        if (controller.signal.aborted) return;
+        const frame = buffer.slice(0, boundary.index);
+        buffer = buffer.slice(boundary.index + boundary.length);
         const event = decodeSseFrame(frame);
         if (event !== undefined) {
           delivered += 1;
           yield event;
+          if (controller.signal.aborted) return;
         }
-        boundary = buffer.indexOf("\n\n");
+        boundary = nextSseBoundary(buffer);
       }
     }
     if (buffer.trim().length > 0 && delivered < maxEvents) {
