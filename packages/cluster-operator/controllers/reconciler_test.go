@@ -1801,16 +1801,14 @@ func TestSessionResourcesWithAnyForeignOwnerFailClosed(t *testing.T) {
 						t.Fatalf("Service with foreign OwnerReference was mutated: %#v", got)
 					}
 				}
-				if path == "dependency-cleanup" {
-					var sibling client.Object
-					if kind == "Pod" {
-						sibling = &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: controllers.SessionServiceName(session), Namespace: session.Namespace}}
-					} else {
-						sibling = &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: controllers.SessionPodName(session), Namespace: session.Namespace}}
-					}
-					if err := c.Get(ctx, client.ObjectKeyFromObject(sibling), sibling); !apierrors.IsNotFound(err) {
-						t.Fatalf("exclusively owned sibling remained after dependency cleanup: %v", err)
-					}
+				var sibling client.Object
+				if kind == "Pod" {
+					sibling = &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: controllers.SessionServiceName(session), Namespace: session.Namespace}}
+				} else {
+					sibling = &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: controllers.SessionPodName(session), Namespace: session.Namespace}}
+				}
+				if err := c.Get(ctx, client.ObjectKeyFromObject(sibling), sibling); !apierrors.IsNotFound(err) {
+					t.Fatalf("exclusively owned sibling remained after ownership conflict: %v", err)
 				}
 				var failed clusterv1alpha1.T4Session
 				if err := c.Get(ctx, client.ObjectKeyFromObject(session), &failed); err != nil {
