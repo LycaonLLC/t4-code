@@ -449,7 +449,7 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 	} else if err != nil {
 		return ctrl.Result{}, err
 	} else if !sessionExclusivelyOwnsResource(&service, &session) {
-		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
+		if err := r.deleteOwnedSessionResourcesAfterVerifiedDependencies(ctx, &session, "ServiceOwnershipConflict", "deterministic session Service has an unexpected owner"); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
@@ -486,7 +486,7 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 	} else if err != nil {
 		return ctrl.Result{}, err
 	} else if !sessionExclusivelyOwnsResource(&pod, &session) {
-		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
+		if err := r.deleteOwnedSessionResourcesAfterVerifiedDependencies(ctx, &session, "PodOwnershipConflict", "deterministic session Pod has an unexpected owner"); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
@@ -750,6 +750,14 @@ func (r *SessionReconciler) reconcileDelete(ctx context.Context, session *cluste
 }
 
 func (r *SessionReconciler) deleteOwnedSessionResources(ctx context.Context, session *clusterv1alpha1.T4Session) error {
+	return r.deleteOwnedSessionResourcesWithFailure(ctx, session, false, false, "ResourceOwnershipConflict", "one or more deterministic session resources have an unexpected owner")
+}
+
+func (r *SessionReconciler) deleteOwnedSessionResourcesAfterVerifiedDependencies(ctx context.Context, session *clusterv1alpha1.T4Session, reason, message string) error {
+	return r.deleteOwnedSessionResourcesWithFailure(ctx, session, true, true, reason, message)
+}
+
+func (r *SessionReconciler) deleteOwnedSessionResourcesWithFailure(ctx context.Context, session *clusterv1alpha1.T4Session, hostReady, workspaceReady bool, reason, message string) error {
 	objects := []client.Object{
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: SessionPodName(session), Namespace: session.Namespace}},
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: SessionServiceName(session), Namespace: session.Namespace}},
@@ -771,7 +779,7 @@ func (r *SessionReconciler) deleteOwnedSessionResources(ctx context.Context, ses
 		}
 	}
 	if ownershipConflict {
-		if err := r.updateSessionFailure(ctx, session, false, false, "Available", "ResourceOwnershipConflict", "one or more deterministic session resources have an unexpected owner"); err != nil {
+		if err := r.updateSessionFailure(ctx, session, hostReady, workspaceReady, "Available", reason, message); err != nil {
 			return err
 		}
 		return errSessionResourceOwnershipConflict
