@@ -2083,6 +2083,18 @@ client render</code></pre>
       pass by assuming host-side idempotency provides exactly-once OMP
       execution.
     </p>
+    <p>
+      Implementation status (2026-07-20): the T4-owned supervisor now queries
+      stock OMP's bounded <code>get_available_commands</code> RPC, normalizes
+      typed and verified headless operations into the shared catalog, and
+      supplements commands omitted from headless discovery with a manifest
+      pinned to the reviewed OMP source revision. Local catalog responses expose
+      those classifications. Recognized terminal-only prompts such as
+      <code>/plan</code> fail with structured <code>terminal_only</code> details
+      before any prompt is written to OMP stdin. The stock-OMP capability smoke
+      and end-to-end host tests pass; Gate 0 remains open for the prompt,
+      control, restart, transcript, and dispatch-crash scenarios above.
+    </p>
     <h3 id="gate-1-contract-freeze">Gate 1: contract freeze</h3>
     <p>Freeze the shared contracts that every later workstream consumes:</p>
     <ul>
@@ -2510,8 +2522,10 @@ client render</code></pre>
     <h2 id="open-decisions-requiring-proof">Open decisions requiring proof</h2>
     <ul>
       <li>
-        The exact official OMP interface sufficient for the runtime adapter and
-        any narrow upstream additions it needs.
+        Whether the remaining official OMP lifecycle, recovery, and durable
+        acceptance behaviors require narrow upstream additions. Capability
+        discovery and terminal-only dispatch classification use the existing
+        official RPC seam.
       </li>
       <li>
         Measured overhead and resource floors for T4 Local, Personal Hub, and HA
