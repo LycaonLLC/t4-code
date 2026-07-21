@@ -1,0 +1,142 @@
+import assert from "node:assert/strict";
+import { chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { spawn } from "node:child_process";
+import test from "node:test";
+
+const repoRoot = resolve(import.meta.dirname, "../..");
+const lifecycle = resolve(import.meta.dirname, "crd-lifecycle.sh");
+
+async function fixture() {
+  const root = await mkdtemp(join(tmpdir(), "t4-crd-lifecycle-"));
+  const bin = join(root, "bin");
+  const log = join(root, "commands.log");
+  await mkdir(bin);
+  await writeFile(
+    join(bin, "kubectl"),
+    `#!/bin/sh
+set -eu
+printf 'kubectl' >>"$COMMAND_LOG"
+for argument in "$@"; do printf '\\t%s' "$argument" >>"$COMMAND_LOG"; done
+printf '\\n' >>"$COMMAND_LOG"
+for argument in "$@"; do
+  if [ "$argument" = "--dry-run=server" ] && [ "\${FAIL_DRY_RUN:-0}" = 1 ]; then
+    exit 42
+  fi
+done
+if [ "\${1:-}" = get ]; then
+  printf '%s' "\${STORED_VERSIONS:-v1alpha1}"
+fi
+`,
+  );
+  await writeFile(
+    join(bin, "helm"),
+    `#!/bin/sh
+set -eu
+printf 'helm' >>"$COMMAND_LOG"
+for argument in "$@"; do printf '\\t%s' "$argument" >>"$COMMAND_LOG"; done
+printf '\\n' >>"$COMMAND_LOG"
+`,
+  );
+  await chmod(join(bin, "kubectl"), 0o755);
+  await chmod(join(bin, "helm"), 0o755);
+  return {
+    root,
+    log,
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, COMMAND_LOG: log },
+  };
+}
+
+async function runLifecycle(args, env = {}) {
+  const result = await new Promise((resolveResult, reject) => {
+    const child = spawn(lifecycle, args, {
+      cwd: repoRoot,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code, signal) => resolveResult({ code, signal, stdout, stderr }));
+  });
+  return result;
+}
+
+async function commands(log) {
+  return (await readFile(log, "utf8")).trim().split("\n").filter(Boolean);
+}
+
+function findCommand(log, predicate, description) {
+  const index = log.findIndex(predicate);
+  assert.notEqual(index, -1, `missing ${description}:\n${log.join("\n")}`);
+  return index;
+}
+
+test("upgrade preflights old objects, establishes CRDs, verifies storage, then upgrades workloads", async () => {
+  const value = await fixture();
+  const result = await runLifecycle(
+    ["upgrade", "--", "helm", "upgrade", "t4-cluster", "deploy/charts/t4-cluster", "--namespace", "t4-system", "--skip-crds"],
+    value.env,
+  );
+  assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+  const log = await commands(value.log);
+  const crdPreflight = findCommand(log, (line) => line.includes("apply") && line.includes("--server-side") && line.includes("--dry-run=server") && line.includes("deploy/charts/t4-cluster/crds"), "server-side CRD preflight");
+  const oldObjectPreflight = findCommand(log, (line) => line.includes("apply") && line.includes("--dry-run=server") && line.includes("testdata/compat"), "old-object compatibility preflight");
+  const crdApply = findCommand(log, (line) => line.includes("apply") && line.includes("--server-side") && !line.includes("--dry-run=server"), "CRD apply");
+  const established = findCommand(log, (line) => line.includes("wait") && line.includes("condition=Established") && line.includes("t4clusterhosts.cluster.t4.dev") && line.includes("t4workspaces.cluster.t4.dev") && line.includes("t4sessions.cluster.t4.dev"), "Established wait");
+  const storageChecks = log.map((line, index) => ({ line, index })).filter(({ line }) => line.startsWith("kubectl\tget\tcrd/") && line.includes("status.storedVersions"));
+  assert.deepEqual(storageChecks.length, 3);
+  const workload = findCommand(log, (line) => line.startsWith("helm\tupgrade\t"), "Helm workload upgrade");
+  assert.ok(crdPreflight < oldObjectPreflight);
+  assert.ok(oldObjectPreflight < crdApply);
+  assert.ok(crdApply < established);
+  assert.ok(established < storageChecks[0].index);
+  assert.ok(storageChecks.every(({ index }) => index < workload));
+  assert.ok(log.every((line) => !line.includes("--force") && !line.includes("replace") && !line.includes("delete\tcrd")), log.join("\n"));
+});
+
+test("fresh install establishes and validates CRDs before Helm installs with CRD handling disabled", async () => {
+  const value = await fixture();
+  const result = await runLifecycle(
+    ["install", "--", "helm", "install", "t4-cluster", "deploy/charts/t4-cluster", "--namespace", "t4-system", "--skip-crds"],
+    value.env,
+  );
+  assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+  const log = await commands(value.log);
+  const established = findCommand(log, (line) => line.includes("wait") && line.includes("condition=Established"), "Established wait");
+  const fixtureValidation = findCommand(log, (line) => line.includes("--dry-run=server") && line.includes("testdata/compat"), "fixture validation");
+  const storage = findCommand(log, (line) => line.includes("status.storedVersions"), "stored-version check");
+  const workload = findCommand(log, (line) => line.startsWith("helm\tinstall\t"), "Helm install");
+  assert.ok(established < fixtureValidation && fixtureValidation < storage && storage < workload);
+});
+
+test("failed server preflight leaves CRDs and workloads untouched", async () => {
+  const value = await fixture();
+  const result = await runLifecycle(
+    ["upgrade", "--", "helm", "upgrade", "t4-cluster", "deploy/charts/t4-cluster", "--namespace", "t4-system", "--skip-crds"],
+    { ...value.env, FAIL_DRY_RUN: "1" },
+  );
+  assert.notEqual(result.code, 0);
+  const log = await commands(value.log);
+  assert.equal(log.length, 1, log.join("\n"));
+  assert.match(log[0], /apply.*--server-side.*--dry-run=server/u);
+});
+
+test("an unexpected stored version stops workload rollout", async () => {
+  const value = await fixture();
+  const result = await runLifecycle(
+    ["upgrade", "--", "helm", "upgrade", "t4-cluster", "deploy/charts/t4-cluster", "--namespace", "t4-system", "--skip-crds"],
+    { ...value.env, STORED_VERSIONS: "v1alpha1,v1beta1" },
+  );
+  assert.notEqual(result.code, 0);
+  const log = await commands(value.log);
+  assert.ok(log.some((line) => line.includes("status.storedVersions")));
+  assert.ok(log.every((line) => !line.startsWith("helm\t")), log.join("\n"));
+});
