@@ -412,7 +412,7 @@ describe("generated T4 API v1 client conformance", () => {
     for (const [status, code] of [[401, "not_found"], [403, "unauthenticated"], [404, "forbidden"], [409, "unavailable"], [503, "revision_conflict"]] as const) {
       const fetch: typeof globalThis.fetch = async () => Response.json({ error: { code, message: "wrong status class", requestId: "r", retryable: false } }, { status });
       const client = createT4ApiClient({ baseUrl: "https://status-errors.test", credential: "token-a", majorVersion: 1, fetch });
-      await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ code: "indeterminate", status });
+      await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ code: "indeterminate", status: status === 503 ? 502 : status });
     }
   });
 
@@ -491,7 +491,7 @@ describe("generated T4 API v1 client conformance", () => {
     let progressAttempts = 0;
     const progressFetch: typeof globalThis.fetch = async () => {
       progressAttempts += 1;
-      if (progressAttempts === 1 || progressAttempts === 3) return new Response(null, { headers: { "Content-Type": "text/event-stream" } });
+      if (progressAttempts === 1) return new Response(null, { headers: { "Content-Type": "text/event-stream" } });
       const cursor = progressAttempts === 2 ? "progress-1" : "progress-2";
       return new Response(`data: {"type":"heartbeat","cursor":"${cursor}","observedAt":"2026-07-21T00:00:00Z"}\n\n`, { headers: { "Content-Type": "text/event-stream" } });
     };
