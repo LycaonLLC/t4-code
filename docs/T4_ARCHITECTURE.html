@@ -2,12 +2,11 @@
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="generator" content="pandoc" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, user-scalable=yes"
     />
-    <title>T4 Code local and managed architecture</title>
+    <title>T4 final-product architecture</title>
     <style>
       html {
         color: #1a1a1a;
@@ -217,2381 +216,1018 @@
   </head>
   <body>
     <header id="title-block-header">
-      <h1 class="title">T4 Code local and managed architecture</h1>
+      <h1 class="title">T4 final-product architecture</h1>
+      <p>Conventional Kubernetes Operator and separately deployable T4 API v1</p>
     </header>
-    <nav id="TOC" role="doc-toc">
+    <nav id="TOC" role="doc-toc" aria-label="Table of contents">
       <ul>
-        <li><a href="#status" id="toc-status">Status</a></li>
-        <li>
-          <a href="#product-goal" id="toc-product-goal">Product goal</a>
-          <ul>
-            <li>
-              <a href="#product-profiles" id="toc-product-profiles"
-                >Product profiles</a
-              >
-            </li>
-          </ul>
-        </li>
-        <li>
-          <a href="#product-names" id="toc-product-names">Product names</a>
-        </li>
-        <li>
-          <a href="#architectural-invariants" id="toc-architectural-invariants"
-            >Architectural invariants</a
-          >
-        </li>
-        <li>
-          <a href="#system-topology" id="toc-system-topology"
-            >System topology</a
-          >
-          <ul>
-            <li>
-              <a href="#t4-hub-placement" id="toc-t4-hub-placement"
-                >T4 Hub placement</a
-              >
-            </li>
-          </ul>
-        </li>
-        <li>
-          <a href="#protocol-boundaries" id="toc-protocol-boundaries"
-            >Protocol boundaries</a
-          >
-          <ul>
-            <li><a href="#hub-wire" id="toc-hub-wire">Hub Wire</a></li>
-            <li>
-              <a href="#runtime-wire" id="toc-runtime-wire">Runtime Wire</a>
-            </li>
-            <li>
-              <a href="#omp-boundary" id="toc-omp-boundary">OMP boundary</a>
-            </li>
-          </ul>
-        </li>
-        <li>
-          <a href="#current-code-disposition" id="toc-current-code-disposition"
-            >Current-code disposition</a
-          >
-          <ul>
-            <li>
-              <a href="#retained-and-evolved" id="toc-retained-and-evolved"
-                >Retained and evolved</a
-              >
-            </li>
-            <li>
-              <a href="#replaced-after-proof" id="toc-replaced-after-proof"
-                >Replaced after proof</a
-              >
-            </li>
-          </ul>
-        </li>
-        <li>
-          <a href="#session-and-command-flow" id="toc-session-and-command-flow"
-            >Session and command flow</a
-          >
-          <ul>
-            <li>
-              <a href="#session-recovery" id="toc-session-recovery"
-                >Session recovery</a
-              >
-            </li>
-          </ul>
-        </li>
-        <li>
-          <a
-            href="#shared-project-filesystem"
-            id="toc-shared-project-filesystem"
-            >Shared project filesystem</a
-          >
-        </li>
-        <li>
-          <a href="#technology-stack" id="toc-technology-stack"
-            >Technology stack</a
-          >
-        </li>
-        <li>
-          <a href="#deployment-profiles" id="toc-deployment-profiles"
-            >Deployment profiles</a
-          >
-          <ul>
-            <li><a href="#t4-local" id="toc-t4-local">T4 Local</a></li>
-            <li>
-              <a href="#workstation-runner" id="toc-workstation-runner"
-                >Workstation Runner</a
-              >
-            </li>
-            <li>
-              <a href="#personal-hub" id="toc-personal-hub">Personal Hub</a>
-            </li>
-            <li>
-              <a
-                href="#highly-available-cluster"
-                id="toc-highly-available-cluster"
-                >Highly available Hub</a
-              >
-            </li>
-            <li>
-              <a href="#advanced-installation" id="toc-advanced-installation"
-                >Existing-cluster installation</a
-              >
-            </li>
-          </ul>
-        </li>
-        <li>
-          <a href="#guided-installation" id="toc-guided-installation"
-            >Guided installation</a
-          >
-          <ul>
-            <li><a href="#first-hub" id="toc-first-hub">First Hub</a></li>
-            <li>
-              <a href="#cluster-expansion" id="toc-cluster-expansion"
-                >Cluster expansion</a
-              >
-            </li>
-            <li>
-              <a href="#configuration-ux" id="toc-configuration-ux"
-                >Configuration UX</a
-              >
-            </li>
-          </ul>
-        </li>
-        <li>
-          <a
-            href="#cicd-and-product-progress"
-            id="toc-cicd-and-product-progress"
-            >CI/CD and product progress</a
-          >
-        </li>
-        <li>
-          <a href="#observability" id="toc-observability">Observability</a>
-        </li>
-        <li>
-          <a
-            href="#performance-and-resource-discipline"
-            id="toc-performance-and-resource-discipline"
-            >Performance and resource discipline</a
-          >
-        </li>
-        <li>
-          <a href="#security-boundaries" id="toc-security-boundaries"
-            >Security boundaries</a
-          >
-        </li>
-        <li>
-          <a href="#delivery-strategy" id="toc-delivery-strategy"
-            >Delivery strategy</a
-          >
-          <ul>
-            <li>
-              <a href="#backend-and-gui-order" id="toc-backend-and-gui-order"
-                >Backend and GUI order</a
-              >
-            </li>
-            <li>
-              <a href="#gate-0-stock-omp-seam" id="toc-gate-0-stock-omp-seam"
-                >Gate 0: stock OMP seam</a
-              >
-            </li>
-            <li>
-              <a href="#gate-1-contract-freeze" id="toc-gate-1-contract-freeze"
-                >Gate 1: contract freeze</a
-              >
-            </li>
-            <li>
-              <a
-                href="#deliberate-parallel-work"
-                id="toc-deliberate-parallel-work"
-                >Deliberate parallel work</a
-              >
-            </li>
-            <li>
-              <a href="#gate-2-local-slice" id="toc-gate-2-local-slice"
-                >Gate 2A: T4 Local slice</a
-              >
-            </li>
-            <li>
-              <a
-                href="#gate-2-single-node-substrate"
-                id="toc-gate-2-single-node-substrate"
-                >Gate 2B: Personal Hub substrate</a
-              >
-            </li>
-            <li>
-              <a
-                href="#gate-3-physical-client-slice"
-                id="toc-gate-3-physical-client-slice"
-                >Gate 3: Personal Hub physical slice</a
-              >
-            </li>
-            <li>
-              <a
-                href="#gate-4-recovery-and-restore"
-                id="toc-gate-4-recovery-and-restore"
-                >Gate 4: recovery and restore</a
-              >
-            </li>
-            <li>
-              <a
-                href="#workstation-runner-proof"
-                id="toc-workstation-runner-proof"
-                >Workstation Runner proof</a
-              >
-            </li>
-            <li>
-              <a
-                href="#gate-5-guided-installer"
-                id="toc-gate-5-guided-installer"
-                >Gate 5: guided installer</a
-              >
-            </li>
-            <li>
-              <a href="#gate-6-ha-expansion" id="toc-gate-6-ha-expansion"
-                >Gate 6: HA expansion</a
-              >
-            </li>
-            <li>
-              <a
-                href="#product-breadth-and-cicd"
-                id="toc-product-breadth-and-cicd"
-                >Product breadth and CI/CD</a
-              >
-            </li>
-            <li>
-              <a href="#first-linux-test-node" id="toc-first-linux-test-node"
-                >First Linux test node</a
-              >
-            </li>
-          </ul>
-        </li>
-        <li>
-          <a
-            href="#reliability-and-release-gates"
-            id="toc-reliability-and-release-gates"
-            >Reliability and release gates</a
-          >
-          <ul>
-            <li>
-              <a href="#command-and-ownership" id="toc-command-and-ownership"
-                >Command and ownership</a
-              >
-            </li>
-            <li><a href="#workspace" id="toc-workspace">Workspace</a></li>
-            <li>
-              <a href="#control-plane" id="toc-control-plane">Control plane</a>
-            </li>
-            <li><a href="#client" id="toc-client">Client</a></li>
-            <li>
-              <a
-                href="#installation-and-lifecycle"
-                id="toc-installation-and-lifecycle"
-                >Installation and lifecycle</a
-              >
-            </li>
-          </ul>
-        </li>
-        <li><a href="#out-of-scope" id="toc-out-of-scope">Out of scope</a></li>
-        <li>
-          <a
-            href="#open-decisions-requiring-proof"
-            id="toc-open-decisions-requiring-proof"
-            >Open decisions requiring proof</a
-          >
-        </li>
+        <li><a href="#status">Status and decision</a></li>
+        <li><a href="#scope-and-terms">Scope and terms</a></li>
+        <li><a href="#implementation-baseline">Implementation baseline</a></li>
+        <li><a href="#architectural-invariants">Architectural invariants</a></li>
+        <li><a href="#topology">Topology and module boundaries</a></li>
+        <li><a href="#reconciliation">Kubernetes reconciliation contract</a></li>
+        <li><a href="#crd-lifecycle">CRD lifecycle</a></li>
+        <li><a href="#api-contract">T4 API v1 and gateway contract</a></li>
+        <li><a href="#durable-ledger">Durable intent, event, and command ledger</a></li>
+        <li><a href="#runtime-provider">Runtime provider and OMP boundary</a></li>
+        <li><a href="#client-flows">Terzo and ACP compatibility flows</a></li>
+        <li><a href="#workspace-recovery">Workspace, recovery, and backup</a></li>
+        <li><a href="#security">Security boundaries</a></li>
+        <li><a href="#distribution">Distribution and lifecycle</a></li>
+        <li><a href="#observability">Observability and truthful capabilities</a></li>
+        <li><a href="#implementation-ledger">Implementation line items</a></li>
+        <li><a href="#release-proof">Release proof and open decisions</a></li>
       </ul>
     </nav>
-    <h2 id="status">Status</h2>
-    <p>
-      This document defines the accepted architecture for native local use,
-      managed Hub use, and optional Hub-registered workstation execution. T4
-      Local remains a first-class native product; users do not need a Linux VM
-      or managed stack to operate OMP on the same macOS or Linux computer.
-    </p>
-    <p>
-      The Flutter client is the product baseline. The current Host evolves into
-      T4 Local Service, while T4 Hub owns distributed managed sessions. Local
-      Service, managed runtimes, and Workstation Runners converge on one
-      T4-owned adapter for pinned official OMP. The released Host Wire and
-      Lycaon authority bridge remain compatibility paths during that migration.
-    </p>
-    <h2 id="product-goal">Product goal</h2>
-    <p>
-      T4 Code presents one client experience across native local and managed
-      execution profiles.
-    </p>
-    <figure>
-      <svg
-        id="product-diagram"
-        xmlns="http://www.w3.org/2000/svg"
-        role="img"
-        aria-labelledby="product-title product-description"
-        viewBox="0 0 900 820"
-      >
-        <title id="product-title">T4 Hub product flow</title>
-        <desc id="product-description">
-          T4 Code desktop and mobile clients connect over Tailscale to T4 Hub.
-          T4 Hub records durable commands and desired state, while the narrow T4
-          Operator reconciles pinned stock OMP runtime pods that mount projects
-          through an administrator-selected RWX StorageClass.
-        </desc>
-        <defs>
-          <marker
-            id="product-arrow"
-            markerWidth="10"
-            markerHeight="10"
-            refX="9"
-            refY="3"
-            orient="auto"
-            markerUnits="strokeWidth"
-          >
-            <path d="M0,0 L0,6 L9,3 z" fill="#475569" />
-          </marker>
-          <style>
-            #product-diagram text {
-              font-family:
-                system-ui,
-                -apple-system,
-                BlinkMacSystemFont,
-                "Segoe UI",
-                sans-serif;
-              fill: #172033;
-            }
-            #product-diagram .box {
-              fill: #fff;
-              stroke-width: 2.5;
-              rx: 14;
-            }
-            #product-diagram .client {
-              fill: #eef2ff;
-              stroke: #6366f1;
-            }
-            #product-diagram .network {
-              fill: #ecfeff;
-              stroke: #0891b2;
-            }
-            #product-diagram .hub {
-              fill: #eff6ff;
-              stroke: #2563eb;
-            }
-            #product-diagram .cluster {
-              fill: #f0fdf4;
-              stroke: #16a34a;
-            }
-            #product-diagram .runtime {
-              fill: #fefce8;
-              stroke: #ca8a04;
-            }
-            #product-diagram .storage {
-              fill: #fff7ed;
-              stroke: #ea580c;
-            }
-            #product-diagram .title {
-              font-size: 23px;
-              font-weight: 700;
-              text-anchor: middle;
-            }
-            #product-diagram .subtitle {
-              font-size: 15px;
-              fill: #64748b;
-              text-anchor: middle;
-            }
-            #product-diagram .edge {
-              fill: none;
-              stroke: #475569;
-              stroke-width: 2.5;
-              marker-end: url(#product-arrow);
-            }
-            #product-diagram .label {
-              font-size: 14px;
-              fill: #475569;
-              text-anchor: start;
-            }
-          </style>
-        </defs>
-        <rect width="900" height="820" fill="#fff" />
 
-        <rect class="box client" x="210" y="30" width="480" height="82" />
-        <text class="title" x="450" y="63">T4 Code</text>
-        <text class="subtitle" x="450" y="89">
-          desktop or mobile remote client
-        </text>
+    <main>
+      <h2 id="status">Status and decision</h2>
+      <p>
+        This hand-maintained document supersedes the prior
+        <em>T4 Code local and managed architecture</em> and is the canonical
+        architecture decision for the managed T4 product. It defines a
+        conventional Kubernetes Operator and a separately deployable,
+        horizontally scalable, versioned T4 API. It is a target contract, not a
+        claim that every described component is already implemented. The
+        implementation baseline and the new work are called out explicitly
+        below.
+      </p>
+      <p>
+        The product boundary is authenticated HTTPS <strong>T4 API v1</strong>.
+        External clients do not call the Kubernetes controller, do not receive
+        Kubernetes credentials, do not mutate custom resources, and do not speak
+        a private runtime protocol. PostgreSQL is authoritative for accepted
+        intent and product events. Kubernetes custom resources are a durable
+        projection of that committed intent. The controller reconciles that
+        projection into Kubernetes resources; it never serves product clients or
+        stores product events.
+      </p>
 
-        <rect class="box network" x="275" y="160" width="350" height="82" />
-        <text class="title" x="450" y="193">Tailscale</text>
-        <text class="subtitle" x="450" y="219">
-          private authenticated connection
-        </text>
+      <h2 id="scope-and-terms">Scope and terms</h2>
+      <table>
+        <thead>
+          <tr><th>Term</th><th>Meaning</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>T4 API</td>
+            <td>
+              The authenticated HTTPS product service implementing T4 API v1
+              from executable OpenAPI. It owns request validation, authorization,
+              idempotency, intent and event persistence, watches, and public
+              capability discovery.
+            </td>
+          </tr>
+          <tr>
+            <td>Gateway</td>
+            <td>
+              The deployable edge/API module. It terminates or receives verified
+              identity, applies scope policy, commits intent to PostgreSQL, then
+              projects committed intent into namespaced T4 custom resources.
+            </td>
+          </tr>
+          <tr>
+            <td>Controller</td>
+            <td>
+              The Kubernetes reconciliation process. It watches T4 custom
+              resources and owned children, converges desired state, and reports
+              bounded infrastructure status through Kubernetes status.
+            </td>
+          </tr>
+          <tr>
+            <td>Runtime provider</td>
+            <td>
+              The typed internal boundary that starts, supervises, fences, and
+              communicates with a pinned supported OMP runtime. Product modules
+              do not depend on OMP wire details directly.
+            </td>
+          </tr>
+          <tr>
+            <td>Terzo</td>
+            <td>
+              The T4 client. Terzo consumes the generated public SDK and never
+              imports controller packages or Kubernetes resource clients.
+            </td>
+          </tr>
+          <tr>
+            <td>ACP adapter</td>
+            <td>
+              An optional local stdio compatibility process for standard editor
+              clients. It speaks Agent Client Protocol 1.2.1 using JSON-RPC 2.0
+              NDJSON on local stdio and translates to T4 API v1 over HTTPS. ACP is
+              not the remote network API.
+            </td>
+          </tr>
+        </tbody>
+      </table>
 
-        <rect class="box hub" x="185" y="290" width="530" height="92" />
-        <text class="title" x="450" y="326">T4 Hub control plane</text>
-        <text class="subtitle" x="450" y="354">
-          durable commands, desired state, and product events
-        </text>
+      <h2 id="implementation-baseline">Implementation baseline</h2>
+      <h3 id="merged-foundations">Already-merged foundations</h3>
+      <p>
+        The following are present foundations and must be evolved rather than
+        described as future inventions:
+      </p>
+      <ul>
+        <li>
+          Namespaced <code>cluster.t4.dev/v1alpha1</code>
+          <code>T4ClusterHost</code>, <code>T4Workspace</code>, and
+          <code>T4Session</code> custom resources with structural schemas.
+        </li>
+        <li>
+          Status conditions and <code>observedGeneration</code>, deletion
+          finalizers, owner references, leader election, bounded requeues, and
+          namespace-scoped controller RBAC.
+        </li>
+        <li>
+          Helm packaging, controller and server images, gateway foundations,
+          network policies, health endpoints, metrics, and observability
+          foundations.
+        </li>
+        <li>
+          Durable-command concepts, owner epochs and fencing, bounded protocol
+          frames, cursor recovery, disposable runtimes, and shared-filesystem
+          eligibility checks.
+        </li>
+      </ul>
+      <h3 id="new-work">New work required by this decision</h3>
+      <ul>
+        <li>
+          Executable T4 API v1 OpenAPI, generated public SDKs, conformance
+          fixtures, version and capability discovery, and stable error schemas.
+        </li>
+        <li>
+          PostgreSQL migrations for durable intent, idempotency, ordered events,
+          commands, cursors, and a projection/outbox worker. Existing in-memory
+          idempotency is not sufficient for the final product.
+        </li>
+        <li>
+          A clean controller-only contract, the typed OMP runtime provider,
+          Terzo migration to the public SDK, and the optional local ACP adapter.
+        </li>
+        <li>
+          Signed multi-architecture OCI artifacts, SBOM and provenance,
+          compatibility preflight, supported migration and rollback procedures,
+          and physical remote-client and HA evidence.
+        </li>
+      </ul>
 
-        <rect class="box cluster" x="185" y="440" width="530" height="92" />
-        <text class="title" x="450" y="476">Kubernetes and T4 Operator</text>
-        <text class="subtitle" x="450" y="504">
-          reconciles one managed runtime pod per OMP session
-        </text>
+      <h2 id="architectural-invariants">Architectural invariants</h2>
+      <ol>
+        <li>
+          <strong>PostgreSQL authority.</strong> A product mutation is accepted
+          only when its intent and idempotency record commit in PostgreSQL.
+          Kubernetes is a durable desired-state projection, not the product event
+          ledger.
+        </li>
+        <li>
+          <strong>Operator-only reconciliation.</strong> The controller has no
+          public listener. It reconciles custom resources and Kubernetes children
+          and writes status; it does not authenticate product users, serve
+          watches, or retain product commands or events.
+        </li>
+        <li>
+          <strong>Commit before projection.</strong> The gateway may create or
+          patch a custom resource only after the corresponding database
+          transaction commits. A projection can be retried from the durable
+          outbox without accepting the intent again.
+        </li>
+        <li>
+          <strong>Stable ownership.</strong> Every runtime owner carries a
+          monotonically increasing owner epoch. Dispatch includes that epoch;
+          stale owners are fenced before replacement owners may act.
+        </li>
+        <li>
+          <strong>Disposable runtime.</strong> Runtime pods and local child
+          processes are replaceable compute. Durable intent, events, cursors, and
+          workspace data survive their loss.
+        </li>
+        <li>
+          <strong>Reconnectable observation.</strong> Watches use opaque durable
+          cursors. Reconnect resumes after the last acknowledged cursor; cancel is
+          explicit and bounded; expired cursors return a typed resync requirement.
+        </li>
+        <li>
+          <strong>Shared-filesystem safety.</strong> A managed runtime starts only
+          when the selected workspace claim is bound and satisfies the reviewed
+          ReadWriteMany contract. Labels do not make an unsafe backend safe.
+        </li>
+        <li>
+          <strong>Truthful capabilities.</strong> Discovery distinguishes
+          supported, enabled, authorized, and currently available behavior. An
+          unavailable dependency removes or disables a capability; it never
+          causes a successful placeholder response.
+        </li>
+        <li>
+          <strong>Bounded work.</strong> Request bodies, frames, queues, retries,
+          watches, log payloads, and child-process output are bounded. Backoff is
+          capped and jittered; terminal conditions do not busy-loop.
+        </li>
+        <li>
+          <strong>No implicit exactly-once claim.</strong> Database acceptance is
+          idempotent. Runtime side effects use command identifiers, state
+          transitions, owner fencing, and reconciliation to prevent known
+          duplicate dispatch; uncertain crash windows remain visible and are
+          recovered according to the command contract.
+        </li>
+      </ol>
 
-        <rect class="box runtime" x="235" y="590" width="430" height="82" />
-        <text class="title" x="450" y="623">Pinned stock OMP runtime</text>
-        <text class="subtitle" x="450" y="649">
-          unmodified OMP owned by its session pod
-        </text>
+      <h2 id="topology">Topology and module boundaries</h2>
+      <pre aria-label="Managed topology"><code>Terzo ───────────────┐
+standard editor ─┐     │  authenticated HTTPS T4 API v1
+                 ▼     ▼
+          local ACP adapter (optional)       identity provider
+                 │                              │
+                 └──────────────┬───────────────┘
+                                ▼
+                     T4 API / Gateway replicas
+                     ├─ OpenAPI + SDK contract
+                     ├─ authn/authz + idempotency
+                     ├─ intent/event/watch service
+                     └─ projection/outbox worker
+                                │
+                  ┌─────────────┴──────────────┐
+                  ▼                            ▼
+             PostgreSQL                 Kubernetes API
+        authoritative product       cluster.t4.dev/v1alpha1
+         ledger and cursors          desired-state projection
+                                               │ watch
+                                               ▼
+                                      T4 Controller replicas
+                                      (one elected leader)
+                                               │ reconcile
+                                      ┌────────┴─────────┐
+                                      ▼                  ▼
+                              PVC/Service/Pod      status/conditions
+                                      │
+                                      ▼
+                               runtime provider
+                                      │ pinned local RPC/ACP seam
+                                      ▼
+                                  official OMP</code></pre>
+      <p>
+        T4 API replicas and controller replicas are independently deployable,
+        scalable, and upgradeable within the compatibility matrix. They may share
+        a release bundle, but they are separate Deployments, ServiceAccounts,
+        network policies, health checks, and failure domains. PostgreSQL remains
+        available if an API replica or controller leader is replaced. No edge
+        route targets the controller.
+      </p>
+      <h3 id="module-responsibilities">Responsibility matrix</h3>
+      <table>
+        <thead>
+          <tr><th>Module</th><th>Owns</th><th>Must not own</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>T4 API / Gateway</td>
+            <td>
+              Public versioning, OpenAPI, authentication, authorization,
+              idempotency, PostgreSQL transactions, ordered events, cursors,
+              watches, cancellation, and CR projection after commit.
+            </td>
+            <td>Pod convergence, child owner references, or direct OMP details.</td>
+          </tr>
+          <tr>
+            <td>Controller</td>
+            <td>
+              CR and owned-resource watches, finalization, desired child
+              resources, status conditions, observed generation, and bounded
+              reconciliation.
+            </td>
+            <td>
+              External authentication, public HTTP, product event storage,
+              idempotency, command history, or client cursors.
+            </td>
+          </tr>
+          <tr>
+            <td>Runtime provider / host</td>
+            <td>
+              Pinned OMP lifecycle, typed operations, bounded transport,
+              heartbeat, epoch validation, command execution, and normalized
+              runtime events.
+            </td>
+            <td>Public API schemas, user authorization, or CRD conversion.</td>
+          </tr>
+          <tr>
+            <td>Terzo / ACP adapter</td>
+            <td>
+              Public SDK use, local presentation, reconnect, cursor storage, and
+              explicit user cancellation.
+            </td>
+            <td>Kubernetes credentials, controller imports, or runtime secrets.</td>
+          </tr>
+        </tbody>
+      </table>
 
-        <rect class="box storage" x="185" y="720" width="530" height="82" />
-        <text class="title" x="450" y="753">Shared RWX project</text>
-        <text class="subtitle" x="450" y="779">
-          provider-neutral POSIX storage for repositories and worktrees
-        </text>
+      <h2 id="reconciliation">Kubernetes reconciliation contract</h2>
+      <p>
+        Reconciliation follows ordinary Kubernetes level-based semantics. It is
+        idempotent and derives work from current desired and observed state, not
+        from an assumption that every watch event is delivered exactly once.
+      </p>
+      <ol>
+        <li>
+          Watches on a primary T4 resource and its owned secondary resources
+          enqueue a namespaced key. The active leader fetches the latest object;
+          a missing object completes without error.
+        </li>
+        <li>
+          The reconciler validates the structural spec and referenced host,
+          runtime profile, storage eligibility, and policy. Invalid or terminal
+          inputs produce a stable condition and do not use rapid retries.
+        </li>
+        <li>
+          For a live object, the controller adds the documented finalizer before
+          creating dependent state. It computes desired children and applies or
+          patches them with deterministic names, labels, field ownership, and
+          controller owner references where lifecycle ownership is intended.
+        </li>
+        <li>
+          For deletion, the controller performs retention-aware cleanup. A
+          <code>T4Session</code> finalizer waits for its Pod and Service to be
+          absent. A <code>T4Workspace</code> with delete retention waits for its
+          PVC to disappear; retain retention removes the owning reference and
+          records retention before finalizer removal.
+        </li>
+        <li>
+          Status is patched separately from spec. Conditions have stable type,
+          status, reason, and concise message fields. The controller advances
+          <code>status.observedGeneration</code> only after evaluating that
+          generation; readiness is never inferred from generation alone.
+        </li>
+        <li>
+          Optimistic conflicts and transient API failures retry through the work
+          queue. Dependency polling uses bounded, capped, jittered requeues.
+          Successful convergence relies on watches rather than periodic churn.
+        </li>
+      </ol>
+      <p>
+        The controller may read projection identifiers placed on a CR by the
+        gateway and report Kubernetes status correlated to that projection. It
+        must not reach into the product ledger to accept commands or manufacture
+        product events. The API converts correlated Kubernetes status into
+        public events under its own transaction and schema rules.
+      </p>
 
-        <path class="edge" d="M450 112 V160" />
-        <path class="edge" d="M450 242 V290" />
-        <path class="edge" d="M450 382 V440" />
-        <path class="edge" d="M450 532 V590" />
-        <path class="edge" d="M450 672 V720" />
+      <h2 id="crd-lifecycle">CRD group, version, storage, and conversion lifecycle</h2>
+      <p>
+        <code>cluster.t4.dev/v1alpha1</code> remains the current served and storage
+        API for the namespaced <code>T4ClusterHost</code>,
+        <code>T4Workspace</code>, and <code>T4Session</code> resources. Current
+        changes are additive and structural: new fields are optional or have
+        safe schema defaults, unknown fields are not used as an extension
+        mechanism, and existing persisted objects must continue to validate.
+      </p>
+      <ul>
+        <li>
+          Helm installs workloads but is not trusted to upgrade CRDs. Release
+          automation applies reviewed CRD manifests server-side before workload
+          rollout and waits for each CRD to be Established. A validation failure
+          stops the upgrade; automation never force-replaces a CRD or deletes a
+          stored version.
+        </li>
+        <li>
+          A <code>v1beta1</code> proposal requires separate schema, compatibility,
+          defaulting, conversion, round-trip, and downgrade review. Until that
+          review passes, <code>v1alpha1</code> remains both served and storage.
+        </li>
+        <li>
+          When conversion is approved, deploy and prove a highly available
+          conversion webhook before making the new version served. Conversion
+          must preserve hub data and round-trip every fixture between the old and
+          new versions without semantic loss.
+        </li>
+        <li>
+          Change the storage version only after all supported controllers and
+          gateways can read both versions. Run a storage migration, verify
+          <code>status.storedVersions</code> and object counts, and retain the old
+          served version through the documented rollback window.
+        </li>
+        <li>
+          Remove an old served or stored version only in a later incompatible
+          lifecycle step after backups, migration evidence, compatibility-window
+          expiry, and an explicit operator action. Rollback never requires an
+          older binary to read a schema it does not support.
+        </li>
+      </ul>
 
-        <text class="label" x="470" y="142">Hub Wire</text>
-        <text class="label" x="470" y="422">desired state</text>
-        <text class="label" x="470" y="572">Runtime Wire</text>
-        <text class="label" x="470" y="702">POSIX RWX</text>
-      </svg>
-      <figcaption>
-        Managed profile: T4 Hub owns durable orchestration while T4 Code remains
-        a remote client.
-      </figcaption>
-    </figure>
-    <h3 id="product-profiles">Product profiles</h3>
-    <table>
-      <thead>
-        <tr>
-          <th>Profile</th>
-          <th>Authority and execution</th>
-          <th>Storage and portability</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><strong>T4 Local</strong></td>
-          <td>
-            Flutter uses a loopback T4 Local Service, SQLite ledger, and native
-            OMP process.
-          </td>
-          <td>
-            Local filesystem; session stops with the workstation and never fails
-            over elsewhere.
-          </td>
-        </tr>
-        <tr>
-          <td><strong>Personal Hub</strong></td>
-          <td>
-            One Linux Kubernetes node runs Hub, the T4 operator, and managed OMP
-            pods. The optional T4 Stack chart provides a tested default path.
-          </td>
-          <td>
-            A conformant RWX StorageClass; one failure domain is explicitly
-            unprotected, not HA.
-          </td>
-        </tr>
-        <tr>
-          <td><strong>HA Hub</strong></td>
-          <td>
-            At least three tested Linux failure domains run replicated T4
-            services against separately owned platform dependencies.
-          </td>
-          <td>
-            Replicated provider-managed RWX storage; portable only after hard
-            stale-writer fencing is proven.
-          </td>
-        </tr>
-        <tr>
-          <td><strong>Workstation Runner</strong></td>
-          <td>
-            An existing Hub assigns work over an outbound Runtime Wire
-            connection to native OMP.
-          </td>
-          <td>
-            Runner-local filesystem; pinned to that runner with no automatic
-            takeover.
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    <pre
-      class="text"
-    ><code>T4 Code -&gt; T4 Local Service -&gt; shared OMP adapter -&gt; official OMP -&gt; local files
-T4 Code -&gt; T4 Hub -&gt; managed runtime -&gt; shared OMP adapter -&gt; official OMP -&gt; RWX project
-                     \-&gt; Workstation Runner -&gt; shared OMP adapter -&gt; official OMP -&gt; local files</code></pre>
-    <p>
-      T4 Hub integrates source control and CI/CD activity into durable managed
-      session history. A user can begin with T4 Local, install a Personal Hub on
-      one Linux machine, register a Workstation Runner, or expand the same
-      managed installation to a three-or-more-node HA Hub.
-    </p>
-    <h2 id="product-names">Product names</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Responsibility</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><strong>T4 Code</strong></td>
-          <td>
-            Flutter desktop, mobile, and web client with Local and Hub providers
-            behind one state/action model.
-          </td>
-        </tr>
-        <tr>
-          <td><strong>T4 Local Service</strong></td>
-          <td>
-            Native background service for “On this computer”: loopback by
-            default, durable SQLite ledger, local files, and shared official-OMP
-            adapter.
-          </td>
-        </tr>
-        <tr>
-          <td><strong>T4 Workstation Runner</strong></td>
-          <td>
-            Native macOS or Linux executor registered with a Hub. It has scoped
-            execution authority, local files, and no cluster-node or
-            Hub-database role.
-          </td>
-        </tr>
-        <tr>
-          <td><strong>T4 Hub</strong></td>
-          <td>
-            Logical control plane: API, authentication, durable state,
-            scheduling intent, CI/CD integrations, updates, and cluster health.
-            In HA mode it is distributed, not installed on one special computer.
-          </td>
-        </tr>
-        <tr>
-          <td><strong>T4 Node</strong></td>
-          <td>
-            A Linux machine enrolled into a Kubernetes cluster to provide T4
-            control-plane or execution capacity.
-          </td>
-        </tr>
-        <tr>
-          <td><strong>T4 Operator</strong></td>
-          <td>
-            Kubernetes controller that owns T4 custom resources and reconciles
-            session intent into runtime pods, Services, PVC claims, and bounded
-            infrastructure status. It does not operate platform dependencies.
-          </td>
-        </tr>
-        <tr>
-          <td><strong>T4 Stack</strong></td>
-          <td>
-            Optional Helm distribution that installs T4 components and supplies
-            tested defaults or references for independently owned database,
-            storage, ingress, object-storage, and observability services.
-          </td>
-        </tr>
-        <tr>
-          <td><strong>T4 Session Runtime</strong></td>
-          <td>
-            Shared T4 runtime adapter plus a pinned official OMP release,
-            launched natively by Local Service or a Workstation Runner and
-            packaged in an OCI image for managed pods.
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    <p>
-      Users interact with T4 Code, T4 Local Service, T4 Hub, and optionally a
-      Workstation Runner or T4 Node. Cluster administrators may install the
-      portable T4 charts against existing services or use the optional T4 Stack
-      profile. Provider lifecycle and topology remain outside the T4 operator.
-    </p>
-    <h2 id="architectural-invariants">Architectural invariants</h2>
-    <p>The following invariants apply to managed Hub sessions:</p>
-    <ol type="1">
-      <li>
-        PostgreSQL is authoritative for projects, sessions, commands, ownership
-        epochs, approvals, progress events, and CI/CD associations.
-      </li>
-      <li>
-        Kubernetes reconciles execution resources; Kubernetes objects are not
-        the product event database.
-      </li>
-      <li>
-        The T4 operator owns only T4 custom resources and their runtime Pods,
-        Services, PVC claims, finalizers, and infrastructure conditions. It
-        references but never installs or reconciles database, storage-provider,
-        ingress, object-store, or observability operators.
-      </li>
-      <li>
-        T4 creates every managed OMP session and therefore knows its legitimate
-        owner from creation.
-      </li>
-      <li>
-        Each accepted command is durable and idempotent before a runtime
-        receives it.
-      </li>
-      <li>
-        Each session has one current owner epoch. A stale runtime cannot claim
-        commands or publish accepted state after ownership transfers.
-      </li>
-      <li>
-        Runtime pods are disposable. Sessions, worktrees, commands, and
-        user-visible history survive pod replacement.
-      </li>
-      <li>
-        All runtimes for a project mount the same networked POSIX filesystem at
-        the same absolute path.
-      </li>
-      <li>
-        OMP owns repositories, Git worktrees, and its agent behavior inside the
-        managed runtime. T4 does not invent a competing worktree model.
-      </li>
-      <li>
-        T4 Code speaks only the versioned Hub protocol. It never depends on
-        Kubernetes resources or direct pod connections.
-      </li>
-      <li>
-        Development, single-node, and HA installations use the same T4 images,
-        migrations, protocols, and portable charts. Optional stack profiles
-        select tested dependency defaults without changing T4 semantics or
-        transferring provider ownership to the T4 operator.
-      </li>
-      <li>
-        No deployment is described as HA until it has at least three suitable
-        failure domains and passes automated recovery checks.
-      </li>
-      <li>
-        Product progress is durable application state. External telemetry
-        supplements it but never replaces it.
-      </li>
-    </ol>
-    <p>T4 Local and Workstation Runner add these invariants:</p>
-    <ul>
-      <li>
-        T4 Local records accepted commands and client cursors durably in SQLite
-        before dispatch.
-      </li>
-      <li>
-        Local and runner-backed sessions use native files and are explicitly
-        nonportable.
-      </li>
-      <li>
-        A disconnected workstation session becomes unavailable; Hub never
-        assigns it elsewhere.
-      </li>
-      <li>
-        Local files are never continuously synchronized into managed RWX
-        storage.
-      </li>
-      <li>
-        Local Service is a single-machine authority, not a PostgreSQL
-        replacement or cluster control plane.
-      </li>
-      <li>
-        Local Service, managed runtimes, and Workstation Runners reuse one
-        official-OMP adapter and truthful capability manifest.
-      </li>
-    </ul>
-    <h2 id="system-topology">Managed system topology</h2>
-    <figure>
-      <svg
-        id="topology-diagram"
-        xmlns="http://www.w3.org/2000/svg"
-        role="img"
-        aria-labelledby="title description"
-        viewBox="0 0 1280 760"
-      >
-        <title id="title">T4 Hub system topology</title>
-        <desc id="description">
-          Desktop and mobile T4 Code clients connect through Tailscale to the T4
-          Hub control plane. The Hub persists state in PostgreSQL, coordinates
-          durable events and CI/CD, and uses the narrow T4 Operator to manage
-          OMP session runtimes. Runtime pods mount provider-neutral RWX storage;
-          optional S3-compatible object storage and telemetry remain external.
-        </desc>
-        <defs>
-          <marker
-            id="arrow"
-            markerWidth="10"
-            markerHeight="10"
-            refX="9"
-            refY="3"
-            orient="auto"
-            markerUnits="strokeWidth"
-          >
-            <path d="M0,0 L0,6 L9,3 z" fill="#475569" />
-          </marker>
-          <style>
-            #topology-diagram text {
-              font-family:
-                system-ui,
-                -apple-system,
-                BlinkMacSystemFont,
-                "Segoe UI",
-                sans-serif;
-              fill: #172033;
-            }
-            #topology-diagram .group {
-              fill: #f8fafc;
-              stroke: #94a3b8;
-              stroke-width: 2;
-              rx: 18;
-            }
-            #topology-diagram .group-title {
-              font-size: 24px;
-              font-weight: 700;
-            }
-            #topology-diagram .group-subtitle {
-              font-size: 15px;
-              fill: #64748b;
-            }
-            #topology-diagram .node {
-              fill: #ffffff;
-              stroke: #64748b;
-              stroke-width: 2;
-              rx: 12;
-            }
-            #topology-diagram .client {
-              fill: #eef2ff;
-              stroke: #6366f1;
-            }
-            #topology-diagram .network {
-              fill: #ecfeff;
-              stroke: #0891b2;
-            }
-            #topology-diagram .control {
-              fill: #eff6ff;
-              stroke: #2563eb;
-            }
-            #topology-diagram .runtime {
-              fill: #f0fdf4;
-              stroke: #16a34a;
-            }
-            #topology-diagram .storage {
-              fill: #fff7ed;
-              stroke: #ea580c;
-            }
-            #topology-diagram .telemetry {
-              fill: #faf5ff;
-              stroke: #9333ea;
-            }
-            #topology-diagram .node-title {
-              font-size: 18px;
-              font-weight: 700;
-              text-anchor: middle;
-            }
-            #topology-diagram .node-subtitle {
-              font-size: 13px;
-              fill: #64748b;
-              text-anchor: middle;
-            }
-            #topology-diagram .edge {
-              fill: none;
-              stroke: #475569;
-              stroke-width: 2.25;
-              marker-end: url(#arrow);
-            }
-            #topology-diagram .edge-dashed {
-              fill: none;
-              stroke: #64748b;
-              stroke-width: 2;
-              stroke-dasharray: 7 6;
-              marker-end: url(#arrow);
-            }
-            #topology-diagram .edge-label {
-              font-size: 13px;
-              fill: #475569;
-              text-anchor: middle;
-              paint-order: stroke;
-              stroke: #ffffff;
-              stroke-width: 5px;
-              stroke-linejoin: round;
-            }
-          </style>
-        </defs>
+      <h2 id="api-contract">T4 API v1 and gateway contract</h2>
+      <p>
+        The remote contract is an executable OpenAPI document served and versioned
+        with T4 API v1. The checked-in specification is the source for generated
+        SDKs, request/response validators, examples, fixtures, and compatibility
+        checks. Hand-written client DTOs are prohibited where generated public
+        types exist.
+      </p>
+      <h3 id="api-surface">Required v1 surface</h3>
+      <ul>
+        <li>
+          Version and capability discovery, including server build, API versions,
+          feature identifiers, bounds, enablement, authorization, availability,
+          and deprecation metadata.
+        </li>
+        <li>
+          Workspace and session intent creation, retrieval, listing, mutation,
+          deletion, and cancellation with scoped principals and stable resource
+          identifiers.
+        </li>
+        <li>
+          Command submission with a required idempotency key and typed accepted,
+          rejected, conflict, unavailable, and indeterminate states.
+        </li>
+        <li>
+          Snapshot reads and ordered watch streams with opaque cursors,
+          reconnect-after-cursor, heartbeat, explicit cancellation, bounded
+          batches and frames, and typed cursor expiry requiring resync.
+        </li>
+        <li>
+          Stable errors carrying a machine code, safe message, request ID, retry
+          classification, and field violations without exposing internals.
+        </li>
+      </ul>
+      <p>
+        Every mutation authenticates a principal, authorizes tenant, namespace,
+        resource, and action scope, validates advertised bounds, and records an
+        audit correlation ID. The same principal and idempotency key with the same
+        canonical request returns the original result. Reuse with a different
+        request is a typed conflict. Keys are isolated by principal and operation
+        scope and expire only according to a documented retention policy.
+      </p>
+      <p>
+        API and controller compatibility is explicit. Startup and readiness fail
+        closed when database schema, CRD served/storage versions, or runtime
+        provider versions are outside the supported matrix. Public capability
+        discovery exposes only behavior that the current compatible deployment
+        can actually complete.
+      </p>
 
-        <rect width="1280" height="760" fill="#ffffff" />
+      <h2 id="durable-ledger">Durable intent, event, and command ledger</h2>
+      <h3 id="acceptance-order">Mutation acceptance ordering</h3>
+      <ol>
+        <li>Authenticate, authorize, bound, and canonically validate the request.</li>
+        <li>
+          Begin a PostgreSQL transaction and acquire the required aggregate or
+          command serialization lock.
+        </li>
+        <li>
+          Insert or resolve the unique scoped idempotency record. A matching
+          committed record returns its stored response; a mismatched fingerprint
+          fails with conflict.
+        </li>
+        <li>
+          Append immutable accepted intent and product event rows, allocate the
+          aggregate sequence and durable cursor, update the materialized current
+          state, and insert a projection/outbox row in the same transaction.
+        </li>
+        <li>Commit PostgreSQL before reporting acceptance.</li>
+        <li>
+          After commit, a retryable worker creates or patches the corresponding
+          custom resource with stable intent and projection identifiers. It then
+          records projection progress without rewriting accepted history.
+        </li>
+      </ol>
+      <p>
+        Per-aggregate sequence numbers and a globally comparable opaque cursor
+        order committed events. A watch transaction establishes a snapshot
+        boundary and cursor so that events cannot be silently lost between list
+        and watch. Clients acknowledge only cursors they have applied. Event
+        retention may compact old payloads only after retaining a snapshot and a
+        deterministic expired-cursor response.
+      </p>
 
-        <rect class="group" x="420" y="35" width="360" height="680" />
-        <text class="group-title" x="450" y="75">T4 Hub</text>
-        <text class="group-subtitle" x="450" y="100">HA control plane</text>
+      <h3 id="command-state">Command state and ownership</h3>
+      <p>
+        A command has a durable identifier, idempotency scope, target session,
+        owner epoch, request fingerprint, timestamps, and an explicit state such
+        as accepted, projected, dispatching, running, succeeded, failed,
+        cancelled, or indeterminate. Transitions are conditional and append an
+        event. A worker may dispatch only after acquiring the session ownership
+        lease and recording the current epoch. Runtime acknowledgements must echo
+        command ID and epoch; stale epochs are rejected.
+      </p>
+      <p>
+        Cancellation is intent, not deletion of history. The ledger records the
+        request, the provider attempts bounded cancellation, and the final event
+        truthfully distinguishes cancelled-before-start, cancellation-confirmed,
+        already-completed, and cancellation-uncertain outcomes.
+      </p>
 
-        <rect class="group" x="825" y="35" width="425" height="680" />
-        <text class="group-title" x="855" y="75">
-          Kubernetes application plane
-        </text>
-        <text class="group-subtitle" x="855" y="100">
-          T4 runtimes consuming referenced platform services
-        </text>
+      <h3 id="crash-windows">Crash-window behavior</h3>
+      <table>
+        <thead>
+          <tr><th>Window</th><th>Required recovery</th><th>Observable proof</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Before database commit</td>
+            <td>No intent is accepted and no CR may be mutated.</td>
+            <td>Retry with the same key can create exactly one accepted record.</td>
+          </tr>
+          <tr>
+            <td>After commit, before HTTP response</td>
+            <td>
+              The idempotency record returns the committed result; projection
+              proceeds from the durable outbox.
+            </td>
+            <td>Client retry returns the original resource and cursor.</td>
+          </tr>
+          <tr>
+            <td>After commit, before CR projection</td>
+            <td>A new worker safely retries the stable create or patch.</td>
+            <td>One logical projection exists and reaches correlated status.</td>
+          </tr>
+          <tr>
+            <td>After dispatch record, before runtime acknowledgement</td>
+            <td>
+              Recovery queries the provider by command ID when supported; it
+              never silently reports success or knowingly dispatches through a
+              stale epoch. Unresolvable outcomes become indeterminate.
+            </td>
+            <td>The event stream exposes the recovery or indeterminate state.</td>
+          </tr>
+          <tr>
+            <td>After runtime completion, before outcome commit</td>
+            <td>
+              Recovery obtains the durable provider result when available and
+              conditionally commits one terminal transition; otherwise it reports
+              indeterminate rather than inventing an outcome.
+            </td>
+            <td>At most one terminal ledger transition is committed.</td>
+          </tr>
+          <tr>
+            <td>Owner loss during execution</td>
+            <td>
+              Lease expiry advances the owner epoch, fences and terminates the old
+              runtime, then permits a replacement to recover durable session state.
+            </td>
+            <td>Old-epoch heartbeats, events, and outcomes are rejected.</td>
+          </tr>
+        </tbody>
+      </table>
 
-        <rect class="node client" x="30" y="190" width="185" height="78" />
-        <text class="node-title" x="122.5" y="222">T4 Code</text>
-        <text class="node-subtitle" x="122.5" y="246">mobile client</text>
+      <h2 id="runtime-provider">Runtime provider and OMP boundary</h2>
+      <p>
+        OMP is behind one T4-owned typed runtime-provider interface. The provider
+        pins a tested official OMP release and one explicitly supported local
+        transport: the supported OMP RPC seam or ACP 1.2.1 where that operation
+        is available and verified. Transport selection is an implementation
+        detail and is never exposed as the remote product protocol.
+      </p>
+      <ul>
+        <li>
+          Launch uses an explicit executable, arguments, environment allowlist,
+          working directory, protocol version, maximum frame size, startup
+          deadline, and shutdown deadline. There is no unbounded process probing.
+        </li>
+        <li>
+          The provider maps sessions, prompts, questions, approvals, steering,
+          cancellation, commands, files, terminals, and runtime events into typed
+          T4 operations only when the pinned OMP seam proves them.
+        </li>
+        <li>
+          Capability discovery combines the pinned compatibility manifest with
+          live bounded discovery. Manifest-only behavior remains unavailable
+          until an executable probe passes; unknown operations fail closed.
+        </li>
+        <li>
+          The provider enforces command IDs and owner epochs on every operation,
+          bounds stdout and stderr, handles malformed frames as typed failures,
+          and never treats process exit as proof of command success.
+        </li>
+        <li>
+          Runtime hosts use a stable workspace mount, contain no authoritative
+          product state, and can be destroyed after events and outcomes are
+          durably acknowledged.
+        </li>
+      </ul>
 
-        <rect class="node client" x="30" y="310" width="185" height="78" />
-        <text class="node-title" x="122.5" y="342">T4 Code</text>
-        <text class="node-subtitle" x="122.5" y="366">desktop client</text>
+      <h2 id="client-flows">Terzo and ACP compatibility flows</h2>
+      <h3 id="terzo-flow">Terzo remote flow</h3>
+      <ol>
+        <li>Terzo authenticates and selects a T4 API endpoint.</li>
+        <li>
+          It calls version and capability discovery through the generated SDK and
+          rejects incompatible major versions or required unavailable features.
+        </li>
+        <li>
+          It creates or mutates intent with a persisted idempotency key. The API
+          commits intent before a CR projection and returns the accepted resource
+          and cursor.
+        </li>
+        <li>
+          Terzo obtains a snapshot and watches after its cursor. On disconnect it
+          reconnects with the last applied cursor; on cursor expiry it performs a
+          typed resync. User cancellation is another idempotent API mutation.
+        </li>
+      </ol>
+      <pre aria-label="Terzo flow"><code>Terzo → generated SDK → HTTPS T4 API v1 → PostgreSQL commit
+                                      ↓ after commit
+                                CR projection → controller → runtime provider → OMP
+Terzo ← cursor watch ← ordered product events ← gateway normalization</code></pre>
 
-        <rect class="node network" x="245" y="250" width="145" height="78" />
-        <text class="node-title" x="317.5" y="282">Tailscale</text>
-        <text class="node-subtitle" x="317.5" y="306">private ingress</text>
+      <h3 id="acp-flow">Optional local ACP compatibility flow</h3>
+      <ol>
+        <li>
+          A standard editor launches the T4 ACP adapter as a local child and uses
+          ACP 1.2.1 JSON-RPC 2.0 NDJSON over that child's stdio.
+        </li>
+        <li>
+          The adapter holds a user-scoped T4 API credential using platform secure
+          storage, discovers remote capabilities, and translates only supported
+          ACP operations into generated SDK calls.
+        </li>
+        <li>
+          The adapter maps remote ordered events back to ACP notifications,
+          persists or receives a resume cursor without exposing it as an ACP
+          guarantee, and maps cancellation to T4 cancellation intent.
+        </li>
+        <li>
+          Unsupported mappings return standard typed ACP errors. The adapter does
+          not emulate success, expose Kubernetes, forward raw OMP frames, or open
+          a remote ACP socket.
+        </li>
+      </ol>
+      <pre aria-label="ACP adapter flow"><code>standard editor ⇄ local stdio ACP ⇄ T4 ACP adapter ⇄ HTTPS T4 API v1
+                                                      (same ledger and runtime path as Terzo)</code></pre>
 
-        <rect class="node control" x="470" y="135" width="260" height="82" />
-        <text class="node-title" x="600" y="168">T4 API replicas</text>
-        <text class="node-subtitle" x="600" y="193">
-          Hub Wire and authentication
-        </text>
+      <h2 id="workspace-recovery">Workspace, recovery, and backup</h2>
+      <h3 id="shared-filesystem">Shared filesystem</h3>
+      <p>
+        Managed execution nodes mount the selected project claim at a stable
+        configured path. A workspace becomes runtime-eligible only after the PVC
+        is Bound and the selected StorageClass is explicitly reviewed for the
+        required ReadWriteMany semantics. The controller requests ReadWriteMany
+        and fails closed for absent, ambiguous, or ineligible classes. Concurrent
+        work uses isolated Git worktrees or an equivalently reviewed workspace
+        strategy; shared writable access does not permit concurrent mutation of
+        one worktree.
+      </p>
+      <h3 id="session-recovery">Session recovery</h3>
+      <ol>
+        <li>The failed or unreachable runtime's lease expires or is revoked.</li>
+        <li>The durable owner epoch advances in a conditional transaction.</li>
+        <li>Old credentials and epoch traffic are rejected and the old runtime is terminated.</li>
+        <li>
+          A replacement runtime mounts the same eligible workspace and restores
+          only acknowledged durable session/provider state.
+        </li>
+        <li>
+          Commands in uncertain windows follow the crash-window table; clients
+          resume from their durable cursors and see the recovery transition.
+        </li>
+      </ol>
+      <h3 id="backup-restore">Backup and restore</h3>
+      <ul>
+        <li>
+          PostgreSQL backups include schema migrations, intents, idempotency,
+          events, commands, cursors, ownership, and projection state. Point-in-time
+          recovery configuration and restore credentials are tested, not merely
+          documented.
+        </li>
+        <li>
+          Workspace and object-store backups use provider snapshots or a quiesced
+          procedure with an explicit consistency boundary correlated to a database
+          recovery point. Kubernetes manifests alone are not a product backup.
+        </li>
+        <li>
+          Restore starts into isolated networking, restores and verifies
+          PostgreSQL first, restores workspace/object data to the matching point,
+          applies compatible CRDs, deploys compatible API and controller images,
+          then replays outstanding projections.
+        </li>
+        <li>
+          Restore rotates runtime and service credentials, advances owner epochs,
+          and reconciles stale projected resources before accepting mutations.
+          Evidence includes resource counts, cursor continuity, checksums or
+          provider verification, and one recovered end-to-end session.
+        </li>
+      </ul>
 
-        <rect class="node control" x="470" y="270" width="125" height="82" />
-        <text class="node-title" x="532.5" y="302">PostgreSQL</text>
-        <text class="node-subtitle" x="532.5" y="327">durable state</text>
+      <h2 id="security">Security boundaries</h2>
+      <ul>
+        <li>
+          The only external product boundary is authenticated HTTPS T4 API v1,
+          Tailnet-only or equivalently private by default. TLS termination,
+          forwarded identity, origin, and proxy trust are explicit and bounded.
+        </li>
+        <li>
+          Human, device, service, projection-worker, controller, and runtime
+          principals are distinct. Authorization is deny-by-default and scoped by
+          tenant, namespace, resource, verb, and capability. User credentials are
+          never mounted into controller or runtime pods.
+        </li>
+        <li>
+          API and controller use separate least-privilege ServiceAccounts. The API
+          can perform only reviewed CR reads and projections; the controller can
+          reconcile only reviewed T4 and child resources. Neither receives
+          cluster-admin.
+        </li>
+        <li>
+          Runtime-to-service calls use short-lived, audience-bound workload
+          identity or mutually authenticated transport. Epoch and session scope
+          are checked in addition to identity. Secrets are referenced, not copied
+          into CR specs, status, events, logs, or public errors.
+        </li>
+        <li>
+          Default-deny NetworkPolicies allow only required DNS, Kubernetes API,
+          database, ingress, observability, runtime, and dependency paths. The
+          controller has no ingress from public clients.
+        </li>
+        <li>
+          The local ACP adapter communicates with its parent through inherited
+          stdio, does not listen publicly, validates frame bounds, redacts tokens,
+          and stores long-lived user secrets only through platform secure storage.
+        </li>
+        <li>
+          Audit events cover authentication decisions, scoped mutations,
+          idempotency conflicts, projection, privileged runtime actions,
+          cancellation, migration, restore, and administrative policy changes.
+          Payloads and logs are redacted and retention is explicit.
+        </li>
+        <li>
+          OCI signatures, SBOMs, provenance, pinned digests, admission policy,
+          and preflight verification form the supply-chain boundary. Capability
+          flags do not bypass authentication or authorization.
+        </li>
+      </ul>
 
-        <rect class="node control" x="605" y="270" width="125" height="82" />
-        <text class="node-title" x="667.5" y="302">Events</text>
-        <text class="node-subtitle" x="667.5" y="327">commands + cursors</text>
+      <h2 id="distribution">Distribution, migration, and lifecycle</h2>
+      <p>
+        Distribution follows the existing Helm and image conventions. The final
+        release adds signed multi-architecture OCI images and charts, per-artifact
+        SBOMs, build provenance, immutable digests, a compatibility manifest, and
+        operator-facing preflight and rollback instructions. These are required
+        work, not current claims.
+      </p>
+      <h3 id="upgrade-order">Upgrade order</h3>
+      <ol>
+        <li>
+          Back up PostgreSQL and workspace/object data; record deployed versions,
+          digests, CRD stored versions, and database migration level.
+        </li>
+        <li>
+          Preflight Kubernetes, storage, PostgreSQL, ingress, identity, CRD,
+          conversion-webhook, API/controller/runtime, architecture, and free-space
+          compatibility. Verify signatures and provenance before pulling into the
+          trusted runtime.
+        </li>
+        <li>
+          Apply additive CRD changes outside Helm and wait for establishment. Do
+          not change storage version unless the reviewed conversion lifecycle is
+          being executed.
+        </li>
+        <li>
+          Run backward-compatible, expand-first PostgreSQL migrations. New API
+          replicas remain unready until the migration and CRD compatibility checks
+          pass.
+        </li>
+        <li>
+          Roll out API replicas, projection workers, controller replicas, then
+          runtime images using disruption budgets and readiness. Enable new public
+          capabilities only after the full path is healthy.
+        </li>
+        <li>
+          Prove an idempotent mutation, projection, reconciliation, runtime event,
+          cursor reconnect, and cancellation before declaring success. Contracting
+          database or CRD migrations occur only in a later release after the
+          rollback window.
+        </li>
+      </ol>
+      <h3 id="rollback">Rollback rules</h3>
+      <p>
+        Rollback pins the prior signed image and chart digests and is supported
+        only while database and CRD changes remain backward-readable. Traffic is
+        drained before API rollback; projection workers are paused if their schema
+        is incompatible. CRDs are never force-replaced or blindly downgraded.
+        Failed conversion or storage migration stops forward rollout and restores
+        from the verified backup when in-place compatibility cannot be proven.
+        Feature capability remains disabled until all components again agree.
+      </p>
 
-        <rect class="node control" x="470" y="405" width="125" height="82" />
-        <text class="node-title" x="532.5" y="437">T4 Operator</text>
-        <text class="node-subtitle" x="532.5" y="462">reconciliation</text>
+      <h2 id="observability">Observability and truthful capabilities</h2>
+      <p>
+        API, projection worker, controller, and runtime provider expose separate
+        health, readiness, bounded Prometheus metrics, structured logs, and
+        OpenTelemetry traces with request, intent, projection, resource, command,
+        and cursor correlation identifiers. High-cardinality user, prompt, path,
+        and command text are not metric labels.
+      </p>
+      <ul>
+        <li>
+          API readiness covers PostgreSQL migration compatibility, CRD discovery,
+          required identity configuration, and projection-worker health; it does
+          not claim every optional capability is available.
+        </li>
+        <li>
+          Controller readiness covers Kubernetes access, informer synchronization,
+          leader-election participation, and compatible served CRDs. Leader status
+          is observable separately from process health.
+        </li>
+        <li>
+          Required metrics include accepted and rejected intents, idempotency
+          replay/conflict, transaction latency, outbox age and failures, watch lag
+          and resync, reconcile result and duration, finalizer age, condition age,
+          owner-epoch changes, stale-epoch rejection, runtime restarts, command
+          state age, backup age, and restore verification.
+        </li>
+        <li>
+          Alerts are actionable and bounded: stuck outbox, unavailable API quorum,
+          controller leader absence, reconcile error budget, finalizer stall,
+          command indeterminate growth, database recovery risk, cursor retention
+          pressure, and backup verification failure.
+        </li>
+        <li>
+          Capability discovery derives from compatible versions, configured
+          policy, principal scope, dependency health, and verified runtime probes.
+          Build-time support alone is not reported as runtime availability.
+        </li>
+      </ul>
 
-        <rect class="node control" x="605" y="405" width="125" height="82" />
-        <text class="node-title" x="667.5" y="437">CI/CD</text>
-        <text class="node-subtitle" x="667.5" y="462">GitHub integration</text>
+      <h2 id="implementation-ledger">Numbered implementation line items</h2>
+      <p>
+        Each line item is independently reviewable and lands only after its proof
+        gate is attached to the review. Dependencies are strict and ordered; a
+        later item may be developed behind disabled flags but cannot be accepted
+        as complete before its dependencies.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>ID and deliverable</th>
+            <th>Depends on</th>
+            <th>Review boundary</th>
+            <th>Observable proof gate</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>OP-01 — Architecture decision</strong></td>
+            <td>None</td>
+            <td>
+              Canonical HTML fixes the public API, operator boundary, PostgreSQL
+              authority, CR projection, OMP provider, compatibility flows, and
+              lifecycle. No product implementation is implied.
+            </td>
+            <td>
+              Self-contained HTML validation; link/anchor check; forbidden-term
+              scan; reviewer sign-off on topology, invariants, dependency order,
+              migration, rollback, and proof language.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>OP-02 — CRD lifecycle</strong></td>
+            <td>OP-01</td>
+            <td>
+              Additive structural schemas and fixtures for current
+              <code>cluster.t4.dev/v1alpha1</code>; explicit served/storage rules,
+              pre-upgrade apply, status/finalizer compatibility, and reviewed
+              future conversion procedure.
+            </td>
+            <td>
+              Fresh-install and upgrade fixture validation; persisted old objects
+              round-trip; CRDs become Established; stored versions remain expected;
+              failed schema preflight leaves existing workloads and objects intact.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>OP-03 — OpenAPI, SDK, and fixtures</strong></td>
+            <td>OP-01</td>
+            <td>
+              Executable T4 API v1 OpenAPI, generated SDK used by a fixture client,
+              stable errors, idempotency and cursor schemas, capability discovery,
+              bounds, and compatibility checks.
+            </td>
+            <td>
+              OpenAPI validation and generation-drift check; generated client
+              passes version, mutation, error, watch/reconnect/cancel, bounds, and
+              incompatible-version fixtures against the conformance service.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>OP-04 — Controller contract</strong></td>
+            <td>OP-02</td>
+            <td>
+              Remove external product responsibilities; retain conventional
+              reconcile, finalizers, owner references, conditions,
+              observedGeneration, leader election, least-privilege RBAC, and
+              bounded retries for all three CRDs.
+            </td>
+            <td>
+              Reconciliation scenarios prove create/update/delete, ownership,
+              retention, conflict retry, terminal condition, leader replacement,
+              and no public controller route or product-ledger dependency.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>OP-05 — Durable gateway and ledger</strong></td>
+            <td>OP-02, OP-03, OP-04</td>
+            <td>
+              PostgreSQL migrations and transaction code for scoped idempotency,
+              intent, events, commands, cursors, outbox/projection, authorization,
+              and CR mutation strictly after commit.
+            </td>
+            <td>
+              PostgreSQL integration evidence injects every acceptance and
+              projection crash window; same-key retries return one result;
+              mismatched reuse conflicts; reconnect has no gap; API restart loses
+              no accepted intent; projection converges exactly once logically.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>OP-06 — Typed runtime provider</strong></td>
+            <td>OP-03, OP-05</td>
+            <td>
+              One provider interface and pinned official OMP compatibility
+              manifest using only proved bounded local RPC or ACP seams, with
+              owner epoch, command ID, supervision, and normalized events.
+            </td>
+            <td>
+              Stock pinned OMP passes discovery, operation, malformed/oversized
+              frame, cancellation, child-exit, recovery-query, stale-epoch, and
+              uncertain-dispatch fixtures; unsupported capabilities fail closed.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>OP-07 — Terzo and ACP adapter</strong></td>
+            <td>OP-03, OP-05, OP-06</td>
+            <td>
+              Terzo uses only the generated public SDK. Optional local ACP 1.2.1
+              stdio adapter maps standard operations to the same T4 API without a
+              remote ACP listener or raw runtime forwarding.
+            </td>
+            <td>
+              A physical Terzo client and one standard ACP editor client each
+              discover, create, observe, reconnect, cancel, and receive a runtime
+              result through the same remote API; network capture shows HTTPS only.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>OP-08 — Distribution, security, and lifecycle</strong></td>
+            <td>OP-02, OP-03, OP-04, OP-05, OP-06, OP-07</td>
+            <td>
+              Existing Helm/image conventions plus signed multi-arch OCI, SBOM,
+              provenance, digest pinning, scoped identities and network policies,
+              compatibility preflight, expand-first migration, and rollback.
+            </td>
+            <td>
+              Signature/provenance/SBOM verification on every architecture;
+              least-privilege and network-policy denial evidence; fresh install,
+              supported upgrade, failed preflight, and rollback retain data and a
+              working prior capability set.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>OP-09 — Observability and recovery</strong></td>
+            <td>OP-05, OP-06, OP-08</td>
+            <td>
+              Correlated metrics/logs/traces, alerts, owner recovery, all command
+              crash windows, cursor retention/resync, PostgreSQL and workspace
+              backup, isolated restore, and runbooks.
+            </td>
+            <td>
+              Fault matrix kills API, projector, controller leader, runtime, node,
+              and database connections at named windows; alerts fire; stale owners
+              are fenced; restore proves cursor continuity, projections, workspace
+              integrity, and one recovered session.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>OP-10 — Physical remote-client and HA proof</strong></td>
+            <td>OP-07, OP-08, OP-09</td>
+            <td>
+              Release-candidate system on separate client and multi-node failure
+              domains with real PostgreSQL, eligible RWX storage, ingress,
+              identity, controller leader election, and pinned OMP runtimes.
+            </td>
+            <td>
+              From a physical remote client: authenticate, discover, create a
+              workspace/session, run and cancel commands, disconnect/reconnect by
+              cursor, replace runtime and controller leader, lose an API replica,
+              restore from backup, and complete without lost committed intent,
+              stale-owner acceptance, or direct controller/runtime traffic.
+            </td>
+          </tr>
+        </tbody>
+      </table>
 
-        <rect class="node runtime" x="865" y="135" width="170" height="82" />
-        <text class="node-title" x="950" y="168">OMP runtime A</text>
-        <text class="node-subtitle" x="950" y="193">managed session pod</text>
-
-        <rect class="node runtime" x="865" y="270" width="170" height="82" />
-        <text class="node-title" x="950" y="303">OMP runtime B</text>
-        <text class="node-subtitle" x="950" y="328">managed session pod</text>
-
-        <rect class="node runtime" x="865" y="405" width="170" height="82" />
-        <text class="node-title" x="950" y="438">OMP runtime C</text>
-        <text class="node-subtitle" x="950" y="463">managed session pod</text>
-
-        <rect class="node storage" x="1075" y="185" width="135" height="82" />
-        <text class="node-title" x="1142.5" y="218">RWX storage</text>
-        <text class="node-subtitle" x="1142.5" y="243">
-          selected StorageClass
-        </text>
-
-        <rect class="node storage" x="1075" y="330" width="135" height="82" />
-        <text class="node-title" x="1142.5" y="363">S3 API</text>
-        <text class="node-subtitle" x="1142.5" y="388">
-          optional object store
-        </text>
-
-        <rect class="node telemetry" x="1075" y="475" width="135" height="82" />
-        <text class="node-title" x="1142.5" y="508">Telemetry</text>
-        <text class="node-subtitle" x="1142.5" y="533">
-          optional external backend
-        </text>
-
-        <path class="edge" d="M215 229 H245 V270" />
-        <path class="edge" d="M215 349 H245 V308" />
-        <path class="edge" d="M390 289 H430 V176 H470" />
-        <text class="edge-label" x="430" y="271">Hub Wire</text>
-
-        <path class="edge" d="M555 217 V270" />
-        <path class="edge" d="M645 217 V270" />
-        <path class="edge" d="M525 352 V405" />
-        <path class="edge" d="M675 352 V405" />
-
-        <path class="edge" d="M595 446 H810 V176 H865" />
-        <path class="edge" d="M595 446 H810 V311 H865" />
-        <path class="edge" d="M595 446 H810 V446 H865" />
-        <text class="edge-label" x="788" y="431">desired state</text>
-
-        <path class="edge-dashed" d="M730 311 H790 V176 H865" />
-        <path class="edge-dashed" d="M730 311 H790 V311 H865" />
-        <path class="edge-dashed" d="M730 311 H790 V446 H865" />
-        <text class="edge-label" x="790" y="297">Runtime Wire</text>
-
-        <path class="edge" d="M1035 176 H1055 V226 H1075" />
-        <path class="edge" d="M1035 311 H1055 V226 H1075" />
-        <path class="edge" d="M1035 446 H1055 V226 H1075" />
-
-        <path class="edge-dashed" d="M730 330 H1045 V371 H1075" />
-        <path class="edge-dashed" d="M1075 516 H1045 V391 H1075" />
-
-        <text class="edge-label" x="1048" y="210">RWX</text>
-        <text class="edge-label" x="990" y="357">artifacts</text>
-      </svg>
-      <figcaption>
-        T4 Hub is the durable authority; Kubernetes runtimes are replaceable
-        workers sharing a conformant RWX project volume. Platform services keep
-        their own APIs, operators, RBAC, and upgrade lifecycles.
-      </figcaption>
-    </figure>
-    <p>
-      This topology covers Personal Hub and HA Hub. T4 Local has no Kubernetes,
-      PostgreSQL, network filesystem, object-store, or telemetry dependency; its
-      client connects to native Local Service over loopback.
-    </p>
-    <h3 id="t4-hub-placement">T4 Hub placement</h3>
-    <p>
-      In a single-node installation, one Linux machine may host T4 and compact
-      dependency instances. In HA mode, T4 API and operator replicas are
-      distributed independently from provider-managed database, storage, and
-      telemetry replicas. Clients use one stable Tailnet service address and do
-      not select a control-plane replica.
-    </p>
-    <p>
-      A Linux Hub machine may be a dedicated mini PC, home or office server,
-      NAS-hosted VM, cloud VM, or Linux workstation. macOS and Windows run T4
-      Code and may run native T4 Local Service; macOS and Linux may additionally
-      register as Workstation Runners. Managed T4 node implementations remain
-      Linux-only, so a native Mac never needs a managed Linux VM for T4 Local.
-    </p>
-    <h2 id="protocol-boundaries">Protocol boundaries</h2>
-    <p>
-      T4 Code consumes one state/action provider with Local and Hub
-      implementations. Released
-      <code>@t4-code/host-wire</code> remains the local compatibility contract
-      during migration. The convergence target is a bounded
-      capability-negotiated session surface shared by T4 Local Service and T4
-      Hub, without pretending that local endpoints provide cluster features.
-    </p>
-    <h3 id="hub-wire">Hub Wire</h3>
-    <p>
-      <code>@t4-code/hub-wire</code> is the external, versioned client contract.
-      Its common surface covers:
-    </p>
-    <ul>
-      <li>pairing, authentication, devices, and capabilities;</li>
-      <li>projects, workspaces, repositories, and sessions;</li>
-      <li>prompt, steer, follow-up, cancellation, and attention responses;</li>
-      <li>bounded transcript, file, artifact, and image access;</li>
-      <li>durable progress cursors and reconnection;</li>
-      <li>
-        endpoint profile, runtime capability, update, and compatibility status;
-      </li>
-      <li>
-        for Hub endpoints only, cluster health, backup, CI/CD, and deployment
-        operations.
-      </li>
-    </ul>
-    <p>
-      The current protocol's bounded decoding, branded identifiers, additive
-      evolution, command idempotency, paging, and payload limits migrate where
-      their semantics remain correct. Local filesystem authority stays inside
-      Local Service; managed topology stays inside Hub. Flutter never receives
-      Runtime Wire, Kubernetes resources, direct pod endpoints, Hub database
-      access, or unowned absolute paths.
-    </p>
-    <h3 id="runtime-wire">Runtime Wire</h3>
-    <p>
-      <code>@t4-code/runtime-wire</code> is the internal Hub-to-executor
-      contract used by managed runtimes and Workstation Runners. The executor
-      initiates the persistent connection, so pods and runners need no public
-      inbound endpoint. It covers:
-    </p>
-    <ul>
-      <li>
-        runtime or runner registration, endpoint profile, compatibility, and
-        capabilities;
-      </li>
-      <li>
-        session identity, runtime image digest where applicable, and owner
-        epoch;
-      </li>
-      <li>durable command claiming and outcomes;</li>
-      <li>
-        typed OMP prompt, steer, follow-up, cancellation, approval, and command
-        operations;
-      </li>
-      <li>ordered transcript and progress publication;</li>
-      <li>
-        heartbeat, lease renewal, recovery checkpoint, completion, and failure.
-      </li>
-    </ul>
-    <p>
-      A managed runtime may claim work or publish authoritative outcomes only
-      for its current epoch. A Workstation Runner receives only runner-pinned
-      nonportable sessions; losing its connection makes them unavailable rather
-      than eligible for takeover. T4 Local Service can call the same adapter
-      interface in-process and does not serialize an unnecessary local Runtime
-      Wire hop.
-    </p>
-    <h3 id="omp-boundary">OMP boundary</h3>
-    <p>
-      One T4-owned runtime adapter launches pinned official OMP through
-      <code>omp --mode rpc --session &lt;path&gt;</code> and bounded NDJSON
-      stdin/stdout. T4 Local Service, managed runtime pods, and Workstation
-      Runners reuse this adapter. T4 clients never connect directly to OMP.
-    </p>
-    <p>
-      The adapter classifies every exposed operation as typed, verified
-      headless, terminal-only, or unavailable. A recognized terminal-only
-      command is rejected explicitly instead of becoming ordinary model prompt
-      text. An optional separately versioned T4 plugin may use official
-      extension APIs; missing generic capabilities should be proposed upstream.
-      The Lycaon bridge remains temporary compatibility code, not a permanent
-      private OMP product.
-    </p>
-    <h2 id="current-code-disposition">Current-code disposition</h2>
-    <h3 id="retained-and-evolved">Retained and evolved</h3>
-    <ul>
-      <li>
-        The shared Flutter client, adaptive GUI, secure Hub directory, session
-        UX, transcript rendering, composer, attention inbox, developer surfaces,
-        and lifecycle behavior.
-      </li>
-      <li>
-        Observable user workflows and deterministic fixtures that remain valid.
-      </li>
-      <li>Bounded protocol and projection techniques.</li>
-      <li>
-        Capability negotiation, command IDs, paging cursors, payload limits, and
-        fail-closed decoding where their meanings survive.
-      </li>
-      <li>
-        The native Host lifecycle, pairing, local filesystem authority,
-        terminal/file operations, and service packaging, evolved into T4 Local
-        Service.
-      </li>
-      <li>
-        SQLite for the durable single-user local command ledger and client
-        cursors.
-      </li>
-    </ul>
-    <h3 id="replaced-after-proof">Replaced after proof</h3>
-    <ul>
-      <li>Unbounded or ambiguous local OMP discovery and process probing.</li>
-      <li>Attaching externally owned sessions as the primary managed path.</li>
-      <li>
-        Private OMP source imports, fork-only RPC assumptions, and the Lycaon
-        bridge after parity.
-      </li>
-      <li>
-        Local JSONL compatibility projection where official durable RPC entries
-        supersede it.
-      </li>
-      <li>
-        Competing-process takeover behavior that cannot prove one legitimate
-        owner.
-      </li>
-    </ul>
-    <p>
-      Replacement is gated by the official-adapter capability manifest and
-      physical Local and Hub slices. T4 Local Service remains a supported
-      production authority; only its private OMP integration is retired. Managed
-      Hub does not absorb local lifecycle or filesystem ownership.
-    </p>
-    <h2 id="session-and-command-flow">Session and command flow</h2>
-    <figure>
-      <svg
-        id="command-diagram"
-        xmlns="http://www.w3.org/2000/svg"
-        role="img"
-        aria-labelledby="command-title command-description"
-        viewBox="0 0 1080 700"
-      >
-        <title id="command-title">Durable T4 command flow</title>
-        <desc id="command-description">
-          T4 Code submits a command ID. T4 Hub authenticates the request,
-          PostgreSQL records it durably, the current session owner claims it
-          using an owner epoch, the runtime invokes stock OMP, records the
-          outcome, appends transcript and progress events, and advances the
-          client cursor.
-        </desc>
-        <defs>
-          <marker
-            id="command-arrow"
-            markerWidth="10"
-            markerHeight="10"
-            refX="9"
-            refY="3"
-            orient="auto"
-            markerUnits="strokeWidth"
-          >
-            <path d="M0,0 L0,6 L9,3 z" fill="#475569" />
-          </marker>
-          <style>
-            #command-diagram text {
-              font-family:
-                system-ui,
-                -apple-system,
-                BlinkMacSystemFont,
-                "Segoe UI",
-                sans-serif;
-              fill: #172033;
-            }
-            #command-diagram .box {
-              fill: #fff;
-              stroke: #64748b;
-              stroke-width: 2.25;
-              rx: 13;
-            }
-            #command-diagram .client {
-              fill: #eef2ff;
-              stroke: #6366f1;
-            }
-            #command-diagram .hub {
-              fill: #eff6ff;
-              stroke: #2563eb;
-            }
-            #command-diagram .database {
-              fill: #fdf4ff;
-              stroke: #a21caf;
-            }
-            #command-diagram .runtime {
-              fill: #f0fdf4;
-              stroke: #16a34a;
-            }
-            #command-diagram .event {
-              fill: #fff7ed;
-              stroke: #ea580c;
-            }
-            #command-diagram .title {
-              font-size: 20px;
-              font-weight: 700;
-              text-anchor: middle;
-            }
-            #command-diagram .subtitle {
-              font-size: 14px;
-              fill: #64748b;
-              text-anchor: middle;
-            }
-            #command-diagram .step {
-              font-size: 15px;
-              font-weight: 700;
-              fill: #475569;
-              text-anchor: middle;
-            }
-            #command-diagram .edge {
-              fill: none;
-              stroke: #475569;
-              stroke-width: 2.4;
-              marker-end: url(#command-arrow);
-            }
-          </style>
-        </defs>
-        <rect width="1080" height="700" fill="#fff" />
-
-        <rect class="box client" x="55" y="70" width="250" height="94" />
-        <text class="step" x="82" y="97">1</text>
-        <text class="title" x="180" y="119">T4 Code</text>
-        <text class="subtitle" x="180" y="144">submit commandId</text>
-
-        <rect class="box hub" x="415" y="70" width="250" height="94" />
-        <text class="step" x="442" y="97">2</text>
-        <text class="title" x="540" y="119">T4 Hub</text>
-        <text class="subtitle" x="540" y="144">authenticate + validate</text>
-
-        <rect class="box database" x="775" y="70" width="250" height="94" />
-        <text class="step" x="802" y="97">3</text>
-        <text class="title" x="900" y="119">PostgreSQL</text>
-        <text class="subtitle" x="900" y="144">record command durably</text>
-
-        <rect class="box runtime" x="775" y="300" width="250" height="94" />
-        <text class="step" x="802" y="327">4</text>
-        <text class="title" x="900" y="349">Session owner</text>
-        <text class="subtitle" x="900" y="374">claim with ownerEpoch</text>
-
-        <rect class="box runtime" x="415" y="300" width="250" height="94" />
-        <text class="step" x="442" y="327">5</text>
-        <text class="title" x="540" y="349">Stock OMP</text>
-        <text class="subtitle" x="540" y="374">execute through RPC</text>
-
-        <rect class="box event" x="55" y="300" width="250" height="94" />
-        <text class="step" x="82" y="327">6</text>
-        <text class="title" x="180" y="349">Durable outcome</text>
-        <text class="subtitle" x="180" y="374">
-          accepted, rejected, or failed
-        </text>
-
-        <rect class="box event" x="235" y="535" width="250" height="94" />
-        <text class="step" x="262" y="562">7</text>
-        <text class="title" x="360" y="584">Product events</text>
-        <text class="subtitle" x="360" y="609">
-          append transcript + progress
-        </text>
-
-        <rect class="box client" x="595" y="535" width="250" height="94" />
-        <text class="step" x="622" y="562">8</text>
-        <text class="title" x="720" y="584">T4 Code</text>
-        <text class="subtitle" x="720" y="609">receive and advance cursor</text>
-
-        <path class="edge" d="M305 117 H415" />
-        <path class="edge" d="M665 117 H775" />
-        <path class="edge" d="M900 164 V300" />
-        <path class="edge" d="M775 347 H665" />
-        <path class="edge" d="M415 347 H305" />
-        <path class="edge" d="M180 394 V470 H360 V535" />
-        <path class="edge" d="M485 582 H595" />
-      </svg>
-      <figcaption>
-        Managed path: PostgreSQL makes commands durable before Runtime Wire
-        dispatch; clients resume from authoritative event cursors.
-      </figcaption>
-    </figure>
-    <p>The Local path uses the same command state machine with fewer hops:</p>
-    <pre
-      class="text"
-    ><code>T4 Code -&gt; loopback Hub Wire -&gt; T4 Local Service -&gt; SQLite commit
-        -&gt; shared adapter -&gt; OMP stdin -&gt; OMP events -&gt; SQLite outcome -&gt; client cursor</code></pre>
-    <p>
-      A lost client connection cannot lose a committed command. Retrying the
-      same command ID cannot execute it twice. A crash after dispatch but before
-      provable OMP acceptance produces
-      <code>indeterminate</code>, never automatic prompt replay. This applies to
-      SQLite and PostgreSQL ledgers.
-    </p>
-    <h3 id="session-recovery">Session recovery</h3>
-    <p>When a runtime pod fails:</p>
-    <ol type="1">
-      <li>Its lease expires or the controller revokes it.</li>
-      <li>T4 advances the owner epoch.</li>
-      <li>The old runtime is fenced and terminated.</li>
-      <li>
-        The operator creates a replacement runtime using the same pinned image
-        and worktree path.
-      </li>
-      <li>The replacement mounts the shared project filesystem.</li>
-      <li>
-        It restores the durable session checkpoint and resumes command/event
-        cursors.
-      </li>
-      <li>
-        The GUI moves from <code>Recovering</code> to <code>Ready</code> only
-        after continuity is verified.
-      </li>
-    </ol>
-    <h2 id="shared-project-filesystem">Shared project filesystem</h2>
-    <p>
-      All eligible execution nodes mount the same project filesystem at a stable
-      path:
-    </p>
-    <pre class="text"><code>/workspace/projects/&lt;project-id&gt;/
-├── repo/
-├── worktrees/
-├── shared/
-└── .t4/</code></pre>
-    <p>
-      OMP manages repositories and worktrees on this filesystem. Multiple
-      sessions may use distinct OMP-managed worktrees concurrently while seeing
-      the same project environment. Repository-global mutations must retain
-      OMP/Git locking semantics and pass the storage conformance suite.
-    </p>
-    <p>
-      The live filesystem requires POSIX behavior, RWX mounting, atomic rename,
-      exclusive file creation, symlinks, reliable permissions, recovery after
-      node loss, snapshots, and acceptable metadata performance.
-    </p>
-    <p>
-      Managed deployments consume an administrator-selected Kubernetes
-      StorageClass that provisions real RWX volumes. <code>T4Workspace</code>
-      records the requested class and size; the T4 operator creates the PVC and
-      mounts the bound claim into session pods. It does not install a CSI
-      driver, create backend-specific CRs, select disks, or change storage
-      topology.
-    </p>
-    <p>
-      The optional T4 Stack profile may install a vetted default storage chart
-      for users who want a guided single-machine path. That provider retains its
-      own operator, CRDs, RBAC, status, upgrades, and recovery procedures. An
-      existing cluster may instead supply any implementation that passes the
-      same contract.
-    </p>
-    <p>
-      Storage conformance covers real OMP worktree concurrency, POSIX locking,
-      large repositories, package trees, pod and node failure, remount,
-      snapshot, restore, stale-writer fencing, metadata performance, and
-      <code>git fsck</code> integrity. A provider name or RWX declaration alone
-      is not evidence.
-    </p>
-    <p>
-      Optional S3-compatible object storage is a separate contract for immutable
-      artifacts, uploads, large transcript or log chunks, and backup objects. T4
-      receives an endpoint and credential reference; it does not expose
-      provider-specific object-store CRs. The initial compact profile may keep
-      bounded objects on RWX storage and omit S3 entirely.
-    </p>
-    <h2 id="technology-stack">Technology stack</h2>
-    <p>
-      Every profile uses Flutter, the shared T4 runtime adapter, a pinned
-      official OMP release, Git, bounded protocol frames, and platform-native
-      credential storage. T4 Local adds only a native background service,
-      SQLite, loopback or optional Tailnet transport, and the local filesystem.
-      Managed Hub profiles add the following T4 components and provider-neutral
-      contracts:
-    </p>
-    <table>
-      <thead>
-        <tr>
-          <th>Layer</th>
-          <th>T4 choice or external contract</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Client</td>
-          <td>
-            Flutter for macOS, Windows, Linux, Android, iOS, and Web where
-            appropriate
-          </td>
-        </tr>
-        <tr>
-          <td>Private network</td>
-          <td>
-            Tailscale and the Tailscale Kubernetes Operator; Headscale remains a
-            possible self-hosted control-plane option subject to compatibility
-            proof
-          </td>
-        </tr>
-        <tr>
-          <td>Cluster</td>
-          <td>Kubernetes 1.30+; k3s is the optional T4 Stack default</td>
-        </tr>
-        <tr>
-          <td>Container runtime</td>
-          <td>containerd</td>
-        </tr>
-        <tr>
-          <td>Build artifact</td>
-          <td>OCI images built without requiring Docker or Docker Desktop</td>
-        </tr>
-        <tr>
-          <td>Control API</td>
-          <td>
-            T4 Hub service, preserving existing implementation-language
-            conventions until profiling or correctness requires a change
-          </td>
-        </tr>
-        <tr>
-          <td>Reconciler</td>
-          <td>T4 Kubernetes Operator</td>
-        </tr>
-        <tr>
-          <td>Agent runtime</td>
-          <td>T4 runtime adapter plus a pinned official OMP release</td>
-        </tr>
-        <tr>
-          <td>Product database</td>
-          <td>
-            PostgreSQL protocol; an existing service or an optional stack
-            profile managed by a dedicated PostgreSQL operator
-          </td>
-        </tr>
-        <tr>
-          <td>Shared filesystem</td>
-          <td>Administrator-selected, conformance-tested RWX StorageClass</td>
-        </tr>
-        <tr>
-          <td>Object storage</td>
-          <td>Optional S3-compatible endpoint and credential reference</td>
-        </tr>
-        <tr>
-          <td>Source workflow</td>
-          <td>Git and OMP-managed Git worktrees</td>
-        </tr>
-        <tr>
-          <td>CI/CD</td>
-          <td>
-            GitHub App, webhooks, Checks/Actions APIs, and self-hosted runners
-            where appropriate
-          </td>
-        </tr>
-        <tr>
-          <td>Observability</td>
-          <td>
-            Prometheus-format metrics and OpenTelemetry export to an optional
-            administrator-selected backend
-          </td>
-        </tr>
-        <tr>
-          <td>Secrets</td>
-          <td>
-            External Secrets with OpenBao or SOPS; avoid making current Vault
-            BUSL releases a required dependency
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    <p>
-      Provider choices must satisfy their own licenses and remain independently
-      replaceable. The optional T4 Stack must not bundle a copyleft or
-      source-available dependency by default without an explicit distribution
-      and network-use compliance decision. Hosted services, hardware, bandwidth,
-      store accounts, and operational support may still incur costs.
-    </p>
-    <h2 id="deployment-profiles">Deployment profiles</h2>
-    <p>
-      T4 Code chooses an authority profile first. Managed installation guidance
-      begins only for Hub profiles; local users never configure database,
-      storage, or operator replicas.
-    </p>
-    <h3 id="t4-local">T4 Local</h3>
-    <p>
-      T4 Local Service runs natively on the same macOS or Linux workstation as
-      OMP and the project. Flutter connects over loopback by default. No Linux
-      VM, Kubernetes cluster, PostgreSQL service, network filesystem, object
-      store, or telemetry backend is required.
-    </p>
-    <p><strong>Benefits</strong></p>
-    <ul>
-      <li>
-        Native filesystem, SDK, simulator, attached-device, and toolchain
-        performance.
-      </li>
-      <li>Lowest control-plane overhead and simplest offline behavior.</li>
-      <li>Optional paired Tailnet access while the workstation is awake.</li>
-    </ul>
-    <p><strong>Limitations</strong></p>
-    <ul>
-      <li>
-        Sessions stop when the workstation sleeps, shuts down, or disconnects.
-      </li>
-      <li>
-        Local files and sessions are not portable or automatically failed over.
-      </li>
-      <li>Backups remain the user's local storage responsibility.</li>
-    </ul>
-    <h3 id="workstation-runner">Workstation Runner</h3>
-    <p>
-      A macOS or Linux machine registers outbound with an existing Hub and
-      executes selected sessions against its native files and toolchain. Hub
-      owns command history; the runner owns no control-plane database or
-      scheduler.
-    </p>
-    <p><strong>Benefits</strong></p>
-    <ul>
-      <li>
-        Hub collaboration and command durability with native Xcode, simulators,
-        or local hardware.
-      </li>
-      <li>No inbound runner port and no managed stack on the workstation.</li>
-    </ul>
-    <p><strong>Limitations</strong></p>
-    <ul>
-      <li>
-        Every session is pinned to that runner and becomes unavailable when it
-        disconnects.
-      </li>
-      <li>
-        No automatic takeover, local-to-managed-filesystem synchronization, or
-        portable uncommitted state.
-      </li>
-    </ul>
-    <h3 id="personal-hub">Personal Hub</h3>
-    <p>
-      One always-on Linux computer or VM runs the T4 components and managed
-      runtimes. It may sit on a desk, on a LAN, or remotely; desktop and mobile
-      clients connect through a stable Tailscale service. The optional T4 Stack
-      chart supplies a tested compact path, while every database, storage, and
-      telemetry dependency keeps an independent ownership boundary.
-    </p>
-    <p><strong>Benefits</strong></p>
-    <ul>
-      <li>Work continues while client devices are off.</li>
-      <li>
-        Same Kubernetes APIs, protocol, operator, runtime image, and storage
-        contracts as larger deployments.
-      </li>
-      <li>Can expand into the intended HA topology.</li>
-    </ul>
-    <p><strong>Limitations</strong></p>
-    <ul>
-      <li>One failure domain: it is explicitly unprotected, not HA.</li>
-      <li>
-        Full-stack resource floors must be measured; compact bounded retention
-        is required.
-      </li>
-      <li>External backup is required for meaningful disaster recovery.</li>
-    </ul>
-    <h3 id="highly-available-cluster">Highly available Hub</h3>
-    <p>
-      At least three suitable Linux failure domains run Kubernetes quorum,
-      distributed T4 replicas, a highly available PostgreSQL service, replicated
-      provider-managed RWX storage, and schedulable runtime capacity.
-    </p>
-    <p><strong>Benefits</strong></p>
-    <ul>
-      <li>
-        Survives a tested single-node failure and supports portable managed
-        sessions.
-      </li>
-      <li>
-        Adds execution capacity, replicated state, and continuous team
-        workloads.
-      </li>
-    </ul>
-    <p><strong>Limitations</strong></p>
-    <ul>
-      <li>
-        Requires at least three tested failure domains plus greater disk,
-        memory, and network capacity.
-      </li>
-      <li>Replication does not replace backups.</li>
-    </ul>
-    <p>
-      Two nodes may add capacity but are not labeled HA because they cannot
-      preserve quorum after an arbitrary partition. No managed session moves
-      across nodes until hard storage-writer fencing and owner-epoch recovery
-      pass the failure matrix.
-    </p>
-    <h3 id="advanced-installation">Existing-cluster installation</h3>
-    <p>
-      The portable charts support an existing conformant Kubernetes cluster,
-      PostgreSQL service, RWX StorageClass, optional S3-compatible endpoint,
-      ingress, and telemetry backend. The optional T4 Stack is a convenience
-      distribution of the same T4 artifacts, not a second architecture and not
-      authority for the referenced providers.
-    </p>
-    <h2 id="guided-installation">Guided managed installation</h2>
-    <p>
-      “On this computer” installs or connects to native T4 Local Service through
-      the platform service manager and stops there. The following flow applies
-      only when the user selects a Personal Hub or HA Hub.
-    </p>
-    <h3 id="first-hub">First Hub</h3>
-    <figure>
-      <svg
-        id="install-diagram"
-        xmlns="http://www.w3.org/2000/svg"
-        role="img"
-        aria-labelledby="install-title install-description"
-        viewBox="0 0 1100 760"
-      >
-        <title id="install-title">Guided T4 Hub installation flow</title>
-        <desc id="install-description">
-          The user installs T4 Code, chooses a local or remote Linux Hub,
-          identifies the machine through Tailscale, runs the signed T4 Node
-          installer, exchanges a one-time enrollment code, passes hardware and
-          network preflight, installs the signed T4 Stack or portable charts,
-          binds platform services, runs an end-to-end health check, and pairs T4
-          Code.
-        </desc>
-        <defs>
-          <marker
-            id="install-arrow"
-            markerWidth="10"
-            markerHeight="10"
-            refX="9"
-            refY="3"
-            orient="auto"
-            markerUnits="strokeWidth"
-          >
-            <path d="M0,0 L0,6 L9,3 z" fill="#475569" />
-          </marker>
-          <style>
-            #install-diagram text {
-              font-family:
-                system-ui,
-                -apple-system,
-                BlinkMacSystemFont,
-                "Segoe UI",
-                sans-serif;
-              fill: #172033;
-            }
-            #install-diagram .box {
-              fill: #fff;
-              stroke: #64748b;
-              stroke-width: 2.2;
-              rx: 13;
-            }
-            #install-diagram .client {
-              fill: #eef2ff;
-              stroke: #6366f1;
-            }
-            #install-diagram .network {
-              fill: #ecfeff;
-              stroke: #0891b2;
-            }
-            #install-diagram .node {
-              fill: #eff6ff;
-              stroke: #2563eb;
-            }
-            #install-diagram .platform {
-              fill: #f0fdf4;
-              stroke: #16a34a;
-            }
-            #install-diagram .verify {
-              fill: #fff7ed;
-              stroke: #ea580c;
-            }
-            #install-diagram .title {
-              font-size: 18px;
-              font-weight: 700;
-              text-anchor: middle;
-            }
-            #install-diagram .subtitle {
-              font-size: 13px;
-              fill: #64748b;
-              text-anchor: middle;
-            }
-            #install-diagram .step {
-              font-size: 14px;
-              font-weight: 700;
-              fill: #475569;
-              text-anchor: middle;
-            }
-            #install-diagram .edge {
-              fill: none;
-              stroke: #475569;
-              stroke-width: 2.4;
-              marker-end: url(#install-arrow);
-            }
-          </style>
-        </defs>
-        <rect width="1100" height="760" fill="#fff" />
-
-        <rect class="box client" x="40" y="55" width="280" height="88" />
-        <text class="step" x="68" y="82">1</text>
-        <text class="title" x="180" y="103">Install T4 Code</text>
-        <text class="subtitle" x="180" y="127">desktop setup experience</text>
-
-        <rect class="box client" x="410" y="55" width="280" height="88" />
-        <text class="step" x="438" y="82">2</text>
-        <text class="title" x="550" y="103">Choose Hub profile</text>
-        <text class="subtitle" x="550" y="127">
-          local Linux or remote Linux
-        </text>
-
-        <rect class="box network" x="780" y="55" width="280" height="88" />
-        <text class="step" x="808" y="82">3</text>
-        <text class="title" x="920" y="103">Identify through Tailscale</text>
-        <text class="subtitle" x="920" y="127">private machine discovery</text>
-
-        <rect class="box node" x="780" y="255" width="280" height="88" />
-        <text class="step" x="808" y="282">4</text>
-        <text class="title" x="920" y="303">Run signed T4 Node</text>
-        <text class="subtitle" x="920" y="327">bootstrap on Linux</text>
-
-        <rect class="box network" x="410" y="255" width="280" height="88" />
-        <text class="step" x="438" y="282">5</text>
-        <text class="title" x="550" y="303">Exchange enrollment code</text>
-        <text class="subtitle" x="550" y="327">short-lived and single-use</text>
-
-        <rect class="box verify" x="40" y="255" width="280" height="88" />
-        <text class="step" x="68" y="282">6</text>
-        <text class="title" x="180" y="303">Run preflight</text>
-        <text class="subtitle" x="180" y="327">
-          CPU, memory, disk, OS, network, time
-        </text>
-
-        <rect class="box platform" x="40" y="455" width="280" height="88" />
-        <text class="step" x="68" y="482">7</text>
-        <text class="title" x="180" y="503">Install signed release</text>
-        <text class="subtitle" x="180" y="527">
-          T4 charts and pinned OCI bundle
-        </text>
-
-        <rect class="box platform" x="410" y="455" width="280" height="88" />
-        <text class="step" x="438" y="482">8</text>
-        <text class="title" x="550" y="503">Install or reference services</text>
-        <text class="subtitle" x="550" y="527">
-          PostgreSQL, RWX storage, optional S3 and telemetry
-        </text>
-
-        <rect class="box verify" x="780" y="455" width="280" height="88" />
-        <text class="step" x="808" y="482">9</text>
-        <text class="title" x="920" y="503">End-to-end health check</text>
-        <text class="subtitle" x="920" y="527">
-          real session and recovery path
-        </text>
-
-        <rect class="box client" x="410" y="650" width="280" height="88" />
-        <text class="step" x="438" y="677">10</text>
-        <text class="title" x="550" y="698">Pair T4 Code</text>
-        <text class="subtitle" x="550" y="722">Hub ready for client use</text>
-
-        <path class="edge" d="M320 99 H410" />
-        <path class="edge" d="M690 99 H780" />
-        <path class="edge" d="M920 143 V255" />
-        <path class="edge" d="M780 299 H690" />
-        <path class="edge" d="M410 299 H320" />
-        <path class="edge" d="M180 343 V455" />
-        <path class="edge" d="M320 499 H410" />
-        <path class="edge" d="M690 499 H780" />
-        <path class="edge" d="M920 543 V600 H550 V650" />
-      </svg>
-      <figcaption>
-        The optional T4 Stack gives ordinary users a guided default without
-        widening the T4 operator's ownership boundary.
-      </figcaption>
-    </figure>
-    <p>
-      Stack-profile users do not need to run <code>kubectl</code> or place
-      replicas manually. Existing-cluster administrators use Helm values and
-      Secret references to bind T4 to services they already operate.
-    </p>
-    <h3 id="cluster-expansion">Cluster expansion</h3>
-    <p>
-      The GUI may expose <code>Make highly available</code> or
-      <code>Add node</code> for a tested T4 Stack profile. T4 may enroll nodes,
-      expand Kubernetes quorum, and add T4 replicas, but provider-specific
-      database and storage expansion remains the responsibility of their own
-      operators. The installer coordinates health gates without assuming that
-      the T4 operator owns those topology changes.
-    </p>
-    <p>
-      The client endpoint, project identifiers, session history, worktree paths,
-      and credentials remain stable during expansion.
-    </p>
-    <h3 id="configuration-ux">Configuration UX</h3>
-    <p>
-      The configurator shows a topology preview and plain-language consequences:
-    </p>
-    <pre class="text"><code>Availability: Single-node
-Database copies: 1
-Workspace copies: 1
-External backup: Not configured
-Recommendation: Add two Linux nodes for high availability.</code></pre>
-    <p>
-      Ordinary users choose among versioned, tested T4 Stack profiles.
-      Existing-cluster administrators choose provider topology through the
-      providers' own APIs, not through T4 custom resources.
-    </p>
-    <h2 id="cicd-and-product-progress">CI/CD and product progress</h2>
-    <p>
-      A GitHub App integrates repository authorization, webhooks, branches, pull
-      requests, checks, workflow state, reviews, artifacts, deployment
-      environments, and approvals.
-    </p>
-    <p>OMP and integrations emit typed product events such as:</p>
-    <pre class="text"><code>session.created
-runtime.started
-message.accepted
-tool.started
-files.changed
-commit.created
-tests.started
-tests.completed
-pull_request.opened
-ci.check.updated
-approval.requested
-deployment.completed
-session.recovered</code></pre>
-    <p>
-      These events are persisted and shown in T4 Code. The GUI does not infer
-      authoritative progress by scraping terminal text or querying an
-      observability backend.
-    </p>
-    <h2 id="observability">Observability</h2>
-    <p>
-      T4 exposes bounded Prometheus-format metrics, structured logs, health
-      endpoints, and OpenTelemetry signals. An administrator may connect
-      Grafana, Prometheus, an LGTM deployment, or another compatible backend.
-      The T4 operator does not install or reconcile those systems.
-    </p>
-    <p>
-      The portable chart may create narrowly scoped integration resources such
-      as a <code>ServiceMonitor</code> or alert rules only when their CRDs
-      already exist and the administrator enables them. The optional T4 Stack
-      may offer a separately owned observability profile; it is not required for
-      product correctness.
-    </p>
-    <p>
-      Observability failure cannot prevent session execution or alter durable
-      product state. T4 Local requires no external telemetry service and uses
-      bounded native diagnostics.
-    </p>
-    <h2 id="performance-and-resource-discipline">
-      Performance and resource discipline
-    </h2>
-    <p>
-      Ordinary prompt dispatch never waits on the Kubernetes API or telemetry.
-      The hot path is one bounded client frame, one SQLite or PostgreSQL
-      command-ledger transaction, one existing adapter or Runtime Wire stream,
-      and one OMP stdin write. Kubernetes participates only in runtime lifecycle
-      transitions such as create, stop, replace, resource change, and storage
-      mount.
-    </p>
-    <p>Instrument these timestamps from the first executable slices:</p>
-    <pre class="text"><code>client send
-service receive
-command-ledger commit
-runtime claim
-OMP stdin write
-first OMP event
-event-ledger commit
-client render</code></pre>
-    <p>
-      Measure the same scenario with bare official OMP, T4 Local, Personal Hub
-      on one Linux machine, and a three-node HA Hub. Separate ledger durability,
-      Runtime Wire, filesystem, provider, and presentation cost. Publish idle
-      platform usage and incremental per-session CPU, memory, disk, inode, and
-      network usage; profile floors come from those measurements rather than
-      estimates.
-    </p>
-    <p>
-      T4 Local preserves native filesystem and toolchain performance. Managed
-      benchmarks emphasize RWX metadata-heavy work: Git status, worktree
-      creation, package trees, file watching, dependency installation, search,
-      large builds, and concurrent OMP sessions. Personal Hub uses compact T4
-      replicas, conservative database buffers, bounded telemetry retention,
-      node-local disposable caches, and suspended idle runtime pods. It adds no
-      service mesh, Kafka, NATS, or per-runtime Tailnet sidecars without
-      measured need.
-    </p>
-    <h2 id="security-boundaries">Security boundaries</h2>
-    <ul>
-      <li>Hub APIs are Tailnet-only by default.</li>
-      <li>
-        T4 Local Service binds loopback by default; optional Tailnet access
-        requires pairing.
-      </li>
-      <li>Device pairing produces scoped credentials and capabilities.</li>
-      <li>
-        Node enrollment uses short-lived, single-use credentials and establishes
-        durable mTLS identity.
-      </li>
-      <li>
-        Workstation Runners initiate outbound connections and receive
-        runner-scoped authority.
-      </li>
-      <li>Runtime pods receive only project- and session-scoped authority.</li>
-      <li>No runtime pod receives unrestricted Kubernetes API credentials.</li>
-      <li>
-        Repository code is treated as untrusted: workloads require resource
-        limits, network policy, controlled egress, and stronger sandboxing where
-        the threat model requires it.
-      </li>
-      <li>
-        Secrets use workload identity or short-lived delivery and never enter
-        transcripts, logs, images, support bundles, or repository files.
-      </li>
-      <li>Support bundles are bounded and redacted by construction.</li>
-      <li>
-        Every release includes signed OCI images, an SBOM, checksums, schema
-        compatibility, and a supported-version manifest.
-      </li>
-    </ul>
-    <h2 id="delivery-strategy">Delivery strategy</h2>
-    <p>
-      Work proceeds from the Flutter baseline already merged on
-      <code>main</code>. The Local and Hub implementations converge on explicit
-      common contracts; the current Host is evolved into Local Service instead
-      of deleted or expanded into a disguised cluster control plane.
-    </p>
-    <h3 id="backend-and-gui-order">Backend and GUI order</h3>
-    <p>
-      T4 first proves the official OMP seam, freezes the common client, command,
-      capability, and runtime contracts, then advances Local, Hub, shared
-      runtime, managed infrastructure, and Flutter providers in parallel against
-      executable fixtures. T4 Local reaches a physical slice before the Personal
-      Hub slice; managed breadth follows recovery and restore evidence.
-    </p>
-    <p>
-      The existing Flutter <code>T4ViewState</code> and
-      <code>T4Actions</code> boundary, adaptive shell, transcript rendering,
-      composer, attention surfaces, and lifecycle UX remain the client seam.
-      Native discovery, lifecycle, files, terminal operations, and OMP
-      supervision stay encapsulated in T4 Local Service. Released Host Wire
-      remains compatible until the common Local provider passes its physical
-      slice.
-    </p>
-    <h3 id="gate-0-stock-omp-seam">Gate 0: stock OMP seam</h3>
-    <p>
-      Prove the highest-risk dependency before building the control plane. A
-      small T4-owned harness launches an unmodified official OMP release through
-      <code>omp --mode rpc --session &lt;path&gt;</code>, waits for its ready
-      event, executes a prompt, steering or follow-up, approval response,
-      cancellation, and a second prompt, then kills and respawns OMP against the
-      same JSONL session on Linux. Transcript order and continuation must be
-      reconstructed from durable session entries. A ready watermark may improve
-      this later, but stock OMP 17.0.6 does not provide one.
-    </p>
-    <p>
-      This gate also resolves the dispatch crash window. Current stock OMP RPC
-      identifiers correlate responses but do not durably deduplicate commands.
-      T4 must either obtain a narrow upstream OMP capability that persists an
-      opaque command key with the accepted session entry, or fail closed by
-      marking a dispatched-but-unreconciled command <code>indeterminate</code>.
-      It must never automatically replay an ambiguous prompt. Gate 0 does not
-      pass by assuming host-side idempotency provides exactly-once OMP
-      execution.
-    </p>
-    <p>
-      Implementation status (2026-07-21): the T4-owned supervisor now queries
-      stock OMP's bounded <code>get_available_commands</code> RPC, normalizes
-      typed and verified headless operations into the shared catalog, and
-      supplements commands omitted from headless discovery with a manifest
-      pinned to the reviewed OMP source revision. Local catalog responses expose
-      those classifications. Recognized terminal-only prompts such as
-      <code>/plan</code> fail with structured <code>terminal_only</code> details
-      before any prompt is written to OMP stdin. The earlier lifecycle harness
-      used the released <code>t4code-17.0.5-appserver-10</code> Lycaon fallback
-      artifact, despite its official-OMP name. The corrected harness separately
-      pins unmodified official OMP <code>v17.0.6</code> and its per-platform
-      release hashes. On <code>darwin-arm64</code> it now passes deterministic
-      lifecycle, <code>SIGKILL</code> and same-session recovery, steering,
-      follow-up, extension approval, and cancellation scenarios. Focused host
-      and client tests prove that a crash after stdin dispatch produces an
-      unknown outcome and never automatically replays the prompt. The checked
-      Gate 0 snapshot records three missing stock seams: no ready transcript
-      watermark, no live <code>session_entry</code> projection, and no durable
-      command key. T4 therefore reconciles official OMP's JSONL and fails closed
-      across ambiguity instead of pretending to provide exactly-once execution.
-      Native <code>linux-arm64</code> and <code>linux-x64</code> CI jobs pass the
-      same proof. Gate 0 is closed; packaged local and managed cutover remain a
-      separate release gate.
-    </p>
-    <h3 id="gate-1-contract-freeze">Gate 1: contract freeze</h3>
-    <p>Freeze the shared contracts that every later workstream consumes:</p>
-    <ul>
-      <li>
-        Common Local/Hub client state and action contracts plus Hub Wire and
-        Runtime Wire fixtures, bounds, versions, endpoint profiles,
-        capabilities, and error states.
-      </li>
-      <li>
-        The session state machine and the command transitions from pending
-        through claim, dispatch, acceptance, completion, failure, and
-        indeterminate outcome.
-      </li>
-      <li>
-        SQLite and PostgreSQL command-ledger semantics, payload hashing, durable
-        outcomes, cursors, and crash-window behavior; PostgreSQL additionally
-        owns outbox, owner epoch, and lease state.
-      </li>
-      <li>
-        Provider-neutral stale-writer fencing. A replacement cannot start until
-        the old runtime is observed terminated or its write access is revoked
-        and eviction is confirmed.
-      </li>
-      <li>
-        Immutable object upload, checksum, PostgreSQL manifest commit, orphan
-        collection, and database-filesystem-object backup generation ordering
-        for every enabled S3-compatible provider.
-      </li>
-      <li>
-        Stable project, session, command, cursor, runner, PVC, worktree, Tailnet
-        service, OCI image, and compatibility identifiers.
-      </li>
-      <li>
-        Versioned Local, Personal Hub, HA Hub, and Workstation Runner schemas
-        plus one explicit capability and failure-state table.
-      </li>
-    </ul>
-    <p>
-      Gate 1 is a serial integration decision. Parallel implementation starts
-      only after its fixtures and failure semantics are reviewable and
-      executable.
-    </p>
-    <h3 id="deliberate-parallel-work">Deliberate parallel work</h3>
-    <p>
-      After Gate 1, the following workstreams can proceed concurrently against
-      the same fixtures:
-    </p>
-    <table>
-      <thead>
-        <tr>
-          <th>Workstream</th>
-          <th>Bounded responsibility</th>
-          <th>Integration gate</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Local systems</td>
-          <td>
-            Native service lifecycle, SQLite command ledger, local authority,
-            official adapter integration, and loopback or optional Tailnet
-            endpoint.
-          </td>
-          <td>
-            Local crash-window, restart, filesystem, and nonportability
-            conformance.
-          </td>
-        </tr>
-        <tr>
-          <td>Hub core</td>
-          <td>
-            PostgreSQL migrations, command ledger, outbox, authentication, and
-            Hub Wire API.
-          </td>
-          <td>Deterministic command and cursor conformance.</td>
-        </tr>
-        <tr>
-          <td>Shared runtime</td>
-          <td>
-            Official OMP supervisor and capability adapter, bounded NDJSON,
-            Runtime Wire wrapper, transcript reconciliation, lease loss, and
-            shutdown.
-          </td>
-          <td>
-            Gate 0 scenarios repeated through both direct Local and Runtime Wire
-            callers.
-          </td>
-        </tr>
-        <tr>
-          <td>Operator</td>
-          <td>
-            T4 custom-resource reconciliation, pod identity, owner epochs, PVC
-            claims and mounts, finalizers, and bounded replacement.
-          </td>
-          <td>
-            No duplicate runtime across restart and lease-loss cases; no
-            provider-specific CRs or cluster-wide dependency ownership.
-          </td>
-        </tr>
-        <tr>
-          <td>Platform integration</td>
-          <td>
-            Portable Kubernetes and Helm APIs plus references to ingress,
-            PostgreSQL, RWX storage, optional S3, and optional telemetry.
-          </td>
-          <td>
-            One reproducible existing-cluster install and one optional
-            single-node T4 Stack install.
-          </td>
-        </tr>
-        <tr>
-          <td>Flutter</td>
-          <td>
-            Local and Hub providers projecting into retained state/action and
-            adaptive GUI contracts.
-          </td>
-          <td>
-            Common provider fixture conformance before physical Local and
-            managed attachment.
-          </td>
-        </tr>
-        <tr>
-          <td>Supply chain</td>
-          <td>
-            OCI builds, pinned digests, SBOM, signing, compatibility manifest,
-            and release chart.
-          </td>
-          <td>The same artifacts run in CI and on the Linux node.</td>
-        </tr>
-      </tbody>
-    </table>
-    <p>
-      T4 chart semantics and provider contracts stabilize before the optional
-      installer. Provider topology migrations remain owned and reported by their
-      respective operators. A T4 Stack expansion coordinates these independent
-      operations serially so failure attribution and rollback stay explicit.
-    </p>
-    <h3 id="gate-2-local-slice">Gate 2A: T4 Local slice</h3>
-    <p>
-      Evolve the current Host into native T4 Local Service with a durable SQLite
-      ledger and the shared official-OMP adapter. Flutter creates a real local
-      session, prompts, steers, reconnects after application restart, reads
-      local files, executes one verified headless command, and rejects one
-      recognized terminal-only command without sending it to the model.
-    </p>
-    <p>
-      Crash immediately after dispatch and confirm the command becomes
-      <code>indeterminate</code>
-      unless OMP proves durable acceptance. Close the workstation service and
-      confirm no other machine claims the local session. This gate has no
-      Kubernetes, PostgreSQL, network-filesystem, object-store, or telemetry
-      dependency.
-    </p>
-    <h3 id="gate-2-single-node-substrate">Gate 2B: Personal Hub substrate</h3>
-    <p>
-      Prove both supported installation forms: portable T4 charts against
-      existing PostgreSQL, ingress, and RWX services; and the optional T4 Stack
-      on one real Linux node. Both forms deploy the same Hub, operator, and
-      runtime artifacts. Docker Desktop, k3d, and a separate Docker Compose
-      architecture are not required.
-    </p>
-    <p>
-      Before running OMP, mount one conformant RWX project from multiple
-      disposable pods, reboot the node, remount it, and verify filesystem
-      semantics. Database, filesystem, optional object-store, and telemetry
-      health remain distinguishable; external-service impairment cannot grant
-      the T4 operator provider authority or corrupt product commands.
-    </p>
-    <h3 id="gate-3-physical-client-slice">
-      Gate 3: Personal Hub physical-client slice
-    </h3>
-    <p>Prove one complete path with real components:</p>
-    <ol type="1">
-      <li>
-        T4 Code connects over Tailscale to the stable Personal Hub service.
-      </li>
-      <li>T4 Hub persists a project, session, and prompt in PostgreSQL.</li>
-      <li>
-        T4 Operator starts a real T4 Session Runtime with the correct
-        administrator-selected RWX project mounted.
-      </li>
-      <li>
-        The runtime launches pinned official OMP and reconciles its durable
-        entry watermark or fails closed where stock OMP cannot provide one.
-      </li>
-      <li>
-        OMP creates or uses its worktree and changes a file on the RWX volume.
-      </li>
-      <li>
-        Durable progress and transcript events reach the existing Flutter GUI
-        projection.
-      </li>
-      <li>
-        A desktop client and a physical mobile client observe the same
-        authoritative session.
-      </li>
-      <li>
-        Stage timestamps isolate client, PostgreSQL, Runtime Wire, OMP,
-        filesystem, and presentation overhead; idle and active resource floors
-        are recorded.
-      </li>
-    </ol>
-    <p>
-      A deterministic protocol client runs this path before Flutter to localize
-      server defects, but the phase does not pass until physical Flutter clients
-      complete it. Managed backend work does not drift into enabled capabilities
-      ahead of this slice.
-    </p>
-    <h3 id="gate-4-recovery-and-restore">Gate 4: recovery and restore</h3>
-    <p>
-      Exercise every command dispatch crash window, OMP child failure, runtime
-      pod deletion, Hub API restart, operator leader restart, Tailnet
-      interruption, and full single-node reboot. A stale runtime must not modify
-      the shared worktree after replacement, an ambiguous prompt must not be
-      replayed, transcript cursors must converge, and Git integrity must remain
-      valid.
-    </p>
-    <p>
-      Create a coordinated PostgreSQL, shared-filesystem, and optional
-      object-store backup generation on an independent destination, wipe the
-      test installation, and restore it onto a clean host. Backup creation
-      without a successful bare-host restore is not evidence.
-    </p>
-    <h3 id="workstation-runner-proof">Workstation Runner proof</h3>
-    <p>
-      Register one macOS or Linux runner with the proven Hub, pin a session to
-      it, use its local toolchain and filesystem through the shared adapter,
-      disconnect it, and confirm the session becomes unavailable without
-      reassignment or prompt replay. Reconnect the same runner and reconcile
-      against the same local OMP session and files.
-    </p>
-    <h3 id="gate-5-guided-installer">Gate 5: guided installer</h3>
-    <p>
-      Turn the exact managed automation used by Gates 2B through 4 into the
-      signed T4 Node bootstrap and Flutter setup flow. Installation, health
-      checks, support collection, update, failed-update stop, rollback, and
-      recovery must be repeatable from a clean supported Linux image without
-      making an ordinary stack-profile user administer Kubernetes or its
-      independently owned providers.
-    </p>
-    <h3 id="gate-6-ha-expansion">Gate 6: HA expansion</h3>
-    <p>
-      Add two validated Linux nodes and perform changes serially: expand
-      Kubernetes quorum, request provider-owned database and storage expansion,
-      add Hub and T4 operator replicas, then validate the stable Tailnet
-      endpoint. Every provider must report its own healthy state, and the T4
-      operator must remain unable to mutate provider topology. Remove one node
-      and prove continued operation before applying the HA label.
-    </p>
-    <h3 id="product-breadth-and-cicd">Product breadth and CI/CD</h3>
-    <p>
-      After Gate 4, approvals, questions, steering, cancellation, files,
-      terminals, artifacts, and remaining managed workflows proceed as vertical
-      backend-plus-GUI slices. GitHub App, checks, self-hosted runner, and
-      deployment progress can proceed in parallel once command durability, event
-      ordering, and workspace recovery are stable. No CI/CD integration may
-      bypass the command ledger or product event model.
-    </p>
-    <h3 id="first-linux-test-node">First Linux test node</h3>
-    <p>
-      The offered Tailnet Linux box is the correct first external environment.
-      It is disposable test infrastructure, not production data, and should
-      provide:
-    </p>
-    <ul>
-      <li>
-        A supported Linux distribution, kernel, cgroup mode, and OCI image
-        architecture.
-      </li>
-      <li>
-        Root or controlled sudo access, a stable hostname, synchronized time,
-        and reboot persistence.
-      </li>
-      <li>
-        Storage capacity and any provider-specific devices required by the
-        selected optional T4 Stack profile, explicitly approved and containing
-        no data to preserve.
-      </li>
-      <li>
-        Measured CPU, memory, root-disk, inode, and provider capacity headroom
-        for one OMP session plus the compact platform; final profile floors come
-        from this evidence rather than guesses.
-      </li>
-      <li>
-        Tailnet enrollment, intended ACL/tag policy, working MTU, OCI and
-        source-provider egress, and no required public inbound port.
-      </li>
-      <li>
-        An independent off-node backup destination for destructive restore
-        testing.
-      </li>
-      <li>Disabled sleep and an understood power-loss/restart policy.</li>
-    </ul>
-    <p>
-      Hostnames, Tailnet addresses, enrollment credentials, provider tokens, and
-      private repository data remain runtime configuration and never enter the
-      repository or documentation.
-    </p>
-    <h2 id="reliability-and-release-gates">Reliability and release gates</h2>
-    <p>
-      A milestone is not complete from compilation, a running local service, or
-      a healthy Kubernetes dashboard. It must prove observable behavior and
-      failure semantics for the advertised profile.
-    </p>
-    <h3 id="command-and-ownership">Command and ownership</h3>
-    <ul>
-      <li>
-        A command ID is committed once and is never knowingly dispatched twice.
-      </li>
-      <li>
-        An ambiguous post-dispatch outcome becomes <code>indeterminate</code>,
-        never auto-replayed.
-      </li>
-      <li>A client can recover every durable outcome after transport loss.</li>
-      <li>
-        A stale managed owner cannot claim commands or publish authoritative
-        outcomes.
-      </li>
-      <li>
-        Managed owner loss produces one fenced replacement; local or runner loss
-        produces unavailability.
-      </li>
-    </ul>
-    <h3 id="workspace">Workspace</h3>
-    <ul>
-      <li>Concurrent real OMP worktrees preserve repository integrity.</li>
-      <li>
-        Managed pod and node loss preserve work only after the selected storage
-        provider passes fencing and recovery proof.
-      </li>
-      <li>
-        Local and runner files remain on their named machine and are never
-        claimed as portable.
-      </li>
-      <li>
-        Expansion from one node to three does not change managed paths or
-        project identity.
-      </li>
-      <li>
-        Snapshot restoration reproduces database and filesystem generations
-        consistently.
-      </li>
-      <li>
-        Representative destructive tests finish with successful Git integrity
-        checks.
-      </li>
-    </ul>
-    <h3 id="control-plane">Managed control plane</h3>
-    <ul>
-      <li>API replica loss does not interrupt durable commands.</li>
-      <li>Operator leader loss does not duplicate resources.</li>
-      <li>PostgreSQL primary loss preserves committed state.</li>
-      <li>
-        Tailnet reconnect resumes from cursors rather than replaying unbounded
-        history.
-      </li>
-      <li>
-        Optional object-store or telemetry impairment degrades only explicit
-        dependent features without corrupting product state.
-      </li>
-    </ul>
-    <h3 id="client">Client</h3>
-    <ul>
-      <li>
-        Physical desktop clients create, operate, restart, and inspect a real T4
-        Local session.
-      </li>
-      <li>
-        Physical desktop and mobile clients create, operate, recover, and
-        inspect one managed session.
-      </li>
-      <li>
-        Compact and wide layouts show creating, ready, running, waiting,
-        unavailable, recovering, indeterminate, failed, and completed states
-        truthfully.
-      </li>
-      <li>
-        Background/resume and network switching preserve command and transcript
-        continuity.
-      </li>
-    </ul>
-    <h3 id="installation-and-lifecycle">Installation and lifecycle</h3>
-    <ul>
-      <li>
-        A non-expert can install T4 Local Service on macOS or Linux without a VM
-        or managed stack.
-      </li>
-      <li>
-        A Workstation Runner installs separately and cannot acquire Hub
-        control-plane authority.
-      </li>
-      <li>
-        A non-expert can install a single remote Linux Hub without Kubernetes
-        knowledge.
-      </li>
-      <li>
-        Adding two validated nodes converts it to HA only after replication and
-        failure checks pass.
-      </li>
-      <li>
-        Upgrade runs preflight, database backup, filesystem snapshot,
-        signed-image verification, migration, canary, and health gates.
-      </li>
-      <li>
-        Failed upgrades stop safely and expose a tested recovery or rollback
-        path.
-      </li>
-      <li>
-        Backup restoration is exercised, not inferred from successful backup
-        creation.
-      </li>
-    </ul>
-    <h2 id="out-of-scope">Out of scope</h2>
-    <ul>
-      <li>Native macOS or Windows Hub implementations.</li>
-      <li>Docker or Docker Desktop as a user prerequisite.</li>
-      <li>
-        Attaching arbitrary externally owned desktop OMP sessions to the managed
-        control plane.
-      </li>
-      <li>Automatic takeover of Local or Workstation Runner sessions.</li>
-      <li>
-        Continuous bidirectional synchronization between local files and the
-        managed shared filesystem.
-      </li>
-      <li>
-        Installing or lifecycle-managing database, filesystem, object-store,
-        ingress, or observability providers from the T4 operator.
-      </li>
-      <li>Active-active cross-cluster filesystem failover.</li>
-      <li>
-        Making an observability backend the user-facing product event database.
-      </li>
-      <li>
-        Retaining the private Lycaon OMP bridge after official-adapter parity is
-        proven.
-      </li>
-    </ul>
-    <h2 id="open-decisions-requiring-proof">Open decisions requiring proof</h2>
-    <ul>
-      <li>
-        Whether the remaining official OMP lifecycle, recovery, and durable
-        acceptance behaviors require narrow upstream additions. Capability
-        discovery and terminal-only dispatch classification use the existing
-        official RPC seam.
-      </li>
-      <li>
-        Measured overhead and resource floors for T4 Local, Personal Hub, and HA
-        Hub profiles.
-      </li>
-      <li>
-        Tailnet hosted-service plan requirements and whether Headscale meets the
-        supported deployment contract.
-      </li>
-      <li>
-        Packaging and platform capability details for macOS, Linux, Windows, and
-        GPU runners.
-      </li>
-      <li>
-        Retention defaults for product events, transcripts, artifacts, backups,
-        and optional external telemetry.
-      </li>
-    </ul>
+      <h2 id="release-proof">Release proof and open decisions</h2>
+      <p>
+        Compilation, a healthy dashboard, mock transport, or an in-process client
+        is not release proof. A release candidate must satisfy OP-10 using signed
+        artifacts and real failure boundaries. Evidence records exact versions,
+        digests, topology, timestamps, injected fault, expected invariant,
+        observed events and cursors, metrics, logs, and recovery result.
+      </p>
+      <p>
+        The following remain decisions requiring executable proof rather than
+        promises: which pinned official OMP operations use its RPC seam versus ACP;
+        the initial cursor and idempotency retention windows; the first supported
+        PostgreSQL, Kubernetes, ingress, identity, and RWX-provider matrix; and the
+        exact conditions for proposing <code>v1beta1</code>. These choices may
+        narrow advertised capability or supported platforms, but they may not
+        weaken commit-before-projection, fencing, security, or recovery invariants.
+      </p>
+    </main>
   </body>
 </html>
