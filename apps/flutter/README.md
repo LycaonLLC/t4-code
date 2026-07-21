@@ -22,6 +22,12 @@ flutter test integration_test/app_smoke_test.dart -d <device-id>
 build directly to a host. Development credentials are intentionally volatile.
 Release builds use platform secure storage.
 
+The public `https://t4code.net/demo/` preview is a read-only Flutter build with
+local display data. From the repository root, `pnpm build:demo` creates that
+subpath build in `apps/site/dist/demo`; it does not connect to a host or store
+credentials. Demo publication follows current `main` independently of desktop
+release tags.
+
 The device smoke harness launches the real native shell, waits for persistent
 storage and platform initialization, and opens host management. CI runs it on
 an Android emulator and an iOS simulator; local device IDs come from

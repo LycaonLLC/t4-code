@@ -24,5 +24,6 @@ dist-electron/
 coverage/
 playwright-report/
 test-results/
+/output/playwright/
 *.log
 .todos/

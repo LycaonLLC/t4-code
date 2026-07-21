@@ -95,6 +95,42 @@ Resources:
             Override: true
             Protection: true
 
+  DemoResponseHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: t4-code-demo-security
+        Comment: Security headers for the Flutter web demo
+        CustomHeadersConfig:
+          Items:
+            - Header: Cross-Origin-Opener-Policy
+              Override: true
+              Value: same-origin
+            - Header: Permissions-Policy
+              Override: true
+              Value: camera=(), geolocation=(), microphone=(), payment=(), usb=()
+        SecurityHeadersConfig:
+          ContentSecurityPolicy:
+            ContentSecurityPolicy: "default-src 'self'; base-uri 'self'; connect-src 'self' https://fonts.gstatic.com; font-src 'self' https://fonts.gstatic.com; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; upgrade-insecure-requests"
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          FrameOptions:
+            FrameOption: DENY
+            Override: true
+          ReferrerPolicy:
+            Override: true
+            ReferrerPolicy: strict-origin-when-cross-origin
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 63072000
+            IncludeSubdomains: true
+            Override: true
+            Preload: true
+          XSSProtection:
+            ModeBlock: true
+            Override: true
+            Protection: true
+
   Distribution:
     Type: AWS::CloudFront::Distribution
     Properties:
@@ -114,6 +150,18 @@ Resources:
           ResponseHeadersPolicyId: !Ref SiteResponseHeadersPolicy
           TargetOriginId: SiteOrigin
           ViewerProtocolPolicy: redirect-to-https
+        CacheBehaviors:
+          - PathPattern: demo*
+            AllowedMethods: [GET, HEAD, OPTIONS]
+            CachedMethods: [GET, HEAD, OPTIONS]
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+            Compress: true
+            FunctionAssociations:
+              - EventType: viewer-request
+                FunctionARN: !GetAtt UrlRewriteFunction.FunctionARN
+            ResponseHeadersPolicyId: !Ref DemoResponseHeadersPolicy
+            TargetOriginId: SiteOrigin
+            ViewerProtocolPolicy: redirect-to-https
         DefaultRootObject: index.html
         CustomErrorResponses:
           - ErrorCachingMinTTL: 60

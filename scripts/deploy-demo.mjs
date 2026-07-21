@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,8 +14,13 @@ function run(command, args, cwd) {
 }
 
 const DOCUMENT_URL_PATTERN = /\b(?:href|src)="([^"]+)"/gu;
+const BASE_HREF_PATTERN = /<base\s+href="([^"]+)"/u;
 
 export function assertDemoDocumentPaths(document) {
+  const baseHref = BASE_HREF_PATTERN.exec(document)?.[1];
+  if (baseHref !== "/demo/") {
+    throw new Error(`demo base href must be /demo/, received ${baseHref ?? "none"}`);
+  }
   const urls = [...document.matchAll(DOCUMENT_URL_PATTERN)].map((match) => match[1]);
   const localUrls = urls.filter(
     (url) =>
@@ -25,14 +30,32 @@ export function assertDemoDocumentPaths(document) {
       !url.startsWith("https:") &&
       !url.startsWith("#"),
   );
-  if (localUrls.length === 0) throw new Error("demo index does not reference local assets");
-  const escaped = localUrls.find((url) => !url.startsWith("/demo/"));
+  if (!localUrls.includes("flutter_bootstrap.js")) {
+    throw new Error("demo index is not a Flutter web build");
+  }
+  const escaped = localUrls.find((url) => {
+    const resolved = new URL(url, "https://t4code.net/demo/");
+    return resolved.origin !== "https://t4code.net" || !resolved.pathname.startsWith("/demo/");
+  });
   if (escaped !== undefined) throw new Error(`demo asset escapes /demo/: ${escaped}`);
 }
 
 export function validateDemoBuild(repoRoot) {
   const document = readFileSync(resolve(repoRoot, "apps/site/dist/demo/index.html"), "utf8");
   assertDemoDocumentPaths(document);
+  const bootstrap = readFileSync(
+    resolve(repoRoot, "apps/site/dist/demo/flutter_bootstrap.js"),
+    "utf8",
+  );
+  if (!bootstrap.includes("registration.unregister()")) {
+    throw new Error("demo bootstrap must retire stale service workers");
+  }
+  if (!bootstrap.includes('"useLocalCanvasKit":true')) {
+    throw new Error("demo bootstrap must use local Flutter renderer assets");
+  }
+  if (existsSync(resolve(repoRoot, "apps/site/dist/demo/flutter_service_worker.js"))) {
+    throw new Error("demo build must not publish a Flutter service worker");
+  }
 }
 
 export function deployDemo(
