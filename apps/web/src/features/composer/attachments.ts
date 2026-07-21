@@ -2,6 +2,10 @@
 // URLs stay renderer-local; the live runtime converts a File into an appserver
 // upload and sends only the resulting image id across the wire.
 import type { PromptAttachment } from "../session-runtime/intents.ts";
+import {
+  readFileWithFileReader,
+  sniffPromptImageMimeType,
+} from "../session-runtime/image-upload.ts";
 
 export const MAX_ATTACHMENTS = 8;
 export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024; // Mirrors app-wire.
@@ -57,6 +61,19 @@ export interface AttachmentIntakeOptions {
   readonly stagedCount?: number;
 }
 
+export interface AttachmentMaterialization {
+  readonly accepted: readonly AttachmentCandidate[];
+  readonly rejections: readonly string[];
+}
+
+export interface AttachmentMaterializationOptions {
+  /**
+   * Test seam. Production deliberately starts FileReader synchronously while
+   * the Android picker grant is fresh instead of retaining its lazy File.
+   */
+  readonly readFile?: (file: File) => Promise<ArrayBuffer>;
+}
+
 function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   if (bytes >= 1024) return `${Math.round(bytes / 1024)} kB`;
@@ -76,6 +93,66 @@ export function provisionalImageMediaType(file: File): string | null {
   const dot = file.name.lastIndexOf(".");
   if (dot < 0 || dot === file.name.length - 1) return null;
   return IMAGE_EXTENSIONS[file.name.slice(dot + 1).toLowerCase()] ?? null;
+}
+
+/**
+ * Copy picker-backed Files into renderer-owned Files before the input is
+ * cleared. Android content providers can invalidate or mutate their synthetic
+ * File metadata after the change event; starting every FileReader here keeps
+ * the grant live, and staging only the immutable copies removes that lifetime
+ * from preview and submission.
+ */
+export async function materializeAttachmentCandidates(
+  candidates: readonly AttachmentCandidate[],
+  options: AttachmentMaterializationOptions = {},
+): Promise<AttachmentMaterialization> {
+  const readFile = options.readFile ?? readFileWithFileReader;
+  const results = await Promise.all(
+    candidates.map(async ({ file }) => {
+      let buffer: ArrayBuffer;
+      try {
+        // This call occurs synchronously for every candidate before the outer
+        // function reaches its first await.
+        buffer = await readFile(file);
+      } catch {
+        return {
+          candidate: null,
+          rejection: `${file.name || "untitled"}: the selected image could not be read. Try choosing it again or selecting it through Files.`,
+        } as const;
+      }
+
+      const name = file.name || "untitled";
+      const mediaType = sniffPromptImageMimeType(new Uint8Array(buffer));
+      if (mediaType === null) {
+        return {
+          candidate: null,
+          rejection: `${name}: attach a PNG, JPEG, WebP, or GIF image.`,
+        } as const;
+      }
+
+      try {
+        return {
+          candidate: {
+            file: new File([buffer], name, { type: mediaType }),
+          },
+          rejection: null,
+        } as const;
+      } catch {
+        return {
+          candidate: null,
+          rejection: `${name}: could not prepare a stable image copy.`,
+        } as const;
+      }
+    }),
+  );
+
+  const accepted: AttachmentCandidate[] = [];
+  const rejections: string[] = [];
+  for (const result of results) {
+    if (result.candidate === null) rejections.push(result.rejection);
+    else accepted.push(result.candidate);
+  }
+  return { accepted, rejections };
 }
 
 /**
