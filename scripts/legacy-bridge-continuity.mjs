@@ -16,13 +16,22 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { createOmpClient } from "../packages/client/src/index.ts";
+import {
+  clusterOperatorRequestedCapabilities,
+  clusterOperatorRequestedFeatures,
+  createOmpClient,
+} from "../packages/client/src/index.ts";
 import { UnixWebSocketTransport } from "../apps/desktop/src/transport.ts";
 import {
   ADDITIVE_FEATURES,
   decodeSessionListResult,
   DEVICE_CAPABILITIES,
 } from "../packages/protocol/src/index.ts";
+
+const LEGACY_DEVICE_CAPABILITIES =
+  clusterOperatorRequestedCapabilities(DEVICE_CAPABILITIES);
+const LEGACY_REQUESTED_FEATURES =
+  clusterOperatorRequestedFeatures(ADDITIVE_FEATURES);
 
 const PROCESS_TIMEOUT_MS = 30_000;
 const RECONNECT_TIMEOUT_MS = 45_000;
@@ -462,9 +471,9 @@ class T4Probe {
     this.transport = auditedTransportFactory(socketPath, label, wireJournal);
     this.client = createOmpClient({
       transport: this.transport.factory,
-      capabilities: DEVICE_CAPABILITIES,
-      requestedFeatures: ADDITIVE_FEATURES,
-      compatibilityRequestedFeatures: ADDITIVE_FEATURES.filter(
+      capabilities: LEGACY_DEVICE_CAPABILITIES,
+      requestedFeatures: LEGACY_REQUESTED_FEATURES,
+      compatibilityRequestedFeatures: LEGACY_REQUESTED_FEATURES.filter(
         (feature) => feature !== "prompt.images" && feature !== "transcript.images",
       ),
       client: {
