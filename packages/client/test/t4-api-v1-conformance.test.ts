@@ -599,6 +599,7 @@ describe("generated T4 API v1 client conformance", () => {
     }
 
     for (const response of [
+      new Response('data: {"type":"heartbeat","cursor":"wrong-media-1","observedAt":"2026-07-21T00:00:00Z"}\n\n', { status: 200, headers: { "Content-Type": "application/json" } }),
       new Response('data: {"type":"heartbeat","cursor":"wrong-1","observedAt":"2026-07-21T00:00:00Z"}\n\n', { status: 201, headers: { "Content-Type": "text/event-stream" } }),
       new Response(null, { status: 204, headers: { "Content-Type": "text/event-stream" } }),
       Response.json({ error: { code: "revision_conflict", message: "bad", requestId: "r", retryable: false } }, { status: 409 }),
@@ -638,6 +639,20 @@ describe("generated T4 API v1 client conformance", () => {
       });
       expect(attempts).toBe(1);
     }
+
+    let oversizedCancelled = false;
+    const oversizedChunk = new Uint8Array(600 * 1024);
+    const streamedOversizedClient = createT4ApiClient({
+      baseUrl: "https://streamed-invalid-503.test", credential: "token-a", majorVersion: 1,
+      fetch: async () => new Response(new ReadableStream<Uint8Array>({
+        pull(controller) { controller.enqueue(oversizedChunk); },
+        cancel() { oversizedCancelled = true; },
+      }), { status: 503, headers: { "Content-Type": "application/json" } }),
+    });
+    await expect(streamedOversizedClient.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 3, retryBackoffMs: 0 }).next()).rejects.toMatchObject({
+      code: "indeterminate", status: 502, retryable: false,
+    });
+    expect(oversizedCancelled).toBe(true);
 
     let nonJsonCancelled = false;
     const nonJsonClient = createT4ApiClient({
