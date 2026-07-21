@@ -72,6 +72,40 @@ func TestWorkspaceReconcileIsIdempotentAcrossDuplicateEvents(t *testing.T) {
 	}
 }
 
+func TestWorkspaceCreateAlreadyExistsRefetchesForeignPVC(t *testing.T) {
+	ctx := context.Background()
+	scheme := testScheme(t)
+	workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+	workspace.UID = "workspace-uid"
+	base := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&clusterv1alpha1.T4Workspace{}, &corev1.PersistentVolumeClaim{}).
+		WithObjects(testHost(), rwxStorageClass(), workspace).Build()
+	c := &createAlreadyExistsClient{Client: base, raceKind: "PVC"}
+	r := &controllers.WorkspaceReconciler{Client: c, Scheme: scheme}
+	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workspace)}); err != nil {
+		t.Fatal(err)
+	}
+	if c.winner == nil {
+		t.Fatal("PVC create race was not exercised")
+	}
+	var pvc corev1.PersistentVolumeClaim
+	if err := base.Get(ctx, client.ObjectKeyFromObject(c.winner), &pvc); err != nil {
+		t.Fatalf("foreign PVC winner was deleted: %v", err)
+	}
+	want := c.winner.(*corev1.PersistentVolumeClaim)
+	if !reflect.DeepEqual(pvc.ObjectMeta, want.ObjectMeta) || !reflect.DeepEqual(pvc.Spec, want.Spec) {
+		t.Fatalf("foreign PVC winner was mutated: %#v", pvc)
+	}
+	var failed clusterv1alpha1.T4Workspace
+	if err := base.Get(ctx, client.ObjectKeyFromObject(workspace), &failed); err != nil {
+		t.Fatal(err)
+	}
+	storageReady := findCondition(failed.Status.Conditions, "StorageReady")
+	if failed.Status.PVCName != "" || storageReady == nil || storageReady.Status != metav1.ConditionFalse || storageReady.Reason != "PVCOwnershipConflict" || storageReady.ObservedGeneration != failed.Generation {
+		t.Fatalf("foreign PVC winner was published as authoritative: status=%#v StorageReady=%#v", failed.Status, storageReady)
+	}
+}
+
 func TestRetainWorkspaceCreatesPVCWithoutGarbageCollectableOwner(t *testing.T) {
 	scheme := testScheme(t)
 	workspace := testWorkspace(clusterv1alpha1.RetentionPolicyRetain)
@@ -2161,6 +2195,10 @@ func (c *createAlreadyExistsClient) Create(ctx context.Context, object client.Ob
 		}
 	case *corev1.Service:
 		if c.raceKind == "Service" {
+			winner = object.DeepCopy()
+		}
+	case *corev1.PersistentVolumeClaim:
+		if c.raceKind == "PVC" {
 			winner = object.DeepCopy()
 		}
 	}
