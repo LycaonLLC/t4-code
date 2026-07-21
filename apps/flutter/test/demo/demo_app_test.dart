@@ -11,16 +11,23 @@ void main() {
     addTearDown(tester.view.reset);
 
     await tester.pumpWidget(const T4DemoApp());
-    await tester.pumpAndSettle();
+    // The demo seeds a working session whose rail spinner animates forever,
+    // so settle with bounded pumps instead of pumpAndSettle.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.text('T4 Code'), findsWidgets);
+    expect(find.text('T4 CODE'), findsWidgets);
     expect(
       find.text('Public preview · sample data · actions disabled'),
       findsOneWidget,
     );
-    expect(find.text('Align the public demo'), findsWidgets);
+    expect(find.text('Fix quick-open stale results'), findsWidgets);
     expect(
-      find.textContaining('The Flutter client is now the product source'),
+      find.textContaining(
+        'Quick open now keys its cache',
+        findRichText: true,
+      ),
       findsOneWidget,
     );
     expect(find.text('Connect to T4'), findsNothing);
