@@ -127,12 +127,11 @@ export class T4ApiV1ConformanceService {
         const parsed = await this.#jsonBody(request);
         if (parsed instanceof Response) return parsed;
         const body = parsed;
-        if (request.headers.get("If-Match") !== String(workspace.revision)) return problem(409, "revision_conflict", "Workspace revision changed");
         return this.#idempotent(request, tenant, "mutateWorkspace", [id], body, 200, 200, () => {
           const updated = { ...workspace, name: body.name ?? workspace.name, revision: Number(workspace.revision) + 1 };
           this.#workspaces.set(id, updated);
           return updated;
-        });
+        }, () => request.headers.get("If-Match") === String(workspace.revision) ? undefined : problem(409, "revision_conflict", "Workspace revision changed"));
       }
       if (request.method === "DELETE") {
         return this.#idempotent(request, tenant, "deleteWorkspace", [id], null, 204, 204, () => {
@@ -180,12 +179,11 @@ export class T4ApiV1ConformanceService {
         const parsed = await this.#jsonBody(request);
         if (parsed instanceof Response) return parsed;
         const body = parsed;
-        if (request.headers.get("If-Match") !== String(session.revision)) return problem(409, "revision_conflict", "Session revision changed");
         return this.#idempotent(request, tenant, "mutateSession", [id], body, 200, 200, () => {
           const updated = { ...session, title: body.title ?? session.title, revision: Number(session.revision) + 1 };
           this.#sessions.set(id, updated);
           return updated;
-        });
+        }, () => request.headers.get("If-Match") === String(session.revision) ? undefined : problem(409, "revision_conflict", "Session revision changed"));
       }
       if (request.method === "DELETE") {
         return this.#idempotent(request, tenant, "deleteSession", [id], null, 204, 204, () => {
@@ -329,6 +327,7 @@ export class T4ApiV1ConformanceService {
     firstStatus: number,
     replayStatus: number,
     create: () => unknown,
+    validate?: () => Response | undefined,
   ): Response {
     const key = request.headers.get("Idempotency-Key");
     if (key === null) return problem(400, "idempotency_key_required", "Idempotency-Key is required");
@@ -343,6 +342,8 @@ export class T4ApiV1ConformanceService {
         ? new Response(null, { status: prior.replayStatus, headers: { "T4-API-Version": "1.0", "Idempotency-Replayed": "true" } })
         : json(prior.replayStatus, prior.body, { "Idempotency-Replayed": "true" });
     }
+    const validation = validate?.();
+    if (validation !== undefined) return validation;
     const created = create();
     const visibleValue = created !== null && typeof created === "object" && !Array.isArray(created)
       ? this.#visible(created as Record<string, unknown>)

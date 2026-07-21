@@ -169,6 +169,12 @@ describe("generated T4 API v1 client conformance", () => {
       body: { name: "renamed" },
     }));
     expect(updated).toMatchObject({ name: "renamed", revision: 2 });
+    const updatedReplay = await owner.http.PATCH("/v1/workspaces/{workspaceId}", {
+      params: { header: mutationHeaders(1, "workspace-patch-0001"), path: { workspaceId: "ws-1" } }, body: { name: "renamed" },
+    });
+    expect(updatedReplay.response.status).toBe(200);
+    expect(updatedReplay.response.headers.get("Idempotency-Replayed")).toBe("true");
+    expect(updatedReplay.data).toEqual(updated);
     const stale = await owner.http.PATCH("/v1/workspaces/{workspaceId}", {
       params: { header: mutationHeaders(1, "workspace-patch-0002"), path: { workspaceId: "ws-1" } },
       body: { name: "stale" },
@@ -231,6 +237,12 @@ describe("generated T4 API v1 client conformance", () => {
       params: { header: mutationHeaders(1, "session-patch-0001"), path: { sessionId: "ses-1" } }, body: { title: "renamed-agent" },
     }));
     expect(mutated).toMatchObject({ title: "renamed-agent", revision: 2 });
+    const mutatedReplay = await client.http.PATCH("/v1/sessions/{sessionId}", {
+      params: { header: mutationHeaders(1, "session-patch-0001"), path: { sessionId: "ses-1" } }, body: { title: "renamed-agent" },
+    });
+    expect(mutatedReplay.response.status).toBe(200);
+    expect(mutatedReplay.response.headers.get("Idempotency-Replayed")).toBe("true");
+    expect(mutatedReplay.data).toEqual(mutated);
     const stale = await client.http.PATCH("/v1/sessions/{sessionId}", {
       params: { header: mutationHeaders(1, "session-patch-0002"), path: { sessionId: "ses-1" } }, body: { title: "stale-agent" },
     });

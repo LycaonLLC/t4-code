@@ -7,6 +7,7 @@ export type { components, operations, paths } from "./generated/schema.ts";
 const MAX_CREDENTIAL_LENGTH = 4096;
 const MAX_ERROR_BYTES = 1024 * 1024;
 const MAX_EVENT_BYTES = 1024 * 1024;
+const MAX_JSON_RESPONSE_BYTES = 16 * 1024 * 1024;
 const CURSOR_PATTERN = /^[A-Za-z0-9._~-]+$/u;
 const ERROR_CODES = {
   invalid_request: true, unauthenticated: true, forbidden: true, not_found: true,
@@ -29,6 +30,10 @@ const ERROR_CODES_BY_STATUS: Readonly<Record<number, Readonly<Record<string, tru
   422: { invalid_request: true },
   503: { unavailable: true, indeterminate: true },
 };
+const WORKSPACE_STATES = {
+  accepted: true, provisioning: true, ready: true, deleting: true,
+  deleted: true, failed: true, unavailable: true, indeterminate: true,
+} as const satisfies Record<components["schemas"]["WorkspaceState"], true>;
 const SESSION_STATES = {
   accepted: true, provisioning: true, ready: true, cancelling: true,
   cancelled: true, failed: true, unavailable: true, indeterminate: true,
@@ -70,8 +75,9 @@ export class T4ApiError extends Error {
   readonly violations?: ApiError["violations"];
   readonly supportedMajors?: ApiError["supportedMajors"];
   readonly resync?: Resync;
+  readonly retryAfterMs?: number;
 
-  constructor(status: number, error: ApiError, options?: ErrorOptions) {
+  constructor(status: number, error: ApiError, options?: ErrorOptions & { readonly retryAfterMs?: number }) {
     super(error.message, options);
     this.name = "T4ApiError";
     this.code = error.code;
@@ -81,6 +87,7 @@ export class T4ApiError extends Error {
     if (error.violations !== undefined) this.violations = error.violations;
     if (error.supportedMajors !== undefined) this.supportedMajors = error.supportedMajors;
     if (error.resync !== undefined) this.resync = error.resync;
+    if (options?.retryAfterMs !== undefined) this.retryAfterMs = options.retryAfterMs;
   }
 }
 
@@ -180,7 +187,7 @@ function apiError(value: unknown, status: number): ApiError | undefined {
   return error as ApiError;
 }
 
-async function boundedResponseText(response: Response): Promise<string | undefined> {
+async function boundedResponseText(response: Response, maximumBytes = MAX_ERROR_BYTES): Promise<string | undefined> {
   if (response.body === null) return "";
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -190,7 +197,7 @@ async function boundedResponseText(response: Response): Promise<string | undefin
       const chunk = await reader.read();
       if (chunk.done) break;
       length += chunk.value.byteLength;
-      if (length > MAX_ERROR_BYTES) {
+      if (length > maximumBytes) {
         await reader.cancel();
         return undefined;
       }
@@ -208,12 +215,26 @@ async function boundedResponseText(response: Response): Promise<string | undefin
   try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { return undefined; }
 }
 
+function retryAfterMilliseconds(response: Response): number | undefined {
+  const value = response.headers.get("Retry-After")?.trim();
+  if (value === undefined || value === "") return undefined;
+  if (/^[0-9]+$/u.test(value)) return Math.min(30_000, Number(value) * 1000);
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return undefined;
+  return Math.min(30_000, Math.max(0, timestamp - Date.now()));
+}
+
 async function boundedError(response: Response): Promise<T4ApiError> {
   const text = await boundedResponseText(response);
+  const retryAfterMs = retryAfterMilliseconds(response);
   if (text !== undefined) {
     try {
       const decoded = apiError(JSON.parse(text), response.status);
-      if (decoded !== undefined) return new T4ApiError(response.status, decoded);
+      if (decoded !== undefined) {
+        return retryAfterMs === undefined
+          ? new T4ApiError(response.status, decoded)
+          : new T4ApiError(response.status, decoded, { retryAfterMs });
+      }
     } catch {
       // Fall through to the stable indeterminate transport envelope.
     }
@@ -228,6 +249,83 @@ async function boundedError(response: Response): Promise<T4ApiError> {
 
 function hasOnlyKeys(value: Record<string, unknown>, keys: Readonly<Record<string, true>>): boolean {
   return Object.keys(value).every((key) => keys[key] === true);
+}
+
+function validResourceId(value: unknown): value is string {
+  return typeof value === "string" && value.length >= 1 && value.length <= 128 && /^[A-Za-z0-9][A-Za-z0-9._~-]*$/u.test(value);
+}
+
+function validCursor(value: unknown): value is string {
+  return typeof value === "string" && value.length >= 1 && value.length <= 512 && CURSOR_PATTERN.test(value);
+}
+
+function validLabels(value: unknown): boolean {
+  if (value === undefined) return true;
+  const labels = record(value);
+  return labels !== undefined && Object.keys(labels).length <= 32 && Object.entries(labels).every(([key, item]) =>
+    /^[a-z][a-z0-9.-]{0,62}$/u.test(key) && typeof item === "string" && item.length <= 128);
+}
+
+function validWorkspace(value: unknown): boolean {
+  const item = record(value);
+  return item !== undefined && hasOnlyKeys(item, { id: true, name: true, state: true, revision: true, labels: true }) &&
+    validResourceId(item.id) && typeof item.name === "string" && item.name.length >= 1 && item.name.length <= 128 &&
+    typeof item.state === "string" && WORKSPACE_STATES[item.state as components["schemas"]["WorkspaceState"]] === true &&
+    Number.isSafeInteger(item.revision) && Number(item.revision) >= 1 && validLabels(item.labels);
+}
+
+function validSession(value: unknown): boolean {
+  const item = record(value);
+  return item !== undefined && hasOnlyKeys(item, { id: true, workspaceId: true, title: true, state: true, revision: true, labels: true }) &&
+    validResourceId(item.id) && validResourceId(item.workspaceId) && typeof item.title === "string" && item.title.length >= 1 && item.title.length <= 128 &&
+    typeof item.state === "string" && SESSION_STATES[item.state as components["schemas"]["SessionState"]] === true &&
+    Number.isSafeInteger(item.revision) && Number(item.revision) >= 1 && validLabels(item.labels);
+}
+
+function validCommandResult(value: unknown): boolean {
+  const item = record(value);
+  return item !== undefined && hasOnlyKeys(item, { commandId: true, state: true }) && validResourceId(item.commandId) &&
+    typeof item.state === "string" && OPERATION_STATES[item.state as components["schemas"]["OperationState"]] === true;
+}
+
+function validDiscovery(value: unknown): boolean {
+  const discovery = record(value);
+  const limits = record(discovery?.limits);
+  return discovery !== undefined && hasOnlyKeys(discovery, { apiVersion: true, supportedMajors: true, capabilities: true, limits: true }) &&
+    typeof discovery.apiVersion === "string" && /^1\.[0-9]+$/u.test(discovery.apiVersion) &&
+    Array.isArray(discovery.supportedMajors) && discovery.supportedMajors.length >= 1 && discovery.supportedMajors.length <= 8 && discovery.supportedMajors.every((major) => Number.isSafeInteger(major) && Number(major) >= 1) &&
+    Array.isArray(discovery.capabilities) && discovery.capabilities.length <= 128 && discovery.capabilities.every((capability) => typeof capability === "string" && /^[a-z][a-z0-9.-]{0,127}$/u.test(capability)) &&
+    limits !== undefined && hasOnlyKeys(limits, { pageSizeDefault: true, pageSizeMax: true, commandBytesMax: true, commandRequestBytesMax: true, commandMetadataValueBytesMax: true, watchEventsMax: true, heartbeatSeconds: true }) &&
+    [limits.pageSizeDefault, limits.pageSizeMax, limits.commandBytesMax, limits.commandRequestBytesMax, limits.commandMetadataValueBytesMax, limits.watchEventsMax, limits.heartbeatSeconds].every((limit) => Number.isSafeInteger(limit) && Number(limit) >= 1) &&
+    Number(limits.pageSizeDefault) <= Number(limits.pageSizeMax) && Number(limits.commandBytesMax) <= Number(limits.commandRequestBytesMax) && Number(limits.commandMetadataValueBytesMax) <= Number(limits.commandRequestBytesMax) &&
+    Number(limits.pageSizeMax) <= 100 && Number(limits.commandBytesMax) <= 262144 && Number(limits.commandRequestBytesMax) <= 1048576 && Number(limits.commandMetadataValueBytesMax) <= 262144 && Number(limits.watchEventsMax) <= 1000 && Number(limits.heartbeatSeconds) >= 5 && Number(limits.heartbeatSeconds) <= 60;
+}
+
+function validSuccessPayload(request: Request, value: unknown): boolean {
+  const path = new URL(request.url).pathname;
+  if (request.method === "GET" && path === "/v1") return validDiscovery(value);
+  if (/^\/v1\/workspaces\/[A-Za-z0-9._~-]+\/sessions$/u.test(path) && request.method === "GET") {
+    const page = record(value);
+    return page !== undefined && hasOnlyKeys(page, { items: true, nextCursor: true }) && Array.isArray(page.items) && page.items.length <= 100 && page.items.every(validSession) && (page.nextCursor === undefined || validCursor(page.nextCursor));
+  }
+  if (path === "/v1/workspaces" && request.method === "GET") {
+    const page = record(value);
+    return page !== undefined && hasOnlyKeys(page, { items: true, nextCursor: true }) && Array.isArray(page.items) && page.items.length <= 100 && page.items.every(validWorkspace) && (page.nextCursor === undefined || validCursor(page.nextCursor));
+  }
+  if (path === "/v1/workspaces" || /^\/v1\/workspaces\/[A-Za-z0-9._~-]+$/u.test(path)) return validWorkspace(value);
+  if (/^\/v1\/workspaces\/[A-Za-z0-9._~-]+\/sessions$/u.test(path) || /^\/v1\/sessions\/[A-Za-z0-9._~-]+(?:\/cancel)?$/u.test(path)) return validSession(value);
+  if (/^\/v1\/sessions\/[A-Za-z0-9._~-]+\/commands$/u.test(path)) return validCommandResult(value);
+  return true;
+}
+
+async function validateJsonSuccess(request: Request, response: Response): Promise<void> {
+  if (!response.ok || response.status === 204 || !response.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return;
+  const text = await boundedResponseText(response.clone(), MAX_JSON_RESPONSE_BYTES);
+  let value: unknown;
+  try { value = text === undefined ? undefined : JSON.parse(text); } catch { value = undefined; }
+  if (text === undefined || !validSuccessPayload(request, value)) {
+    throw new T4ApiError(502, { code: "indeterminate", message: "T4 API returned an invalid or oversized JSON response", requestId: "unavailable", retryable: true });
+  }
 }
 
 function watchEvent(value: unknown, eventId: string | undefined): WatchEvent {
@@ -412,6 +510,7 @@ async function* watch(
     while (delivered < maxEvents && !controller.signal.aborted) {
       let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
       let transientFailure: unknown;
+      let retryAfterMs = 0;
       try {
         const url = new URL(`${baseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/events`);
         url.searchParams.set("maxEvents", String(maxEvents - delivered));
@@ -438,6 +537,7 @@ async function* watch(
           for (const event of events) {
             cursor = event.cursor;
             delivered += 1;
+            reconnectAttempts = 0;
             yield event;
             if (delivered >= maxEvents || controller.signal.aborted) break;
           }
@@ -447,7 +547,11 @@ async function* watch(
         transientFailure = new TypeError("T4 API watch ended before the requested event bound");
       } catch (error) {
         if (controller.signal.aborted) return;
-        if (error instanceof T4ApiError) throw error;
+        if (error instanceof T4ApiError) {
+          const reconnectable = error.retryable && error.status === 503 && (error.code === "unavailable" || error.code === "indeterminate");
+          if (!reconnectable) throw error;
+          retryAfterMs = error.retryAfterMs ?? 0;
+        }
         transientFailure = error;
       } finally {
         if (reader !== undefined) {
@@ -458,7 +562,7 @@ async function* watch(
       if (reconnectAttempts >= maxReconnectAttempts) {
         throw new T4ApiError(502, { code: "indeterminate", message: "T4 API watch reconnect attempts exhausted", requestId: "unavailable", retryable: true }, { cause: transientFailure });
       }
-      const delay = Math.min(30_000, retryBackoffMs * (2 ** reconnectAttempts));
+      const delay = Math.min(30_000, Math.max(retryAfterMs, retryBackoffMs * (2 ** reconnectAttempts)));
       reconnectAttempts += 1;
       if (!await retryDelay(delay, controller.signal)) return;
     }
@@ -478,7 +582,9 @@ export function createT4ApiClient(options: T4ApiClientOptions): T4ApiClient {
     request.headers.set("Authorization", `Bearer ${credential}`);
     request.headers.set("T4-API-Version", majorVersion);
     request.headers.set("Accept", "application/json");
-    return await fetchImpl(request);
+    const response = await fetchImpl(request);
+    await validateJsonSuccess(request, response);
+    return response;
   };
   const http = createClient<paths>({ baseUrl, fetch: authenticatedFetch });
   return Object.freeze({

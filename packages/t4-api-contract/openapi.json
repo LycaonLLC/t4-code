@@ -317,14 +317,14 @@
         ],
         "responses": {
           "200": {
-            "description": "Bounded SSE event stream; each data field is a WatchEvent JSON value",
+            "description": "Bounded SSE event stream. Every non-empty SSE data field is one JSON value conforming to WatchEvent; clients MUST reject unknown fields and schema-invalid event payloads before delivery. Transport chunk boundaries do not delimit frames.",
             "headers": {
               "Cache-Control": { "schema": { "type": "string", "const": "no-store" } },
               "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }
             },
             "content": {
               "text/event-stream": {
-                "schema": { "type": "string" },
+                "schema": { "type": "string", "description": "Server-Sent Events framing whose data values conform to #/components/schemas/WatchEvent", "x-t4-sse-data-schema": "#/components/schemas/WatchEvent" },
                 "example": "id: cur_01J...\\nevent: heartbeat\\ndata: {\"type\":\"heartbeat\",\"cursor\":\"cur_01J...\",\"observedAt\":\"2026-07-21T00:00:00Z\"}\\n\\n"
               }
             }
@@ -808,7 +808,7 @@
       "Error409": { "description": "Idempotency or resource revision conflict", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConflictErrorEnvelope" } } } },
       "Error410": { "description": "Watch cursor expired; resync from the typed snapshot target", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CursorExpiredErrorEnvelope" } } } },
       "Error422": { "description": "Bounded semantic validation failure with stable field violations", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InvalidRequestErrorEnvelope" } } } },
-      "Error503": { "description": "Service temporarily unavailable or outcome indeterminate", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UnavailableErrorEnvelope" } } } }
+      "Error503": { "description": "Service temporarily unavailable or outcome indeterminate. Retryable watch failures may advertise Retry-After; clients honor it with a 30 second ceiling.", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Retry-After": { "description": "RFC 9110 delay in seconds or HTTP date; clients bound the applied delay.", "schema": { "type": "string", "minLength": 1, "maxLength": 128 } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UnavailableErrorEnvelope" } } } }
     }
   }
 }
