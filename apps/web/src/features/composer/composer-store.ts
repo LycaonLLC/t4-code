@@ -48,6 +48,8 @@ export interface ComposerStoreState {
   finishSubmission(sessionId: string, token: SubmissionToken): void;
   setSubmissionNotice(sessionId: string, notice: SubmissionNotice): void;
   setAttachmentRejections(sessionId: string, rejections: readonly string[]): void;
+  /** Monotonic lifetime token invalidated by permanent session deletion. */
+  sessionGeneration(sessionId: string): number;
   /** Invalidate async owners and release renderer-owned values after permanent deletion. */
   disposeSession(sessionId: string): void;
 }
@@ -62,6 +64,7 @@ export interface ComposerStoreOptions {
 export function createComposerStore(options: ComposerStoreOptions = {}): ComposerStoreApi {
   const revokePreviewUrl = options.revokePreviewUrl ?? ((url: string) => URL.revokeObjectURL(url));
   let submissionSequence = 0;
+  const sessionGenerations = new Map<string, number>();
   return createStore<ComposerStoreState>((set, get) => ({
     attachmentsBySessionId: {},
     contextItemsBySessionId: {},
@@ -212,7 +215,12 @@ export function createComposerStore(options: ComposerStoreOptions = {}): Compose
         };
       });
     },
+    sessionGeneration: (sessionId) => sessionGenerations.get(sessionId) ?? 0,
     disposeSession: (sessionId) => {
+      sessionGenerations.set(
+        sessionId,
+        (sessionGenerations.get(sessionId) ?? 0) + 1,
+      );
       const attachments = get().attachmentsBySessionId[sessionId] ?? [];
       for (const attachment of attachments) revokePreviewUrl(attachment.previewUrl);
       set((state) => {

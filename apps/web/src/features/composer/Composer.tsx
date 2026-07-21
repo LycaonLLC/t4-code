@@ -442,12 +442,14 @@ export function Composer({
       }
 
       setPreparingAttachmentCount((count) => count + 1);
-      // Start every picker read now, before this batch waits behind an earlier
-      // intake and before the file input is cleared.
-      const initialState = attachmentIntakeState(sessionId);
-      const materialized = materializeAttachmentCandidates(candidates, initialState);
+      const generation = composerStore.getState().sessionGeneration(sessionId);
+      // Serialize materialization as well as admission. This reserves the
+      // global staged byte/count budget before another picker batch allocates
+      // renderer-owned copies, bounding transient Android WebView memory.
       const task = attachmentIntakeTailRef.current.then(async () => {
-        const prepared = await materialized;
+        const initialState = attachmentIntakeState(sessionId);
+        const prepared = await materializeAttachmentCandidates(candidates, initialState);
+        if (composerStore.getState().sessionGeneration(sessionId) !== generation) return;
         const { existing, stagedBytes, stagedCount } = attachmentIntakeState(sessionId);
         const result = admitAttachments(existing, prepared.accepted, { stagedBytes, stagedCount });
         if (result.accepted.length > 0) {
