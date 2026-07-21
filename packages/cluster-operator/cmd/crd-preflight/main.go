@@ -115,9 +115,14 @@ func validateObject(path string, object map[string]interface{}, candidate *candi
 	}
 	celValidator := cel.NewValidator(candidate.structural, true, perCallCELCostLimit)
 	if celValidator != nil {
-		errs, _ := celValidator.Validate(context.Background(), field.NewPath("fixture"), candidate.structural, object, nil, runtimeCELCostBudget)
-		if len(errs) > 0 {
-			result = append(result, fmt.Errorf("%s: proposed CEL validation failed: %w", path, errs.ToAggregate()))
+		fixturePath := field.NewPath("fixture")
+		createErrors, _ := celValidator.Validate(context.Background(), fixturePath, candidate.structural, object, nil, runtimeCELCostBudget)
+		if len(createErrors) > 0 {
+			result = append(result, fmt.Errorf("%s: proposed CEL create validation failed: %w", path, createErrors.ToAggregate()))
+		}
+		updateErrors, _ := celValidator.Validate(context.Background(), fixturePath, candidate.structural, object, object, runtimeCELCostBudget)
+		if len(updateErrors) > 0 {
+			result = append(result, fmt.Errorf("%s: proposed CEL unchanged-update validation failed: %w", path, updateErrors.ToAggregate()))
 		}
 	}
 	unknownFields := pruning.PruneWithOptions(

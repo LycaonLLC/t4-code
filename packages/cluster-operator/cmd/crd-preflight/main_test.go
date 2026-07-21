@@ -56,11 +56,12 @@ spec:
 
 func TestValidateFixturesRejectsProposedSpecTighteningAndCEL(t *testing.T) {
 	for _, test := range []struct {
-		name string
-		code string
+		name          string
+		code          string
+		expectedError string
 	}{
-		{name: "openapi maxLength", code: "okay"},
-		{name: "CEL rule", code: "bad"},
+		{name: "openapi maxLength", code: "okay", expectedError: "proposed OpenAPI validation failed"},
+		{name: "CEL rule", code: "bad", expectedError: "proposed CEL create validation failed"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			crds, fixtures := writeCandidate(t, `apiVersion: cluster.t4.dev/v1alpha1
@@ -71,8 +72,12 @@ spec:
   code: `+test.code+"\n"+`status:
   phase: Ready
 `)
-			if err := validateFixtures(crds, fixtures); err == nil {
+			err := validateFixtures(crds, fixtures)
+			if err == nil {
 				t.Fatal("fixture incompatible with the proposed spec schema was accepted")
+			}
+			if !strings.Contains(err.Error(), test.expectedError) {
+				t.Fatalf("validation error %q does not identify %q", err, test.expectedError)
 			}
 		})
 	}
@@ -95,12 +100,14 @@ status:
 
 func TestValidateFixturesRejectsUnchangedLegacyValuesUnderTransitionCEL(t *testing.T) {
 	tests := []struct {
-		name       string
-		fixture    string
-		candidate  func(string) string
+		name         string
+		fixture      string
+		expectedPath string
+		candidate    func(string) string
 	}{
 		{
-			name: "spec transition rule",
+			name:         "spec transition rule",
+			expectedPath: "fixture.spec.code",
 			fixture: `apiVersion: cluster.t4.dev/v1alpha1
 kind: Widget
 metadata:
@@ -116,7 +123,8 @@ status:
 			},
 		},
 		{
-			name: "status transition rule",
+			name:         "status transition rule",
+			expectedPath: "fixture.status.phase",
 			fixture: `apiVersion: cluster.t4.dev/v1alpha1
 kind: Widget
 metadata:
@@ -137,8 +145,15 @@ status:
 			if err := os.WriteFile(filepath.Join(crds, "widget.yaml"), []byte(test.candidate(candidateCRD)), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if err := validateFixtures(crds, fixtures); err == nil {
+			err := validateFixtures(crds, fixtures)
+			if err == nil {
 				t.Fatal("unchanged persisted value blocked by transition CEL was accepted")
+			}
+			if !strings.Contains(err.Error(), "proposed CEL unchanged-update validation failed") {
+				t.Fatalf("validation error does not identify unchanged-update semantics: %v", err)
+			}
+			if !strings.Contains(err.Error(), test.expectedPath) {
+				t.Fatalf("validation error %q does not identify field %q", err, test.expectedPath)
 			}
 		})
 	}
