@@ -743,6 +743,161 @@ describe("generated T4 API v1 client conformance", () => {
     })).rejects.toMatchObject({ code: "indeterminate", status: 502 });
   });
 
+  it("requires declared selected-version and replay response headers", async () => {
+    const discovery = {
+      apiVersion: "1.0", supportedMajors: [1], capabilities: [],
+      limits: { pageSizeDefault: 1, pageSizeMax: 1, commandBytesMax: 1, commandRequestBytesMax: 1, commandMetadataValueBytesMax: 1, watchEventsMax: 1, heartbeatSeconds: 5 },
+    };
+    for (const selectedVersion of [undefined, "1", "2.0", `1.${"0".repeat(15)}`]) {
+      const client = createT4ApiClient({
+        baseUrl: "https://response-version.test", credential: "token-a", majorVersion: 1,
+        fetch: async () => Response.json(discovery, selectedVersion === undefined ? {} : { headers: { "T4-API-Version": selectedVersion } }),
+      });
+      await expect(client.http.GET("/v1", { params: { header: VERSION_HEADERS } })).rejects.toMatchObject({ status: 502, code: "indeterminate", retryable: false });
+    }
+
+    const unauthenticated = createT4ApiClient({
+      baseUrl: "https://response-version.test", credential: "token-a", majorVersion: 1,
+      fetch: async () => Response.json({ error: { code: "unauthenticated", message: "bad", requestId: "r", retryable: false } }, { status: 401 }),
+    });
+    expect((await unauthenticated.http.GET("/v1", { params: { header: VERSION_HEADERS } })).response.status).toBe(401);
+
+    const workspace = { id: "wsp-1", name: "workspace", state: "ready", revision: 1 };
+    const missingReplay = createT4ApiClient({
+      baseUrl: "https://response-replay.test", credential: "token-a", majorVersion: 1,
+      fetch: async () => Response.json(workspace, { headers: { "T4-API-Version": "1.0" } }),
+    });
+    await expect(missingReplay.http.PATCH("/v1/workspaces/{workspaceId}", {
+      params: { header: mutationHeaders(1, "response-replay-patch"), path: { workspaceId: "wsp-1" } }, body: { name: "workspace" },
+    })).rejects.toMatchObject({ status: 502, retryable: false });
+
+    for (const replayed of [undefined, "TRUE", "0"]) {
+      const client = createT4ApiClient({
+        baseUrl: "https://delete-replay-header.test", credential: "token-a", majorVersion: 1,
+        fetch: async () => new Response(null, { status: 204, headers: {
+          "T4-API-Version": "1.0", ...(replayed === undefined ? {} : { "Idempotency-Replayed": replayed }),
+        } }),
+      });
+      await expect(client.http.DELETE("/v1/workspaces/{workspaceId}", {
+        params: { header: idempotencyHeaders("response-delete-key"), path: { workspaceId: "wsp-1" } },
+      })).rejects.toMatchObject({ status: 502, retryable: false });
+    }
+
+    const missingWatchVersion = createT4ApiClient({
+      baseUrl: "https://watch-response-version.test", credential: "token-a", majorVersion: 1,
+      fetch: async () => new Response('data: {"type":"heartbeat","cursor":"c1","observedAt":"2026-07-21T00:00:00Z"}\n\n', { headers: { "Content-Type": "text/event-stream" } }),
+    });
+    await expect(missingWatchVersion.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ status: 502, retryable: false });
+
+    const missingWatchErrorVersion = createT4ApiClient({
+      baseUrl: "https://watch-error-version.test", credential: "token-a", majorVersion: 1,
+      fetch: async () => Response.json({ error: { code: "unavailable", message: "later", requestId: "r", retryable: true } }, { status: 503 }),
+    });
+    await expect(missingWatchErrorVersion.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0, retryBackoffMs: 0 }).next()).rejects.toMatchObject({ status: 502, retryable: false });
+  });
+
+  it("rejects duplicate unique response arrays", async () => {
+    const limits = { pageSizeDefault: 1, pageSizeMax: 1, commandBytesMax: 1, commandRequestBytesMax: 1, commandMetadataValueBytesMax: 1, watchEventsMax: 1, heartbeatSeconds: 5 };
+    for (const discovery of [
+      { apiVersion: "1.0", supportedMajors: [1, 1], capabilities: [], limits },
+      { apiVersion: "1.0", supportedMajors: [1], capabilities: ["session.watch.sse", "session.watch.sse"], limits },
+    ]) {
+      const client = createT4ApiClient({
+        baseUrl: "https://duplicate-discovery.test", credential: "token-a", majorVersion: 1,
+        fetch: async () => Response.json(discovery, { headers: { "T4-API-Version": "1.0" } }),
+      });
+      await expect(client.http.GET("/v1", { params: { header: VERSION_HEADERS } })).rejects.toMatchObject({ status: 502, retryable: false });
+    }
+    const duplicateError = createT4ApiClient({
+      baseUrl: "https://duplicate-error.test", credential: "token-a", majorVersion: 1,
+      fetch: async () => Response.json({ error: {
+        code: "incompatible_version", message: "bad", requestId: "r", retryable: false, supportedMajors: [1, 1],
+      } }, { status: 406, headers: { "T4-API-Version": "1.0" } }),
+    });
+    await expect(duplicateError.http.GET("/v1", { params: { header: VERSION_HEADERS } })).rejects.toMatchObject({ status: 406, code: "indeterminate", retryable: false });
+  });
+
+  it("discards unterminated SSE data at EOF before reconnecting", async () => {
+    for (const unterminated of [
+      'data: {"type":"heartbeat","cursor":"unterminated","observedAt":"2026-07-21T00:00:00Z"}',
+      "data: {not-json",
+    ]) {
+      let attempts = 0;
+      const client = createT4ApiClient({
+        baseUrl: "https://unterminated-sse.test", credential: "token-a", majorVersion: 1,
+        fetch: async () => {
+          attempts += 1;
+          const body = attempts === 1
+            ? unterminated
+            : 'data: {"type":"heartbeat","cursor":"complete","observedAt":"2026-07-21T00:00:00Z"}\n\n';
+          return new Response(body, { headers: { "Content-Type": "text/event-stream", "T4-API-Version": "1.0" } });
+        },
+      });
+      await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 1, retryBackoffMs: 0 }).next()).resolves.toMatchObject({ value: { cursor: "complete" } });
+      expect(attempts).toBe(2);
+    }
+  });
+
+  it("accepts exact code-point request lengths and rejects one more", async () => {
+    const service = new T4ApiV1ConformanceService();
+    const client = createT4ApiClient({ baseUrl: service.origin, credential: "token-a", majorVersion: 1, fetch: service.fetch });
+    const exact = "😀".repeat(128);
+    const workspace = await client.http.POST("/v1/workspaces", {
+      body: { name: exact }, params: { header: idempotencyHeaders("unicode-workspace-exact") },
+    });
+    expect(workspace.response.status).toBe(202);
+    expect((await client.http.POST("/v1/workspaces", {
+      body: { name: `${exact}😀` }, params: { header: idempotencyHeaders("unicode-workspace-over") },
+    })).response.status).toBe(422);
+    const session = await client.http.POST("/v1/workspaces/{workspaceId}/sessions", {
+      body: { title: exact }, params: { header: idempotencyHeaders("unicode-session-exact"), path: { workspaceId: requireData(workspace).id } },
+    });
+    expect(session.response.status).toBe(202);
+    expect((await client.http.POST("/v1/workspaces/{workspaceId}/sessions", {
+      body: { title: `${exact}😀` }, params: { header: idempotencyHeaders("unicode-session-over"), path: { workspaceId: requireData(workspace).id } },
+    })).response.status).toBe(422);
+  });
+
+  it("fails terminally and cancels an invalid UTF-8 SSE body", async () => {
+    let cancelled = false;
+    const client = createT4ApiClient({
+      baseUrl: "https://invalid-utf8-sse.test", credential: "token-a", majorVersion: 1,
+      fetch: async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(new Uint8Array([100, 97, 116, 97, 58, 32, 195, 40, 10, 10])); },
+        cancel() { cancelled = true; },
+      }), { headers: { "Content-Type": "text/event-stream", "T4-API-Version": "1.0" } }),
+    });
+    await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 3 }).next()).rejects.toMatchObject({ status: 502, code: "indeterminate", retryable: false });
+    expect(cancelled).toBe(true);
+  });
+
+  it("scopes one DELETE key independently by live target ID", async () => {
+    const service = new T4ApiV1ConformanceService();
+    const client = createT4ApiClient({ baseUrl: service.origin, credential: "token-a", majorVersion: 1, fetch: service.fetch });
+    for (const [key, name] of [["delete-target-workspace-a", "first"], ["delete-target-workspace-b", "second"]] as const) {
+      requireData(await client.http.POST("/v1/workspaces", { body: { name }, params: { header: idempotencyHeaders(key) } }));
+    }
+    for (const workspaceId of ["ws-1", "ws-2"] as const) {
+      expect((await client.http.DELETE("/v1/workspaces/{workspaceId}", {
+        params: { header: idempotencyHeaders("delete-shared-workspace"), path: { workspaceId } },
+      })).response.status).toBe(204);
+    }
+
+    const sessionService = new T4ApiV1ConformanceService();
+    const sessionClient = createT4ApiClient({ baseUrl: sessionService.origin, credential: "token-a", majorVersion: 1, fetch: sessionService.fetch });
+    requireData(await sessionClient.http.POST("/v1/workspaces", { body: { name: "workspace" }, params: { header: idempotencyHeaders("delete-session-workspace") } }));
+    for (const [key, title] of [["delete-target-session-a", "first"], ["delete-target-session-b", "second"]] as const) {
+      requireData(await sessionClient.http.POST("/v1/workspaces/{workspaceId}/sessions", {
+        body: { title }, params: { header: idempotencyHeaders(key), path: { workspaceId: "ws-1" } },
+      }));
+    }
+    for (const sessionId of ["ses-1", "ses-2"] as const) {
+      expect((await sessionClient.http.DELETE("/v1/sessions/{sessionId}", {
+        params: { header: idempotencyHeaders("delete-shared-session"), path: { sessionId } },
+      })).response.status).toBe(204);
+    }
+  });
+
   it("bounds automatic EOF retry and supports explicit abort", async () => {
     let attempts = 0;
     const eofFetch: typeof globalThis.fetch = async () => {
