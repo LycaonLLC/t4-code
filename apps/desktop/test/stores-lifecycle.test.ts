@@ -149,7 +149,7 @@ describe("desktop persisted lifecycle stores", () => {
     const payloadCorrupt = new ElectronProjectionCacheStore(payloadBacking as never, {
       isEncryptionAvailable: () => true,
       encryptString: (value: string) => Buffer.from(value),
-      decryptString: () => JSON.stringify({ kind: "t4-code-projection", version: 2, data: {} }),
+      decryptString: () => JSON.stringify({ kind: "t4-code-projection", version: 3, data: {} }),
     });
     expect(payloadCorrupt.load()).toEqual({ available: true, value: null });
     expect(payloadBacking.store).toEqual({ version: 1, ciphertext: null });
