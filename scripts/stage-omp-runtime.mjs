@@ -16,12 +16,16 @@ const option = (name) => {
 const platform = option("platform") ?? process.platform;
 const arch = option("arch") ?? process.arch;
 const key = `${platform}-${arch}`;
-const runtime = matrix.verifiedRuntime;
+const runtimeKind = option("runtime") ?? "verified";
+if (runtimeKind !== "verified" && runtimeKind !== "official") {
+  throw new Error("--runtime must be official or verified");
+}
+const runtime = runtimeKind === "official" ? matrix.officialRuntime : matrix.verifiedRuntime;
 const artifact = runtime?.artifacts?.[key];
 if (!artifact || !/^[a-z0-9][a-z0-9._-]{1,80}$/u.test(artifact.name) || !/^[0-9a-f]{64}$/u.test(artifact.sha256)) {
-  throw new Error(`compat/omp-app-matrix.json has no valid ${key} runtime artifact`);
+  throw new Error(`compat/omp-app-matrix.json has no valid ${runtimeKind} ${key} runtime artifact`);
 }
-const outputRoot = join(repoRoot, ".artifacts", "omp-runtime");
+const outputRoot = join(repoRoot, ".artifacts", runtimeKind === "official" ? "omp-runtime-official" : "omp-runtime");
 const output = join(outputRoot, "omp");
 const temporary = `${output}.partial-${process.pid}`;
 const url = `${runtime.sourceRepository}/releases/download/${runtime.sourceTag}/${artifact.name}`;
@@ -54,4 +58,4 @@ await writeFile(
   `${JSON.stringify({ version: 1, tag: runtime.sourceTag, platform, arch, executable: basename(output), size: artifact.size, sha256: artifact.sha256 }, null, 2)}\n`,
   { mode: 0o600 },
 );
-console.log(`staged ${runtime.sourceTag} ${key} runtime`);
+console.log(`staged ${runtimeKind} ${runtime.sourceTag} ${key} runtime`);
