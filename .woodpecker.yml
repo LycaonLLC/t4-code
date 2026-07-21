@@ -37,6 +37,9 @@ steps:
     commands:
       - corepack enable
       - pnpm --filter @t4-code/t4-api-contract validate
+      - pnpm --filter @t4-code/t4-api-contract generate:ci
+      - test -f artifacts/t4-api/generated/schema.ts
+      - echo "T4_API_GENERATED_ARTIFACT=artifacts/t4-api/generated/schema.ts"
       - pnpm --filter @t4-code/t4-api-contract check:generated
       - pnpm --filter @t4-code/t4-api-client typecheck
       - pnpm --filter @t4-code/client typecheck

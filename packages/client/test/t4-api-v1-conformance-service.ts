@@ -14,6 +14,21 @@ function hasAtMostCodePoints(value: string, maximum: number): boolean {
   return true;
 }
 
+function validLabels(value: unknown): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const entries = Object.entries(value as Record<string, unknown>);
+  return entries.length <= 32 && entries.every(([key, item]) =>
+    /^[a-z][a-z0-9.-]{0,62}$/u.test(key) && typeof item === "string" && hasAtMostCodePoints(item, 128));
+}
+
+function validMutation(body: Record<string, unknown>, textField: "name" | "title"): boolean {
+  const keys = Object.keys(body);
+  if (keys.length < 1 || keys.some((key) => key !== textField && key !== "labels")) return false;
+  const text = body[textField];
+  return (text === undefined || (typeof text === "string" && text !== "" && hasAtMostCodePoints(text, 128))) &&
+    (body.labels === undefined || validLabels(body.labels));
+}
+
 function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
   return Response.json(body, { status, headers: { "T4-API-Version": "1.0", ...headers } });
 }
@@ -142,8 +157,9 @@ export class T4ApiV1ConformanceService {
         const parsed = await this.#jsonBody(request);
         if (parsed instanceof Response) return parsed;
         const body = parsed;
+        if (!validMutation(body, "name")) return this.#invalid("body", "schema", "workspace mutation must match WorkspaceMutation");
         return this.#idempotent(request, tenant, "mutateWorkspace", [id], body, 200, 200, () => {
-          const updated = { ...workspace, name: body.name ?? workspace.name, revision: Number(workspace.revision) + 1 };
+          const updated = { ...workspace, ...(body.name === undefined ? {} : { name: body.name }), ...(body.labels === undefined ? {} : { labels: body.labels }), revision: Number(workspace.revision) + 1 };
           this.#workspaces.set(id, updated);
           return updated;
         }, () => request.headers.get("If-Match") === String(workspace.revision) ? undefined : problem(409, "revision_conflict", "Workspace revision changed"));
@@ -194,8 +210,9 @@ export class T4ApiV1ConformanceService {
         const parsed = await this.#jsonBody(request);
         if (parsed instanceof Response) return parsed;
         const body = parsed;
+        if (!validMutation(body, "title")) return this.#invalid("body", "schema", "session mutation must match SessionMutation");
         return this.#idempotent(request, tenant, "mutateSession", [id], body, 200, 200, () => {
-          const updated = { ...session, title: body.title ?? session.title, revision: Number(session.revision) + 1 };
+          const updated = { ...session, ...(body.title === undefined ? {} : { title: body.title }), ...(body.labels === undefined ? {} : { labels: body.labels }), revision: Number(session.revision) + 1 };
           this.#sessions.set(id, updated);
           return updated;
         }, () => request.headers.get("If-Match") === String(session.revision) ? undefined : problem(409, "revision_conflict", "Session revision changed"));

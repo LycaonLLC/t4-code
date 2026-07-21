@@ -592,7 +592,7 @@ describe("generated T4 API v1 client conformance", () => {
       baseUrl: "https://undeclared-error.test", credential: "token-a", majorVersion: 1,
       fetch: async () => jsonResponse(validErrors[3][1], { status: 404 }),
     });
-    await expect(statusClient.http.GET("/v1", { params: { header: VERSION_HEADERS } })).rejects.toMatchObject({ code: "indeterminate", status: 404 });
+    await expect(statusClient.http.GET("/v1", { params: { header: VERSION_HEADERS } })).rejects.toMatchObject({ code: "indeterminate", status: 502, retryable: false });
   });
 
   it("validates successful JSON routes relative to the base path and rejects undeclared media and statuses", async () => {

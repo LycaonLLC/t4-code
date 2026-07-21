@@ -16,6 +16,31 @@ for (const server of document.servers) {
 if (document.security?.[0]?.BearerAuth === undefined) throw new Error("T4 API contract must default to bearer authentication");
 const sseSchema = document.paths?.["/v1/sessions/{sessionId}/events"]?.get?.responses?.["200"]?.content?.["text/event-stream"]?.schema;
 if (sseSchema?.["x-t4-sse-data-schema"] !== "#/components/schemas/WatchEvent") throw new Error("watch SSE data must remain linked to WatchEvent");
+const schemas = document.components?.schemas ?? {};
+const commandCreate = schemas.CommandCreate;
+if (commandCreate?.["x-t4-maxUtf8Bytes"] !== 1048576) throw new Error("CommandCreate must retain its UTF-8 request-byte bound");
+if (commandCreate?.properties?.command?.["x-t4-maxUtf8Bytes"] !== 262144) throw new Error("command must retain its UTF-8 byte bound");
+const metadataString = commandCreate?.properties?.metadata?.additionalProperties?.oneOf?.find((item) => item?.type === "string");
+if (metadataString?.["x-t4-maxUtf8Bytes"] !== 262144) throw new Error("command metadata strings must retain their UTF-8 byte bound");
+
+for (const [schema, property] of [["Discovery", "supportedMajors"], ["Discovery", "capabilities"], ["ApiError", "supportedMajors"]]) {
+  if (schemas[schema]?.properties?.[property]?.uniqueItems !== true) throw new Error(`${schema}.${property} must retain uniqueItems`);
+}
+
+const selectedVersion = document.components?.headers?.SelectedVersion?.schema;
+if (selectedVersion?.pattern !== "^1\\.[0-9]+$" || selectedVersion?.maxLength !== 16) throw new Error("SelectedVersion must remain a bounded v1 minor");
+const selectedVersionRef = "#/components/headers/SelectedVersion";
+const replayRef = "#/components/headers/IdempotencyReplayed";
+const selectedVersionResponses = ["Discovery", "Workspace", "WorkspaceAccepted", "WorkspaceReplay", "WorkspacePage", "Session", "SessionAccepted", "SessionReplay", "SessionPage", "CommandAccepted", "CommandReplay", "Snapshot", "Deleted", "Error400", "Error403", "Error404", "Error406", "Error409", "Error410", "Error422", "Error503"];
+for (const responseName of selectedVersionResponses) {
+  if (document.components?.responses?.[responseName]?.headers?.["T4-API-Version"]?.$ref !== selectedVersionRef) throw new Error(`${responseName} must declare SelectedVersion`);
+}
+for (const responseName of ["WorkspaceAccepted", "WorkspaceReplay", "SessionAccepted", "SessionReplay", "CommandAccepted", "CommandReplay", "Deleted"]) {
+  if (document.components?.responses?.[responseName]?.headers?.["Idempotency-Replayed"]?.$ref !== replayRef) throw new Error(`${responseName} must declare IdempotencyReplayed`);
+}
+if (document.paths?.["/v1/sessions/{sessionId}/events"]?.get?.responses?.["200"]?.headers?.["T4-API-Version"]?.$ref !== selectedVersionRef) throw new Error("watch success must declare SelectedVersion");
+if (document.paths?.["/v1/workspaces/{workspaceId}"]?.patch?.responses?.["200"]?.$ref !== "#/components/responses/WorkspaceReplay") throw new Error("workspace PATCH success must declare replay headers");
+if (document.paths?.["/v1/sessions/{sessionId}"]?.patch?.responses?.["200"]?.$ref !== "#/components/responses/SessionReplay") throw new Error("session PATCH success must declare replay headers");
 const errorResponses = { 400: "Error400", 401: "Error401", 403: "Error403", 404: "Error404", 406: "Error406", 409: "Error409", 410: "Error410", 422: "Error422", 503: "Error503" };
 for (const path of Object.values(document.paths ?? {})) {
   for (const operation of Object.values(path)) {

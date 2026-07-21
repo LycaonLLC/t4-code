@@ -82,10 +82,19 @@ jobs:
       - name: Validate OpenAPI and deterministic generation
         run: |
           pnpm --filter @t4-code/t4-api-contract validate
+          pnpm --filter @t4-code/t4-api-contract generate:ci
           pnpm --filter @t4-code/t4-api-contract check:generated
           pnpm --filter @t4-code/t4-api-client typecheck
           pnpm --filter @t4-code/client typecheck
           pnpm --filter @t4-code/client exec vp test run test/t4-api-v1-conformance.test.ts
+      - name: Upload deterministic T4 API client
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: t4-api-generated-${{ github.run_id }}
+          path: artifacts/t4-api/generated/schema.ts
+          if-no-files-found: error
+
 
 
   core:
@@ -552,7 +561,7 @@ jobs:
   verify:
     name: verify
     if: ${{ always() }}
-    needs: [changes, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug, flutter, flutter-android, flutter-apple]
+    needs: [changes, t4-api-generation, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug, flutter, flutter-android, flutter-apple]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -560,6 +569,7 @@ jobs:
         shell: bash
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
+          T4_API_GENERATION_RESULT: ${{ needs.t4-api-generation.result }}
           CORE_RESULT: ${{ needs.core.result }}
           CONTINUITY_RESULT: ${{ needs.legacy-bridge-continuity.result }}
           OFFICIAL_OMP_GATE0_RESULT: ${{ needs.official-omp-gate0.result }}
@@ -572,6 +582,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$CHANGES_RESULT" = success
+          test "$T4_API_GENERATION_RESULT" = success
           test "$CORE_RESULT" = success
           for result in \
             "$CONTINUITY_RESULT" \

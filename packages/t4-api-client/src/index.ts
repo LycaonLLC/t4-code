@@ -435,12 +435,12 @@ async function validateResponse(request: Request, response: Response, baseUrl: s
   const contract = path === undefined ? undefined : responseContract(request.method, path);
   if (contract === undefined) {
     void response.body?.cancel().catch(() => {});
-    throw protocolError(response.ok ? 502 : response.status, "T4 API returned a response for an undeclared route");
+    throw protocolError(502, "T4 API returned a response for an undeclared route");
   }
   if (!response.ok) {
     if (!contract.errors.includes(response.status)) {
       void response.body?.cancel().catch(() => {});
-      throw protocolError(response.status, "T4 API returned an undeclared error status");
+      throw protocolError(502, "T4 API returned an undeclared error status");
     }
     if (response.status !== 401 && !validSelectedVersion(response)) {
       void response.body?.cancel().catch(() => {});
