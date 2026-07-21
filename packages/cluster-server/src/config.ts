@@ -3,6 +3,7 @@ import { isAbsolute } from "node:path";
 import { isIP } from "node:net";
 
 const DNS_LABEL = /^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/u;
+const DNS_SUBDOMAIN = /^(?:[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)(?:\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$/u;
 const AUDIENCE = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/u;
 export interface ClusterServerConfig {
 	readonly namespace: string;
@@ -34,6 +35,10 @@ function required(env: Readonly<Record<string, string | undefined>>, name: strin
 }
 function dns(value: string, name: string): string {
 	if (!DNS_LABEL.test(value)) throw new Error(`${name} is invalid`);
+	return value;
+}
+function dnsSubdomain(value: string, name: string): string {
+	if (value.length > 253 || !DNS_SUBDOMAIN.test(value)) throw new Error(`${name} is invalid`);
 	return value;
 }
 function audience(value: string, name: string): string {
@@ -130,7 +135,7 @@ export function clusterServerConfigFromEnv(env: Readonly<Record<string, string |
 		namespace,
 		podName,
 		epoch: `replica:${podUid}`,
-		hostName: dns(required(env, "T4_CLUSTER_HOST_NAME"), "T4_CLUSTER_HOST_NAME"),
+		hostName: dnsSubdomain(required(env, "T4_CLUSTER_HOST_NAME"), "T4_CLUSTER_HOST_NAME"),
 		gatewayPort: port(env.T4_CLUSTER_SERVER_PORT, 8080, "T4_CLUSTER_SERVER_PORT"),
 		adminPort: port(env.T4_CLUSTER_ADMIN_PORT, 9090, "T4_CLUSTER_ADMIN_PORT"),
 		trustedProxyAddresses: proxyAddresses(env.T4_CLUSTER_TRUSTED_PROXY_ADDRESSES),
