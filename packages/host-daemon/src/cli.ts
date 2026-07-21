@@ -17,6 +17,9 @@ import {
 export const T4_HOST_VERSION = "0.1.30";
 const PROFILE = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
 const ORIGIN_LIMIT = 32;
+// After the bridge dies we ask the appserver to stop, but a dead bridge can wedge that teardown; cap
+// the wait so the process always exits and the service manager restarts a healthy host.
+const SHUTDOWN_GRACE_MS = 2_000;
 
 export interface HostDaemonConfig {
   readonly ompExecutable: string;
@@ -239,7 +242,21 @@ export async function runHostDaemon(
     onSignal("SIGTERM", stop);
     try {
       await appserver.start();
-      await stopped.promise;
+      const bridgeFailure = await Promise.race([
+        stopped.promise.then<Error | undefined>(() => undefined),
+        bridge.closed,
+      ]);
+      if (bridgeFailure) {
+        process.stderr.write(
+          `t4-host: OMP authority bridge closed unexpectedly; exiting so the service restarts: ${bridgeFailure.message}\n`,
+        );
+        stop();
+        await Promise.race([
+          stopped.promise.catch(() => undefined),
+          new Promise<void>(resolve => setTimeout(resolve, SHUTDOWN_GRACE_MS)),
+        ]);
+        throw bridgeFailure;
+      }
     } finally {
       removeSignal("SIGINT", stop);
       removeSignal("SIGTERM", stop);
@@ -259,6 +276,10 @@ async function main(): Promise<void> {
     );
     process.exitCode = 1;
   }
+  // The appserver's listener and a half-dead bridge can leave open handles that keep this process
+  // alive after the daemon logic has finished. Exit explicitly so a crashed bridge always yields a
+  // clean restart instead of an unreachable, never-restarted host.
+  process.exit(process.exitCode ?? 0);
 }
 
 if (import.meta.main) await main();

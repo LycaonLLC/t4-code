@@ -3,6 +3,7 @@ import {
 	decodeOmpAuthorityBridgeClientFrame,
 	decodeOmpAuthorityBridgeServerFrame,
 	encodeOmpAuthorityBridgeFrame,
+	OMP_AUTHORITY_BRIDGE_MAX_LINE_BYTES,
 	OMP_AUTHORITY_BRIDGE_METHODS,
 	OMP_AUTHORITY_BRIDGE_PROTOCOL,
 	parseOmpAuthorityBridgeLine,
@@ -78,8 +79,22 @@ describe("OMP authority bridge contract", () => {
 			type: "request",
 			id: "request-1",
 			method: "session.create",
-			params: { cwd: "x".repeat(300_000) },
+			params: { cwd: "x".repeat(OMP_AUTHORITY_BRIDGE_MAX_LINE_BYTES + 1) },
 		})).toThrow("text bounds");
+	});
+
+	test("decodes a large transcript result within the line budget", () => {
+		// discovery.load returns whole transcripts; a ~450 KiB payload must not be rejected by a
+		// text budget stricter than the line cap, or the bridge is torn down on the first big session.
+		const transcript = { entries: [{ text: "y".repeat(450 * 1024) }] };
+		const frame = decodeOmpAuthorityBridgeServerFrame({
+			v: OMP_AUTHORITY_BRIDGE_PROTOCOL,
+			type: "response",
+			id: "request-1",
+			ok: true,
+			result: transcript,
+		});
+		expect(frame).toMatchObject({ type: "response", id: "request-1", ok: true });
 	});
 
 	test("does not accept non-JSON payload values", () => {
