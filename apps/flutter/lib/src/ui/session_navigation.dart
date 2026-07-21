@@ -158,7 +158,7 @@ final class _SessionNavigationState extends State<_SessionNavigation> {
                       widget.mode == _SessionNavigationMode.rail
                           ? 'T4'
                           : 'Navigation',
-                      style: Theme.of(context).textTheme.titleLarge,
+                      style: Theme.of(context).textTheme.titleSmall,
                     ),
                   ),
                   if (widget.onClose case final close?)
@@ -171,58 +171,31 @@ final class _SessionNavigationState extends State<_SessionNavigation> {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: _T4Space.md),
-              child: _ConnectionStatus(
-                phase: widget.state.connectionPhase,
-                actionPending: widget.connecting || widget.disconnecting,
-                onConnect: widget.onConnect,
-                onDisconnect: widget.onDisconnect,
+              padding: const EdgeInsets.fromLTRB(
+                _T4Space.md,
+                0,
+                _T4Space.md,
+                _T4Space.xxs,
+              ),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: _HostChip(
+                  phase: widget.state.connectionPhase,
+                  hostLabel: activeProfile?.label ?? 'No host',
+                  actionPending: widget.connecting || widget.disconnecting,
+                  showingHostManager: widget.showingHostManager,
+                  onConnect: widget.onConnect,
+                  onDisconnect: widget.onDisconnect,
+                  onManageHosts: widget.onManageHosts,
+                ),
               ),
             ),
-            if (activeProfile != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  _T4Space.md,
-                  _T4Space.xs,
-                  _T4Space.md,
-                  _T4Space.sm,
-                ),
-                child: Text(
-                  activeProfile.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
             Padding(
               padding: const EdgeInsets.fromLTRB(
-                _T4Space.xs,
+                _T4Space.md,
                 _T4Space.sm,
                 _T4Space.xs,
                 0,
-              ),
-              child: Semantics(
-                button: true,
-                selected: widget.showingHostManager,
-                label: 'Manage hosts',
-                child: ListTile(
-                  selected: widget.showingHostManager,
-                  selectedTileColor: scheme.secondaryContainer,
-                  leading: const Icon(Icons.dns_outlined),
-                  title: const Text('Manage hosts'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: widget.onManageHosts,
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                _T4Space.md,
-                _T4Space.md,
-                _T4Space.xs,
-                _T4Space.xs,
               ),
               child: Row(
                 children: [
@@ -314,16 +287,19 @@ final class _SessionNavigationState extends State<_SessionNavigation> {
                             Padding(
                               padding: const EdgeInsets.fromLTRB(
                                 _T4Space.sm,
-                                _T4Space.sm,
+                                _T4Space.xs,
                                 _T4Space.sm,
                                 _T4Space.xxs,
                               ),
                               child: Text(
-                                entry.value.first.projectName,
+                                entry.value.first.projectName.toUpperCase(),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.labelMedium
-                                    ?.copyWith(color: scheme.onSurfaceVariant),
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(
+                                      color: scheme.onSurfaceVariant,
+                                      letterSpacing: 0.6,
+                                    ),
                               ),
                             ),
                             for (final session in entry.value)
@@ -357,61 +333,118 @@ final class _SessionNavigationState extends State<_SessionNavigation> {
   }
 }
 
-final class _ConnectionStatus extends StatelessWidget {
-  const _ConnectionStatus({
+final class _HostChip extends StatelessWidget {
+  const _HostChip({
     required this.phase,
+    required this.hostLabel,
     required this.actionPending,
+    required this.showingHostManager,
     required this.onConnect,
     required this.onDisconnect,
+    required this.onManageHosts,
   });
 
   final ConnectionPhase phase;
+  final String hostLabel;
   final bool actionPending;
+  final bool showingHostManager;
   final Future<void> Function() onConnect;
   final Future<void> Function() onDisconnect;
+  final VoidCallback onManageHosts;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final actionLabel = phase.actionLabel;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final semantic = T4SemanticColors.of(context);
+    final dotColor = switch (phase) {
+      ConnectionPhase.ready => semantic.statusDone,
+      ConnectionPhase.connecting ||
+      ConnectionPhase.synchronizing ||
+      ConnectionPhase.retrying => semantic.statusWorking,
+      ConnectionPhase.failed => semantic.statusError,
+      ConnectionPhase.disconnected => scheme.outline,
+    };
     final action = phase.canDisconnect ? onDisconnect : onConnect;
-    final active = phase.isActive || actionPending;
 
     return Semantics(
       container: true,
       label: 'Connection status: ${phase.label}',
-      child: Row(
-        children: [
-          SizedBox.square(
-            dimension: _T4Size.indicator,
-            child: active
-                ? CircularProgressIndicator(
-                    strokeWidth: _T4Size.thinStroke,
-                    color: scheme.primary,
-                    semanticsLabel: phase.label,
-                  )
-                : Icon(
-                    Icons.circle,
-                    size: _T4Space.xs,
-                    color: phase == ConnectionPhase.ready
-                        ? scheme.primary
-                        : scheme.outline,
-                  ),
-          ),
-          const SizedBox(width: _T4Space.xs),
-          Expanded(
+      child: MenuAnchor(
+        menuChildren: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              _T4Space.sm,
+              _T4Space.xs,
+              _T4Space.sm,
+              _T4Space.xxs,
+            ),
             child: Text(
-              phase.label,
-              style: Theme.of(
-                context,
-              ).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+              '${phase.label} · $hostLabel',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
             ),
           ),
-          TextButton(
+          MenuItemButton(
+            onPressed: onManageHosts,
+            leadingIcon: const Icon(Icons.dns_outlined),
+            child: const Text('Manage hosts'),
+          ),
+          MenuItemButton(
             onPressed: actionPending ? null : () => unawaited(action()),
-            child: Text(actionPending ? 'Working…' : actionLabel),
+            style: phase.canDisconnect
+                ? MenuItemButton.styleFrom(foregroundColor: scheme.error)
+                : null,
+            child: Text(actionPending ? 'Working…' : phase.actionLabel),
           ),
         ],
+        builder: (context, controller, _) => Tooltip(
+          message: 'Host menu',
+          child: Semantics(
+            button: true,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(_T4Radius.lg),
+              onTap: () =>
+                  controller.isOpen ? controller.close() : controller.open(),
+              child: Ink(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: _T4Space.sm,
+                  vertical: _T4Space.xxs,
+                ),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(_T4Radius.lg),
+                  border: Border.all(
+                    color: showingHostManager
+                        ? scheme.primary
+                        : scheme.outlineVariant,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.circle, size: 6, color: dotColor),
+                    const SizedBox(width: _T4Space.xs),
+                    Flexible(
+                      child: Text(
+                        hostLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ),
+                    const SizedBox(width: _T4Space.xxs),
+                    Icon(
+                      Icons.expand_more,
+                      size: _T4Size.indicator,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -469,6 +502,8 @@ final class _SessionTile extends StatefulWidget {
 enum _SessionAction { rename, terminate, archive, restore, delete }
 
 final class _SessionTileState extends State<_SessionTile> {
+  bool _hovered = false;
+
   bool get _canManage =>
       widget.state.connectionPhase == ConnectionPhase.ready &&
       widget.state.grantedCapabilities.contains('sessions.manage') &&
@@ -628,12 +663,28 @@ final class _SessionTileState extends State<_SessionTile> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final session = widget.session;
     final title = session.title.trim().isEmpty
         ? 'Untitled session'
         : session.title;
+    final status = session.status.trim().isEmpty ? 'idle' : session.status;
     final canArchiveOrDelete = _canManage && !session.working;
+    final touch = switch (theme.platform) {
+      TargetPlatform.android ||
+      TargetPlatform.iOS ||
+      TargetPlatform.fuchsia => true,
+      TargetPlatform.linux ||
+      TargetPlatform.macOS ||
+      TargetPlatform.windows => false,
+    };
+    final showMenu = touch || _hovered || widget.selected;
+    final dotColor = session.archived || session.status == 'closed'
+        ? scheme.onSurfaceVariant.withValues(alpha: 0.5)
+        : session.working
+        ? scheme.primary
+        : scheme.outlineVariant;
 
     return Semantics(
       button: true,
@@ -641,71 +692,97 @@ final class _SessionTileState extends State<_SessionTile> {
       label:
           '$title, ${session.projectName}, '
           '${session.archived ? 'archived, ' : ''}${session.status}',
-      child: ListTile(
-        selected: widget.selected,
-        selectedTileColor: scheme.secondaryContainer,
-        title: Tooltip(
-          message: title,
-          child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-        ),
-        subtitle: Text(
-          session.status.trim().isEmpty ? 'idle' : session.status,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        trailing: widget.pending
-            ? const SizedBox.square(
-                dimension: _T4Size.indicator,
-                child: CircularProgressIndicator(
-                  strokeWidth: _T4Size.thinStroke,
-                  semanticsLabel: 'Selecting session',
-                ),
-              )
-            : PopupMenuButton<_SessionAction>(
-                tooltip: 'Session actions',
-                enabled: _canManage,
-                onSelected: (action) => unawaited(_run(action)),
-                itemBuilder: (context) => [
-                  if (!session.archived)
-                    const PopupMenuItem(
-                      value: _SessionAction.rename,
-                      child: Text('Rename'),
-                    ),
-                  if (!session.archived && session.status != 'closed')
-                    const PopupMenuItem(
-                      value: _SessionAction.terminate,
-                      child: Text('Terminate runtime'),
-                    ),
-                  if (!session.archived)
-                    PopupMenuItem(
-                      value: _SessionAction.archive,
-                      enabled: canArchiveOrDelete,
-                      child: Text(
-                        session.working
-                            ? 'Archive (terminate runtime first)'
-                            : 'Archive',
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: ListTile(
+          selected: widget.selected,
+          selectedTileColor: scheme.secondaryContainer,
+          title: Tooltip(
+            message: '$title — $status',
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 13),
+            ),
+          ),
+          trailing: widget.pending
+              ? const SizedBox.square(
+                  dimension: _T4Size.indicator,
+                  child: CircularProgressIndicator(
+                    strokeWidth: _T4Size.thinStroke,
+                    semanticsLabel: 'Selecting session',
+                  ),
+                )
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (session.working)
+                      SizedBox.square(
+                        dimension: 12,
+                        child: CircularProgressIndicator(
+                          strokeWidth: _T4Size.thinStroke,
+                          color: scheme.primary,
+                          semanticsLabel: 'Session working',
+                        ),
+                      )
+                    else
+                      Icon(Icons.circle, size: 6, color: dotColor),
+                    Visibility(
+                      visible: showMenu,
+                      maintainSize: true,
+                      maintainAnimation: true,
+                      maintainState: true,
+                      child: PopupMenuButton<_SessionAction>(
+                        tooltip: 'Session actions',
+                        enabled: _canManage,
+                        onSelected: (action) => unawaited(_run(action)),
+                        itemBuilder: (context) => [
+                          if (!session.archived)
+                            const PopupMenuItem(
+                              value: _SessionAction.rename,
+                              child: Text('Rename'),
+                            ),
+                          if (!session.archived && session.status != 'closed')
+                            const PopupMenuItem(
+                              value: _SessionAction.terminate,
+                              child: Text('Terminate runtime'),
+                            ),
+                          if (!session.archived)
+                            PopupMenuItem(
+                              value: _SessionAction.archive,
+                              enabled: canArchiveOrDelete,
+                              child: Text(
+                                session.working
+                                    ? 'Archive (terminate runtime first)'
+                                    : 'Archive',
+                              ),
+                            ),
+                          if (session.archived)
+                            const PopupMenuItem(
+                              value: _SessionAction.restore,
+                              child: Text('Restore'),
+                            ),
+                          PopupMenuItem(
+                            value: _SessionAction.delete,
+                            enabled: canArchiveOrDelete,
+                            child: Text(
+                              session.working
+                                  ? 'Delete (terminate runtime first)'
+                                  : 'Delete permanently',
+                            ),
+                          ),
+                        ],
+                        icon: widget.selected
+                            ? const Icon(Icons.more_horiz)
+                            : const Icon(Icons.more_vert),
                       ),
                     ),
-                  if (session.archived)
-                    const PopupMenuItem(
-                      value: _SessionAction.restore,
-                      child: Text('Restore'),
-                    ),
-                  PopupMenuItem(
-                    value: _SessionAction.delete,
-                    enabled: canArchiveOrDelete,
-                    child: Text(
-                      session.working
-                          ? 'Delete (terminate runtime first)'
-                          : 'Delete permanently',
-                    ),
-                  ),
-                ],
-                icon: widget.selected
-                    ? const Icon(Icons.more_horiz)
-                    : const Icon(Icons.more_vert),
-              ),
-        onTap: widget.pending ? null : () => unawaited(widget.onTap()),
+                  ],
+                ),
+          onTap: widget.pending ? null : () => unawaited(widget.onTap()),
+        ),
       ),
     );
   }
