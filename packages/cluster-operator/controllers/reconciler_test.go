@@ -106,6 +106,67 @@ func TestWorkspaceCreateAlreadyExistsRefetchesForeignPVC(t *testing.T) {
 	}
 }
 
+func TestWorkspacePendingPVCPolicyFailsBeforeAuthority(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*corev1.PersistentVolumeClaim)
+		reason string
+	}{
+		{name: "wrong class", reason: controllers.ReasonStorageClassMismatch, mutate: func(pvc *corev1.PersistentVolumeClaim) { pvc.Spec.StorageClassName = ptr("other-rwx") }},
+		{name: "wrong access", reason: "PVCNotRWX", mutate: func(pvc *corev1.PersistentVolumeClaim) { pvc.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce} }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			scheme := testScheme(t)
+			workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+			workspace.UID = "workspace-uid"
+			pvc := ownedWorkspacePVC(workspace)
+			pvc.Status.Phase = corev1.ClaimPending
+			test.mutate(pvc)
+			c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Workspace{}, &corev1.PersistentVolumeClaim{}).WithObjects(testHost(), rwxStorageClass(), workspace, pvc).Build()
+			r := &controllers.WorkspaceReconciler{Client: c, APIReader: c, Scheme: scheme}
+			if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workspace)}); err != nil {
+				t.Fatal(err)
+			}
+			var failed clusterv1alpha1.T4Workspace
+			if err := c.Get(ctx, client.ObjectKeyFromObject(workspace), &failed); err != nil {
+				t.Fatal(err)
+			}
+			condition := findCondition(failed.Status.Conditions, "StorageReady")
+			if failed.Status.PVCName != "" || condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != test.reason {
+				t.Fatalf("incompatible Pending PVC published authority: status=%#v condition=%#v", failed.Status, condition)
+			}
+		})
+	}
+}
+
+func TestWorkspaceDeletionUsesAuthoritativePVCReader(t *testing.T) {
+	ctx := context.Background()
+	scheme := testScheme(t)
+	workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+	workspace.UID = "workspace-uid"
+	workspace.Finalizers = []string{clusterv1alpha1.WorkspaceFinalizer}
+	pvc := ownedWorkspacePVC(workspace)
+	pvc.OwnerReferences = nil
+	base := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Workspace{}).WithObjects(workspace, pvc).Build()
+	if err := base.Delete(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
+	c := &createAlreadyExistsClient{Client: base, raceKind: "PVC", winner: pvc, hideWinnerFromCache: true}
+	r := &controllers.WorkspaceReconciler{Client: c, APIReader: base, Scheme: scheme}
+	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workspace)}); err != nil {
+		t.Fatal(err)
+	}
+	var waiting clusterv1alpha1.T4Workspace
+	if err := base.Get(ctx, client.ObjectKeyFromObject(workspace), &waiting); err != nil {
+		t.Fatalf("workspace finalizer ignored authoritative PVC conflict: %v", err)
+	}
+	condition := findCondition(waiting.Status.Conditions, "Ready")
+	if condition == nil || condition.Reason != "CleanupOwnershipConflict" || !contains(waiting.Finalizers, clusterv1alpha1.WorkspaceFinalizer) {
+		t.Fatalf("authoritative PVC conflict not retained: %#v", waiting)
+	}
+}
+
 func TestRetainWorkspaceCreatesPVCWithoutGarbageCollectableOwner(t *testing.T) {
 	scheme := testScheme(t)
 	workspace := testWorkspace(clusterv1alpha1.RetentionPolicyRetain)
@@ -1297,6 +1358,35 @@ func TestSessionDeletionRefusesForeignDeterministicResources(t *testing.T) {
 	}
 }
 
+func TestSessionDeletionUsesAuthoritativeChildReader(t *testing.T) {
+	ctx := context.Background()
+	scheme := testScheme(t)
+	session := testSession()
+	session.UID = "session-uid"
+	session.Finalizers = []string{clusterv1alpha1.SessionFinalizer}
+	pod, service := ownedSessionResources(session)
+	pod.OwnerReferences = nil
+	base := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Session{}).WithObjects(session, pod, service).Build()
+	if err := base.Delete(ctx, session); err != nil {
+		t.Fatal(err)
+	}
+	c := &createAlreadyExistsClient{Client: base, raceKind: "Pod", winner: pod, hideWinnerFromCache: true}
+	r := configuredSessionReconciler(c, scheme)
+	r.APIReader = base
+	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
+		t.Fatal(err)
+	}
+	assertObjectCounts(t, base, 1, 0)
+	var waiting clusterv1alpha1.T4Session
+	if err := base.Get(ctx, client.ObjectKeyFromObject(session), &waiting); err != nil {
+		t.Fatalf("session finalizer ignored authoritative Pod conflict: %v", err)
+	}
+	condition := findCondition(waiting.Status.Conditions, "Available")
+	if condition == nil || condition.Reason != "CleanupOwnershipConflict" || !contains(waiting.Finalizers, clusterv1alpha1.SessionFinalizer) {
+		t.Fatalf("authoritative child conflict not retained: %#v", waiting)
+	}
+}
+
 func TestSessionDeletionCleansResourcesBeforeFinalizer(t *testing.T) {
 	scheme := testScheme(t)
 	session := testSession()
@@ -2180,6 +2270,10 @@ func (c *createAlreadyExistsClient) Get(ctx context.Context, key client.ObjectKe
 		case *corev1.Service:
 			if c.raceKind == "Service" {
 				return apierrors.NewNotFound(schema.GroupResource{Resource: "services"}, key.Name)
+			}
+		case *corev1.PersistentVolumeClaim:
+			if c.raceKind == "PVC" {
+				return apierrors.NewNotFound(schema.GroupResource{Resource: "persistentvolumeclaims"}, key.Name)
 			}
 		}
 	}
