@@ -251,6 +251,7 @@ final class FilesPanelController extends DeveloperPanelController {
     final workspace = state.fileWorkspace;
     final content = workspace.content;
     if (content == null || workspace.path.isEmpty) return;
+    selectedFilePath = workspace.path;
     if (!force && dirty && editedFilePath == workspace.path) return;
     editedFilePath = workspace.path;
     dirty = false;

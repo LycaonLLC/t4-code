@@ -640,6 +640,8 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
       onOpenAttention: _openAttention,
       onOpenDeveloper: _openDeveloper,
       onOpenQuickOpen: _openQuickOpen,
+      onSelectSession: (sessionId) =>
+          _selectSession(sessionId, closeDrawer: false),
     );
   }
 
@@ -830,7 +832,8 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
               ),
             if (!_showHostManager && !_showSearch && !_showUsage)
               IconButton(
-                onPressed: _toggleContextPanel,
+                onPressed: () =>
+                    _scaffoldKey.currentState?.openEndDrawer(),
                 tooltip: 'Toggle context panel',
                 icon: const Icon(Icons.view_sidebar_outlined),
               ),
@@ -861,6 +864,14 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
             ),
             _surfaceNavigationEntries(closeDrawer: true, rail: false),
           ],
+        ),
+      ),
+      endDrawer: Drawer(
+        child: SafeArea(
+          child: ContextPanel(
+            sections: _buildContextSections(context),
+            onClose: () => _scaffoldKey.currentState?.closeEndDrawer(),
+          ),
         ),
       ),
       body: _primaryContent(showHeader: false),
@@ -904,11 +915,15 @@ final class _CompactConnectionLabel extends StatelessWidget {
                   ),
           ),
           const SizedBox(width: _T4Space.xs),
-          Text(
-            phase.label,
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          Flexible(
+            child: Text(
+              phase.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+            ),
           ),
         ],
       ),

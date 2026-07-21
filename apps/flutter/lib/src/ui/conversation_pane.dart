@@ -10,6 +10,7 @@ final class _ConversationPane extends StatelessWidget {
     required this.onOpenAttention,
     required this.onOpenDeveloper,
     required this.onOpenQuickOpen,
+    required this.onSelectSession,
   });
 
   final T4ViewState state;
@@ -20,6 +21,7 @@ final class _ConversationPane extends StatelessWidget {
   final VoidCallback onOpenAttention;
   final VoidCallback onOpenDeveloper;
   final Future<void> Function() onOpenQuickOpen;
+  final Future<void> Function(String sessionId) onSelectSession;
 
   @override
   Widget build(BuildContext context) {
@@ -36,6 +38,7 @@ final class _ConversationPane extends StatelessWidget {
             actions: actions,
             onOpenDeveloper: onOpenDeveloper,
             onOpenQuickOpen: onOpenQuickOpen,
+            onSelectSession: onSelectSession,
           ),
         if (showError)
           _ConnectionErrorBanner(
@@ -69,12 +72,14 @@ final class _ConversationHeader extends StatefulWidget {
     required this.actions,
     required this.onOpenDeveloper,
     required this.onOpenQuickOpen,
+    required this.onSelectSession,
   });
 
   final T4ViewState state;
   final T4Actions actions;
   final VoidCallback onOpenDeveloper;
   final Future<void> Function() onOpenQuickOpen;
+  final Future<void> Function(String sessionId) onSelectSession;
 
   @override
   State<_ConversationHeader> createState() => _ConversationHeaderState();
@@ -159,8 +164,8 @@ final class _ConversationHeaderState extends State<_ConversationHeader> {
                       showTitle: false,
                       onDone: _inboxMenu.close,
                       onOpenSession: (sessionId) async {
-                        await widget.actions.selectSession(sessionId);
-                        _inboxMenu.close();
+                        await widget.onSelectSession(sessionId);
+                        if (mounted) _inboxMenu.close();
                       },
                     ),
                   ),

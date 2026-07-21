@@ -68,7 +68,7 @@ class TranscriptMarkdown extends StatelessWidget {
       builders: <String, MarkdownElementBuilder>{'code': _FencedCodeBuilder()},
     );
     if (selectable) {
-      return body;
+      return SelectionArea(child: body);
     }
     return SelectionContainer.disabled(child: body);
   }

@@ -338,6 +338,15 @@ abstract final class _T4Theme {
       ),
     );
     const minimumSize = WidgetStatePropertyAll<Size>(Size(0, 32));
+    final touchPlatform =
+        defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+    final iconButtonMinimumSize = WidgetStatePropertyAll<Size>(
+      Size.square(touchPlatform ? _T4Layout.minimumTouchTarget : 28),
+    );
+    final iconButtonPadding = WidgetStatePropertyAll<EdgeInsetsGeometry>(
+      EdgeInsets.all(touchPlatform ? _T4Space.xs : _T4Space.xxs),
+    );
     final controlShape = WidgetStatePropertyAll<OutlinedBorder>(
       RoundedRectangleBorder(borderRadius: BorderRadius.circular(_T4Radius.sm)),
     );
@@ -446,10 +455,8 @@ abstract final class _T4Theme {
       iconButtonTheme: IconButtonThemeData(
         style: ButtonStyle(
           iconSize: const WidgetStatePropertyAll<double>(19),
-          minimumSize: const WidgetStatePropertyAll<Size>(Size(28, 28)),
-          padding: const WidgetStatePropertyAll<EdgeInsetsGeometry>(
-            EdgeInsets.all(4),
-          ),
+          minimumSize: iconButtonMinimumSize,
+          padding: iconButtonPadding,
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           shape: controlShape,
         ),
