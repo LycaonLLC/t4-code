@@ -153,7 +153,7 @@ func TestRetainDeletionOrphansPVCBeforeRemovingFinalizer(t *testing.T) {
 				APIVersion: clusterv1alpha1.GroupVersion.String(), Kind: "T4Workspace", Name: workspace.Name, UID: workspace.UID, Controller: ptr(true),
 			}},
 		},
-		Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+		Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Workspace{}).WithObjects(testHost(), rwxStorageClass(), workspace, pvc).Build()
 	if err := c.Delete(context.Background(), workspace); err != nil {
@@ -187,7 +187,7 @@ func TestWorkspaceDeletionWaitsForSessionResources(t *testing.T) {
 			Name: controllers.WorkspacePVCName(workspace), Namespace: workspace.Namespace,
 			OwnerReferences: []metav1.OwnerReference{{APIVersion: clusterv1alpha1.GroupVersion.String(), Kind: "T4Workspace", Name: workspace.Name, UID: workspace.UID, Controller: ptr(true)}},
 		},
-		Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+		Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
 	}
 	session := testSession()
 	session.Spec.WorkspaceRef = workspace.Name
@@ -457,7 +457,7 @@ func TestSessionRuntimeImageMustBeImmutableDigest(t *testing.T) {
 			workspace.Status.PVCName = "workspace-a-data"
 			pvc := &corev1.PersistentVolumeClaim{
 				ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
-				Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+				Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
 				Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
 			}
 			session := testSession()
@@ -528,7 +528,7 @@ func TestSessionAuthorityRevocationDeletesOwnedPodAndService(t *testing.T) {
 			workspace.Status.PVCName = "workspace-a-data"
 			pvc := &corev1.PersistentVolumeClaim{
 				ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
-				Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+				Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
 				Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
 			}
 			session := testSession()
@@ -575,7 +575,7 @@ func TestSessionNamesProduceSafeRuntimeIdentities(t *testing.T) {
 			workspace.Status.PVCName = "workspace-a-data"
 			pvc := &corev1.PersistentVolumeClaim{
 				ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
-				Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+				Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
 				Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
 			}
 			session := testSession()
@@ -620,7 +620,7 @@ func TestSessionWaitsForBoundRWXThenCreatesExactlyOnePodAndService(t *testing.T)
 	workspace.Status.Phase = clusterv1alpha1.InfrastructurePending
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
-		Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
 		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
 	}
 	session := testSession()
@@ -755,7 +755,7 @@ func TestSessionOMPModeOmitsCredentialSecretReference(t *testing.T) {
 	workspace.Status.PVCName = "workspace-a-data"
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
-		Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
 		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
 	}
 	session := testSession()
@@ -791,7 +791,7 @@ func TestSessionRejectsUnownedDeterministicResources(t *testing.T) {
 	workspace.Status.PVCName = "workspace-a-data"
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
-		Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
 		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
 	}
 	session := testSession()
@@ -826,7 +826,7 @@ func TestSessionRecreatesPodWhenImmutableDesiredStateChanges(t *testing.T) {
 	workspace.Status.PVCName = "workspace-a-data"
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
-		Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
 		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
 	}
 	session := testSession()
@@ -881,7 +881,7 @@ func TestSessionPodHashIncludesEveryOMPReference(t *testing.T) {
 			workspace.Status.PVCName = "workspace-a-data"
 			pvc := &corev1.PersistentVolumeClaim{
 				ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
-				Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+				Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
 				Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
 			}
 			session := testSession()
@@ -927,7 +927,7 @@ func TestSessionRecreatesPodWhenOMPResourceVersionChanges(t *testing.T) {
 			workspace.Status.PVCName = "workspace-a-data"
 			pvc := &corev1.PersistentVolumeClaim{
 				ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
-				Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+				Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
 				Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
 			}
 			session := testSession()
@@ -970,7 +970,7 @@ func TestSessionRuntimeReferenceRevocationStopsAuthority(t *testing.T) {
 			workspace.Status.PVCName = "workspace-a-data"
 			pvc := &corev1.PersistentVolumeClaim{
 				ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
-				Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+				Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
 				Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
 			}
 			session := testSession()
@@ -1024,7 +1024,7 @@ func TestSessionFailsClosedWhenOMPConfigMapIsMissing(t *testing.T) {
 			scheme := testScheme(t)
 			workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
 			workspace.Status.PVCName = "workspace-a-data"
-			pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"}, Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}}, Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound}}
+			pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"}, Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}}, Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound}}
 			session := testSession()
 			objects := []client.Object{testHost(), rwxStorageClass(), workspace, pvc, session}
 			if test.configMap != nil {
@@ -1054,7 +1054,7 @@ func TestSessionRecreatesExternallyExposedOwnedService(t *testing.T) {
 	workspace.Status.PVCName = "workspace-a-data"
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
-		Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
 		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
 	}
 	session := testSession()
@@ -1102,7 +1102,7 @@ func TestSessionRestoresRequiredPodSelectorLabelsBeforeAvailability(t *testing.T
 	workspace.Status.PVCName = "workspace-a-data"
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
-		Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: ptr("portable-rwx"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
 		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
 	}
 	session := testSession()
@@ -1308,6 +1308,14 @@ func TestSessionDependencyRevocationCleansOwnedResourcesAndConvergesAfterRestart
 			host.Spec.StorageClassName = otherClass.Name
 			return c.Update(ctx, &host)
 		}},
+		{name: "classless Workspace PVC", conditionType: "WorkspaceReady", wantReason: "StorageClassMismatch", revoke: func(ctx context.Context, c client.Client) error {
+			var pvc corev1.PersistentVolumeClaim
+			if err := c.Get(ctx, types.NamespacedName{Namespace: "team", Name: "workspace-a-data"}, &pvc); err != nil {
+				return err
+			}
+			pvc.Spec.StorageClassName = nil
+			return c.Update(ctx, &pvc)
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -1384,57 +1392,67 @@ func TestSessionDependencyRevocationCleansOwnedResourcesAndConvergesAfterRestart
 }
 
 func TestWorkspaceHostStorageClassDriftFailsClosedWithoutRecreatingPVC(t *testing.T) {
-	ctx := context.Background()
-	scheme := testScheme(t)
-	workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
-	workspace.UID = "workspace-uid"
-	workspace.Status.ObservedGeneration = workspace.Generation
-	workspace.Status.PVCName = controllers.WorkspacePVCName(workspace)
-	workspace.Status.Phase = clusterv1alpha1.InfrastructureReady
-	workspace.Status.Conditions = []metav1.Condition{
-		{Type: "StorageReady", Status: metav1.ConditionTrue, Reason: controllers.ReasonStorageReady, ObservedGeneration: workspace.Generation},
-		{Type: "Ready", Status: metav1.ConditionTrue, Reason: "PVCBound", ObservedGeneration: workspace.Generation},
-	}
 	oldClass := "portable-rwx"
-	pvc := &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: workspace.Status.PVCName, Namespace: workspace.Namespace,
-			Annotations:     map[string]string{clusterv1alpha1.WorkspaceUIDAnnotation: string(workspace.UID)},
-			OwnerReferences: []metav1.OwnerReference{{APIVersion: clusterv1alpha1.GroupVersion.String(), Kind: "T4Workspace", Name: workspace.Name, UID: workspace.UID, Controller: ptr(true)}},
-		},
-		Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: &oldClass, AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
-		Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
-	}
-	host := testHost()
-	host.Spec.StorageClassName = "other-rwx"
-	otherClass := &storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "other-rwx", Annotations: map[string]string{clusterv1alpha1.RWXStorageClassAnnotation: string(corev1.ReadWriteMany)}}, Provisioner: "example.invalid/csi"}
-	c := fake.NewClientBuilder().WithScheme(scheme).
-		WithStatusSubresource(&clusterv1alpha1.T4Workspace{}, &corev1.PersistentVolumeClaim{}).
-		WithObjects(host, otherClass, workspace, pvc).Build()
-	r := &controllers.WorkspaceReconciler{Client: c, Scheme: scheme}
+	for _, test := range []struct {
+		name      string
+		claimClass *string
+	}{
+		{name: "different class", claimClass: &oldClass},
+		{name: "class omitted"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			scheme := testScheme(t)
+			workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+			workspace.UID = "workspace-uid"
+			workspace.Status.ObservedGeneration = workspace.Generation
+			workspace.Status.PVCName = controllers.WorkspacePVCName(workspace)
+			workspace.Status.Phase = clusterv1alpha1.InfrastructureReady
+			workspace.Status.Conditions = []metav1.Condition{
+				{Type: "StorageReady", Status: metav1.ConditionTrue, Reason: controllers.ReasonStorageReady, ObservedGeneration: workspace.Generation},
+				{Type: "Ready", Status: metav1.ConditionTrue, Reason: "PVCBound", ObservedGeneration: workspace.Generation},
+			}
+			pvc := &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: workspace.Status.PVCName, Namespace: workspace.Namespace,
+					Annotations:     map[string]string{clusterv1alpha1.WorkspaceUIDAnnotation: string(workspace.UID)},
+					OwnerReferences: []metav1.OwnerReference{{APIVersion: clusterv1alpha1.GroupVersion.String(), Kind: "T4Workspace", Name: workspace.Name, UID: workspace.UID, Controller: ptr(true)}},
+				},
+				Spec:   corev1.PersistentVolumeClaimSpec{StorageClassName: test.claimClass, AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
+				Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+			}
+			host := testHost()
+			host.Spec.StorageClassName = "other-rwx"
+			otherClass := &storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "other-rwx", Annotations: map[string]string{clusterv1alpha1.RWXStorageClassAnnotation: string(corev1.ReadWriteMany)}}, Provisioner: "example.invalid/csi"}
+			c := fake.NewClientBuilder().WithScheme(scheme).
+				WithStatusSubresource(&clusterv1alpha1.T4Workspace{}, &corev1.PersistentVolumeClaim{}).
+				WithObjects(host, otherClass, workspace, pvc).Build()
+			r := &controllers.WorkspaceReconciler{Client: c, Scheme: scheme}
 
-	result, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workspace)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.RequeueAfter <= 0 || result.RequeueAfter > 30*time.Second {
-		t.Fatalf("storage drift requeue = %s, want bounded positive retry", result.RequeueAfter)
-	}
-	var got clusterv1alpha1.T4Workspace
-	if err := c.Get(ctx, client.ObjectKeyFromObject(workspace), &got); err != nil {
-		t.Fatal(err)
-	}
-	storageReady := findCondition(got.Status.Conditions, "StorageReady")
-	ready := findCondition(got.Status.Conditions, "Ready")
-	if got.Status.Phase != clusterv1alpha1.InfrastructureFailed || storageReady == nil || storageReady.Status != metav1.ConditionFalse || storageReady.Reason != "StorageClassMismatch" || ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != "StorageClassMismatch" {
-		t.Fatalf("storage drift remained Ready: status=%#v StorageReady=%#v Ready=%#v", got.Status, storageReady, ready)
-	}
-	var retained corev1.PersistentVolumeClaim
-	if err := c.Get(ctx, client.ObjectKeyFromObject(pvc), &retained); err != nil {
-		t.Fatalf("storage drift removed the data PVC: %v", err)
-	}
-	if retained.Spec.StorageClassName == nil || *retained.Spec.StorageClassName != oldClass {
-		t.Fatalf("storage drift recreated or mutated PVC class: %#v", retained.Spec.StorageClassName)
+			result, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workspace)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.RequeueAfter <= 0 || result.RequeueAfter > 30*time.Second {
+				t.Fatalf("storage drift requeue = %s, want bounded positive retry", result.RequeueAfter)
+			}
+			var got clusterv1alpha1.T4Workspace
+			if err := c.Get(ctx, client.ObjectKeyFromObject(workspace), &got); err != nil {
+				t.Fatal(err)
+			}
+			storageReady := findCondition(got.Status.Conditions, "StorageReady")
+			ready := findCondition(got.Status.Conditions, "Ready")
+			if got.Status.Phase != clusterv1alpha1.InfrastructureFailed || storageReady == nil || storageReady.Status != metav1.ConditionFalse || storageReady.Reason != "StorageClassMismatch" || ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != "StorageClassMismatch" {
+				t.Fatalf("storage drift remained Ready: status=%#v StorageReady=%#v Ready=%#v", got.Status, storageReady, ready)
+			}
+			var retained corev1.PersistentVolumeClaim
+			if err := c.Get(ctx, client.ObjectKeyFromObject(pvc), &retained); err != nil {
+				t.Fatalf("storage drift removed the data PVC: %v", err)
+			}
+			if !reflect.DeepEqual(retained.Spec.StorageClassName, test.claimClass) {
+				t.Fatalf("storage drift recreated or mutated PVC class: got %#v, want %#v", retained.Spec.StorageClassName, test.claimClass)
+			}
+		})
 	}
 }
 
@@ -1510,6 +1528,31 @@ func TestHostDependencyRecoveryReplacesFalseConditions(t *testing.T) {
 		hostReady := findCondition(recovered.Status.Conditions, "HostReady")
 		if hostReady == nil || hostReady.Status != metav1.ConditionTrue || hostReady.ObservedGeneration != recovered.Generation {
 			t.Fatalf("recovered Session retained stale HostReady: %#v", hostReady)
+		}
+	})
+
+	t.Run("static runtime failure", func(t *testing.T) {
+		ctx := context.Background()
+		scheme := testScheme(t)
+		session := testSession()
+		session.Status.ObservedGeneration = session.Generation
+		session.Status.Phase = clusterv1alpha1.InfrastructureFailed
+		session.Status.Conditions = []metav1.Condition{{Type: "HostReady", Status: metav1.ConditionFalse, Reason: "HostNotFound", ObservedGeneration: session.Generation}}
+		c := fake.NewClientBuilder().WithScheme(scheme).
+			WithStatusSubresource(&clusterv1alpha1.T4Session{}).
+			WithObjects(testHost(), session).Build()
+		r := configuredSessionReconciler(c, scheme)
+		r.RuntimeImage = "registry.example/session:latest"
+		if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
+			t.Fatal(err)
+		}
+		var failed clusterv1alpha1.T4Session
+		if err := c.Get(ctx, client.ObjectKeyFromObject(session), &failed); err != nil {
+			t.Fatal(err)
+		}
+		hostReady := findCondition(failed.Status.Conditions, "HostReady")
+		if hostReady == nil || hostReady.Status != metav1.ConditionUnknown || hostReady.Reason != "NotEvaluated" || hostReady.ObservedGeneration != failed.Generation {
+			t.Fatalf("static runtime failure retained stale HostReady: %#v", hostReady)
 		}
 	})
 }

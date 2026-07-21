@@ -380,11 +380,11 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		}
 		return ctrl.Result{}, err
 	}
-	if pvc.Spec.StorageClassName != nil && *pvc.Spec.StorageClassName != host.Spec.StorageClassName {
+	if pvcStorageClassName(&pvc) != host.Spec.StorageClassName {
 		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, "WorkspaceReady", ReasonStorageClassMismatch, fmt.Sprintf("workspace PVC uses StorageClass %q instead of host-selected %q", *pvc.Spec.StorageClassName, host.Spec.StorageClassName))
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, "WorkspaceReady", ReasonStorageClassMismatch, fmt.Sprintf("workspace PVC uses StorageClass %q instead of host-selected %q", pvcStorageClassName(&pvc), host.Spec.StorageClassName))
 	}
 	if pvc.Status.Phase != corev1.ClaimBound || !pvcHasRWX(&pvc) {
 		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
@@ -751,6 +751,8 @@ func (r *SessionReconciler) updateSessionFailure(ctx context.Context, session *c
 	}
 	if hostReady {
 		meta.SetStatusCondition(&session.Status.Conditions, condition("HostReady", metav1.ConditionTrue, "HostResolved", "referenced T4ClusterHost is available", session.Generation))
+	} else if conditionType != "HostReady" {
+		meta.SetStatusCondition(&session.Status.Conditions, condition("HostReady", metav1.ConditionUnknown, "NotEvaluated", "host dependency was not evaluated because static runtime configuration is invalid", session.Generation))
 	}
 	session.Status.ObservedGeneration = session.Generation
 	session.Status.PodName = ""

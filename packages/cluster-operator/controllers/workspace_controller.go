@@ -105,8 +105,8 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 		return ctrl.Result{}, err
 	} else if !workspaceOwnsPVC(&workspace, &pvc) {
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCOwnershipConflict", "deterministic workspace PVC does not belong to this workspace")
-	} else if pvc.Spec.StorageClassName != nil && *pvc.Spec.StorageClassName != storageClassName {
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", ReasonStorageClassMismatch, fmt.Sprintf("workspace PVC uses StorageClass %q instead of host-selected %q; data-bearing PVCs are never recreated automatically", *pvc.Spec.StorageClassName, storageClassName))
+	} else if pvcStorageClassName(&pvc) != storageClassName {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", ReasonStorageClassMismatch, fmt.Sprintf("workspace PVC uses StorageClass %q instead of host-selected %q; data-bearing PVCs are never recreated automatically", pvcStorageClassName(&pvc), storageClassName))
 	} else if workspace.Spec.RetentionPolicy == clusterv1alpha1.RetentionPolicyRetain && metav1.IsControlledBy(&pvc, &workspace) {
 		before := pvc.DeepCopy()
 		pvc.OwnerReferences = removeWorkspaceOwnerReference(pvc.OwnerReferences, workspace.UID)
