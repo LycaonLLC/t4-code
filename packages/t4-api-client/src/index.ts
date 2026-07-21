@@ -198,7 +198,7 @@ async function boundedResponseText(response: Response, maximumBytes = MAX_ERROR_
       if (chunk.done) break;
       length += chunk.value.byteLength;
       if (length > maximumBytes) {
-        await reader.cancel();
+        void reader.cancel().catch(() => {});
         return undefined;
       }
       chunks.push(chunk.value);
@@ -259,6 +259,15 @@ function validResourceId(value: unknown): value is string {
   return typeof value === "string" && value.length >= 1 && value.length <= 128 && /^[A-Za-z0-9][A-Za-z0-9._~-]*$/u.test(value);
 }
 
+function hasAtMostCodePoints(value: string, maximum: number): boolean {
+  let count = 0;
+  for (const _codePoint of value) {
+    count += 1;
+    if (count > maximum) return false;
+  }
+  return true;
+}
+
 function validCursor(value: unknown): value is string {
   return typeof value === "string" && value.length >= 1 && value.length <= 512 && CURSOR_PATTERN.test(value);
 }
@@ -315,7 +324,7 @@ function validSnapshot(value: unknown): boolean {
       return entry !== undefined && hasOnlyKeys(entry, { sequence: true, kind: true, text: true }) &&
         Number.isSafeInteger(entry.sequence) && Number(entry.sequence) >= 0 &&
         (entry.kind === "input" || entry.kind === "output" || entry.kind === "status") &&
-        typeof entry.text === "string" && entry.text.length <= 1_048_576;
+        typeof entry.text === "string" && hasAtMostCodePoints(entry.text, 1_048_576);
     });
 }
 
@@ -400,40 +409,48 @@ async function validateResponse(request: Request, response: Response, baseUrl: s
   const path = relativeApiPath(request, baseUrl);
   const contract = path === undefined ? undefined : responseContract(request.method, path);
   if (contract === undefined) {
+    void response.body?.cancel().catch(() => {});
     throw protocolError(response.ok ? 502 : response.status, "T4 API returned a response for an undeclared route");
   }
   if (!response.ok) {
     if (!contract.errors.includes(response.status)) {
+      void response.body?.cancel().catch(() => {});
       throw protocolError(response.status, "T4 API returned an undeclared error status");
     }
     if (await parsedError(response.clone()) === undefined) {
+      void response.body?.cancel().catch(() => {});
       throw protocolError(response.status, "T4 API returned an invalid or oversized error envelope");
     }
     return;
   }
   const validator = contract.success[response.status];
   if (validator === undefined) {
+    void response.body?.cancel().catch(() => {});
     throw protocolError(502, "T4 API returned an undeclared success status");
   }
   if (validator === "empty") {
     if (response.body !== null || response.headers.has("content-type")) {
+      void response.body?.cancel().catch(() => {});
       throw protocolError(502, "T4 API returned content for a bodyless response");
     }
     return;
   }
   if (validator === "event-stream") {
     if (response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "text/event-stream") {
+      void response.body?.cancel().catch(() => {});
       throw protocolError(502, "T4 API returned an undeclared success media type");
     }
     return;
   }
   if (response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
+    void response.body?.cancel().catch(() => {});
     throw protocolError(502, "T4 API returned an undeclared success media type");
   }
   const text = await boundedResponseText(response.clone(), MAX_JSON_RESPONSE_BYTES);
   let value: unknown;
   try { value = text === undefined ? undefined : JSON.parse(text); } catch { value = undefined; }
   if (text === undefined || !validator(value)) {
+    void response.body?.cancel().catch(() => {});
     throw protocolError(502, "T4 API returned an invalid or oversized JSON response");
   }
 }
@@ -635,10 +652,19 @@ async function* watch(
         if (cursor !== undefined) headers.set("Last-Event-ID", cursor);
         const response = await fetchImpl(url, { method: "GET", headers, signal: controller.signal });
         if (!response.ok) {
+          if (!EVENTS_RESPONSE.errors.includes(response.status)) {
+            void response.body?.cancel().catch(() => {});
+            throw protocolError(502, "T4 API returned an undeclared watch error status");
+          }
           const error = await parsedError(response);
-          throw error ?? protocolError(response.status, "T4 API returned an invalid or oversized error envelope");
+          throw error ?? protocolError(502, "T4 API returned an invalid or oversized error envelope");
+        }
+        if (response.status !== 200) {
+          void response.body?.cancel().catch(() => {});
+          throw protocolError(502, "T4 API returned an undeclared watch success status");
         }
         if (response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "text/event-stream") {
+          void response.body?.cancel().catch(() => {});
           throw protocolError(502, "T4 API watch did not return text/event-stream");
         }
         if (response.body === null) throw protocolError(502, "T4 API watch response body is unavailable");

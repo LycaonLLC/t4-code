@@ -500,6 +500,28 @@ describe("generated T4 API v1 client conformance", () => {
       params: { header: VERSION_HEADERS, path: { workspaceId: "missing" } },
     })).rejects.toMatchObject({ code: "indeterminate", status: 404 });
 
+    vi.useFakeTimers();
+    try {
+      let cancelled = false;
+      const chunk = new Uint8Array(600 * 1024);
+      const streamedClient = createT4ApiClient({
+        baseUrl: "https://streamed-error.test", credential: "token-a", majorVersion: 1,
+        fetch: async () => new Response(new ReadableStream<Uint8Array>({
+          pull(controller) { controller.enqueue(chunk); },
+          cancel() { cancelled = true; },
+        }), { status: 404, headers: { "Content-Type": "application/json" } }),
+      });
+      const outcome = streamedClient.http.GET("/v1/workspaces/{workspaceId}", {
+        params: { header: VERSION_HEADERS, path: { workspaceId: "missing" } },
+      }).then(() => "resolved" as const, () => "rejected" as const);
+      const bounded = Promise.race([outcome, new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 1_000))]);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(bounded).resolves.toBe("rejected");
+      expect(cancelled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+
     const statusClient = createT4ApiClient({
       baseUrl: "https://undeclared-error.test", credential: "token-a", majorVersion: 1,
       fetch: async () => Response.json(validErrors[3][1], { status: 404 }),
@@ -522,12 +544,25 @@ describe("generated T4 API v1 client conformance", () => {
     await expect(prefixed.http.GET("/v1", { params: { header: VERSION_HEADERS } })).rejects.toMatchObject({ code: "indeterminate", status: 502 });
 
     const invalidSnapshot = createT4ApiClient({
-      baseUrl: "https://snapshot.test", credential: "token-a", majorVersion: 1,
-      fetch: async () => Response.json({ sessionId: "ses-1", cursor: "cursor-1", state: "ready", entries: [], unknown: true }),
+      baseUrl: "https://snapshot.test/api", credential: "token-a", majorVersion: 1,
+      fetch: async (input) => {
+        expect(new URL(new Request(input).url).pathname).toBe("/api/v1/sessions/ses-1/snapshot");
+        return Response.json({ sessionId: "ses-1", cursor: "cursor-1", state: "ready", entries: [], unknown: true });
+      },
     });
     await expect(invalidSnapshot.http.GET("/v1/sessions/{sessionId}/snapshot", {
       params: { header: VERSION_HEADERS, path: { sessionId: "ses-1" } },
     })).rejects.toMatchObject({ code: "indeterminate", status: 502 });
+
+    const astralText = "😀".repeat(524_289);
+    const unicodeSnapshot = createT4ApiClient({
+      baseUrl: "https://unicode-snapshot.test", credential: "token-a", majorVersion: 1,
+      fetch: async () => Response.json({ sessionId: "ses-1", cursor: "cursor-1", state: "ready", entries: [{ sequence: 0, kind: "output", text: astralText }] }),
+    });
+    const unicode = requireData(await unicodeSnapshot.http.GET("/v1/sessions/{sessionId}/snapshot", {
+      params: { header: VERSION_HEADERS, path: { sessionId: "ses-1" } },
+    }));
+    expect(unicode.entries[0]?.text).toBe(astralText);
 
     for (const response of [
       new Response(JSON.stringify(discovery), { status: 200, headers: { "Content-Type": "text/plain" } }),
@@ -542,6 +577,48 @@ describe("generated T4 API v1 client conformance", () => {
       fetch: async () => Response.json(discovery),
     });
     await expect(unknownRoute.http.GET("/v1/undeclared" as "/v1", { params: { header: VERSION_HEADERS } })).rejects.toMatchObject({ code: "indeterminate", status: 502 });
+  });
+
+  it("accepts only the exact watch status matrix under a prefixed base path", async () => {
+    const prefixed = createT4ApiClient({
+      baseUrl: "https://watch-status.test/api", credential: "token-a", majorVersion: 1,
+      fetch: async (input) => {
+        expect(new URL(new Request(input).url).pathname).toBe("/api/v1/sessions/ses-1/events");
+        return new Response('data: {"type":"heartbeat","cursor":"prefixed-1","observedAt":"2026-07-21T00:00:00Z"}\n\n', { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      },
+    });
+    await expect(prefixed.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).resolves.toMatchObject({ value: { cursor: "prefixed-1" } });
+
+    const declared = [
+      [400, { error: { code: "invalid_request", message: "bad", requestId: "r", retryable: false } }],
+      [401, { error: { code: "unauthenticated", message: "bad", requestId: "r", retryable: false } }],
+      [403, { error: { code: "forbidden", message: "bad", requestId: "r", retryable: false } }],
+      [404, { error: { code: "not_found", message: "bad", requestId: "r", retryable: false } }],
+      [406, { error: { code: "incompatible_version", message: "bad", requestId: "r", retryable: false, supportedMajors: [1] } }],
+      [410, { error: { code: "cursor_expired", message: "bad", requestId: "r", retryable: false, resync: { snapshotUrl: "/v1/sessions/ses-1/snapshot", cursor: "cursor-1" } } }],
+      [422, { error: { code: "invalid_request", message: "bad", requestId: "r", retryable: false, violations: [{ field: "maxEvents", rule: "range", message: "bad" }] } }],
+      [503, { error: { code: "unavailable", message: "bad", requestId: "r", retryable: false } }],
+    ] as const;
+    for (const [status, body] of declared) {
+      const client = createT4ApiClient({ baseUrl: "https://watch-status.test", credential: "token-a", majorVersion: 1, fetch: async () => Response.json(body, { status }) });
+      await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ status, code: body.error.code });
+    }
+
+    for (const response of [
+      new Response('data: {"type":"heartbeat","cursor":"wrong-1","observedAt":"2026-07-21T00:00:00Z"}\n\n', { status: 201, headers: { "Content-Type": "text/event-stream" } }),
+      new Response(null, { status: 204, headers: { "Content-Type": "text/event-stream" } }),
+      Response.json({ error: { code: "revision_conflict", message: "bad", requestId: "r", retryable: false } }, { status: 409 }),
+    ]) {
+      let attempts = 0;
+      const client = createT4ApiClient({
+        baseUrl: "https://watch-status.test", credential: "token-a", majorVersion: 1,
+        fetch: async () => { attempts += 1; return response.clone(); },
+      });
+      await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 3, retryBackoffMs: 0 }).next()).rejects.toMatchObject({
+        status: 502, code: "indeterminate", retryable: false,
+      });
+      expect(attempts).toBe(1);
+    }
   });
 
   it("declares the replay response header on both conditional PATCH success responses", () => {
@@ -647,7 +724,7 @@ describe("generated T4 API v1 client conformance", () => {
       if (progressAttempts === 2) {
         return new Response('data: {"type":"heartbeat","cursor":"progress-1","observedAt":"2026-07-21T00:00:00Z"}\n\n', { headers: { "Content-Type": "text/event-stream" } });
       }
-      return new Response(null, { headers: { "Content-Type": "text/event-stream" } });
+      return new Response(new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } }), { headers: { "Content-Type": "text/event-stream" } });
     };
     const progressClient = createT4ApiClient({ baseUrl: "https://progress.test", credential: "token-a", majorVersion: 1, fetch: progressFetch });
     const progressWatch = progressClient.watchSession("ses-1", { maxEvents: 2, maxReconnectAttempts: 1, retryBackoffMs: 0 });
