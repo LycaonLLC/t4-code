@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
-import { chmod, mkdir, open, readdir, readFile, stat, unlink } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { chmod, lstat, mkdir, open, readdir, readFile, realpath, stat, unlink } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import type {
 	ArtifactDescriptor,
 	DurableEntry,
@@ -49,6 +49,8 @@ type DiscoveryFileSystem = FileSystem & {
 		maxBytes: number,
 		expectedIdentity?: string,
 	) => Promise<string | Uint8Array>;
+	realpath?: (path: string) => Promise<string>;
+	isSymbolicLink?: (path: string) => Promise<boolean>;
 };
 const OBSERVER_MAX_BUFFER_BYTES = 2 * 1024 * 1024;
 const OBSERVER_TAIL_ANCHOR_BYTES = 4 * 1024;
@@ -66,6 +68,8 @@ const realFs: DiscoveryFileSystem = {
 	},
 	stat: async path => await stat(path),
 	readdir: async path => (await readdir(path, { withFileTypes: true })).map(entry => join(path, entry.name)),
+	realpath: async path => await realpath(path),
+	isSymbolicLink: async path => (await lstat(path)).isSymbolicLink(),
 	readFile: async path => await readFile(path),
 	readFileSlice: async (path, maxBytes) => {
 		const handle = await open(path, "r");
@@ -1449,6 +1453,7 @@ function isEncodedProjectDirectory(path: string): boolean {
 export class FileSessionDiscovery implements SessionDiscovery {
 	private readonly index = new Map<string, FileIndexEntry>();
 	private rootMisses = 0;
+	private canonicalRoot?: string;
 	readonly page?: SessionDiscovery["page"];
 
 	constructor(
@@ -1466,6 +1471,18 @@ export class FileSessionDiscovery implements SessionDiscovery {
 			});
 			this.page = (session, args) => pageReader.page(session, args);
 		}
+	}
+	private async rootPath(): Promise<string> {
+		if (this.canonicalRoot !== undefined) return this.canonicalRoot;
+		this.canonicalRoot = this.fs.realpath ? await this.fs.realpath(this.root) : resolve(this.root);
+		return this.canonicalRoot;
+	}
+	private async containedPath(path: string): Promise<string | null> {
+		const canonical = this.fs.realpath ? await this.fs.realpath(path) : resolve(path);
+		const fromRoot = relative(await this.rootPath(), canonical);
+		return fromRoot === "" || (!fromRoot.startsWith("..") && !isAbsolute(fromRoot))
+			? canonical
+			: null;
 	}
 	private async parse(path: string, size: number, metadataOnly: boolean): Promise<SessionRecord> {
 		if (size > MAX_TRANSCRIPT_BYTES) {
@@ -1508,6 +1525,7 @@ export class FileSessionDiscovery implements SessionDiscovery {
 		const children = await this.fs.readdir(path);
 		const output: string[] = [];
 		for (const child of children.sort()) {
+			if (this.fs.isSymbolicLink && (await this.fs.isSymbolicLink(child).catch(() => true))) continue;
 			const info = await this.fs.stat(child).catch(() => null);
 			if (!info) continue;
 			if (info.isFile() && child.endsWith(".jsonl")) {
@@ -1556,9 +1574,11 @@ export class FileSessionDiscovery implements SessionDiscovery {
 		for (const path of files) {
 			let identity: string;
 			try {
-				identity = realpathSync.native(path);
+				const contained = await this.containedPath(path);
+				if (contained === null) continue;
+				identity = contained;
 			} catch {
-				identity = resolve(path);
+				continue;
 			}
 			if (seen.has(identity)) continue;
 			seen.add(identity);

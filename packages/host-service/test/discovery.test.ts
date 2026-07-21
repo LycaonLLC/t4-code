@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decodeServerFrame, entryId, hostId, parseBounded, projectId, sessionId } from "@t4-code/host-wire";
@@ -1167,11 +1167,9 @@ test("incrementally indexes a large corpus and evicts only deleted or changed fi
 	expect(reads).toBe(0);
 });
 
-test("rebinds a canonical cached transcript when its live symlink alias changes", async () => {
-	const root = await mkdtemp(join(tmpdir(), "omp-discovery-alias-"));
-	const target = join(root, "session-target.jsonl");
-	const firstAlias = join(root, "alias-a.jsonl");
-	const secondAlias = join(root, "alias-b.jsonl");
+test("rejects transcript symlinks even when their targets are readable", async () => {
+	const root = await mkdtemp(join(tmpdir(), "omp-discovery-root-"));
+	const outside = await mkdtemp(join(tmpdir(), "omp-discovery-outside-"));
 	const contents = JSON.stringify({
 		type: "session",
 		version: 3,
@@ -1180,18 +1178,18 @@ test("rebinds a canonical cached transcript when its live symlink alias changes"
 		timestamp: stamp,
 	});
 	try {
-		await writeFile(target, contents);
-		await symlink(target, firstAlias);
+		const internalTarget = join(root, "session-target.data");
+		const externalTarget = join(outside, "session-target.jsonl");
+		await writeFile(internalTarget, contents);
+		await writeFile(externalTarget, contents);
+		await symlink(internalTarget, join(root, "internal-alias.jsonl"));
+		await symlink(externalTarget, join(root, "external-alias.jsonl"));
+
 		const discovery = new FileSessionDiscovery(root, undefined, host);
-		const first = await discovery.list();
-		expect(first[0]?.path).toBe(firstAlias);
-		await rm(firstAlias);
-		await symlink(target, secondAlias);
-		const warmAlias = await discovery.list();
-		expect(warmAlias[0]?.path).toBe(secondAlias);
-		await expect(stat(warmAlias[0]!.path)).resolves.toBeDefined();
+		await expect(discovery.list()).resolves.toEqual([]);
 	} finally {
 		await rm(root, { recursive: true, force: true });
+		await rm(outside, { recursive: true, force: true });
 	}
 });
 
