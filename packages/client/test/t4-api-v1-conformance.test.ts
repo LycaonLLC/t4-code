@@ -404,6 +404,117 @@ describe("generated T4 API v1 client conformance", () => {
     })).response.status).toBe(200);
   });
 
+  it("validates creates before idempotency and round-trips valid labels", async () => {
+    const invalidLabels = [
+      null, [], Object.fromEntries(Array.from({ length: 33 }, (_, index) => [`key-${index}`, "value"])),
+      { Invalid: "value" }, { valid: 1 }, { valid: "😀".repeat(129) },
+    ];
+    const workspaceService = new T4ApiV1ConformanceService();
+    const workspaceClient = createT4ApiClient({ baseUrl: workspaceService.origin, credential: "token-a", majorVersion: 1, fetch: workspaceService.fetch });
+    const workspaceBodies: unknown[] = [{ name: "workspace", unknown: true }, ...invalidLabels.map((labels) => ({ name: "workspace", labels }))];
+    for (const [index, body] of workspaceBodies.entries()) {
+      const key = `invalid-workspace-create-${index}`;
+      const invalid = await workspaceClient.http.POST("/v1/workspaces", { body: body as never, params: { header: idempotencyHeaders(key) } });
+      expect(invalid.response.status).toBe(422);
+      expect(invalid.error).toMatchObject({ error: { code: "invalid_request" } });
+      expect((await workspaceClient.http.POST("/v1/workspaces", {
+        body: { name: `valid-${index}` }, params: { header: idempotencyHeaders(key) },
+      })).response.status).toBe(202);
+    }
+    const workspaceLabels = { team: "😀".repeat(128) };
+    expect(requireData(await workspaceClient.http.POST("/v1/workspaces", {
+      body: { name: "labelled", labels: workspaceLabels }, params: { header: idempotencyHeaders("valid-workspace-labels") },
+    }))).toMatchObject({ labels: workspaceLabels });
+
+    const sessionService = new T4ApiV1ConformanceService();
+    const sessionClient = createT4ApiClient({ baseUrl: sessionService.origin, credential: "token-a", majorVersion: 1, fetch: sessionService.fetch });
+    requireData(await sessionClient.http.POST("/v1/workspaces", {
+      body: { name: "workspace" }, params: { header: idempotencyHeaders("session-create-workspace") },
+    }));
+    const sessionBodies: unknown[] = [{ title: "session", unknown: true }, ...invalidLabels.map((labels) => ({ title: "session", labels }))];
+    for (const [index, body] of sessionBodies.entries()) {
+      const key = `invalid-session-create-${index}`;
+      const invalid = await sessionClient.http.POST("/v1/workspaces/{workspaceId}/sessions", {
+        body: body as never, params: { header: idempotencyHeaders(key), path: { workspaceId: "ws-1" } },
+      });
+      expect(invalid.response.status).toBe(422);
+      expect(invalid.error).toMatchObject({ error: { code: "invalid_request" } });
+      expect((await sessionClient.http.POST("/v1/workspaces/{workspaceId}/sessions", {
+        body: { title: `valid-${index}` }, params: { header: idempotencyHeaders(key), path: { workspaceId: "ws-1" } },
+      })).response.status).toBe(202);
+    }
+    const sessionLabels = { team: "😀".repeat(128) };
+    expect(requireData(await sessionClient.http.POST("/v1/workspaces/{workspaceId}/sessions", {
+      body: { title: "labelled", labels: sessionLabels }, params: { header: idempotencyHeaders("valid-session-labels"), path: { workspaceId: "ws-1" } },
+    }))).toMatchObject({ labels: sessionLabels });
+
+    const commandClient = await seededClient(new T4ApiV1ConformanceService(), "command-create-validation");
+    const invalidCommand = await commandClient.http.POST("/v1/sessions/{sessionId}/commands", {
+      body: { command: "ok", unknown: true } as never,
+      params: { header: idempotencyHeaders("invalid-command-create"), path: { sessionId: "ses-1" } },
+    });
+    expect(invalidCommand.response.status).toBe(422);
+    expect((await commandClient.http.POST("/v1/sessions/{sessionId}/commands", {
+      body: { command: "ok" }, params: { header: idempotencyHeaders("invalid-command-create"), path: { sessionId: "ses-1" } },
+    })).response.status).toBe(202);
+  });
+
+  it("validates If-Match syntax before PATCH idempotency lookup", async () => {
+    const service = new T4ApiV1ConformanceService();
+    const client = createT4ApiClient({ baseUrl: service.origin, credential: "token-a", majorVersion: 1, fetch: service.fetch });
+    requireData(await client.http.POST("/v1/workspaces", {
+      body: { name: "workspace" }, params: { header: idempotencyHeaders("if-match-workspace-setup") },
+    }));
+    for (const [index, ifMatch] of [undefined, "", "0", "01", "abc", "1.0", "11111111111111111111"].entries()) {
+      const key = `invalid-if-match-${index}`;
+      const response = await service.fetch(`${service.origin}/v1/workspaces/ws-1`, {
+        method: "PATCH",
+        headers: {
+          Authorization: "Bearer token-a", "T4-API-Version": "1", "Idempotency-Key": key, "Content-Type": "application/json",
+          ...(ifMatch === undefined ? {} : { "If-Match": ifMatch }),
+        },
+        body: '{"name":"updated"}',
+      });
+      expect(response.status).toBe(400);
+      expect((await response.json()) as unknown).toMatchObject({ error: { code: "invalid_request" } });
+    }
+    const first = await client.http.PATCH("/v1/workspaces/{workspaceId}", {
+      body: { name: "updated" }, params: { header: mutationHeaders(1, "if-match-replay-order"), path: { workspaceId: "ws-1" } },
+    });
+    expect(first.response.status).toBe(200);
+    const missingOnReplay = await service.fetch(`${service.origin}/v1/workspaces/ws-1`, {
+      method: "PATCH",
+      headers: { Authorization: "Bearer token-a", "T4-API-Version": "1", "Idempotency-Key": "if-match-replay-order", "Content-Type": "application/json" },
+      body: '{"name":"updated"}',
+    });
+    expect(missingOnReplay.status).toBe(400);
+  });
+
+  it("rejects invalid declared watch headers and calendar timestamps", async () => {
+    let cacheBodyCancelled = false;
+    const cacheClient = createT4ApiClient({
+      baseUrl: "https://watch-cache.test", credential: "token-a", majorVersion: 1,
+      fetch: async () => apiResponse(new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(new TextEncoder().encode('data: {"type":"heartbeat","cursor":"cache","observedAt":"2026-07-21T00:00:00Z"}\n\n')); },
+        cancel() { cacheBodyCancelled = true; },
+      }), { headers: { "Content-Type": "text/event-stream", "Cache-Control": "max-age=3600" } }),
+    });
+    await expect(cacheClient.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ status: 502, retryable: false });
+    expect(cacheBodyCancelled).toBe(true);
+
+    for (const observedAt of [
+      "2026-02-31T00:00:00Z", "2026-13-01T00:00:00Z", "2025-02-29T00:00:00Z",
+      "2026-04-31T00:00:00Z", "2026-01-01T24:00:00Z", "2026-01-01T00:60:00Z",
+      "2026-01-01T00:00:00+24:00", "2026-01-01T00:00:00+01:60",
+    ]) {
+      const calendarClient = createT4ApiClient({
+        baseUrl: "https://watch-calendar.test", credential: "token-a", majorVersion: 1,
+        fetch: async () => apiResponse(`data: {"type":"heartbeat","cursor":"calendar","observedAt":"${observedAt}"}\n\n`, { headers: { "Content-Type": "text/event-stream" } }),
+      });
+      await expect(calendarClient.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ status: 502, retryable: false });
+    }
+  });
+
   it("takes a snapshot and watches bounded SSE with heartbeat, reconnect, cancellation, and typed resync", async () => {
     const service = new T4ApiV1ConformanceService();
     const client = createT4ApiClient({ baseUrl: service.origin, credential: "token-a", majorVersion: 1, fetch: service.fetch });
