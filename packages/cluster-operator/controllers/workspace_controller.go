@@ -118,6 +118,12 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 			return ctrl.Result{Requeue: true}, nil
 		}
 	}
+	if pvc.Status.Phase == corev1.ClaimBound && !pvcHasRWX(&pvc) {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCNotRWX", "bound workspace PVC does not request ReadWriteMany")
+	}
+	if pvc.Status.Phase == corev1.ClaimLost {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateWorkspaceFailure(ctx, &workspace, "StorageReady", "PVCLost", "workspace PVC lost its volume")
+	}
 
 	original := workspace.Status
 	original.Capacity = workspace.Status.Capacity.DeepCopy()
@@ -133,16 +139,8 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 	meta.SetStatusCondition(&workspace.Status.Conditions, condition("StorageReady", metav1.ConditionTrue, ReasonStorageReady, "RWX StorageClass and workspace PVC are accepted", workspace.Generation))
 	switch pvc.Status.Phase {
 	case corev1.ClaimBound:
-		if !pvcHasRWX(&pvc) {
-			workspace.Status.Phase = clusterv1alpha1.InfrastructureFailed
-			meta.SetStatusCondition(&workspace.Status.Conditions, condition("Ready", metav1.ConditionFalse, "PVCNotRWX", "bound workspace PVC does not request ReadWriteMany", workspace.Generation))
-		} else {
-			workspace.Status.Phase = clusterv1alpha1.InfrastructureReady
-			meta.SetStatusCondition(&workspace.Status.Conditions, condition("Ready", metav1.ConditionTrue, "PVCBound", "workspace PVC is bound with ReadWriteMany access", workspace.Generation))
-		}
-	case corev1.ClaimLost:
-		workspace.Status.Phase = clusterv1alpha1.InfrastructureFailed
-		meta.SetStatusCondition(&workspace.Status.Conditions, condition("Ready", metav1.ConditionFalse, "PVCLost", "workspace PVC lost its volume", workspace.Generation))
+		workspace.Status.Phase = clusterv1alpha1.InfrastructureReady
+		meta.SetStatusCondition(&workspace.Status.Conditions, condition("Ready", metav1.ConditionTrue, "PVCBound", "workspace PVC is bound with ReadWriteMany access", workspace.Generation))
 	default:
 		workspace.Status.Phase = clusterv1alpha1.InfrastructurePending
 		meta.SetStatusCondition(&workspace.Status.Conditions, condition("Ready", metav1.ConditionFalse, "PVCBinding", "workspace PVC is waiting to bind", workspace.Generation))

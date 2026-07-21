@@ -748,6 +748,7 @@ func (r *SessionReconciler) deleteOwnedSessionResources(ctx context.Context, ses
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: SessionPodName(session), Namespace: session.Namespace}},
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: SessionServiceName(session), Namespace: session.Namespace}},
 	}
+	ownershipConflict := false
 	for _, object := range objects {
 		if err := r.Get(ctx, client.ObjectKeyFromObject(object), object); err != nil {
 			if err := client.IgnoreNotFound(err); err != nil {
@@ -756,14 +757,18 @@ func (r *SessionReconciler) deleteOwnedSessionResources(ctx context.Context, ses
 			continue
 		}
 		if !sessionExclusivelyOwnsResource(object, session) {
-			if err := r.updateSessionFailure(ctx, session, false, false, "Available", "ResourceOwnershipConflict", fmt.Sprintf("deterministic %T has an unexpected owner", object)); err != nil {
-				return err
-			}
-			return errSessionResourceOwnershipConflict
+			ownershipConflict = true
+			continue
 		}
 		if err := r.Delete(ctx, object); err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
+	}
+	if ownershipConflict {
+		if err := r.updateSessionFailure(ctx, session, false, false, "Available", "ResourceOwnershipConflict", "one or more deterministic session resources have an unexpected owner"); err != nil {
+			return err
+		}
+		return errSessionResourceOwnershipConflict
 	}
 	return nil
 }
