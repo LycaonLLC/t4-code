@@ -97,7 +97,7 @@ Some actions depend on what the host supports. When a host can't do something (s
 
 ## Local and paired hosts
 
-**Local.** T4 Code looks for the `omp` executable via `$OMP_EXECUTABLE`, your `PATH`, and common install locations (`~/.local/bin`, `/usr/local/bin`, `/opt/omp/bin`, ...). It then manages one T4 host per OMP profile for you: a systemd user service on Linux, a launch agent on macOS. Named profiles under `~/.omp/profiles` appear as their own local hosts and can auto-start with the app. Host logs remain in the compatibility paths `~/.local/state/t4-code/appserver` (Linux) or `~/Library/Logs/T4 Code/appserver` (macOS); named profiles log under `profiles/<id>` inside those directories.
+**Local.** The Flutter macOS application includes its compatible T4 host and OMP authority runtimes. Opening the app installs or repairs its per-user launch agent, starts it when needed, and connects over the private Unix socket automatically. No host address or Tailnet setup is required for normal Mac use. Development and Linux builds can instead discover `omp` via `$OMP_EXECUTABLE`, `PATH`, and common install locations. Named profiles under `~/.omp/profiles` appear as their own local hosts. Host logs remain in the compatibility paths `~/.local/state/t4-code/appserver` (Linux) or `~/Library/Logs/T4 Code/appserver` (macOS); named profiles log under `profiles/<id>` inside those directories.
 
 **Paired.** Connect to an OMP host on another machine through a `t4-code://pair/...` link generated on that host. Device credentials are encrypted with your OS keychain (Electron `safeStorage`) before they touch disk. Dropped connections reconnect automatically with backoff, and any settings you had staged stay staged until the host confirms.
 
@@ -105,9 +105,9 @@ Some actions depend on what the host supports. When a host can't do something (s
 
 ## First run
 
-1. Install and start OMP on the machine you want to work on.
-2. Launch T4 Code. On the same machine, it finds `omp` and offers to start the T4 host. For another machine, open the pairing link from that host.
-3. Pick a project, pick or create a session, and start working.
+1. Install T4 Code and open it normally. On macOS, the bundled local runtime starts and connects automatically.
+2. Pick a project, pick or create a session, and start working.
+3. To use another machine, add it explicitly through the pairing or Tailnet workflow.
 
 ## Build from source
 

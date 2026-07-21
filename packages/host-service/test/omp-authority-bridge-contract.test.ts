@@ -91,4 +91,22 @@ describe("OMP authority bridge contract", () => {
 			params: { invalid: undefined },
 		})).toThrow("non-JSON");
 	});
+
+	test("accepts large bounded session inventories without relaxing client request limits", () => {
+		const largeInventory = decodeOmpAuthorityBridgeServerFrame({
+			v: OMP_AUTHORITY_BRIDGE_PROTOCOL,
+			type: "response",
+			id: "request-1",
+			ok: true,
+			result: [{ title: "x".repeat(300_000) }],
+		});
+		expect(largeInventory).toMatchObject({ type: "response", ok: true });
+		expect(() => decodeOmpAuthorityBridgeServerFrame({
+			v: OMP_AUTHORITY_BRIDGE_PROTOCOL,
+			type: "response",
+			id: "request-2",
+			ok: true,
+			result: [{ title: "x".repeat(800_000) }],
+		})).toThrow("text bounds");
+	});
 });

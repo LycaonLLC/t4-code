@@ -16,7 +16,7 @@
     "build:host": "pnpm --filter @t4-code/host-daemon build:binary",
     "build:site": "pnpm --filter @t4-code/site build",
     "build:flutter:web": "vp run --filter @t4-code/flutter build:web",
-    "build:flutter:macos": "pnpm build:host && vp run --filter @t4-code/flutter build:macos",
+    "build:flutter:macos": "pnpm stage:omp-runtime:mac && pnpm build:host && vp run --filter @t4-code/flutter build:macos",
     "build:flutter:android": "vp run --filter @t4-code/flutter build:android",
     "build:flutter:ios": "vp run --filter @t4-code/flutter build:ios",
     "build:demo": "pnpm --filter @t4-code/web exec vp build --mode demo --base /demo/ --outDir ../site/dist/demo --emptyOutDir",

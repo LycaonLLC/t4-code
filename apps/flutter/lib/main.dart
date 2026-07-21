@@ -6,13 +6,23 @@ import 'package:flutter/foundation.dart';
 import 'src/client/app_state.dart';
 import 'src/client/t4_client_controller.dart';
 import 'src/client/transcript_tail_store.dart';
+import 'src/client/web_socket_connector.dart';
 import 'src/host/app_preferences.dart';
 import 'src/host/persistent_host_stores.dart';
 import 'src/platform/platform_lifecycle_controller.dart';
 import 'src/ui/t4_app.dart';
 
 void main() {
-  runApp(T4Bootstrap(developmentEndpoint: _developmentEndpoint()));
+  final configuredEndpoint = _developmentEndpoint();
+  final localEndpoint = configuredEndpoint == null
+      ? platformLocalWebSocketEndpoint()
+      : null;
+  runApp(
+    T4Bootstrap(
+      developmentEndpoint: configuredEndpoint ?? localEndpoint,
+      manageLocalRuntime: localEndpoint != null,
+    ),
+  );
 }
 
 Uri? _developmentEndpoint() {
@@ -27,9 +37,14 @@ Uri? _developmentEndpoint() {
 }
 
 final class T4Bootstrap extends StatefulWidget {
-  const T4Bootstrap({this.developmentEndpoint, super.key});
+  const T4Bootstrap({
+    this.developmentEndpoint,
+    this.manageLocalRuntime = false,
+    super.key,
+  });
 
   final Uri? developmentEndpoint;
+  final bool manageLocalRuntime;
 
   @override
   State<T4Bootstrap> createState() => _T4BootstrapState();
@@ -59,9 +74,18 @@ final class _T4BootstrapState extends State<T4Bootstrap>
     _platformController = PlatformLifecycleController();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      unawaited(_controller.initialize());
-      unawaited(_platformController.initialize());
+      unawaited(_initialize());
     });
+  }
+
+  Future<void> _initialize() async {
+    await _platformController.initialize();
+    if (!mounted) return;
+    if (widget.manageLocalRuntime) {
+      await _platformController.ensureRuntimeReady();
+      if (!mounted) return;
+    }
+    await _controller.initialize();
   }
 
   @override

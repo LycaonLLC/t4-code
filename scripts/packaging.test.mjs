@@ -157,6 +157,17 @@ test("signed macOS packaging relaxes library validation only for the bundled OMP
   });
 });
 
+test("Flutter macOS signs its bundled OMP runtime with the native-addon entitlement", () => {
+  const project = readFileSync(
+    resolve(repoRoot, "apps/flutter/macos/Runner.xcodeproj/project.pbxproj"),
+    "utf8",
+  );
+
+  assert.match(project, /Sign T4 Runtime/u);
+  assert.match(project, /entitlements\.omp-runtime\.plist/u);
+  assert.match(project, /codesign --force --sign/u);
+});
+
 test("macOS signing accepts current and legacy electron-builder callback shapes", () => {
   const current = { app: "/tmp/current.app", identity: "certificate" };
   assert.equal(normalizeMacSignOptions(current), current);

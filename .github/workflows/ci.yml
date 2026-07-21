@@ -494,12 +494,17 @@ jobs:
       - name: Build standalone T4 host for Flutter macOS
         run: pnpm build:host
 
+      - name: Stage pinned OMP authority runtime
+        run: pnpm stage:omp-runtime:mac
+
       - name: Build Flutter macOS application
         working-directory: apps/flutter
         run: flutter build macos --debug
 
-      - name: Verify bundled Flutter macOS host
-        run: test -x apps/flutter/build/macos/Build/Products/Debug/t4code.app/Contents/Resources/runtime/t4-host
+      - name: Verify bundled Flutter macOS runtime
+        run: |
+          test -x apps/flutter/build/macos/Build/Products/Debug/t4code.app/Contents/Resources/runtime/t4-host
+          test -x apps/flutter/build/macos/Build/Products/Debug/t4code.app/Contents/Resources/runtime/omp
 
       - name: Run Flutter macOS native tests
         working-directory: apps/flutter/macos

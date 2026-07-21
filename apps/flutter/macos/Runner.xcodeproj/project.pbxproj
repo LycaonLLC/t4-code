@@ -30,6 +30,7 @@
 		78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */ = {isa = PBXBuildFile; productRef = 78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */; };
 		A4C1F1012E2C000100000001 /* PlatformLifecycleChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4C1F1002E2C000100000001 /* PlatformLifecycleChannel.swift */; };
 		A4C1F1032E2C000100000003 /* t4-host in Embed T4 Host */ = {isa = PBXBuildFile; fileRef = A4C1F1022E2C000100000002 /* t4-host */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		A4C1F1062E2C000100000006 /* omp in Embed T4 Runtime */ = {isa = PBXBuildFile; fileRef = A4C1F1052E2C000100000005 /* omp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -60,15 +61,16 @@
 			name = "Bundle Framework";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		A4C1F1042E2C000100000004 /* Embed T4 Host */ = {
+		A4C1F1042E2C000100000004 /* Embed T4 Runtime */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = runtime;
 			dstSubfolderSpec = 7;
 			files = (
 				A4C1F1032E2C000100000003 /* t4-host in Embed T4 Host */,
+				A4C1F1062E2C000100000006 /* omp in Embed T4 Runtime */,
 			);
-			name = "Embed T4 Host";
+			name = "Embed T4 Runtime";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
@@ -93,6 +95,7 @@
 		78E0A7A72DC9AD7400C4905E /* FlutterGeneratedPluginSwiftPackage */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = FlutterGeneratedPluginSwiftPackage; path = ephemeral/Packages/FlutterGeneratedPluginSwiftPackage; sourceTree = "<group>"; };
 		A4C1F1002E2C000100000001 /* PlatformLifecycleChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformLifecycleChannel.swift; sourceTree = "<group>"; };
 		A4C1F1022E2C000100000002 /* t4-host */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; path = ../../../packages/host-daemon/dist/t4-host; sourceTree = SOURCE_ROOT; };
+		A4C1F1052E2C000100000005 /* omp */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; path = ../../../.artifacts/omp-runtime/omp; sourceTree = SOURCE_ROOT; };
 		7AFA3C8E1D35360C0083082E /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
 		9740EEB21CF90195004384FC /* Debug.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -159,6 +162,7 @@
 			isa = PBXGroup;
 			children = (
 				A4C1F1022E2C000100000002 /* t4-host */,
+				A4C1F1052E2C000100000005 /* omp */,
 				33CC10F22044A3C60003C045 /* Assets.xcassets */,
 				33CC10F42044A3C60003C045 /* MainMenu.xib */,
 				33CC10F72044A3C60003C045 /* Info.plist */,
@@ -229,7 +233,8 @@
 				33CC10EA2044A3C60003C045 /* Frameworks */,
 				33CC10EB2044A3C60003C045 /* Resources */,
 				33CC110E2044A8840003C045 /* Bundle Framework */,
-				A4C1F1042E2C000100000004 /* Embed T4 Host */,
+				A4C1F1042E2C000100000004 /* Embed T4 Runtime */,
+				A4C1F1072E2C000100000007 /* Sign T4 Runtime */,
 				3399D490228B24CF009A79C7 /* ShellScript */,
 			);
 			buildRules = (
@@ -314,6 +319,26 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		A4C1F1072E2C000100000007 /* Sign T4 Runtime */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/runtime/omp",
+				"$(PROJECT_DIR)/../../desktop/build/entitlements.omp-runtime.plist",
+			);
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "runtime=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/runtime/omp\"\nidentity=\"${EXPANDED_CODE_SIGN_IDENTITY:--}\"\n/usr/bin/codesign --force --sign \"$identity\" --options runtime --entitlements \"$PROJECT_DIR/../../desktop/build/entitlements.omp-runtime.plist\" \"$runtime\"\n";
+		};
 		3399D490228B24CF009A79C7 /* ShellScript */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
