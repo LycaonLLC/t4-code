@@ -31,6 +31,11 @@ test("official lifecycle inputs run their native proof and tooling", () => {
     ]),
     { ...none, official_omp_gate0: true, tooling: true },
   );
+  assert.deepEqual(classifyCiPaths(["docs/OMP_T4_CAPABILITY_TRACKER.csv"]), {
+    ...none,
+    official_omp_gate0: true,
+    tooling: true,
+  });
 });
 
 test("cluster implementation changes run the cluster gate", () => {

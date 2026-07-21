@@ -2126,8 +2126,9 @@ client render</code></pre>
       watermark, no live <code>session_entry</code> projection, and no durable
       command key. T4 therefore reconciles official OMP's JSONL and fails closed
       across ambiguity instead of pretending to provide exactly-once execution.
-      Native <code>linux-arm64</code> and <code>linux-x64</code> CI jobs are the
-      remaining platform evidence before Gate 0 closes.
+      Native <code>linux-arm64</code> and <code>linux-x64</code> CI jobs pass the
+      same proof. Gate 0 is closed; packaged local and managed cutover remain a
+      separate release gate.
     </p>
     <h3 id="gate-1-contract-freeze">Gate 1: contract freeze</h3>
     <p>Freeze the shared contracts that every later workstream consumes:</p>

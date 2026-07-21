@@ -14,7 +14,7 @@ The largest problem is no longer a missing transport layer. T4 now has a shared 
 
 1. **Operation truth is implemented in the host but was not yet reaching the UI.** PR #111 added `typed`, `headless`, `terminal-only`, and `unavailable`; PR #113 classifies stock OMP commands and rejects known terminal-only text before it reaches the model. This sprint carries that result into desktop/web and Flutter.
 2. **Important daily workflows still lack a typed app action:** plan and goal modes, session branch/fork/tree, handoff, provider login/logout, queue control, and child-agent steering.
-3. **The official-OMP path now passes the complete behavioral proof on macOS ARM64.** Unmodified OMP 17.0.6 passed restart continuity, steering, follow-up, approval, cancellation, and the no-replay failure policy. Native Linux x64 and ARM64 jobs are wired into CI and remain the final platform evidence before Gate 0 closes.
+3. **The official-OMP Gate 0 proof is complete.** Unmodified OMP 17.0.6 passed restart continuity, steering, follow-up, approval, cancellation, and the no-replay failure policy on macOS ARM64 plus native Linux x64 and ARM64.
 4. **The Lycaon fork is transitional, not the desired product center.** The current public package still pins its thin authority bridge, but new compatibility work should prefer the T4-owned official-OMP adapter and add only small, extractable bridge methods when stock OMP has no usable seam.
 5. **Protocol vocabulary is not UI coverage.** Every tracker row needs an explicit client disposition: direct control, palette action, read-only view, disabled explanation, terminal handoff, or unavailable.
 6. **Source is ahead of the public release.** Flutter and the latest adapter work are on `main`; the latest public GitHub release remains v0.1.28.
@@ -29,7 +29,7 @@ The truthful-command foundation is split cleanly between merged host work and th
 - **Merged:** PR #117 preserves `catalog.get.result.operations` through the desktop runtime.
 - **Merged:** PRs #118 and #120 make web/Electron and Flutter build truthful slash menus from the runtime capability contract and fail closed when that contract is absent or unavailable.
 - **This sprint:** the official OMP 17.0.6 harness passes lifecycle, crash/resume, steer, follow-up, approval, and cancellation on macOS ARM64; the host/client failure tests prove a dispatched command becomes `outcome_unknown` and is never automatically replayed.
-- **This sprint:** `compat/official-omp-gate0.json` records the exact runtime, required platforms/scenarios, direct RPC support, and three missing stock seams. Linux x64 and ARM64 CI jobs produce per-platform evidence.
+- **This sprint:** `compat/official-omp-gate0.json` records the exact runtime, required platforms/scenarios, direct RPC support, and three missing stock seams. Linux x64 and ARM64 CI jobs pass and retain per-platform evidence.
 - **This sprint:** Flutter adds project Quick Open plus visible pause, resume, and manual compaction controls over existing typed commands. No new fork behavior is required.
 
 The tracker distinguishes merged source, work in this sprint, and public release state. None of the new adapter/client work is claimed as packaged desktop, Android, or iOS proof yet.
@@ -40,7 +40,7 @@ The tracker distinguishes merged source, work in this sprint, and public release
 |---|---|---|---|---|---|
 | Operation capability contract | Merged | Decodes shared contract | Same web client | Dart decoder merged | PR #111 green |
 | Official OMP command discovery and rejection | Merged | Receives through host | Receives through host | Receives through host | PR #113 green |
-| Official OMP Gate 0 behavior | macOS ARM64 proof passes; Linux CI wired | Shared host behavior | Shared host behavior | Shared host behavior | Stock 17.0.6 passes lifecycle, steer/follow-up, approval, cancellation; native Linux evidence pending |
+| Official OMP Gate 0 behavior | macOS ARM64 and native Linux x64/ARM64 pass | Shared host behavior | Shared host behavior | Shared host behavior | Stock 17.0.6 passes lifecycle, steer/follow-up, approval, cancellation, and crash/no-replay behavior |
 | Preserve `catalog.get.operations` | Merged host response | Merged in PR #117 | Merged in PR #117 | Already decoded | Response and live-frame client tests pass |
 | Capability-aware slash menu | Host rejects unsafe fallback | Implemented on `main` | Implemented on `main` | Implemented on `main` | PRs #118 and #120 are green and merged |
 | Project Quick Open | `files.search` merged | Implemented on `main` | Implemented on `main` | Implemented this sprint | Flutter analysis and the full 168-test suite pass locally; platform CI pending |
@@ -152,7 +152,7 @@ Fork PR [#22](https://github.com/lyc-aon/oh-my-pi/pull/22) removed more than 37,
 
 | Priority | Gap | Why it matters | Best patch path |
 |---|---|---|---|
-| T0 | Official adapter Gate 0 needs native Linux evidence | The full behavior set passes on macOS ARM64, but the product also runs Linux x64 and ARM64 | Require both native Linux CI jobs and retain their generated evidence |
+| T0 | Packaged official-OMP cutover is not proven | Gate 0 now passes on macOS ARM64 and native Linux x64/ARM64, but released builds still use the Lycaon fallback | Reconcile stock JSONL through the shared adapter, then run packaged local and managed cutover proofs |
 | T0 | Release state is ambiguous | Source says v0.1.30 while public GitHub release remains v0.1.28 | Separate `on main`, `verified package`, and `publicly released` in the tracker/release gate |
 | T0 | Plan, goal, branch/fork/tree, handoff, and provider auth lack complete typed app flows | These are central OMP workflows, not decorative terminal features | Typed T4 commands backed by existing OMP RPC where possible |
 | T1 | Queue and pause/resume controls are not consistently exposed outside Flutter | Cross-device control needs explicit, predictable behavior | Add equally visible controls to web/Capacitor over the same typed commands |
@@ -279,9 +279,9 @@ official OMP version + commit
 
 ### Phase 0: finish the official-OMP foundation
 
-1. Land and observe green Linux x64 and ARM64 Gate 0 jobs.
-2. Reconcile stock JSONL without depending on fork-only ready watermarks or live `session_entry` frames.
-3. Track source, verified package, and public release status separately, then plan the packaged cutover from the fallback bridge.
+1. Reconcile stock JSONL without depending on fork-only ready watermarks or live `session_entry` frames.
+2. Run packaged local and managed cutover proofs while preserving the released fallback.
+3. Track source, verified package, and public release status separately, then retire fallback use only after those proofs pass.
 
 ### Phase 1: close the daily-workflow gaps
 
