@@ -1457,6 +1457,136 @@ void main() {
       'selector': 'button',
     });
   });
+
+  testWidgets('quick open searches the selected project and opens its file', (
+    tester,
+  ) async {
+    final profile = HostProfile.parseTailnetAddress(
+      'https://alpha.tailnet-name.ts.net',
+    );
+    final actions = _FakeActions(
+      projectFileSearchResult: const ProjectFileSearchResult(
+        paths: <String>['lib/main.dart', 'test/main_test.dart'],
+        truncated: false,
+      ),
+    );
+    await pumpApp(
+      tester,
+      state: T4ViewState(
+        connectionPhase: ConnectionPhase.ready,
+        hostDirectory: HostDirectory.empty().upsert(profile),
+        authenticationPhase: AuthenticationPhase.paired,
+        grantedCapabilities: t4RequestedCapabilities.toSet(),
+        grantedFeatures: const <String>{'files.search'},
+        selectedSessionId: 'session-alpha',
+        sessions: const <SessionSummary>[
+          SessionSummary(
+            hostId: 'host-alpha',
+            sessionId: 'session-alpha',
+            projectId: 'project-alpha',
+            projectName: 'Project Alpha',
+            title: 'Quick open fixture',
+            revision: 'revision-alpha',
+            status: 'idle',
+          ),
+        ],
+      ),
+      actions: actions,
+      size: compactPhone,
+    );
+
+    await tester.tap(find.byTooltip('Quick open project file'));
+    await tester.pumpAndSettle();
+    expect(find.text('Quick open'), findsOneWidget);
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Find a project file'),
+      'main',
+    );
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pumpAndSettle();
+    expect(actions.projectFileQueries, <String>['main']);
+    expect(find.text('lib/main.dart'), findsOneWidget);
+
+    await tester.tap(find.text('lib/main.dart'));
+    await tester.pumpAndSettle();
+    expect(actions.readFilePaths, <String>['lib/main.dart']);
+    expect(find.text('Developer tools'), findsOneWidget);
+    expect(find.text('Files'), findsOneWidget);
+  });
+
+  testWidgets('composer exposes pause, resume, and manual compaction', (
+    tester,
+  ) async {
+    final profile = HostProfile.parseTailnetAddress(
+      'https://alpha.tailnet-name.ts.net',
+    );
+    final actions = _FakeActions();
+    T4ViewState stateFor({required bool turnActive, required bool isPaused}) =>
+        T4ViewState(
+          connectionPhase: ConnectionPhase.ready,
+          hostDirectory: HostDirectory.empty().upsert(profile),
+          authenticationPhase: AuthenticationPhase.paired,
+          grantedCapabilities: t4RequestedCapabilities.toSet(),
+          selectedSessionId: 'session-alpha',
+          sessions: <SessionSummary>[
+            SessionSummary(
+              hostId: 'host-alpha',
+              sessionId: 'session-alpha',
+              projectId: 'project-alpha',
+              projectName: 'Project Alpha',
+              title: 'Control fixture',
+              revision: 'revision-alpha',
+              status: turnActive ? 'active' : 'idle',
+              turnActive: turnActive,
+              isPaused: isPaused,
+            ),
+          ],
+          composer: SessionComposerState(
+            turnActive: turnActive,
+            isPaused: isPaused,
+          ),
+        );
+
+    await pumpApp(
+      tester,
+      state: stateFor(turnActive: true, isPaused: false),
+      actions: actions,
+      size: compactPhone,
+    );
+    expect(find.text('Pause'), findsOneWidget);
+    expect(find.text('Stop'), findsOneWidget);
+    await tester.tap(find.text('Pause'));
+    await tester.pumpAndSettle();
+    expect(actions.pauseSessionCalls, 1);
+
+    await tester.pumpWidget(
+      T4App(
+        state: stateFor(turnActive: false, isPaused: true),
+        actions: actions,
+        credentialsAreVolatile: false,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Resume'), findsOneWidget);
+    expect(find.text('Resume the session to continue'), findsOneWidget);
+    await tester.tap(find.text('Resume'));
+    await tester.pumpAndSettle();
+    expect(actions.resumeSessionCalls, 1);
+
+    await tester.pumpWidget(
+      T4App(
+        state: stateFor(turnActive: false, isPaused: false),
+        actions: actions,
+        credentialsAreVolatile: false,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Compact'), findsOneWidget);
+    await tester.tap(find.text('Compact'));
+    await tester.pumpAndSettle();
+    expect(actions.compactSessionCalls, 1);
+  });
 }
 
 final class _FakeActions implements T4Actions {
@@ -1467,6 +1597,7 @@ final class _FakeActions implements T4Actions {
     this.transcriptContextResult,
     this.usageReadResult,
     this.brokerStatusResult,
+    this.projectFileSearchResult,
   });
 
   final Object? addHostError;
@@ -1475,6 +1606,7 @@ final class _FakeActions implements T4Actions {
   final TranscriptContextResult? transcriptContextResult;
   final UsageReadResult? usageReadResult;
   final BrokerStatusResult? brokerStatusResult;
+  final ProjectFileSearchResult? projectFileSearchResult;
   final List<String> transcriptQueries = <String>[];
   final List<String> contextAnchors = <String>[];
   final List<String> addedAddresses = <String>[];
@@ -1495,6 +1627,9 @@ final class _FakeActions implements T4Actions {
   final List<String> submittedPrompts = <String>[];
   final List<String> queuedPrompts = <String>[];
   int cancelTurnCalls = 0;
+  int pauseSessionCalls = 0;
+  int resumeSessionCalls = 0;
+  int compactSessionCalls = 0;
   int loadEarlierCalls = 0;
   final List<String> selectedModels = <String>[];
   final List<String> selectedThinkingLevels = <String>[];
@@ -1504,6 +1639,8 @@ final class _FakeActions implements T4Actions {
   attentionResponses = <({AttentionItem item, AttentionResponse response})>[];
   final List<String> retriedSessionIds = <String>[];
   final List<String> cancelledAgentIds = <String>[];
+  final List<String> projectFileQueries = <String>[];
+  final List<String> readFilePaths = <String>[];
   final List<({String path, String content})> fileWrites =
       <({String path, String content})>[];
   final List<String> refreshedReviewIds = <String>[];
@@ -1671,6 +1808,21 @@ final class _FakeActions implements T4Actions {
   }
 
   @override
+  Future<void> pauseSession() async {
+    pauseSessionCalls += 1;
+  }
+
+  @override
+  Future<void> resumeSession() async {
+    resumeSessionCalls += 1;
+  }
+
+  @override
+  Future<void> compactSession({String? instructions}) async {
+    compactSessionCalls += 1;
+  }
+
+  @override
   Future<void> setSessionModel(String selector) async {
     selectedModels.add(selector);
   }
@@ -1718,7 +1870,19 @@ final class _FakeActions implements T4Actions {
   Future<void> listFiles([String path = '']) async {}
 
   @override
-  Future<void> readFile(String path) async {}
+  Future<ProjectFileSearchResult> searchProjectFiles(
+    String query, {
+    int limit = 12,
+  }) async {
+    projectFileQueries.add(query);
+    return projectFileSearchResult ??
+        (throw UnsupportedError('project file search is not configured'));
+  }
+
+  @override
+  Future<void> readFile(String path) async {
+    readFilePaths.add(path);
+  }
 
   @override
   Future<void> loadSessionDiff() async {}

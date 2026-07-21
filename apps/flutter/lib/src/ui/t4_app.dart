@@ -20,6 +20,7 @@ part 'attention_pane.dart';
 part 'conversation_pane.dart';
 part 'developer_surfaces.dart';
 part 'host_management.dart';
+part 'quick_open_dialog.dart';
 part 'transcript_search_pane.dart';
 part 'usage_status_pane.dart';
 part 'settings_pane.dart';

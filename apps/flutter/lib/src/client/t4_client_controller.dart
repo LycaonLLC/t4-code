@@ -315,6 +315,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       fastEnabled: session.fast,
       fastAvailable: session.fastAvailable,
       turnActive: session.turnActive || _submitting,
+      isPaused: session.isPaused,
       queuedFollowUpCount: session.queuedFollowUpCount,
     );
   }
@@ -1661,6 +1662,88 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
   }
 
   @override
+  Future<void> pauseSession() async {
+    final session = state.selectedSession;
+    if (session == null || session.isPaused) return;
+    final frame = await _runSessionOperation(
+      prefix: 'session-pause',
+      command: 'session.pause',
+      capability: 'sessions.control',
+      session: session,
+    );
+    final result = frame.result;
+    if (result is Map<String, Object?> && result['paused'] is bool) {
+      _setSessionPaused(session.sessionId, result['paused']! as bool);
+    }
+  }
+
+  @override
+  Future<void> resumeSession() async {
+    final session = state.selectedSession;
+    if (session == null || !session.isPaused) return;
+    final frame = await _runSessionOperation(
+      prefix: 'session-resume',
+      command: 'session.resume',
+      capability: 'sessions.control',
+      session: session,
+    );
+    final result = frame.result;
+    final paused = result is Map<String, Object?> && result['paused'] is bool
+        ? result['paused']! as bool
+        : false;
+    _setSessionPaused(session.sessionId, paused);
+  }
+
+  @override
+  Future<void> compactSession({String? instructions}) async {
+    final session = state.selectedSession;
+    if (session == null || session.turnActive || session.isPaused) return;
+    final normalized = instructions?.trim();
+    await _runSessionOperation(
+      prefix: 'session-compact',
+      command: 'session.compact',
+      capability: 'sessions.control',
+      session: session,
+      args: <String, Object?>{
+        if (normalized != null && normalized.isNotEmpty)
+          'instructions': normalized,
+      },
+    );
+  }
+
+  void _setSessionPaused(String sessionId, bool paused) {
+    _sessions = _sessions
+        .map(
+          (session) => session.sessionId == sessionId
+              ? SessionSummary(
+                  hostId: session.hostId,
+                  sessionId: session.sessionId,
+                  title: session.title,
+                  revision: session.revision,
+                  status: session.status,
+                  projectId: session.projectId,
+                  projectName: session.projectName,
+                  updatedAt: session.updatedAt,
+                  archivedAt: session.archivedAt,
+                  working: session.working,
+                  modelSelector: session.modelSelector,
+                  modelDisplayName: session.modelDisplayName,
+                  thinking: session.thinking,
+                  thinkingSupported: session.thinkingSupported,
+                  thinkingLevels: session.thinkingLevels,
+                  fast: session.fast,
+                  fastAvailable: session.fastAvailable,
+                  turnActive: session.turnActive,
+                  isPaused: paused,
+                  queuedFollowUpCount: session.queuedFollowUpCount,
+                )
+              : session,
+        )
+        .toList(growable: false);
+    _publish();
+  }
+
+  @override
   Future<void> setSessionModel(String selector) async {
     final session = state.selectedSession;
     if (session == null) return;
@@ -2015,6 +2098,65 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
               : null,
         );
       });
+
+  @override
+  Future<ProjectFileSearchResult> searchProjectFiles(
+    String query, {
+    int limit = 12,
+  }) async {
+    final normalized = query.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError.value(query, 'query', 'must not be blank');
+    }
+    if (utf8.encode(normalized).length > 256) {
+      throw ArgumentError.value(query, 'query', 'must be at most 256 bytes');
+    }
+    if (limit < 1 || limit > 50) {
+      throw RangeError.range(limit, 1, 50, 'limit');
+    }
+    if (!_grantedFeatures.contains('files.search')) {
+      throw StateError('This host does not support project file search.');
+    }
+    final session = _developerSession();
+    final frame = await _runComposerCommand(
+      prefix: 'files-search',
+      command: 'files.search',
+      session: session,
+      capability: 'files.list',
+      args: <String, Object?>{'query': normalized, 'limit': limit},
+    );
+    final result = frame.result;
+    if (result is! Map<String, Object?> ||
+        result['matches'] is! List<Object?> ||
+        result['truncated'] is! bool) {
+      throw const FormatException('files.search result is invalid');
+    }
+    if (result.keys.toSet().difference(const {
+          'matches',
+          'truncated',
+        }).isNotEmpty ||
+        (result['matches']! as List<Object?>).length > 50) {
+      throw const FormatException('files.search result is invalid');
+    }
+    final paths = <String>[];
+    final seen = <String>{};
+    for (final raw in result['matches']! as List<Object?>) {
+      if (raw is! Map<String, Object?> ||
+          raw.keys.toSet().difference(const {'path'}).isNotEmpty ||
+          raw['path'] is! String) {
+        throw const FormatException('files.search match is invalid');
+      }
+      final path = _safeProjectSearchPath(raw['path']! as String);
+      if (!seen.add(path)) {
+        throw const FormatException('files.search match is duplicated');
+      }
+      paths.add(path);
+    }
+    return ProjectFileSearchResult(
+      paths: List<String>.unmodifiable(paths),
+      truncated: result['truncated']! as bool,
+    );
+  }
 
   @override
   Future<void> readFile(String path) => _runDeveloperOperation(() async {
@@ -2917,6 +3059,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
       fastAvailable: liveState['fastAvailable'] == true,
       turnActive:
           streaming || pendingApproval == true || pendingUserInput == true,
+      isPaused: liveState['isPaused'] == true,
       queuedFollowUpCount: queuedCount,
     );
   }
@@ -3573,6 +3716,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
                   fast: session.fast,
                   fastAvailable: session.fastAvailable,
                   turnActive: session.turnActive,
+                  isPaused: session.isPaused,
                   queuedFollowUpCount: session.queuedFollowUpCount,
                 )
               : session,
@@ -3965,6 +4109,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
             fast: result.fastActive ?? result.fast ?? session.fast,
             fastAvailable: result.fastAvailable ?? session.fastAvailable,
             turnActive: result.isStreaming || session.turnActive,
+            isPaused: result.isPaused,
             queuedFollowUpCount: result.queuedMessageCount,
           );
         })
@@ -4939,6 +5084,26 @@ String _humanizeSettingPath(String path) => path
           .join(' '),
     )
     .join(' · ');
+
+String _safeProjectSearchPath(String value) {
+  final hasControl = value.runes.any((rune) => rune <= 0x1f || rune == 0x7f);
+  if (value.isEmpty ||
+      utf8.encode(value).length > 4096 ||
+      hasControl ||
+      value.contains(r'\') ||
+      value.startsWith('/') ||
+      RegExp(r'^[A-Za-z]:').hasMatch(value) ||
+      value.startsWith('~')) {
+    throw const FormatException(
+      'files.search path must be a safe relative POSIX path',
+    );
+  }
+  final parts = value.split('/');
+  if (parts.any((part) => part.isEmpty || part == '.' || part == '..')) {
+    throw const FormatException('files.search path contains an unsafe segment');
+  }
+  return value;
+}
 
 final class _PendingCommand {
   _PendingCommand({

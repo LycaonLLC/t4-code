@@ -34,6 +34,7 @@ const List<String> t4RequestedFeatures = <String>[
   'agent.transcript',
   'terminal.io',
   'files.list',
+  'files.search',
   'files.diff',
   'audit.tail',
   'catalog.metadata',
@@ -101,6 +102,7 @@ final class SessionSummary {
     this.fast = false,
     this.fastAvailable = false,
     this.turnActive = false,
+    this.isPaused = false,
     this.queuedFollowUpCount = 0,
   });
 
@@ -122,6 +124,7 @@ final class SessionSummary {
   final bool fast;
   final bool fastAvailable;
   final bool turnActive;
+  final bool isPaused;
   final int queuedFollowUpCount;
 
   bool get archived => archivedAt != null;
@@ -211,6 +214,7 @@ final class SessionComposerState {
     this.fastEnabled = false,
     this.fastAvailable = false,
     this.turnActive = false,
+    this.isPaused = false,
     this.queuedFollowUpCount = 0,
   });
 
@@ -226,6 +230,7 @@ final class SessionComposerState {
   final bool fastEnabled;
   final bool fastAvailable;
   final bool turnActive;
+  final bool isPaused;
   final int queuedFollowUpCount;
 }
 
@@ -419,6 +424,13 @@ final class FileWorkspaceState {
   final String? revision;
   final bool loading;
   final String? error;
+}
+
+final class ProjectFileSearchResult {
+  const ProjectFileSearchResult({required this.paths, required this.truncated});
+
+  final List<String> paths;
+  final bool truncated;
 }
 
 final class ReviewWorkspaceItem {
@@ -711,6 +723,12 @@ abstract interface class T4Actions {
 
   Future<void> cancelTurn();
 
+  Future<void> pauseSession();
+
+  Future<void> resumeSession();
+
+  Future<void> compactSession({String? instructions});
+
   Future<void> setSessionModel(String selector);
 
   Future<void> setSessionThinking(String level);
@@ -734,6 +752,10 @@ abstract interface class T4Actions {
   void closeTerminal(String terminalId);
 
   Future<void> listFiles([String path = '']);
+  Future<ProjectFileSearchResult> searchProjectFiles(
+    String query, {
+    int limit = 12,
+  });
   Future<void> readFile(String path);
   Future<void> loadSessionDiff();
   Future<void> writeFile(String path, String content);
