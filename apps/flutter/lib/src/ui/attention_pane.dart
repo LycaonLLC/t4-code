@@ -1,6 +1,6 @@
 part of 't4_app.dart';
 
-final class _AttentionPane extends StatefulWidget {
+final class _AttentionPane extends StatelessWidget {
   const _AttentionPane({
     required this.state,
     required this.actions,
@@ -14,10 +14,37 @@ final class _AttentionPane extends StatefulWidget {
   final Future<void> Function(String sessionId) onOpenSession;
 
   @override
-  State<_AttentionPane> createState() => _AttentionPaneState();
+  Widget build(BuildContext context) => InboxFlyoutContent(
+    state: state,
+    actions: actions,
+    onDone: onDone,
+    onOpenSession: onOpenSession,
+  );
 }
 
-final class _AttentionPaneState extends State<_AttentionPane>
+/// The inbox content column (Needs you / Updates / Agents), embeddable in a
+/// ~400 px anchored popover or, via [_AttentionPane], the full-width takeover.
+final class InboxFlyoutContent extends StatefulWidget {
+  const InboxFlyoutContent({
+    required this.state,
+    required this.actions,
+    required this.onDone,
+    required this.onOpenSession,
+    this.showTitle = true,
+    super.key,
+  });
+
+  final T4ViewState state;
+  final T4Actions actions;
+  final VoidCallback onDone;
+  final Future<void> Function(String sessionId) onOpenSession;
+  final bool showTitle;
+
+  @override
+  State<InboxFlyoutContent> createState() => _InboxFlyoutContentState();
+}
+
+final class _InboxFlyoutContentState extends State<InboxFlyoutContent>
     with SingleTickerProviderStateMixin {
   late final TabController _tabs;
   final Set<String> _responding = <String>{};
@@ -96,10 +123,11 @@ final class _AttentionPaneState extends State<_AttentionPane>
         .toList(growable: false);
     return Column(
       children: [
-        _AttentionHeader(
-          urgentCount: widget.state.urgentAttentionCount,
-          onDone: widget.onDone,
-        ),
+        if (widget.showTitle)
+          _AttentionHeader(
+            urgentCount: widget.state.urgentAttentionCount,
+            onDone: widget.onDone,
+          ),
         if (widget.state.attentionPartial)
           MaterialBanner(
             content: Text(
@@ -248,6 +276,117 @@ final class _AttentionHeader extends StatelessWidget {
   );
 }
 
+IconData _attentionKindIcon(AttentionKind kind) => switch (kind) {
+  AttentionKind.approval => Icons.shield_outlined,
+  AttentionKind.question => Icons.help_outline,
+  AttentionKind.plan => Icons.account_tree_outlined,
+  AttentionKind.confirmation => Icons.verified_user_outlined,
+  AttentionKind.completed => Icons.check_circle_outline,
+  AttentionKind.failed => Icons.error_outline,
+  AttentionKind.cancelled => Icons.cancel_outlined,
+};
+
+Color _attentionKindColor(AttentionKind kind, ColorScheme scheme) =>
+    switch (kind) {
+      AttentionKind.failed => scheme.error,
+      AttentionKind.cancelled => scheme.onSurfaceVariant,
+      AttentionKind.completed => scheme.primary,
+      _ => scheme.tertiary,
+    };
+
+/// Question choice buttons shared by [_AttentionCard] and
+/// [InlineApprovalCard]: one outlined button per choice plus the optional
+/// free-text answer affordance.
+final class _AttentionQuestionActions extends StatelessWidget {
+  const _AttentionQuestionActions({
+    required this.item,
+    required this.enabled,
+    required this.onRespond,
+    required this.onCustomAnswer,
+  });
+
+  final AttentionItem item;
+  final bool enabled;
+  final ValueChanged<AttentionResponse> onRespond;
+  final VoidCallback onCustomAnswer;
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+    spacing: _T4Space.sm,
+    runSpacing: _T4Space.sm,
+    children: [
+      for (final choice in item.choices)
+        OutlinedButton(
+          onPressed: !enabled
+              ? null
+              : () => onRespond(
+                  AttentionResponse(
+                    decision: AttentionDecision.approve,
+                    optionIds: <String>[choice.id],
+                  ),
+                ),
+          child: Text(choice.label),
+        ),
+      if (item.allowText)
+        FilledButton.tonal(
+          onPressed: !enabled ? null : onCustomAnswer,
+          child: const Text('Type an answer'),
+        ),
+    ],
+  );
+}
+
+/// Approve / deny / reject / revise buttons shared by [_AttentionCard] and
+/// [InlineApprovalCard]; label and decision semantics depend on the item kind.
+final class _AttentionDecisionActions extends StatelessWidget {
+  const _AttentionDecisionActions({
+    required this.item,
+    required this.enabled,
+    required this.onRespond,
+    required this.onRevise,
+  });
+
+  final AttentionItem item;
+  final bool enabled;
+  final ValueChanged<AttentionResponse> onRespond;
+  final VoidCallback onRevise;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisAlignment: MainAxisAlignment.end,
+    children: [
+      if (item.kind == AttentionKind.plan) ...[
+        TextButton(
+          onPressed: !enabled ? null : onRevise,
+          child: const Text('Revise'),
+        ),
+        const SizedBox(width: _T4Space.sm),
+      ],
+      OutlinedButton(
+        onPressed: !enabled
+            ? null
+            : () => onRespond(
+                AttentionResponse(
+                  decision: item.kind == AttentionKind.plan
+                      ? AttentionDecision.reject
+                      : AttentionDecision.deny,
+                ),
+              ),
+        child: Text(item.kind == AttentionKind.plan ? 'Reject' : 'Deny'),
+      ),
+      const SizedBox(width: _T4Space.sm),
+      FilledButton(
+        onPressed: !enabled
+            ? null
+            : () => onRespond(
+                const AttentionResponse(decision: AttentionDecision.approve),
+              ),
+        child: const Text('Approve'),
+      ),
+    ],
+  );
+}
+
 final class _AttentionCard extends StatelessWidget {
   const _AttentionCard({
     required this.item,
@@ -281,7 +420,11 @@ final class _AttentionCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(_icon, size: 20, color: _color(scheme)),
+                Icon(
+                  _attentionKindIcon(item.kind),
+                  size: 20,
+                  color: _attentionKindColor(item.kind, scheme),
+                ),
                 const SizedBox(width: _T4Space.sm),
                 Expanded(
                   child: Text(
@@ -307,9 +450,19 @@ final class _AttentionCard extends StatelessWidget {
             if (item.needsResponse) ...[
               const SizedBox(height: _T4Space.sm),
               if (item.kind == AttentionKind.question)
-                _questionActions()
+                _AttentionQuestionActions(
+                  item: item,
+                  enabled: canRespond && !busy,
+                  onRespond: onRespond,
+                  onCustomAnswer: onCustomAnswer,
+                )
               else
-                _decisionActions(),
+                _AttentionDecisionActions(
+                  item: item,
+                  enabled: canRespond && !busy,
+                  onRespond: onRespond,
+                  onRevise: onRevise,
+                ),
               if (!canRespond)
                 Padding(
                   padding: const EdgeInsets.only(top: _T4Space.sm),
@@ -333,81 +486,116 @@ final class _AttentionCard extends StatelessWidget {
       ),
     );
   }
+}
 
-  Widget _questionActions() => Wrap(
-    spacing: _T4Space.sm,
-    runSpacing: _T4Space.sm,
-    children: [
-      for (final choice in item.choices)
-        OutlinedButton(
-          onPressed: !canRespond || busy
-              ? null
-              : () => onRespond(
-                  AttentionResponse(
-                    decision: AttentionDecision.approve,
-                    optionIds: <String>[choice.id],
+/// A single actionable attention item (approval or question) rendered inline
+/// in the conversation transcript. Shares choice/decision button semantics
+/// with the inbox cards via [_AttentionQuestionActions] and
+/// [_AttentionDecisionActions].
+final class InlineApprovalCard extends StatelessWidget {
+  const InlineApprovalCard({
+    required this.item,
+    required this.onRespond,
+    required this.onRevise,
+    required this.onCustomAnswer,
+    required this.onOpenInbox,
+    this.busy = false,
+    this.canRespond = true,
+    super.key,
+  });
+
+  final AttentionItem item;
+  final ValueChanged<AttentionResponse> onRespond;
+  final VoidCallback onRevise;
+  final VoidCallback onCustomAnswer;
+  final VoidCallback onOpenInbox;
+  final bool busy;
+  final bool canRespond;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final enabled = canRespond && !busy && item.actionable;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: Container(
+          padding: const EdgeInsets.all(_T4Space.md),
+          decoration: BoxDecoration(
+            color: scheme.surface,
+            borderRadius: BorderRadius.circular(_T4Radius.md),
+            border: Border.all(
+              width: 1,
+              color: scheme.tertiary.withValues(alpha: 0.4),
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    _attentionKindIcon(item.kind),
+                    size: 18,
+                    color: _attentionKindColor(item.kind, scheme),
                   ),
-                ),
-          child: Text(choice.label),
-        ),
-      if (item.allowText)
-        FilledButton.tonal(
-          onPressed: !canRespond || busy ? null : onCustomAnswer,
-          child: const Text('Type an answer'),
-        ),
-    ],
-  );
-
-  Widget _decisionActions() => Row(
-    mainAxisAlignment: MainAxisAlignment.end,
-    children: [
-      if (item.kind == AttentionKind.plan) ...[
-        TextButton(
-          onPressed: !canRespond || busy ? null : onRevise,
-          child: const Text('Revise'),
-        ),
-        const SizedBox(width: _T4Space.sm),
-      ],
-      OutlinedButton(
-        onPressed: !canRespond || busy
-            ? null
-            : () => onRespond(
-                AttentionResponse(
-                  decision: item.kind == AttentionKind.plan
-                      ? AttentionDecision.reject
-                      : AttentionDecision.deny,
-                ),
+                  const SizedBox(width: _T4Space.sm),
+                  Expanded(
+                    child: Text(
+                      item.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleSmall,
+                    ),
+                  ),
+                  if (busy)
+                    const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else
+                    IconButton(
+                      onPressed: onOpenInbox,
+                      tooltip: 'Open inbox',
+                      iconSize: 18,
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.inbox_outlined),
+                    ),
+                ],
               ),
-        child: Text(item.kind == AttentionKind.plan ? 'Reject' : 'Deny'),
-      ),
-      const SizedBox(width: _T4Space.sm),
-      FilledButton(
-        onPressed: !canRespond || busy
-            ? null
-            : () => onRespond(
-                const AttentionResponse(decision: AttentionDecision.approve),
+              const SizedBox(height: _T4Space.xs),
+              Text(
+                item.summary,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall,
               ),
-        child: const Text('Approve'),
+              if (item.needsResponse) ...[
+                const SizedBox(height: _T4Space.sm),
+                if (item.kind == AttentionKind.question)
+                  _AttentionQuestionActions(
+                    item: item,
+                    enabled: enabled,
+                    onRespond: onRespond,
+                    onCustomAnswer: onCustomAnswer,
+                  )
+                else
+                  _AttentionDecisionActions(
+                    item: item,
+                    enabled: enabled,
+                    onRespond: onRespond,
+                    onRevise: onRevise,
+                  ),
+              ],
+            ],
+          ),
+        ),
       ),
-    ],
-  );
-
-  IconData get _icon => switch (item.kind) {
-    AttentionKind.approval => Icons.shield_outlined,
-    AttentionKind.question => Icons.help_outline,
-    AttentionKind.plan => Icons.account_tree_outlined,
-    AttentionKind.confirmation => Icons.verified_user_outlined,
-    AttentionKind.completed => Icons.check_circle_outline,
-    AttentionKind.failed => Icons.error_outline,
-    AttentionKind.cancelled => Icons.cancel_outlined,
-  };
-
-  Color _color(ColorScheme scheme) => switch (item.kind) {
-    AttentionKind.failed => scheme.error,
-    AttentionKind.cancelled => scheme.onSurfaceVariant,
-    AttentionKind.completed => scheme.primary,
-    _ => scheme.tertiary,
-  };
+    );
+  }
 }
 
 final class _AgentActivityList extends StatefulWidget {
