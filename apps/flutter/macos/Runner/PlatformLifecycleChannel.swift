@@ -4,7 +4,8 @@ import FlutterMacOS
 import Foundation
 
 private let runtimeOutputLimit = 16 * 1024
-private let runtimeProbeTimeout: TimeInterval = 1.5
+private let runtimeBridgeProbeTimeout: TimeInterval = 8
+private let runtimeStatusProbeTimeout: TimeInterval = 2
 private let runtimeCommandTimeout: TimeInterval = 8
 private let runtimeLabel = "dev.oh-my-pi.appserver"
 private let authorityBridgeHelpMarkers = [
@@ -25,7 +26,8 @@ protocol RuntimeProcessRunning {
     arguments: [String],
     environment: [String: String],
     timeout: TimeInterval,
-    maxOutputBytes: Int
+    maxOutputBytes: Int,
+    captureOutput: Bool
   ) throws -> RuntimeProcessResult
 }
 
@@ -35,12 +37,36 @@ final class BoundedRuntimeProcessRunner: RuntimeProcessRunning {
     arguments: [String],
     environment: [String: String],
     timeout: TimeInterval,
-    maxOutputBytes: Int
+    maxOutputBytes: Int,
+    captureOutput: Bool
   ) throws -> RuntimeProcessResult {
     let process = Process()
     process.executableURL = executableURL
     process.arguments = arguments
     process.environment = environment
+
+    if !captureOutput {
+      process.standardOutput = FileHandle.nullDevice
+      process.standardError = FileHandle.nullDevice
+      let terminated = DispatchSemaphore(value: 0)
+      process.terminationHandler = { _ in terminated.signal() }
+      try process.run()
+      var timedOut = false
+      if terminated.wait(timeout: .now() + timeout) == .timedOut {
+        timedOut = true
+        if process.isRunning { process.terminate() }
+        if terminated.wait(timeout: .now() + 0.2) == .timedOut, process.isRunning {
+          kill(process.processIdentifier, SIGKILL)
+          _ = terminated.wait(timeout: .now() + 0.2)
+        }
+      }
+      return RuntimeProcessResult(
+        exitCode: process.isRunning ? nil : process.terminationStatus,
+        output: "",
+        timedOut: timedOut,
+        overflowed: false
+      )
+    }
 
     let pipe = Pipe()
     process.standardOutput = pipe
@@ -85,8 +111,17 @@ final class BoundedRuntimeProcessRunner: RuntimeProcessRunning {
     }
 
     pipe.fileHandleForReading.readabilityHandler = nil
-    let tail = pipe.fileHandleForReading.readDataToEndOfFile()
     lock.lock()
+    let descriptor = pipe.fileHandleForReading.fileDescriptor
+    let currentFlags = fcntl(descriptor, F_GETFL)
+    if currentFlags >= 0 { _ = fcntl(descriptor, F_SETFL, currentFlags | O_NONBLOCK) }
+    var tail = Data()
+    var buffer = [UInt8](repeating: 0, count: 4096)
+    while true {
+      let count = Darwin.read(descriptor, &buffer, buffer.count)
+      if count <= 0 { break }
+      tail.append(contentsOf: buffer.prefix(count))
+    }
     if output.count < maxOutputBytes + 1 {
       output.append(tail.prefix(maxOutputBytes + 1 - output.count))
     }
@@ -113,19 +148,26 @@ final class OmpRuntimeDiscovery {
   private let environment: [String: String]
   private let homeDirectory: String
   private let runner: RuntimeProcessRunning
+  private let packagedExecutable: String?
 
   init(
     environment: [String: String] = ProcessInfo.processInfo.environment,
     homeDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path,
-    runner: RuntimeProcessRunning = BoundedRuntimeProcessRunner()
+    runner: RuntimeProcessRunning = BoundedRuntimeProcessRunner(),
+    packagedExecutable: String? = Bundle.main.resourceURL?
+      .appendingPathComponent("runtime/omp").path
   ) {
     self.environment = environment
     self.homeDirectory = homeDirectory
     self.runner = runner
+    self.packagedExecutable = packagedExecutable
   }
 
   func discover() -> RuntimeDiscovery {
     var candidates: [String] = []
+    if let packagedExecutable, !packagedExecutable.isEmpty {
+      candidates.append(packagedExecutable)
+    }
     if let explicit = environment["OMP_EXECUTABLE"], !explicit.isEmpty {
       candidates.append(explicit)
     }
@@ -183,16 +225,18 @@ final class OmpRuntimeDiscovery {
         executableURL: URL(fileURLWithPath: executable),
         arguments: ["bridge", "--help"],
         environment: safeEnvironment,
-        timeout: runtimeProbeTimeout,
-        maxOutputBytes: runtimeOutputLimit
+        timeout: runtimeBridgeProbeTimeout,
+        maxOutputBytes: runtimeOutputLimit,
+        captureOutput: true
       ), bridge.exitCode == 0, !bridge.timedOut, !bridge.overflowed,
       authorityBridgeHelpMarkers.allSatisfy({ bridge.output.contains($0) }),
       let result = try? runner.run(
         executableURL: URL(fileURLWithPath: executable),
         arguments: ["appserver", "status", "--json"],
         environment: safeEnvironment,
-        timeout: runtimeProbeTimeout,
-        maxOutputBytes: runtimeOutputLimit
+        timeout: runtimeStatusProbeTimeout,
+        maxOutputBytes: runtimeOutputLimit,
+        captureOutput: true
       ), !result.timedOut, !result.overflowed
     else { return .invalid }
 
@@ -453,6 +497,8 @@ final class MacRuntimeLifecycle {
   private let runner: RuntimeProcessRunning
   private let files: RuntimeFileStoring
   private let packagedHostExecutable: String?
+  private let packagedOmpExecutable: String?
+  private let bundleIdentity: String
 
   init(
     environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -461,7 +507,10 @@ final class MacRuntimeLifecycle {
     runner: RuntimeProcessRunning = BoundedRuntimeProcessRunner(),
     files: RuntimeFileStoring = SecureRuntimeFileStore(),
     packagedHostExecutable: String? = Bundle.main.resourceURL?
-      .appendingPathComponent("runtime/t4-host").path
+      .appendingPathComponent("runtime/t4-host").path,
+    packagedOmpExecutable: String? = Bundle.main.resourceURL?
+      .appendingPathComponent("runtime/omp").path,
+    bundleIdentity: String = "\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown")-\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown")"
   ) {
     self.environment = environment
     self.homeDirectory = homeDirectory
@@ -469,6 +518,8 @@ final class MacRuntimeLifecycle {
     self.runner = runner
     self.files = files
     self.packagedHostExecutable = packagedHostExecutable
+    self.packagedOmpExecutable = packagedOmpExecutable
+    self.bundleIdentity = bundleIdentity
   }
 
   private var definitionPath: String {
@@ -504,9 +555,15 @@ final class MacRuntimeLifecycle {
         try files.ensureDirectory(logsDirectory)
         try files.writeAtomically(definitionPath, content: definition, mode: 0o600)
       }
-      if registered && changed { _ = try launchctl(["bootout", target]) }
-      if !registered || changed { _ = try launchctl(["bootstrap", domain, definitionPath]) }
-      _ = try launchctl(["kickstart", "-k", target])
+      if registered && changed {
+        _ = try launchctl(["bootout", target])
+        Thread.sleep(forTimeInterval: 0.5)
+      }
+      if !registered || changed {
+        try bootstrapService()
+      } else {
+        _ = try launchctl(["kickstart", "-k", target])
+      }
     } catch {
       if changed {
         if let old = previous.content {
@@ -515,8 +572,9 @@ final class MacRuntimeLifecycle {
           try? files.remove(definitionPath)
         }
         _ = try? launchctl(["bootout", target], allowMissing: true)
+        Thread.sleep(forTimeInterval: 0.5)
         if registered, previous.content != nil {
-          _ = try? launchctl(["bootstrap", domain, definitionPath])
+          try? bootstrapService()
           if serviceState(status) == "running" {
             _ = try? launchctl(["kickstart", "-k", target])
           }
@@ -536,7 +594,7 @@ final class MacRuntimeLifecycle {
       ompExecutable: ompExecutable
     )
     let status = try launchctl(["print", target], allowMissing: true)
-    if isMissingService(status) { _ = try launchctl(["bootstrap", domain, definitionPath]) }
+    if isMissingService(status) { try bootstrapService() }
     _ = try launchctl(["kickstart", "-k", target])
     return inspect(discovery: discovery)
   }
@@ -555,7 +613,7 @@ final class MacRuntimeLifecycle {
       ompExecutable: ompExecutable
     )
     let status = try launchctl(["print", target], allowMissing: true)
-    if isMissingService(status) { _ = try launchctl(["bootstrap", domain, definitionPath]) }
+    if isMissingService(status) { try bootstrapService() }
     _ = try launchctl(["kickstart", "-k", target])
     return inspect(discovery: discovery)
   }
@@ -582,7 +640,8 @@ final class MacRuntimeLifecycle {
     OmpRuntimeDiscovery(
       environment: environment,
       homeDirectory: homeDirectory,
-      runner: runner
+      runner: runner,
+      packagedExecutable: packagedOmpExecutable
     ).discover()
   }
 
@@ -721,7 +780,7 @@ final class MacRuntimeLifecycle {
   }
 
   private func renderDefinition(hostExecutable: String, ompExecutable: String) throws -> String {
-    let values = [hostExecutable, ompExecutable, logsDirectory]
+    let values = [hostExecutable, ompExecutable, logsDirectory, bundleIdentity]
     guard
       values.allSatisfy({ value in
         !value.isEmpty && value.utf8.count <= 4096
@@ -734,6 +793,7 @@ final class MacRuntimeLifecycle {
     let hostExecutableXML = escapeXML(hostExecutable)
     let ompExecutableXML = escapeXML(ompExecutable)
     let logsXML = escapeXML(logsDirectory)
+    let bundleIdentityXML = escapeXML(bundleIdentity)
     return [
       "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
       "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
@@ -759,6 +819,8 @@ final class MacRuntimeLifecycle {
       "    <dict>",
       "      <key>OMP_PROFILE</key>",
       "      <string>default</string>",
+      "      <key>T4_HOST_BUNDLE_IDENTITY</key>",
+      "      <string>\(bundleIdentityXML)</string>",
       "    </dict>",
       "  </dict>",
       "</plist>",
@@ -781,7 +843,8 @@ final class MacRuntimeLifecycle {
     let result = try runLaunchctl(arguments)
     if result.timedOut {
       throw RuntimeBridgeFailure(
-        code: "runtime_command_timeout", message: "The LaunchAgent command timed out.")
+        code: "runtime_command_timeout",
+        message: "The LaunchAgent \(arguments.first ?? "unknown") command timed out.")
     }
     if result.overflowed {
       throw RuntimeBridgeFailure(
@@ -797,6 +860,18 @@ final class MacRuntimeLifecycle {
     }
     return result
   }
+
+  private func bootstrapService() throws {
+    for attempt in 0..<12 {
+      do {
+        _ = try launchctl(["bootstrap", domain, definitionPath])
+        return
+      } catch let failure as RuntimeBridgeFailure {
+        guard failure.code == "runtime_command_failed", attempt < 11 else { throw failure }
+        Thread.sleep(forTimeInterval: 0.5)
+      }
+    }
+  }
   private func runLaunchctl(_ arguments: [String]) throws -> RuntimeProcessResult {
     do {
       return try runner.run(
@@ -804,7 +879,8 @@ final class MacRuntimeLifecycle {
         arguments: arguments,
         environment: safeEnvironment(),
         timeout: runtimeCommandTimeout,
-        maxOutputBytes: runtimeOutputLimit
+        maxOutputBytes: runtimeOutputLimit,
+        captureOutput: !["bootout", "kickstart"].contains(arguments.first ?? "")
       )
     } catch {
       throw RuntimeBridgeFailure(

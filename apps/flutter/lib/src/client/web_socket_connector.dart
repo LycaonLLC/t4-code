@@ -7,5 +7,8 @@ import 'web_socket_connector_stub.dart'
 
 typedef WebSocketConnector = Future<WebSocketChannel> Function(Uri endpoint);
 
+Uri? platformLocalWebSocketEndpoint() =>
+    platform.platformLocalWebSocketEndpoint();
+
 Future<WebSocketChannel> connectPlatformWebSocket(Uri endpoint) =>
     platform.connectPlatformWebSocket(endpoint);

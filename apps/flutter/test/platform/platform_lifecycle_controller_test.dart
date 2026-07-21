@@ -50,6 +50,56 @@ void main() {
     expect(controller.state.runtimeOperationPending, isFalse);
   });
 
+  test('installs a missing local runtime during desktop bootstrap', () async {
+    final bridge = _FakeBridge(runtimeSupported: true)
+      ..inspectedRuntime = const RuntimeServiceStatus(
+        supported: true,
+        available: true,
+        definition: RuntimeDefinitionState.missing,
+        service: RuntimeServicePhase.stopped,
+        diagnostics: 'Not installed.',
+        executable: '/Applications/T4 Code.app/Contents/Resources/runtime/omp',
+      );
+    final controller = PlatformLifecycleController.withBridge(bridge);
+
+    await controller.initialize();
+    await controller.ensureRuntimeReady();
+
+    expect(bridge.runtimeInstalls, 1);
+    expect(bridge.runtimeStarts, 0);
+  });
+
+  test('starts an installed local runtime during desktop bootstrap', () async {
+    final bridge = _FakeBridge(runtimeSupported: true);
+    final controller = PlatformLifecycleController.withBridge(bridge);
+
+    await controller.initialize();
+    await controller.ensureRuntimeReady();
+
+    expect(bridge.runtimeInstalls, 0);
+    expect(bridge.runtimeStarts, 1);
+    expect(controller.state.runtime.service, RuntimeServicePhase.running);
+  });
+
+  test('leaves a running local runtime unchanged during bootstrap', () async {
+    final bridge = _FakeBridge(runtimeSupported: true)
+      ..inspectedRuntime = const RuntimeServiceStatus(
+        supported: true,
+        available: true,
+        definition: RuntimeDefinitionState.current,
+        service: RuntimeServicePhase.running,
+        diagnostics: 'Running.',
+        executable: '/Applications/T4 Code.app/Contents/Resources/runtime/omp',
+      );
+    final controller = PlatformLifecycleController.withBridge(bridge);
+
+    await controller.initialize();
+    await controller.ensureRuntimeReady();
+
+    expect(bridge.runtimeInstalls, 0);
+    expect(bridge.runtimeStarts, 0);
+  });
+
   test('keeps unsupported operations inert', () async {
     final bridge = _FakeBridge();
     final controller = PlatformLifecycleController.withBridge(bridge);
@@ -88,6 +138,7 @@ final class _FakeBridge implements PlatformLifecycleBridge {
   final bool runtimeSupported;
   final bool updatesSupported;
   int runtimeInspections = 0;
+  int runtimeInstalls = 0;
   int runtimeStarts = 0;
   int runtimeRestarts = 0;
   int updateReads = 0;
@@ -95,6 +146,7 @@ final class _FakeBridge implements PlatformLifecycleBridge {
   Object? runtimeFailure;
   Object? runtimeInspectionFailure;
   Object? updateReadFailure;
+  RuntimeServiceStatus? inspectedRuntime;
 
   @override
   bool get supportsRuntimeService => runtimeSupported;
@@ -124,11 +176,14 @@ final class _FakeBridge implements PlatformLifecycleBridge {
   Future<RuntimeServiceStatus> inspectRuntime() async {
     runtimeInspections += 1;
     if (runtimeInspectionFailure case final Object error) throw error;
-    return _stopped;
+    return inspectedRuntime ?? _stopped;
   }
 
   @override
-  Future<RuntimeServiceStatus> installRuntime() async => _stopped;
+  Future<RuntimeServiceStatus> installRuntime() async {
+    runtimeInstalls += 1;
+    return _running;
+  }
 
   @override
   Future<RuntimeServiceStatus> startRuntime() async {

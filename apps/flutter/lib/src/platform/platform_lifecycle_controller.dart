@@ -134,6 +134,20 @@ final class PlatformLifecycleController extends ChangeNotifier
     _notify();
   }
 
+  Future<void> ensureRuntimeReady() async {
+    if (!_bridge.supportsRuntimeService || _state.initializing) return;
+    final runtime = _state.runtime;
+    if (!runtime.supported || !runtime.available) return;
+    if (runtime.definition != RuntimeDefinitionState.current) {
+      await installRuntime();
+      return;
+    }
+    if (runtime.service != RuntimeServicePhase.running &&
+        runtime.service != RuntimeServicePhase.starting) {
+      await startRuntime();
+    }
+  }
+
   @override
   Future<void> refreshPlatformState() => _runBoth(
     runtime: _bridge.supportsRuntimeService ? _bridge.inspectRuntime : null,

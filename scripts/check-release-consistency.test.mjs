@@ -570,10 +570,16 @@ test("deploys release site source only after artifact publication", () => {
   );
   assert.ok(ciWorkflow.includes('kill -0 "$app_pid"'));
   assert.ok(ciWorkflow.includes("Build standalone T4 host for Flutter macOS"));
-  assert.ok(ciWorkflow.includes("Verify bundled Flutter macOS host"));
+  assert.ok(ciWorkflow.includes("Stage pinned OMP authority runtime"));
+  assert.ok(ciWorkflow.includes("Verify bundled Flutter macOS runtime"));
   assert.ok(
     ciWorkflow.includes(
       "test -x apps/flutter/build/macos/Build/Products/Debug/t4code.app/Contents/Resources/runtime/t4-host",
+    ),
+  );
+  assert.ok(
+    ciWorkflow.includes(
+      "test -x apps/flutter/build/macos/Build/Products/Debug/t4code.app/Contents/Resources/runtime/omp",
     ),
   );
   assert.ok(ciWorkflow.includes("name: verify"));

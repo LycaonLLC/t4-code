@@ -14,6 +14,7 @@ private final class StubRuntimeRunner: RuntimeProcessRunning {
   var probeExitCode: Int32
   var bridgeOutput = "Expose the private OMP authority bridge used by T4 Code\n--stdio\n"
   var registered = false
+  var bootstrapFailuresRemaining = 0
   var invocations: [Invocation] = []
 
   init(probeOutput: String, probeExitCode: Int32 = 0) {
@@ -26,7 +27,8 @@ private final class StubRuntimeRunner: RuntimeProcessRunning {
     arguments: [String],
     environment: [String: String],
     timeout: TimeInterval,
-    maxOutputBytes: Int
+    maxOutputBytes: Int,
+    captureOutput: Bool
   ) throws -> RuntimeProcessResult {
     invocations.append(Invocation(
       executable: executableURL.path,
@@ -58,6 +60,15 @@ private final class StubRuntimeRunner: RuntimeProcessRunning {
         overflowed: false
       )
     case "bootstrap":
+      if bootstrapFailuresRemaining > 0 {
+        bootstrapFailuresRemaining -= 1
+        return RuntimeProcessResult(
+          exitCode: 5,
+          output: "Bootstrap failed: 5: Input/output error",
+          timedOut: false,
+          overflowed: false
+        )
+      }
       registered = true
     case "bootout":
       registered = false
@@ -100,7 +111,8 @@ final class RunnerTests: XCTestCase {
         "OPENAI_API_KEY": "must-not-leak",
       ],
       homeDirectory: home.path,
-      runner: runner
+      runner: runner,
+      packagedExecutable: nil
     ).discover()
 
     XCTAssertEqual(discovery, .found(executable))
@@ -115,6 +127,25 @@ final class RunnerTests: XCTestCase {
     XCTAssertEqual(runner.invocations[1].arguments, ["appserver", "status", "--json"])
   }
 
+  func testProcessRunnerDoesNotWaitForAChildHoldingItsOutputPipe() throws {
+    let runner = BoundedRuntimeProcessRunner()
+    let started = Date()
+
+    let result = try runner.run(
+      executableURL: URL(fileURLWithPath: "/bin/sh"),
+      arguments: ["-c", "sleep 5 & printf ready"],
+      environment: [:],
+      timeout: 1,
+      maxOutputBytes: 1024,
+      captureOutput: true
+    )
+
+    XCTAssertEqual(result.exitCode, 0)
+    XCTAssertEqual(result.output, "ready")
+    XCTAssertFalse(result.timedOut)
+    XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+  }
+
   func testDiscoveryAcceptsExactStoppedStatus() throws {
     let home = try temporaryDirectory()
     let executable = try makeExecutable(home: home)
@@ -125,9 +156,31 @@ final class RunnerTests: XCTestCase {
     let result = OmpRuntimeDiscovery(
       environment: ["OMP_EXECUTABLE": executable],
       homeDirectory: home.path,
-      runner: runner
+      runner: runner,
+      packagedExecutable: nil
     ).discover()
     XCTAssertEqual(result, .found(executable))
+  }
+
+  func testDiscoveryPrefersThePackagedAuthorityRuntime() throws {
+    let home = try temporaryDirectory()
+    let packaged = try makeExecutable(home: home)
+    let otherHome = try temporaryDirectory()
+    let explicit = try makeExecutable(home: otherHome)
+    let runner = StubRuntimeRunner(
+      probeOutput: #"{"state":"stopped","reason":"unreachable"}"#,
+      probeExitCode: 1
+    )
+
+    let result = OmpRuntimeDiscovery(
+      environment: ["OMP_EXECUTABLE": explicit],
+      homeDirectory: home.path,
+      runner: runner,
+      packagedExecutable: packaged
+    ).discover()
+
+    XCTAssertEqual(result, .found(packaged))
+    XCTAssertEqual(runner.invocations.first?.executable, packaged)
   }
 
   func testDiscoveryReportsUnsupportedJSONDistinctly() throws {
@@ -137,7 +190,8 @@ final class RunnerTests: XCTestCase {
     let result = OmpRuntimeDiscovery(
       environment: ["OMP_EXECUTABLE": executable],
       homeDirectory: home.path,
-      runner: runner
+      runner: runner,
+      packagedExecutable: nil
     ).discover()
     XCTAssertEqual(result, .incompatible)
   }
@@ -149,14 +203,16 @@ final class RunnerTests: XCTestCase {
     let malformed = OmpRuntimeDiscovery(
       environment: ["OMP_EXECUTABLE": executable],
       homeDirectory: home.path,
-      runner: runner
+      runner: runner,
+      packagedExecutable: nil
     ).discover()
     XCTAssertEqual(malformed, .missing)
 
     let missing = OmpRuntimeDiscovery(
       environment: ["OMP_EXECUTABLE": "\(home.path)/missing/omp", "PATH": ""],
       homeDirectory: home.path,
-      runner: runner
+      runner: runner,
+      packagedExecutable: nil
     ).discover()
     XCTAssertEqual(missing, .missing)
   }
@@ -199,7 +255,9 @@ final class RunnerTests: XCTestCase {
       homeDirectory: home.path,
       uid: 501,
       runner: runner,
-      files: files
+      files: files,
+      packagedOmpExecutable: nil,
+      bundleIdentity: "test-1"
     )
 
     let installed = try lifecycle.install()
@@ -214,6 +272,8 @@ final class RunnerTests: XCTestCase {
     XCTAssertTrue(snapshot.content?.contains("<string>--omp</string>") == true)
     XCTAssertTrue(snapshot.content?.contains("<string>--profile</string>") == true)
     XCTAssertTrue(snapshot.content?.contains("<key>OMP_PROFILE</key>") == true)
+    XCTAssertTrue(snapshot.content?.contains("<key>T4_HOST_BUNDLE_IDENTITY</key>") == true)
+    XCTAssertTrue(snapshot.content?.contains("<string>test-1</string>") == true)
     XCTAssertTrue(snapshot.content?.contains("<string>default</string>") == true)
     XCTAssertTrue(snapshot.content?.contains("Library/Logs/T4 Code/appserver/appserver.log") == true)
     XCTAssertFalse(snapshot.content?.contains("must-not-leak") == true)
@@ -221,9 +281,8 @@ final class RunnerTests: XCTestCase {
       $0.executable == "/bin/launchctl"
         && $0.arguments == ["bootstrap", "gui/501", definitionPath]
     }))
-    XCTAssertTrue(runner.invocations.contains(where: {
-      $0.executable == "/bin/launchctl"
-        && $0.arguments == ["kickstart", "-k", "gui/501/dev.oh-my-pi.appserver"]
+    XCTAssertFalse(runner.invocations.contains(where: {
+      $0.executable == "/bin/launchctl" && $0.arguments.first == "kickstart"
     }))
 
     let uninstalled = try lifecycle.uninstall()
@@ -243,6 +302,39 @@ final class RunnerTests: XCTestCase {
 
     XCTAssertThrowsError(try SecureRuntimeFileStore().read(definition.path, maxBytes: 1024))
     XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "safe")
+  }
+
+  func testLaunchAgentInstallRetriesTransientBootstrapRace() throws {
+    let home = try temporaryDirectory()
+    let executable = try makeExecutable(home: home)
+    let hostExecutable = try makeExecutable(home: home, name: "t4-host")
+    let runner = StubRuntimeRunner(probeOutput: #"{"state":"stopped","reason":"unreachable"}"#)
+    runner.registered = true
+    runner.bootstrapFailuresRemaining = 1
+    let files = SecureRuntimeFileStore()
+    let definitionPath = "\(home.path)/Library/LaunchAgents/dev.oh-my-pi.appserver.plist"
+    try files.writeAtomically(definitionPath, content: "stale definition", mode: 0o600)
+    let lifecycle = MacRuntimeLifecycle(
+      environment: [
+        "HOME": home.path,
+        "OMP_EXECUTABLE": executable,
+        "T4_HOST_EXECUTABLE": hostExecutable,
+      ],
+      homeDirectory: home.path,
+      uid: 501,
+      runner: runner,
+      files: files,
+      packagedOmpExecutable: nil
+    )
+
+    let installed = try lifecycle.install()
+
+    XCTAssertEqual(installed["definition"] as? String, "current")
+    XCTAssertEqual(installed["service"] as? String, "running")
+    XCTAssertEqual(
+      runner.invocations.filter { $0.arguments.first == "bootstrap" }.count,
+      2
+    )
   }
 
   func testMacUpdateCheckSelectsCanonicalDMGAndOnlyOpensValidatedURL() throws {
