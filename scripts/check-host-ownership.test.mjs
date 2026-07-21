@@ -32,6 +32,20 @@ test("T4 owns the active host wire and generic host packages", () => {
   assert.equal(protocol.dependencies["@oh-my-pi/app-wire"], undefined);
 });
 
+test("product and ownership documents link the canonical architecture", () => {
+  const brief = readFileSync(join(root, "PRODUCT_BRIEF.md"), "utf8");
+  const ownership = readFileSync(join(root, "docs", "OWNERSHIP.md"), "utf8");
+  const architecture = readFileSync(join(root, "docs", "T4_ARCHITECTURE.html"), "utf8");
+
+  assert.match(brief, /Flutter desktop, mobile, and web workspace/u);
+  assert.match(brief, /docs\/T4_ARCHITECTURE\.html/u);
+  assert.doesNotMatch(brief, /packages\/host-service/u);
+  assert.match(ownership, /packages\/host-wire/u);
+  assert.match(ownership, /packages\/host-service/u);
+  assert.match(ownership, /T4_ARCHITECTURE\.html/u);
+  assert.match(architecture, /T4 Code local and managed architecture/u);
+});
+
 test("generic host source has no private OMP source-tree dependency", () => {
   const roots = [join(root, "packages", "host-wire"), join(root, "packages", "host-service")];
   const forbidden = ["@oh-my-pi/app-wire", "@oh-my-pi/appserver", "../../coding-agent", "../coding-agent"];

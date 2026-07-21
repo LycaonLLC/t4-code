@@ -46,6 +46,7 @@ export const PROTOCOL_FEATURES = [
 	"agent.transcript",
 	"terminal.io",
 	"files.list",
+	"files.search",
 	"files.diff",
 	"audit.tail",
 	"catalog.metadata",

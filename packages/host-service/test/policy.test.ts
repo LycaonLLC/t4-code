@@ -489,6 +489,36 @@ test("transcript pages require both the negotiated read feature and sessions.rea
 	policy.close();
 });
 
+test("project file search requires both its negotiated feature and files.list", () => {
+	const registry = new Registry();
+	registry.current = { ...record, capabilities: [...record.capabilities, "files.list"] };
+	const policy = new TailscaleRemotePolicy({ registry, supportedFeatures: ["files.search"] });
+	const search = command("file-search", "files.search", "session", { query: "app" });
+
+	const missingFeature = connection("file-search-missing-feature", { count: 0 });
+	policy.authenticate(missingFeature, hello(missingFeature.connectionId, ["files.list"], []));
+	expect(
+		policy.authorize(missingFeature, search, {
+			connectionId: missingFeature.connectionId,
+			peer: missingFeature.peer,
+		}),
+	).toBe(false);
+
+	const ready = connection("file-search-ready", { count: 0 });
+	policy.authenticate(ready, hello(ready.connectionId, ["files.list"], ["files.search"]));
+	expect(policy.authorize(ready, search, { connectionId: ready.connectionId, peer: ready.peer })).toBe(true);
+
+	const missingCapability = connection("file-search-missing-capability", { count: 0 });
+	policy.authenticate(missingCapability, hello(missingCapability.connectionId, [], ["files.search"]));
+	expect(
+		policy.authorize(missingCapability, search, {
+			connectionId: missingCapability.connectionId,
+			peer: missingCapability.peer,
+		}),
+	).toBe(false);
+	policy.close();
+});
+
 test("terminal input needs terminal.io even when term.input is granted", () => {
 	const registry = new Registry();
 	const policy = new TailscaleRemotePolicy({ registry, supportedFeatures: ["controller.lease"] });

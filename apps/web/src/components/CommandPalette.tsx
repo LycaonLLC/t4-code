@@ -2,240 +2,174 @@
 // Cmd/Ctrl+K opens it; arrows move, Enter runs, Escape closes and restores
 // focus (dialog primitive owns the focus contract).
 import { cn, Dialog, DialogPopup, StatusPill } from "@t4-code/ui";
-import { useNavigate } from "@tanstack/react-router";
+import {
+  ProjectFileSearchError,
+  searchProjectFiles,
+  type ProjectFileSearchMatch,
+} from "@t4-code/client";
 import { CornerDownLeft, Search, SquareTerminal } from "lucide-react";
-import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
+import { buildQuickOpenItems, type ActionRegistry, type QuickOpenItem } from "../actions/index.ts";
+import { flattenFileIndex, type FileRefEntry } from "../features/composer/file-refs.ts";
+import { getInspectorStore, type FileChildren } from "../features/panes/inspector-store.ts";
 import type { ProjectGroup } from "../lib/session-tree.ts";
-import { handoffTranscriptSearchQuery } from "../features/transcript-search/index.ts";
-import { TRANSCRIPT_SEARCH_ROUTE } from "../features/transcript-search/route.ts";
+import { desktopRuntime, useDesktopRuntimeSnapshot } from "../platform/desktop-runtime.ts";
+import { resolveLiveSession } from "../platform/live-workspace.ts";
 import { useWorkspace, workspaceStore } from "../state/store-instance.ts";
-import { selectSessionView } from "../state/workspace-store.ts";
-import { resolveTheme } from "../theme/theme.ts";
-import { PANE_FAMILY_META } from "./pane-families.tsx";
-interface PaletteItem {
-  readonly id: string;
-  readonly group: "recent" | "workspace" | "navigate" | "app";
-  readonly label: string;
-  readonly hint: string;
-  readonly status: ReactNode;
-  readonly run: () => void;
-}
+import { SESSION_SURFACES } from "./pane-families.tsx";
 
 const GROUP_LABEL = {
   recent: "Recent work",
+  files: "Files",
   workspace: "Workspace",
   navigate: "Navigate",
   app: "App",
 } as const;
 
-const DEFAULT_RECENT_LIMIT = 5;
+const EMPTY_FILE_CHILDREN: Readonly<Record<string, FileChildren>> = Object.freeze({});
+const EMPTY_FILE_ENTRIES: readonly FileRefEntry[] = Object.freeze([]);
+const EMPTY_PROJECT_MATCHES: readonly ProjectFileSearchMatch[] = Object.freeze([]);
+const PROJECT_SEARCH_DEBOUNCE_MS = 140;
 
-function buildItems(
-  groups: readonly ProjectGroup[],
-  navigate: (sessionId: string) => void,
-  openInbox: () => void,
-  openTranscriptSearch: (query: string) => void,
-  openAgentView: () => void,
-  openSettings: () => void,
-): PaletteItem[] {
-  const items: PaletteItem[] = [];
-  for (const group of groups) {
-    for (const row of group.sessions) {
-      items.push({
-        id: `session:${row.session.id}`,
-        group: "recent",
-        label: row.session.title,
-        hint: `${group.project.name} · ${row.session.model}`,
-        status:
-          row.session.status !== null ? (
-            <StatusPill labelHidden status={row.session.status} />
-          ) : null,
-        run: () => navigate(row.session.id),
-      });
-    }
+type ProjectSearchState = "idle" | "loading" | "ready" | "unsupported" | "offline" | "error";
+
+function ItemStatus({ item }: { readonly item: QuickOpenItem }) {
+  if (item.status === null) return null;
+  if (item.status.kind === "session") {
+    return <StatusPill labelHidden status={item.status.status} />;
   }
-  const state = workspaceStore.getState();
-  const activeSessionId = state.activeSessionId;
-  const activeSessionVisible =
-    activeSessionId !== null &&
-    groups.some((group) => group.sessions.some((row) => row.session.id === activeSessionId));
-  if (activeSessionId !== null && activeSessionVisible) {
-    const view = selectSessionView(state, activeSessionId);
-    for (const meta of PANE_FAMILY_META) {
-      const active = !state.focusMode && view.paneOpen && view.paneFamily === meta.id;
-      const Icon = meta.icon;
-      const label = meta.id === "terminals" ? "Agent terminals" : meta.label;
-      items.push({
-        id: `action:pane:${meta.id}`,
-        group: "workspace",
-        label: active ? `Close ${label}` : `Open ${label}`,
-        hint: "Workspace · Right",
-        status: <Icon aria-hidden="true" className="size-3.5 text-muted-foreground" />,
-        run: () => {
-          const current = workspaceStore.getState();
-          const currentView = selectSessionView(current, activeSessionId);
-          if (current.focusMode) {
-            current.setFocusMode(false);
-            if (!(currentView.paneOpen && currentView.paneFamily === meta.id)) {
-              current.togglePaneFamily(activeSessionId, meta.id);
-            }
-          } else {
-            current.togglePaneFamily(activeSessionId, meta.id);
-          }
-        },
-      });
-    }
-    items.push({
-      id: "action:terminal",
-      group: "workspace",
-      label: !state.focusMode && view.terminalDrawerOpen ? "Close terminal" : "Open terminal",
-      hint: "Workspace · Below · ⌘J",
-      status: <SquareTerminal aria-hidden="true" className="size-3.5 text-muted-foreground" />,
-      run: () => {
-        const current = workspaceStore.getState();
-        const currentView = selectSessionView(current, activeSessionId);
-        if (current.focusMode) {
-          current.setFocusMode(false);
-          current.setTerminalDrawerOpen(activeSessionId, true);
-        } else {
-          current.setTerminalDrawerOpen(activeSessionId, !currentView.terminalDrawerOpen);
-        }
-      },
-    });
+  if (item.status.icon === "search") {
+    return <Search aria-hidden="true" className="size-3.5 text-muted-foreground" />;
   }
-  items.push(
-    {
-      id: "action:focus",
-      group: "workspace",
-      label: state.focusMode ? "Exit focus mode" : "Enter focus mode",
-      hint: "⌘⇧F",
-      status: null,
-      run: () => workspaceStore.getState().setFocusMode(!state.focusMode),
-    },
-    {
-      id: "action:rail",
-      group: "workspace",
-      label: state.focusMode || state.railCollapsed ? "Show session list" : "Hide session list",
-      hint: "Sidebar",
-      status: null,
-      run: () => {
-        const current = workspaceStore.getState();
-        if (current.focusMode) {
-          current.setFocusMode(false);
-          current.setRailCollapsed(false);
-        } else {
-          current.setRailCollapsed(!current.railCollapsed);
-        }
-      },
-    },
-    {
-      id: "action:inbox",
-      group: "navigate",
-      label: "Open Inbox",
-      hint: "Attention across sessions",
-      status: null,
-      run: openInbox,
-    },
-    {
-      id: "action:transcript-search",
-      group: "navigate",
-      label: "Open transcript search",
-      hint: "Prior decisions and code discussions",
-      status: <Search aria-hidden="true" className="size-3.5 text-muted-foreground" />,
-      run: () => openTranscriptSearch(""),
-    },
-    {
-      id: "action:agents",
-      group: "navigate",
-      label: "Open Agent View",
-      hint: "Agents",
-      status: null,
-      run: openAgentView,
-    },
-    {
-      id: "action:settings",
-      group: "app",
-      label: "Open settings",
-      hint: "Preferences",
-      status: null,
-      run: openSettings,
-    },
-    {
-      id: "action:theme",
-      group: "app",
-      label:
-        resolveTheme(state.theme) === "dark" ? "Switch to light colors" : "Switch to dark colors",
-      hint: "Appearance",
-      status: null,
-      run: () => {
-        const current = resolveTheme(workspaceStore.getState().theme);
-        workspaceStore.getState().setTheme(current === "dark" ? "light" : "dark");
-      },
-    },
-  );
-  return items;
+  if (item.status.icon === "terminal") {
+    return <SquareTerminal aria-hidden="true" className="size-3.5 text-muted-foreground" />;
+  }
+  const icon = item.status.icon;
+  const meta = SESSION_SURFACES.find((surface) => surface.id === icon);
+  if (meta === undefined) return null;
+  const Icon = meta.icon;
+  return <Icon aria-hidden="true" className="size-3.5 text-muted-foreground" />;
 }
 
-export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) {
+export function CommandPalette({
+  groups,
+  registry,
+}: {
+  readonly groups: readonly ProjectGroup[];
+  readonly registry: ActionRegistry;
+}) {
   const open = useWorkspace((state) => state.paletteOpen);
-  const navigate = useNavigate();
+  const activeSessionId = useWorkspace((state) => state.activeSessionId);
+  const runtimeSnapshot = useDesktopRuntimeSnapshot();
   const [query, setQuery] = useState("");
   const [highlighted, setHighlighted] = useState(0);
+  const [projectMatches, setProjectMatches] = useState(EMPTY_PROJECT_MATCHES);
+  const [projectSearchState, setProjectSearchState] = useState<ProjectSearchState>("idle");
+  const [projectSearchTruncated, setProjectSearchTruncated] = useState(false);
+  const searchGeneration = useRef(0);
   const listRef = useRef<HTMLUListElement | null>(null);
-
-  const items = useMemo(
+  const inspector = activeSessionId === null ? null : getInspectorStore(activeSessionId);
+  const fileChildren = useSyncExternalStore(
+    useCallback(
+      (onStoreChange: () => void) => inspector?.subscribe(onStoreChange) ?? (() => {}),
+      [inspector],
+    ),
+    useCallback(
+      () => inspector?.getState().files.childrenByPath ?? EMPTY_FILE_CHILDREN,
+      [inspector],
+    ),
+  );
+  const activeSessionFiles = useMemo(
+    () => (activeSessionId === null ? EMPTY_FILE_ENTRIES : flattenFileIndex(fileChildren)),
+    [activeSessionId, fileChildren],
+  );
+  const liveAddress =
+    runtimeSnapshot === null || activeSessionId === null
+      ? null
+      : resolveLiveSession(runtimeSnapshot, activeSessionId);
+  const searchTargetId = liveAddress?.targetId ?? null;
+  const searchHostId = liveAddress?.hostId ?? null;
+  const searchSessionId = liveAddress?.sessionId ?? null;
+  useEffect(() => {
+    const generation = ++searchGeneration.current;
+    const trimmed = query.trim();
+    setProjectSearchTruncated(false);
+    if (!open || trimmed.length < 2 || activeSessionId === null) {
+      setProjectMatches(EMPTY_PROJECT_MATCHES);
+      setProjectSearchState("idle");
+      return;
+    }
+    const controller = desktopRuntime();
+    if (
+      controller === null ||
+      searchTargetId === null ||
+      searchHostId === null ||
+      searchSessionId === null
+    ) {
+      setProjectMatches(EMPTY_PROJECT_MATCHES);
+      setProjectSearchState(runtimeSnapshot === null ? "unsupported" : "offline");
+      return;
+    }
+    setProjectMatches(EMPTY_PROJECT_MATCHES);
+    setProjectSearchState("loading");
+    const timeout = window.setTimeout(() => {
+      void searchProjectFiles(
+        controller,
+        { targetId: searchTargetId, hostId: searchHostId, sessionId: searchSessionId },
+        { query: trimmed },
+      ).then(
+        (result) => {
+          if (searchGeneration.current !== generation) return;
+          setProjectMatches(result.matches);
+          setProjectSearchTruncated(result.truncated);
+          setProjectSearchState("ready");
+        },
+        (error: unknown) => {
+          if (searchGeneration.current !== generation) return;
+          setProjectMatches(EMPTY_PROJECT_MATCHES);
+          setProjectSearchState(
+            error instanceof ProjectFileSearchError &&
+              (error.code === "unsupported" || error.code === "offline")
+              ? error.code
+              : "error",
+          );
+        },
+      );
+    }, PROJECT_SEARCH_DEBOUNCE_MS);
+    return () => {
+      window.clearTimeout(timeout);
+      if (searchGeneration.current === generation) searchGeneration.current += 1;
+    };
+  }, [
+    activeSessionId,
+    open,
+    query,
+    runtimeSnapshot === null,
+    searchHostId,
+    searchSessionId,
+    searchTargetId,
+  ]);
+  const filtered = useMemo(
     () =>
-      buildItems(
+      buildQuickOpenItems(query, {
+        registry,
         groups,
-        (sessionId) => {
-          void navigate({ params: { sessionId }, to: "/sessions/$sessionId" });
-        },
-        () => {
-          void navigate({ to: "/inbox" });
-        },
-        (searchQuery) => {
-          handoffTranscriptSearchQuery(searchQuery);
-          void navigate({ to: TRANSCRIPT_SEARCH_ROUTE });
-        },
-        () => {
-          void navigate({ to: "/agents" });
-        },
-        () => {
-          void navigate({ to: "/settings" });
-        },
-      ),
-    [groups, navigate, open],
+        activeSessionFiles,
+        projectFileMatches: projectMatches,
+      }),
+    [activeSessionFiles, groups, projectMatches, query, registry],
   );
-
   const needle = query.trim().toLowerCase();
-  const defaultRecentIds = new Set(
-    items
-      .filter((item) => item.group === "recent")
-      .slice(0, DEFAULT_RECENT_LIMIT)
-      .map((item) => item.id),
-  );
-  const baseFiltered =
-    needle === ""
-      ? items.filter((item) => item.group !== "recent" || defaultRecentIds.has(item.id))
-      : items.filter((item) => `${item.label} ${item.hint}`.toLowerCase().includes(needle));
-  const filtered =
-    needle.length < 2
-      ? baseFiltered
-      : [
-          ...baseFiltered,
-          {
-            id: "action:transcript-search-query",
-            group: "navigate" as const,
-            label: "View all transcript results",
-            hint: `Search for “${query.trim()}”`,
-            status: <Search aria-hidden="true" className="size-3.5 text-muted-foreground" />,
-            run: () => {
-              handoffTranscriptSearchQuery(query.trim());
-              void navigate({ to: TRANSCRIPT_SEARCH_ROUTE });
-            },
-          },
-        ];
+  const activeIndex = Math.min(highlighted, Math.max(0, filtered.length - 1));
 
   useEffect(() => {
     setHighlighted(0);
@@ -250,20 +184,24 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
 
   useEffect(() => {
     listRef.current
-      ?.querySelector(`[data-index="${highlighted}"]`)
+      ?.querySelector(`[data-index="${activeIndex}"]`)
       ?.scrollIntoView({ block: "nearest" });
-  }, [highlighted]);
+  }, [activeIndex]);
 
-  const runItem = (item: PaletteItem | undefined) => {
+  useEffect(() => {
+    setHighlighted((index) => Math.min(index, Math.max(0, filtered.length - 1)));
+  }, [filtered.length]);
+
+  const runItem = (item: QuickOpenItem | undefined) => {
     if (item === undefined) return;
-    workspaceStore.getState().setPaletteOpen(false);
-    item.run();
+    const result = registry.execute(item.invocation);
+    if (result.executed) workspaceStore.getState().setPaletteOpen(false);
   };
 
   return (
     <Dialog onOpenChange={(next) => workspaceStore.getState().setPaletteOpen(next)} open={open}>
       <DialogPopup
-        aria-label="Search sessions, transcripts, and commands"
+        aria-label="Search files, sessions, transcripts, and commands"
         className="w-full max-w-lg overflow-hidden p-0"
         showCloseButton={false}
       >
@@ -273,7 +211,7 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
             className="pointer-events-none absolute start-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
           />
           <input
-            aria-activedescendant={filtered.length > 0 ? `palette-item-${highlighted}` : undefined}
+            aria-activedescendant={filtered.length > 0 ? `palette-item-${activeIndex}` : undefined}
             aria-controls="palette-results"
             aria-expanded="true"
             autoFocus
@@ -282,16 +220,16 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
             onKeyDown={(event) => {
               if (event.key === "ArrowDown") {
                 event.preventDefault();
-                setHighlighted((index) => Math.min(index + 1, filtered.length - 1));
+                setHighlighted((index) => Math.min(index + 1, Math.max(0, filtered.length - 1)));
               } else if (event.key === "ArrowUp") {
                 event.preventDefault();
                 setHighlighted((index) => Math.max(index - 1, 0));
               } else if (event.key === "Enter") {
                 event.preventDefault();
-                runItem(filtered[highlighted]);
+                runItem(filtered[activeIndex]);
               }
             }}
-            placeholder="Search sessions, transcripts, and commands"
+            placeholder="Search files, sessions, transcripts, and commands"
             role="combobox"
             type="text"
             value={query}
@@ -311,8 +249,9 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
           )}
           {filtered.map((item, index) => {
             const startsGroup = index === 0 || filtered[index - 1]?.group !== item.group;
+            const disabled = item.availability.status === "disabled";
             return (
-              <Fragment key={item.id}>
+              <Fragment key={item.key}>
                 {startsGroup && (
                   <li
                     className="px-2.5 pt-2 pb-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider first:pt-1"
@@ -322,10 +261,12 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
                   </li>
                 )}
                 <li
-                  aria-selected={index === highlighted}
+                  aria-disabled={disabled || undefined}
+                  aria-selected={index === activeIndex}
                   className={cn(
                     "flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2",
-                    index === highlighted && "bg-secondary ring-1 ring-border/60",
+                    index === activeIndex && "bg-secondary ring-1 ring-border/60",
+                    disabled && "cursor-default opacity-60",
                   )}
                   data-index={index}
                   id={`palette-item-${index}`}
@@ -333,10 +274,12 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
                   onMouseMove={() => setHighlighted(index)}
                   role="option"
                 >
-                  <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
-                  <span className="shrink-0 text-muted-foreground text-xs">{item.hint}</span>
-                  {item.status}
-                  {index === highlighted && (
+                  <span className="min-w-0 flex-1 truncate text-sm">{item.title}</span>
+                  <span className="shrink-0 text-muted-foreground text-xs">
+                    {disabled ? item.availability.reason : item.subtitle}
+                  </span>
+                  <ItemStatus item={item} />
+                  {index === activeIndex && !disabled && (
                     <CornerDownLeft
                       aria-hidden="true"
                       className="size-3.5 shrink-0 text-muted-foreground"
@@ -360,6 +303,19 @@ export function CommandPalette({ groups }: { groups: readonly ProjectGroup[] }) 
             Open
           </span>
           <span className="ml-auto flex items-center gap-1">
+            {query.trim().length >= 2 && projectSearchState === "loading" && (
+              <span>Searching current project…</span>
+            )}
+            {query.trim().length >= 2 &&
+              (projectSearchState === "unsupported" || projectSearchState === "offline") && (
+                <span>Project search unavailable · showing loaded files</span>
+              )}
+            {query.trim().length >= 2 && projectSearchState === "error" && (
+              <span>Project search failed · showing loaded files</span>
+            )}
+            {projectSearchState === "ready" && projectSearchTruncated && (
+              <span>Best matches from a bounded scan</span>
+            )}
             <kbd className="font-mono text-foreground/80">Esc</kbd>
             Close
           </span>

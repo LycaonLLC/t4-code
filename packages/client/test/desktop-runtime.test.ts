@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { CLUSTER_OPERATOR_FEATURE, hostId, revision, sessionId, type WelcomeFrame, type WorkspaceInfrastructureProjection } from "@t4-code/protocol";
+import { CLUSTER_OPERATOR_FEATURE, hostId, operationId, revision, sessionId, type WelcomeFrame, type WorkspaceInfrastructureProjection } from "@t4-code/protocol";
 import { rendererServerEventFromFrame } from "@t4-code/protocol/desktop-ipc";
 import type {
   BootstrapResult,
@@ -440,6 +440,60 @@ describe("desktop runtime projection", () => {
     });
     expect(runtime.getSnapshot().projection.workspaces.size).toBe(0);
     expect(runtime.getSnapshot().projection.workspaceCursors.size).toBe(0);
+  it("preserves operation capabilities from catalog responses and live catalog frames", async () => {
+    const shell = new FakeShell();
+    shell.catalogResult = {
+      revision: "catalog-response",
+      items: [],
+      operations: [{
+        operationId: "slash.compact",
+        label: "/compact",
+        execution: "headless",
+        supported: true,
+      }],
+    };
+    const runtime = createDesktopRuntimeController({ shell });
+    await runtime.start();
+    shell.emitState({ targetId: "local", state: "connected" });
+    shell.emitFrame({ targetId: "local", frame: welcome("host-a", [], []) });
+
+    await runtime.command("local", {
+      hostId: hostId("host-a"),
+      command: "catalog.get",
+      args: {},
+    });
+    expect(runtime.getSnapshot().catalogs.get("host-a")?.operations).toMatchObject([
+      { operationId: "slash.compact", execution: "headless", supported: true },
+    ]);
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: "omp-app/1",
+        type: "catalog",
+        hostId: hostId("host-a"),
+        revision: revision("catalog-live"),
+        items: [],
+        operations: [{
+          operationId: operationId("slash.plan"),
+          label: "/plan",
+          execution: "terminal-only",
+          supported: false,
+          disabledReason: {
+            code: "terminal_only",
+            message: "This command requires the OMP terminal interface.",
+          },
+        }],
+      },
+    });
+    expect(runtime.getSnapshot().catalogs.get("host-a")?.operations).toMatchObject([
+      {
+        operationId: "slash.plan",
+        execution: "terminal-only",
+        supported: false,
+        disabledReason: { code: "terminal_only" },
+      },
+    ]);
   });
   it("refreshes inventory on cadence so a session started after bootstrap appears without reconnect", async () => {
     const timers = new FakeTimerScheduler();

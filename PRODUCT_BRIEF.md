@@ -1,43 +1,59 @@
-# OMP Desktop Product Brief
+# T4 Code Product Brief
 
 ## Product
 
-A Linux/macOS desktop client for OMP. Preserve OMP as the agent runtime; make projects, concurrent sessions, live streaming, tools, terminal activity, subagents, reviews, files, settings, and remote hosts easier to see and operate.
-
-## Primary reference
-
-T3 Code at `reference/t3code` is the primary presentation, interaction, desktop-shell, and implementation reference. Its MIT license permits copying and modification with attribution. Use direct adaptation where it accelerates quality; do not reimplement equivalent primitives without a reason.
+T4 Code is a Flutter desktop, mobile, and web workspace for official Oh My Pi (OMP). It makes
+projects, concurrent sessions, live streaming, tools, terminal activity, task agents, reviews, files,
+settings, and local or remote execution easier to operate without reimplementing OMP behavior.
 
 ## Experience target
 
 - Presentation and perceived performance are product-critical.
 - Keyboard-first, dense when useful, calm by default.
-- Fast project/session switching with preserved scroll, composer, panel, and draft state.
-- Center session stream remains the primary surface.
-- Optional right pane extends the T3 pattern with five calm surface families: Agents, Activity (including events), Review, Files, and user Terminal. Context is a popover/dialog, not a permanent tab.
-- Browser/app preview is required before parity closure, but opens as a focused preview workspace or secondary Electron window rather than becoming a sixth permanent right-pane family.
-- Light and dark themes use neutral surfaces. Accent use is minimal and semantic.
-- OMP identity uses the existing pi/connector mark from the upstream Oh My Pi repository and the Pi Pink `#e83174` accent.
-- No SVG turbulence, paper-grain, noise texture, or equivalent decorative overlay is imported from T3.
+- Fast project/session switching preserves scroll, composer, panel, and draft state.
+- The center session stream remains the primary surface.
+- Optional right-pane surfaces cover Agents, Activity, Review, Files, and Agent Terminals. The user
+  terminal remains a bottom drawer; Context is a popover or dialog.
+- Browser and app preview remains a focused workspace rather than a permanent sixth pane.
+- Keyboard shortcuts, Quick Open, workspace menus, and transcript links use one action registry so
+  availability and behavior do not diverge.
+- Quick Open searches through bounded authorized operations. Flutter never receives or chooses an
+  absolute path it does not already own.
+- The Universal Working Set lets a user deliberately stage exact material from a file preview,
+  transcript message, review diff, selected terminal text, or browser accessibility snapshot. The
+  user can inspect and remove each item before it joins one ordinary OMP prompt; it does not become
+  a second runtime authority.
+- Light and dark themes use neutral surfaces with minimal semantic accent.
+- OMP identity uses the existing pi/connector mark and Pi Pink `#e83174` accent.
 
-## Runtime boundary
+## Product modes
 
-- OMP remains authoritative for models, tools, commands, sessions, task agents, memory, skills, settings, auth, and execution.
-- The desktop app consumes a versioned OMP app protocol; it does not parse terminal pixels as its primary data source and does not reimplement OMP behavior.
-- A persistent OMP appserver runs on an OMP host, supports local desktop attachment, and supports authenticated remote attachment across the user's Tailscale tailnet.
-- Remote control must preserve exact session identity, reconnect/replay semantics, capability authorization, and explicit destructive-action boundaries.
+T4 Code presents one client experience across four execution profiles:
 
-## Planned package boundaries
+- **T4 Local:** native execution on this macOS or Linux computer.
+- **Personal Hub:** a managed installation on one Linux machine.
+- **HA Hub:** a managed installation across tested Linux failure domains.
+- **Workstation Runner:** native macOS or Linux execution registered with an existing Hub.
 
-- `apps/desktop`: Electron main/preload, packaging, updates, OS integration.
-- `apps/web`: T3-derived React renderer and desktop/web client shell.
-- `packages/protocol`: install the checked-in relative app-wire tarball from `vendor/app-wire/`, verify its manifest/checksums, re-export it, and add desktop-only IPC schemas without redeclaring network frames.
-- `packages/client`: connection, replay, cache, optimistic-state rules, host/session stores.
-- `packages/ui`: T3-derived design primitives, tokens, icons, motion, virtualization.
-- `packages/fixture-server`: deterministic seeded sessions, faults, and load scenarios.
-- OMP `packages/app-wire`: sole versioned, dependency-free protocol authority with JSON-safe TypeScript types, executable decoders/guards, constants, and golden frames.
-- OMP `packages/appserver`: persistent host service, RPC-child supervisor, local socket, remote endpoint, pairing, policy, replay, PTY, files, and audit.
+The client reports the selected profile and its capabilities truthfully. It never presents local
+sessions as portable, terminal-only behavior as remotely executable, or unavailable features as
+working.
+
+## Runtime principle
+
+OMP remains authoritative for prompt acceptance, transcript truth, models, tools, sessions, task
+agents, memory, skills, settings, credentials, and execution. T4 operates through public OMP seams,
+does not parse terminal pixels as its primary data source, and does not grow a permanent private OMP
+distribution.
 
 ## Proof standard
 
-Behavior is proven with deterministic contract tests, concurrency and reconnect stress, seeded visual states, screenshot comparison, interaction/motion checks, Linux runtime proof, macOS runtime proof, and a real two-host Tailscale smoke before remote functionality is called complete.
+Behavior is proven with executable contracts, deterministic failure scenarios, physical client
+slices, measured latency and resource overhead, and platform-specific runtime proof. Product claims
+follow observed behavior rather than compilation, healthy infrastructure, or optimistic capability
+reporting.
+
+## Canonical architecture
+
+[`docs/T4_ARCHITECTURE.html`](docs/T4_ARCHITECTURE.html) is the sole specification for execution
+profiles, authority, transport, storage, recovery, deployment, performance, and delivery gates.

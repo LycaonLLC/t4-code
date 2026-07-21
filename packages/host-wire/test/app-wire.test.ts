@@ -18,6 +18,7 @@ import {
 	decodeServerFrame,
 	decodeSessionListResult,
 	decodeSessionRef,
+	decodeOperationCapability,
 	decodeTurnReviewSnapshot,
 	deviceToken,
 	IMAGE_UPLOAD_CHUNK_BYTES,
@@ -38,6 +39,7 @@ import {
 	validateCommandDescriptor,
 } from "../src/index.js";
 
+const operationCapabilityFixture = new URL("./fixtures/operation-capabilities.json", import.meta.url);
 const root = new URL("../fixtures/v1/", import.meta.url);
 async function fixture(name: string): Promise<unknown> {
 	return JSON.parse(await Bun.file(new URL(name, root)).text()) as unknown;
@@ -105,6 +107,61 @@ describe("app-wire authority", () => {
 			["WorkerA", "started", true],
 			["WorkerA", "cancelled", false],
 		]);
+	});
+	test("operation capability corpus distinguishes execution classes and explicit rejections", async () => {
+		const scenario = JSON.parse(await Bun.file(operationCapabilityFixture).text()) as {
+			schema: unknown;
+			catalog: unknown;
+			rejections: unknown;
+		};
+		expect(scenario.schema).toBe("operation-capabilities/1");
+		const catalog = decodeServerFrame(scenario.catalog) as unknown as Record<string, unknown>;
+		expect(catalog.type).toBe("response");
+		expect(catalog.ok).toBe(true);
+		const result = catalog.result as Record<string, unknown>;
+		expect(result.revision).toBe("capabilities-v1");
+		const operations = result.operations as Array<Record<string, unknown>>;
+		expect(operations.map(operation => [operation.operationId, operation.execution, operation.supported])).toEqual([
+			["session.prompt", "typed", true],
+			["slash.compact", "headless", true],
+			["slash.plan", "terminal-only", false],
+			["goal.create", "unavailable", false],
+		]);
+		expect(
+			operations.slice(2).map(operation => (operation.disabledReason as Record<string, unknown>).code),
+		).toEqual(["terminal_only", "capability_unavailable"]);
+		expect(Array.isArray(scenario.rejections)).toBe(true);
+		const rejections = (scenario.rejections as unknown[]).map(frame => {
+			const decoded = decodeServerFrame(frame) as unknown as Record<string, unknown>;
+			expect(decoded.type).toBe("response");
+			expect(decoded.ok).toBe(false);
+			return decoded.error as Record<string, unknown>;
+		});
+		expect(rejections.map(error => error.code)).toEqual(["terminal_only", "capability_unavailable"]);
+	});
+	test("operation capabilities reject ambiguous availability states", () => {
+		const operation = {
+			operationId: "slash.compact",
+			label: "/compact",
+			execution: "headless",
+			supported: true,
+		};
+		expect(decodeOperationCapability(operation, "operation")).toMatchObject(operation);
+		for (const invalid of [
+			{ ...operation, operationId: undefined },
+			{ ...operation, label: undefined },
+			{ ...operation, execution: "future" },
+			{ ...operation, supported: "yes" },
+			{ ...operation, supported: false },
+			{ ...operation, disabledReason: { code: "terminal_only", message: "not disabled" } },
+			{ ...operation, execution: "terminal-only", supported: true },
+			{
+				...operation,
+				supported: false,
+				disabledReason: { code: 42, message: "invalid code" },
+			},
+		])
+			expect(() => decodeOperationCapability(invalid, "operation")).toThrow(AppWireError);
 	});
 	test("session list metadata remains bounded at the wire cap", () => {
 		const sessions = Array.from({ length: 1_000 }, (_, index) => ({
@@ -1127,6 +1184,7 @@ describe("app-wire authority", () => {
 			"files.write": "authority",
 			"files.patch": "authority",
 			"files.list": "authority",
+			"files.search": "authority",
 			"files.diff": "authority",
 			"review.read": "authority",
 			"review.apply": "authority",
@@ -1434,7 +1492,8 @@ describe("app-wire authority", () => {
 			reason: "available",
 			metadata: { category: "system" },
 		};
-		expect(decodeCommandResult("catalog.get", { items: [catalogItem] }).items).toHaveLength(1);
+		expect(decodeCommandResult("catalog.get", { revision: "catalog-1", items: [catalogItem] }).items).toHaveLength(1);
+		expect(() => decodeCommandResult("catalog.get", { items: [catalogItem] })).toThrow(AppWireError);
 		for (const item of [
 			{ ...catalogItem, id: undefined },
 			{ ...catalogItem, kind: "future" },
@@ -1445,7 +1504,9 @@ describe("app-wire authority", () => {
 			{ ...catalogItem, reason: 42 },
 			{ ...catalogItem, metadata: { apiToken: "must-not-cross" } },
 		])
-			expect(() => decodeCommandResult("catalog.get", { items: [item] })).toThrow(AppWireError);
+			expect(() =>
+				decodeCommandResult("catalog.get", { revision: "catalog-1", items: [item] }),
+			).toThrow(AppWireError);
 		expect(
 			decodeCommandResult("controller.lease.renew", { leaseId: "l", cursor: { epoch: "e", seq: 1 } }).leaseId,
 		).toBe("l");

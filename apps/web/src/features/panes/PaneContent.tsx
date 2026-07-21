@@ -1,12 +1,13 @@
-// Right-pane family body: routes the active family to its panel, bound to
-// the active session's inspector store. The shell owns the frame; this seam
-// owns everything inside it.
+// Registered session-surface body: routes one explicit session and surface
+// ID to its renderer. Route identity is never inferred from global active
+// state, so an outgoing screen cannot briefly show an incoming session's
+// inspector during navigation.
 import type * as React from "react";
 import { FamilyEmpty } from "./FamilyEmpty.tsx";
 import { PaneHeading } from "./PaneHeading.tsx";
 import { desktopRuntime } from "../../platform/desktop-runtime.ts";
-import { rendererPlatform, useWorkspace } from "../../state/store-instance.ts";
-import type { PaneFamily } from "../../state/workspace-store.ts";
+import { rendererPlatform } from "../../state/store-instance.ts";
+import type { SessionSurfaceId } from "../../state/workspace-store.ts";
 import { installTerminalStoreFactory, createTerminalStore } from "../terminal/terminal-store.ts";
 import { createFixturePtyBridge } from "../terminal/pty.ts";
 import { createLivePtySessionFactory } from "../terminal/live-pty.ts";
@@ -71,41 +72,54 @@ if (rendererPlatform.mode === "browser") {
 }
 
 export interface PaneContentProps {
-  readonly family: PaneFamily;
+  readonly sessionId: string;
+  readonly surfaceId: SessionSurfaceId;
   /** Optional trailing action forwarded to the pane heading (e.g. dock close button). */
   readonly trailing?: React.ReactNode | undefined;
 }
 
+type SurfaceRendererProps = Required<Pick<PaneContentProps, "sessionId" | "surfaceId">> &
+  Pick<PaneContentProps, "trailing"> & {
+    readonly store: NonNullable<ReturnType<typeof getInspectorStore>>;
+  };
 
-export function PaneContent({ family, trailing }: PaneContentProps) {
-  const sessionId = useWorkspace((state) => state.activeSessionId);
-  const store = sessionId === null ? null : getInspectorStore(sessionId);
-  if (sessionId === null || store === null) {
+type SurfaceRenderer = (props: SurfaceRendererProps) => React.ReactNode;
+
+/** Compile-time exhaustive: adding an ID requires adding its renderer here. */
+export const SESSION_SURFACE_RENDERERS = Object.freeze({
+  agents: ({ sessionId, store, trailing }) => {
+    const controller = rendererPlatform.mode === "browser" ? null : desktopRuntime();
+    const address =
+      controller === null ? null : resolveLiveSession(controller.getSnapshot(), sessionId);
+    const imageSource =
+      address === null
+        ? undefined
+        : (transcriptImageSourceForSession(address.hostId, address.sessionId) ?? undefined);
+    return (
+      <AgentsPane api={store} imageSource={imageSource} sessionId={sessionId} trailing={trailing} />
+    );
+  },
+  activity: ({ store, trailing }) => <ActivityPane api={store} trailing={trailing} />,
+  review: ({ sessionId, store, trailing }) => (
+    <ReviewPane api={store} sessionId={sessionId} trailing={trailing} />
+  ),
+  files: ({ sessionId, store, trailing }) => (
+    <FilesPane api={store} sessionId={sessionId} trailing={trailing} />
+  ),
+  terminals: ({ sessionId, store, trailing }) => (
+    <TerminalsPane api={store} sessionId={sessionId} trailing={trailing} />
+  ),
+} satisfies Record<SessionSurfaceId, SurfaceRenderer>);
+
+export function PaneContent({ sessionId, surfaceId, trailing }: PaneContentProps) {
+  const store = getInspectorStore(sessionId);
+  if (store === null) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <PaneHeading family={family} trailing={trailing} />
-        <FamilyEmpty className="min-h-0 flex-1" family={family} />
+        <PaneHeading family={surfaceId} trailing={trailing} />
+        <FamilyEmpty className="min-h-0 flex-1" family={surfaceId} />
       </div>
     );
   }
-  switch (family) {
-    case "agents": {
-      const controller = rendererPlatform.mode === "browser" ? null : desktopRuntime();
-      const address =
-        controller === null ? null : resolveLiveSession(controller.getSnapshot(), sessionId);
-      const imageSource =
-        address === null
-          ? undefined
-          : (transcriptImageSourceForSession(address.hostId, address.sessionId) ?? undefined);
-      return <AgentsPane api={store} imageSource={imageSource} sessionId={sessionId} trailing={trailing} />;
-    }
-    case "activity":
-      return <ActivityPane api={store} trailing={trailing} />;
-    case "review":
-      return <ReviewPane api={store} trailing={trailing} />;
-    case "files":
-      return <FilesPane api={store} trailing={trailing} />;
-    case "terminals":
-      return <TerminalsPane api={store} sessionId={sessionId} trailing={trailing} />;
-  }
+  return SESSION_SURFACE_RENDERERS[surfaceId]({ sessionId, store, surfaceId, trailing });
 }

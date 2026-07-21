@@ -7,6 +7,11 @@ import { createStore, type StoreApi, useStore } from "zustand";
 
 import type { StagedAttachment } from "./attachments.ts";
 import type { SubmissionNotice, SubmissionToken } from "./submission.ts";
+import {
+  admitContextItem,
+  type ContextItemAdmission,
+  type ContextPacketItem,
+} from "../context-packet/context-packet.ts";
 
 /**
  * The retired v1 options-persistence key. Model/thinking/fast/mode moved to
@@ -25,12 +30,19 @@ export function purgeLegacyComposerPersistence(storage: Pick<Storage, "removeIte
 
 export interface ComposerStoreState {
   readonly attachmentsBySessionId: Record<string, readonly StagedAttachment[]>;
+  readonly contextItemsBySessionId: Readonly<Record<string, readonly ContextPacketItem[]>>;
+  readonly contextNoticeBySessionId: Readonly<Record<string, string>>;
   readonly pendingSubmissionBySessionId: Readonly<Record<string, SubmissionToken>>;
   readonly submissionNoticeBySessionId: Readonly<Record<string, SubmissionNotice>>;
   readonly attachmentRejectionsBySessionId: Readonly<Record<string, readonly string[]>>;
   addAttachments(sessionId: string, attachments: readonly StagedAttachment[]): void;
   removeAttachment(sessionId: string, attachmentId: string): void;
   clearAttachments(sessionId: string): void;
+  addContextItem(sessionId: string, item: ContextPacketItem): ContextItemAdmission;
+  removeContextItem(sessionId: string, itemId: string): void;
+  removeContextItems(sessionId: string, itemIds: readonly string[]): void;
+  clearContextItems(sessionId: string): void;
+  setContextNotice(sessionId: string, notice: string | null): void;
   beginSubmission(sessionId: string): SubmissionToken | null;
   isSubmissionCurrent(sessionId: string, token: SubmissionToken): boolean;
   finishSubmission(sessionId: string, token: SubmissionToken): void;
@@ -52,6 +64,8 @@ export function createComposerStore(options: ComposerStoreOptions = {}): Compose
   let submissionSequence = 0;
   return createStore<ComposerStoreState>((set, get) => ({
     attachmentsBySessionId: {},
+    contextItemsBySessionId: {},
+    contextNoticeBySessionId: {},
     pendingSubmissionBySessionId: {},
     submissionNoticeBySessionId: {},
     attachmentRejectionsBySessionId: {},
@@ -84,6 +98,69 @@ export function createComposerStore(options: ComposerStoreOptions = {}): Compose
       set((state) => {
         const { [sessionId]: _cleared, ...remaining } = state.attachmentsBySessionId;
         return { attachmentsBySessionId: remaining };
+      });
+    },
+    addContextItem: (sessionId, item) => {
+      if (item.sessionId !== sessionId) {
+        return { accepted: false, reason: "This context belongs to a different session." };
+      }
+      const admission = admitContextItem(get().contextItemsBySessionId[sessionId] ?? [], item);
+      if (!admission.accepted) {
+        get().setContextNotice(sessionId, admission.reason);
+        return admission;
+      }
+      set((state) => {
+        const { [sessionId]: _clearedNotice, ...remainingNotices } = state.contextNoticeBySessionId;
+        return {
+          contextItemsBySessionId: {
+            ...state.contextItemsBySessionId,
+            [sessionId]: admission.items,
+          },
+          contextNoticeBySessionId: remainingNotices,
+        };
+      });
+      return admission;
+    },
+    removeContextItem: (sessionId, itemId) => {
+      get().removeContextItems(sessionId, [itemId]);
+    },
+    removeContextItems: (sessionId, itemIds) => {
+      if (itemIds.length === 0) return;
+      const removed = new Set(itemIds);
+      set((state) => {
+        const remaining = (state.contextItemsBySessionId[sessionId] ?? []).filter(
+          (item) => !removed.has(item.id),
+        );
+        if (remaining.length === 0) {
+          const { [sessionId]: _cleared, ...rest } = state.contextItemsBySessionId;
+          return { contextItemsBySessionId: rest };
+        }
+        return {
+          contextItemsBySessionId: {
+            ...state.contextItemsBySessionId,
+            [sessionId]: remaining,
+          },
+        };
+      });
+    },
+    clearContextItems: (sessionId) => {
+      set((state) => {
+        const { [sessionId]: _cleared, ...remaining } = state.contextItemsBySessionId;
+        return { contextItemsBySessionId: remaining };
+      });
+    },
+    setContextNotice: (sessionId, notice) => {
+      set((state) => {
+        if (notice === null) {
+          const { [sessionId]: _cleared, ...remaining } = state.contextNoticeBySessionId;
+          return { contextNoticeBySessionId: remaining };
+        }
+        return {
+          contextNoticeBySessionId: {
+            ...state.contextNoticeBySessionId,
+            [sessionId]: notice,
+          },
+        };
       });
     },
     beginSubmission: (sessionId) => {
@@ -144,11 +221,17 @@ export function createComposerStore(options: ComposerStoreOptions = {}): Compose
         const { [sessionId]: _notice, ...remainingNotices } = state.submissionNoticeBySessionId;
         const { [sessionId]: _rejections, ...remainingRejections } =
           state.attachmentRejectionsBySessionId;
+        const { [sessionId]: _contextItems, ...remainingContextItems } =
+          state.contextItemsBySessionId;
+        const { [sessionId]: _contextNotice, ...remainingContextNotices } =
+          state.contextNoticeBySessionId;
         return {
           attachmentsBySessionId: remainingAttachments,
           pendingSubmissionBySessionId: remainingPending,
           submissionNoticeBySessionId: remainingNotices,
           attachmentRejectionsBySessionId: remainingRejections,
+          contextItemsBySessionId: remainingContextItems,
+          contextNoticeBySessionId: remainingContextNotices,
         };
       });
     },

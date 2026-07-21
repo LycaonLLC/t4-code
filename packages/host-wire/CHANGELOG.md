@@ -5,6 +5,7 @@
 ### Added
 
 - Add negotiated, bounded `transcript.page` backward pagination for attached session history.
+- Add a bounded operation-capability catalog with typed, headless, terminal-only, and unavailable execution classes plus structured disabled reasons and rejection fixtures shared with Flutter.
 
 - Add negotiated runtime-adapter discovery, path-free runtime selection for session creation, and server-authorized workspace lifecycle commands.
 

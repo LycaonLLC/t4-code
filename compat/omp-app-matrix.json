@@ -31,6 +31,16 @@
         "sha256": "f7d4438e163aabc4ca624468bf5bd4a243b5e1ab5360e84cef52abe93683ea55",
         "releaseCodeSignature": "adhoc",
         "distributionSigningBoundary": "t4-product-package"
+      },
+      "linux-arm64": {
+        "name": "omp-linux-arm64",
+        "size": 150513808,
+        "sha256": "968a939fc26329590ba53b11c9cb0eccc0e849e8988c8da9fc58c7c2fcfe8ef5"
+      },
+      "linux-x64": {
+        "name": "omp-linux-x64",
+        "size": 175372416,
+        "sha256": "deb7dae793a2191746681980305ab8b5ed0480410950ca7d5e555257f4f3fb04"
       }
     },
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
@@ -122,6 +132,16 @@
         "sha256": "f7d4438e163aabc4ca624468bf5bd4a243b5e1ab5360e84cef52abe93683ea55",
         "releaseCodeSignature": "adhoc",
         "distributionSigningBoundary": "t4-product-package"
+      },
+      "linux-arm64": {
+        "name": "omp-linux-arm64",
+        "size": 150513808,
+        "sha256": "968a939fc26329590ba53b11c9cb0eccc0e849e8988c8da9fc58c7c2fcfe8ef5"
+      },
+      "linux-x64": {
+        "name": "omp-linux-x64",
+        "size": 175372416,
+        "sha256": "deb7dae793a2191746681980305ab8b5ed0480410950ca7d5e555257f4f3fb04"
       }
     },
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",

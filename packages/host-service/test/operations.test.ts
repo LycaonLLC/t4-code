@@ -119,6 +119,7 @@ function authority(overrides: Partial<DesktopOperationsAuthority> = {}): Desktop
 	return {
 		filesRead: async () => ({ content: "hello" }),
 		filesList: async () => ({ entries: [] }),
+		filesSearch: async () => ({ matches: [], truncated: false }),
 		filesDiff: async () => ({ diff: "" }),
 		filesWrite: async () => ({}),
 		filesPatch: async () => ({}),
@@ -126,7 +127,7 @@ function authority(overrides: Partial<DesktopOperationsAuthority> = {}): Desktop
 		reviewApply: async () => ({}),
 		bashRun: async () => ({}),
 		termOpen: async () => ({ terminalId: "term-1" }),
-		catalogGet: async () => ({ items: [] }),
+		catalogGet: async () => ({ revision: "revision-catalog", items: [] }),
 		settingsRead: async () => ({ revision: "revision-settings", settings: {} }),
 		brokerStatus: async () => ({ state: "local", generation: 1 }),
 		settingsWrite: async () => ({}),
@@ -148,6 +149,7 @@ describe("desktop operation dispatcher", () => {
 		for (const name of [
 			"files.read",
 			"files.list",
+			"files.search",
 			"files.diff",
 			"files.write",
 			"files.patch",
@@ -166,7 +168,9 @@ describe("desktop operation dispatcher", () => {
 		]) {
 			const args = name.startsWith("preview.")
 				? previewArgs(name)
-				: name.startsWith("files.")
+				: name === "files.search"
+					? { query: "app" }
+					: name.startsWith("files.")
 					? {
 							path: "src/a.txt",
 							...(name === "files.write" ? { content: "x" } : {}),

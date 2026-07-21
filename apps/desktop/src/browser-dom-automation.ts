@@ -1,5 +1,4 @@
 const MAX_STRING_BYTES = 32 * 1024;
-const MAX_PROMPT_BYTES = 4_000;
 const MAX_ELEMENTS = 512;
 const MAX_SNAPSHOT_ELEMENTS = 256;
 const MAX_DEPTH = 12;
@@ -23,6 +22,7 @@ interface SnapshotElement {
   readonly ref: string;
   readonly role: string;
   readonly name: string;
+  readonly visible: true;
   readonly text?: string;
   readonly value?: string;
   readonly bounds?: { x: number; y: number; width: number; height: number };
@@ -36,9 +36,8 @@ const refs = new Map<string, RefEntry>();
 const elements = new WeakMap<Element, string>();
 let nextRef = 1;
 let activeDocument: Document | null = null;
-let designMode = false;
-let designPrompt = "";
-let designOverlay: HTMLElement | null = null;
+let designModeOriginals = new WeakMap<Document, string>();
+const designModeDocuments = new Set<Document>();
 let savedState: JsonValue | null = null;
 const dialogQueue: Array<{ type: "alert" | "confirm" | "prompt"; message: string; defaultValue?: string }> = [];
 let dialogInstalled = false;
@@ -99,7 +98,15 @@ function accessibleName(element: Element): string {
     if (placeholder) return bound(placeholder);
   }
   if (element instanceof HTMLImageElement && element.alt) return bound(element.alt);
-  return bound((element.textContent ?? "").replace(/\s+/gu, " ").trim(), 8_192);
+  const tag = element.tagName.toLowerCase();
+  const textNamedElement =
+    tag === "a" ||
+    tag === "button" ||
+    /^h[1-6]$/u.test(tag) ||
+    element.children.length === 0;
+  return textNamedElement
+    ? bound((element.textContent ?? "").replace(/\s+/gu, " ").trim(), 8_192)
+    : "";
 }
 function elementRef(element: Element): string {
   const old = elements.get(element);
@@ -141,21 +148,43 @@ function boundsOf(element: Element): { x: number; y: number; width: number; heig
 }
 function isVisible(element: Element): boolean {
   if (!element.isConnected) return false;
-  const style = (element.ownerDocument.defaultView ?? window).getComputedStyle(element);
+  const view = element.ownerDocument.defaultView ?? window;
+  let current: Element | null = element;
+  while (current !== null) {
+    const style = view.getComputedStyle(current);
+    if (
+      current.hasAttribute("hidden") ||
+      current.getAttribute("aria-hidden") === "true" ||
+      style.display === "none" ||
+      style.visibility === "hidden" ||
+      style.visibility === "collapse" ||
+      Number(style.opacity) === 0
+    ) {
+      return false;
+    }
+    current = current.parentElement;
+  }
   const rect = element.getBoundingClientRect();
-  return style.display !== "none" && style.visibility !== "hidden" && style.visibility !== "collapse" && Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0;
+  return rect.width > 0 && rect.height > 0;
 }
 function isDisabled(element: Element): boolean {
   return (element as HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).disabled === true || element.getAttribute("aria-disabled") === "true" || element.closest("fieldset[disabled]") !== null;
 }
 function snapshotNode(element: Element, depth: number, budget: { count: number }): SnapshotElement {
-  if (budget.count >= MAX_SNAPSHOT_ELEMENTS) return { ref: elementRef(element), role: roleFor(element), name: accessibleName(element) };
+  if (budget.count >= MAX_SNAPSHOT_ELEMENTS) {
+    return {
+      ref: elementRef(element),
+      role: roleFor(element),
+      name: accessibleName(element),
+      visible: true,
+    };
+  }
   budget.count += 1;
   const result: SnapshotElement = {
-    ref: elementRef(element), role: roleFor(element), name: accessibleName(element),
+    ref: elementRef(element), role: roleFor(element), name: accessibleName(element), visible: true,
     ...(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement ? { value: bound(element.value) } : {}),
     ...(element.children.length === 0 && element.textContent?.trim() ? { text: bound(element.textContent.trim(), 8_192) } : {}),
-    ...(isVisible(element) ? { bounds: boundsOf(element) } : {}),
+    bounds: boundsOf(element),
     ...(isDisabled(element) ? { disabled: true } : {}),
     ...(element instanceof HTMLInputElement && (element.type === "checkbox" || element.type === "radio") ? { checked: element.checked } : {}),
     ...(element.getAttribute("aria-expanded") !== null ? { expanded: element.getAttribute("aria-expanded") === "true" } : {}),
@@ -164,6 +193,7 @@ function snapshotNode(element: Element, depth: number, budget: { count: number }
   const children: SnapshotElement[] = [];
   for (const child of Array.from(element.children).slice(0, MAX_SNAPSHOT_ELEMENTS)) {
     if (budget.count >= MAX_SNAPSHOT_ELEMENTS) break;
+    if (!isVisible(child)) continue;
     children.push(snapshotNode(child, depth + 1, budget));
   }
   return children.length ? { ...result, children } : result;
@@ -174,14 +204,15 @@ function snapshot(): JsonValue {
   const flat: SnapshotElement[] = [];
   const visit = (element: Element): void => {
     if (flat.length >= MAX_SNAPSHOT_ELEMENTS) return;
-    flat.push(snapshotNode(element, MAX_DEPTH, { count: 0 }));
+    if (isVisible(element)) flat.push(snapshotNode(element, MAX_DEPTH, { count: 0 }));
     for (const child of Array.from(element.children)) visit(child);
   };
   visit(body);
+  const tree = isVisible(body) ? snapshotNode(body, 0, { count: 0 }) : null;
   return json({
     url: bound(doc.URL), title: bound(doc.title), readyState: doc.readyState,
     viewport: { x: 0, y: 0, width: Math.max(0, window.innerWidth), height: Math.max(0, window.innerHeight) },
-    tree: snapshotNode(body, 0, { count: 0 }), elements: flat, capturedAt: Date.now(), truncated: flat.length >= MAX_SNAPSHOT_ELEMENTS,
+    tree, elements: flat, capturedAt: Date.now(), truncated: flat.length >= MAX_SNAPSHOT_ELEMENTS,
   });
 }
 function postAction(params: Record<string, unknown>): Record<string, JsonValue> {
@@ -272,22 +303,36 @@ function installDialogs(): void {
   window.prompt = (message?: unknown, defaultValue?: string) => { dialogQueue.push({ type: "prompt", message: bound(String(message ?? "")), defaultValue: bound(defaultValue ?? "") }); return null; };
   void original;
 }
-function designModeStatus(): JsonValue { return { enabled: designMode, prompt: bound(designPrompt, MAX_PROMPT_BYTES), selection: bound(window.getSelection()?.toString() ?? "", 4_000) }; }
+function designModeStatus(): JsonValue { return { enabled: designModeDocuments.size > 0, selection: bound(window.getSelection()?.toString() ?? "", 4_000) }; }
 function setDesignMode(params: Record<string, unknown>): JsonValue {
-  designMode = params.enabled === true;
-  designPrompt = typeof params.prompt === "string" ? bound(params.prompt, MAX_PROMPT_BYTES) : "";
-  documentRoot().designMode = designMode ? "on" : "off";
-  documentRoot().body?.setAttribute("contenteditable", designMode ? "true" : "false");
-  if (designMode && !designOverlay) { designOverlay = documentRoot().createElement("div"); designOverlay.setAttribute("data-t4-design-overlay", "true"); designOverlay.textContent = designPrompt; Object.assign(designOverlay.style, { position: "fixed", top: "4px", right: "4px", zIndex: "2147483647", maxWidth: "300px", padding: "4px", background: "#222", color: "#fff", font: "12px sans-serif", pointerEvents: "none" }); documentRoot().body?.append(designOverlay); }
-  if (!designMode && designOverlay) { designOverlay.remove(); designOverlay = null; }
+  const root = documentRoot();
+  const enabled = params.enabled === true;
+  if (enabled) {
+    if (!designModeOriginals.has(root)) {
+      designModeOriginals.set(root, root.designMode);
+      designModeDocuments.add(root);
+    }
+    root.designMode = "on";
+  } else {
+    for (const document of designModeDocuments) {
+      const original = designModeOriginals.get(document);
+      if (original !== undefined) document.designMode = original;
+    }
+    designModeDocuments.clear();
+    designModeOriginals = new WeakMap<Document, string>();
+  }
   return designModeStatus();
 }
 function storage(area: "local" | "session"): Storage { try { return area === "local" ? window.localStorage : window.sessionStorage; } catch { throw new BrowserDomAutomationError("security", "Storage is unavailable"); } }
 
 export function resetBrowserDomAutomation(): void {
+  for (const root of designModeDocuments) {
+    const original = designModeOriginals.get(root);
+    if (original !== undefined) root.designMode = original;
+  }
+  designModeDocuments.clear();
   refs.clear(); nextRef = 1; activeDocument = null;
-  if (designOverlay) { designOverlay.remove(); designOverlay = null; }
-  designMode = false; designPrompt = ""; savedState = null; dialogQueue.length = 0;
+  designModeOriginals = new WeakMap<Document, string>(); savedState = null; dialogQueue.length = 0;
 }
 
 export async function executeBrowserDomAutomation(method: string, rawParams: Record<string, unknown>): Promise<unknown> {

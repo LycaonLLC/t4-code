@@ -4,8 +4,15 @@
 // frames into a TranscriptProjection; rows derive from the projection; user
 // actions leave through typed SessionIntents. The shell's outer scroll
 // container stays inert — this surface owns its own virtualized scroller.
-import { useNavigate } from "@tanstack/react-router";
-import { Badge, cn, StatusPill, Tooltip, TooltipPopup, TooltipTrigger, useReducedMotion } from "@t4-code/ui";
+import {
+  Badge,
+  cn,
+  StatusPill,
+  Tooltip,
+  TooltipPopup,
+  TooltipTrigger,
+  useReducedMotion,
+} from "@t4-code/ui";
 import {
   useCallback,
   useEffect,
@@ -16,8 +23,9 @@ import {
   type RefObject,
 } from "react";
 
+import { useActionRegistry } from "../../actions/index.ts";
+import { captureTranscriptContext } from "../context-packet/context-packet.ts";
 import type { WorkspaceProject, WorkspaceSession } from "../../lib/workspace-data.ts";
-import { workspaceStore } from "../../state/store-instance.ts";
 import { useDesktopRuntimeSnapshot } from "../../platform/desktop-runtime.ts";
 import { resolveLiveSession } from "../../platform/live-workspace.ts";
 import { Composer } from "../composer/Composer.tsx";
@@ -60,17 +68,14 @@ import { TranscriptTimeline } from "./TranscriptTimeline.tsx";
 import type { ToolRenderHost } from "./tool-render/types.ts";
 
 export interface SessionMainProps {
+  /** Route-owned identity, passed explicitly through the whole session surface. */
+  readonly sessionId: string;
   readonly session: WorkspaceSession;
   readonly project: WorkspaceProject;
   readonly nowMs: number;
   readonly onOpenHostHealth: () => void;
   /** Export hook: registered with the current rows so the header menu can serialize them. */
   readonly exportRowsRef: RefObject<(() => ExportContent) | null>;
-}
-
-/** Stable session-scoped destination; all transcript state stays in the workspace store. */
-export function sessionPreviewDestination(sessionId: string) {
-  return { params: { sessionId }, to: "/sessions/$sessionId/preview" as const };
 }
 
 const NO_FILE_CHILDREN: Readonly<Record<string, FileChildren>> = {};
@@ -443,15 +448,20 @@ export function SessionControlBanner({
   );
 }
 
-export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: SessionMainProps) {
+export function SessionMain({
+  onOpenHostHealth,
+  session,
+  sessionId,
+  exportRowsRef,
+}: SessionMainProps) {
   const archived = session.archivedAt !== undefined;
-  const navigate = useNavigate();
-  const { snapshot, runtime } = useSessionRuntime(session.id, session.freshness);
+  const actionRegistry = useActionRegistry();
+  const { snapshot, runtime } = useSessionRuntime(sessionId, session.freshness);
   const projection = snapshot.projection;
   const desktopSnapshot = useDesktopRuntimeSnapshot();
   // The composer "@" picker rides the session's lazy file index; no
   // inspector store (fixture hosts without a factory) means no entries.
-  const inspectorApi = getInspectorStore(session.id);
+  const inspectorApi = getInspectorStore(sessionId);
   const fileChildren = useSyncExternalStore(
     useCallback(
       (onStoreChange: () => void) => inspectorApi?.subscribe(onStoreChange) ?? (() => {}),
@@ -464,12 +474,12 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
   );
   const fileEntries = useMemo(() => flattenFileIndex(fileChildren), [fileChildren]);
   const ensureFileDir = useCallback(
-    (dir: string) => getInspectorStore(session.id)?.getState().requestDir(dir),
-    [session.id],
+    (dir: string) => getInspectorStore(sessionId)?.getState().requestDir(dir),
+    [sessionId],
   );
   const liveAddress = useMemo(
-    () => (desktopSnapshot === null ? null : resolveLiveSession(desktopSnapshot, session.id)),
-    [desktopSnapshot, session.id],
+    () => (desktopSnapshot === null ? null : resolveLiveSession(desktopSnapshot, sessionId)),
+    [desktopSnapshot, sessionId],
   );
   const previews =
     desktopSnapshot === null || liveAddress === null
@@ -485,34 +495,23 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
   const toolHost = useMemo<ToolRenderHost>(
     () => ({
       hasAgent: (agentId) =>
-        getInspectorStore(session.id)?.getState().agentMap.agents[agentId] !== undefined,
+        getInspectorStore(sessionId)?.getState().agentMap.agents[agentId] !== undefined,
       openAgent: (agentId) => {
-        const inspector = getInspectorStore(session.id);
-        if (inspector?.getState().agentMap.agents[agentId] === undefined) return;
-        inspector.getState().selectAgent(agentId);
-        const workspace = workspaceStore.getState();
-        const view = workspace.sessionViewById[session.id];
-        if (view?.paneFamily !== "agents") workspace.togglePaneFamily(session.id, "agents");
-        workspace.setPaneOpen(session.id, true);
+        actionRegistry.execute({ id: "agent.open", args: { sessionId, agentId } });
       },
       openTurnReview: (turnId) => {
-        const inspector = getInspectorStore(session.id);
-        inspector?.getState().loadTurnReview(turnId);
-        const workspace = workspaceStore.getState();
-        const view = workspace.sessionViewById[session.id];
-        if (view?.paneFamily !== "review") workspace.togglePaneFamily(session.id, "review");
-        workspace.setPaneOpen(session.id, true);
+        actionRegistry.execute({ id: "review.open", args: { sessionId, turnId } });
       },
       openPreview: () => {
-        void navigate(sessionPreviewDestination(session.id));
+        actionRegistry.execute({ id: "preview.open", args: { sessionId } });
       },
     }),
-    [navigate, session.id],
+    [actionRegistry, sessionId],
   );
 
   // Leaving this session surface (switch or unmount) ends any read-aloud
   // playback: speech only ever belongs to a response the user can see.
-  useEffect(() => () => getReadAloudController().stop(), [session.id]);
+  useEffect(() => () => getReadAloudController().stop(), [sessionId]);
 
   const rawRows = useMemo(
     () =>
@@ -523,6 +522,15 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
     [projection, snapshot.pendingPrompts, snapshot.sessionActive],
   );
   const rows = useStableTranscriptRows(rawRows);
+  const captureMessageContext = useCallback(
+    (row: Extract<(typeof rows)[number], { kind: "message" }>) => {
+      const item = captureTranscriptContext(sessionId, row);
+      if (item !== null) {
+        actionRegistry.execute({ id: "context.capture", args: { sessionId, item } });
+      }
+    },
+    [actionRegistry, sessionId],
+  );
   // The export menu lives in the header; rows live here. Hand the menu a
   // getter instead of subscribing to the runtime a second time.
   useEffect(() => {
@@ -600,10 +608,10 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      <SessionActivityAnnouncer activity={sessionActivity} key={session.id} />
+      <SessionActivityAnnouncer activity={sessionActivity} key={sessionId} />
       <SessionControlAnnouncer
         control={sessionControl}
-        key={`${session.id}:control`}
+        key={`${sessionId}:control`}
         link={snapshot.link}
         writable={!archived && snapshot.canPrompt}
       />
@@ -669,11 +677,12 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
             bottomInset={archived ? 16 : dockHeight + 16}
             history={snapshot.transcriptHistory}
             imageSource={runtime.transcriptImages}
-            key={session.id}
+            key={sessionId}
             nowMs={snapshot.nowMs}
             onLoadEarlier={runtime.loadEarlierTranscript}
+            onCaptureMessage={archived ? undefined : captureMessageContext}
             rows={rows}
-            sessionId={session.id}
+            sessionId={sessionId}
             streaming={snapshot.sessionActive}
             toolHost={toolHost}
           />
@@ -720,7 +729,7 @@ export function SessionMain({ onOpenHostHealth, session, exportRowsRef }: Sessio
               queuedFollowUps={snapshot.queuedFollowUps}
               readOnlyReason={controlPresentation?.composerReason ?? null}
               revisingPlanId={revisingPlanId}
-              sessionId={session.id}
+              sessionId={sessionId}
               slashCommands={snapshot.slashCommands}
               submitPrompt={submitPrompt}
               turnActive={snapshot.sessionActive}

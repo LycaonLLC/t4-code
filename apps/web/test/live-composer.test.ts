@@ -29,6 +29,7 @@ import {
   type DurableEntry,
   type DurableEntryFrame,
   type LiveEventFrame,
+  type OperationCapability,
   type SessionSnapshotFrame,
   type SessionsFrame,
 } from "@t4-code/protocol";
@@ -149,8 +150,19 @@ function commandItem(name: string, capabilities?: readonly string[]): CatalogIte
   };
 }
 
-function catalogFrame(rev: string, items: CatalogItem[]): CatalogFrame {
-  return { v: V, type: "catalog", hostId: hostId(HOST), revision: revision(rev), items };
+function catalogFrame(
+  rev: string,
+  items: CatalogItem[],
+  operations?: OperationCapability[],
+): CatalogFrame {
+  return {
+    v: V,
+    type: "catalog",
+    hostId: hostId(HOST),
+    revision: revision(rev),
+    items,
+    ...(operations === undefined ? {} : { operations }),
+  };
 }
 
 function pendingPromptSessionsFrame(
@@ -667,6 +679,51 @@ describe("stop affordance and slash catalog", () => {
       "Needs terminal access on this host",
     );
     expect(commands.find((command) => command.name === "/review")?.disabledReason).toBeNull();
+  });
+
+  it("uses official OMP operation capabilities instead of mistaking typed commands for slash commands", async () => {
+    const { shell, runtime } = await startedRuntime();
+    shell.emitFrame({
+      targetId: "local",
+      frame: catalogFrame(
+        "official-operations",
+        [commandItem("session.cancel")],
+        [
+          {
+            operationId: "session.prompt" as OperationCapability["operationId"],
+            label: "Prompt",
+            execution: "typed",
+            supported: true,
+          },
+          {
+            operationId: "slash.compact" as OperationCapability["operationId"],
+            label: "/compact",
+            description: "Compact the active conversation",
+            execution: "headless",
+            supported: true,
+            capabilities: ["sessions.prompt"],
+            metadata: { aliases: ["compress"] },
+          },
+          {
+            operationId: "slash.plan" as OperationCapability["operationId"],
+            label: "/plan",
+            description: "Toggle plan mode",
+            execution: "terminal-only",
+            supported: false,
+            disabledReason: {
+              code: "terminal_only",
+              message: "/plan requires the OMP terminal interface.",
+            },
+          },
+        ],
+      ),
+    });
+
+    const commands = runtime.getSnapshot().slashCommands ?? [];
+    expect(commands.map((command) => command.name)).toEqual(["/compact", "/plan"]);
+    expect(commands[0]?.aliases).toEqual(["/compress"]);
+    expect(commands[0]?.disabledReason).toBeNull();
+    expect(commands[1]?.disabledReason).toBe("/plan requires the OMP terminal interface.");
   });
 });
 

@@ -1,6 +1,7 @@
 import {
 	decodeAuditEvent,
 	decodeCatalogItem,
+	decodeOperationCapability,
 	decodeFileListEntry,
 	decodePreviewSnapshot,
 	PREVIEW_ACTIONS,
@@ -89,6 +90,10 @@ import {
 } from "./limits.js";
 import { decodeSessionListResult, decodeSessionRef, type SessionListResult } from "./session-index.js";
 import { decodeSessionStateResult } from "./session-state.js";
+import {
+	decodeProjectFileSearchArguments,
+	decodeProjectFileSearchResult,
+} from "./project-file-search.js";
 import {
 	decodeTranscriptContextArguments,
 	decodeTranscriptContextResult,
@@ -399,6 +404,13 @@ export const COMMAND_DESCRIPTORS: Readonly<Record<string, CommandDescriptor>> = 
 		confirmation: "challenge",
 	},
 	"files.list": {
+		capability: "files.list",
+		scope: "session",
+		revision: "optional",
+		revisionOwner: "authority",
+		confirmation: "none",
+	},
+	"files.search": {
 		capability: "files.list",
 		scope: "session",
 		revision: "optional",
@@ -1302,10 +1314,16 @@ function decodeAuditResult(value: unknown): CommandResult {
 }
 function decodeCatalogResult(value: unknown): CommandResult {
 	const x = result(value);
-	return {
+	const decoded: CommandResult = {
 		...x,
+		revision: revision(x.revision, "result.revision"),
 		items: boundedArray(x.items, "result.items").map((item, i) => decodeCatalogItem(item, `result.items[${i}]`)),
 	};
+	if (x.operations !== undefined)
+		decoded.operations = boundedArray(x.operations, "result.operations").map((item, i) =>
+			decodeOperationCapability(item, `result.operations[${i}]`),
+		);
+	return decoded;
 }
 function decodeTerminalResult(value: unknown): CommandResult {
 	const x = result(value);
@@ -1718,6 +1736,7 @@ export const COMMAND_ARGUMENT_DECODERS: Readonly<Record<string, (value: unknown)
 		if (x.path !== undefined) safeRelativePath(x.path, "args.path");
 		return x;
 	},
+	"files.search": value => decodeProjectFileSearchArguments(value) as unknown as CommandArguments,
 	"files.diff": value => {
 		const x = args(value);
 		if (x.turnId !== undefined) {
@@ -1958,6 +1977,7 @@ export const COMMAND_RESULT_DECODERS: Readonly<Record<string, (value: unknown) =
 	"files.write": result,
 	"files.patch": result,
 	"files.list": decodeEntries,
+	"files.search": value => decodeProjectFileSearchResult(value) as unknown as CommandResult,
 	"files.diff": value => {
 		const x = result(value);
 		if (x.turnId !== undefined) return decodeTurnReviewSnapshot(x, "result") as unknown as CommandResult;

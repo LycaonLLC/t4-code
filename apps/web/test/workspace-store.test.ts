@@ -10,9 +10,11 @@ import {
   isSessionUnread,
   markVisited,
   parsePersistedWorkspace,
+  PRIMARY_SESSION_SURFACE_ID,
   RAIL_WIDTH,
   RIGHT_PANE_WIDTH,
   selectSessionView,
+  selectSessionWorkspaceLayout,
   toPersistedWorkspace,
   WORKSPACE_STATE_VERSION,
 } from "../src/state/workspace-store.ts";
@@ -89,6 +91,36 @@ describe("session continuity (A→B→A)", () => {
     s().togglePaneFamily("A", "terminals");
     expect(selectSessionView(s(), "A").paneOpen).toBe(false);
     expect(selectSessionView(s(), "A").paneFamily).toBe("terminals");
+  });
+
+  it("opens, toggles, and closes registered surfaces through explicit actions", () => {
+    const { store } = makeStore();
+    const state = () => store.getState();
+
+    expect(selectSessionWorkspaceLayout(state(), "A")).toEqual({
+      primary: PRIMARY_SESSION_SURFACE_ID,
+      secondary: null,
+    });
+
+    state().openSessionSurface("A", "agents");
+    expect(selectSessionWorkspaceLayout(state(), "A").secondary).toBe("agents");
+
+    state().openSessionSurface("A", "review");
+    expect(selectSessionWorkspaceLayout(state(), "A").secondary).toBe("review");
+
+    // A stale close request for the old surface cannot close the new one.
+    state().closeSessionSurface("A", "agents");
+    expect(selectSessionWorkspaceLayout(state(), "A").secondary).toBe("review");
+
+    state().toggleSessionSurface("A", "review");
+    expect(selectSessionWorkspaceLayout(state(), "A").secondary).toBeNull();
+
+    state().toggleSessionSurface("A", "files");
+    expect(selectSessionWorkspaceLayout(state(), "A").secondary).toBe("files");
+    expect(selectSessionWorkspaceLayout(state(), "B").secondary).toBeNull();
+
+    state().closeSessionSurface("A", "files");
+    expect(selectSessionWorkspaceLayout(state(), "A").secondary).toBeNull();
   });
 
   it("keeps the underlying workspace intact while focus mode is active", () => {
@@ -287,6 +319,10 @@ describe("persistence", () => {
       previewId: null,
       previewScale: "fit",
     });
+    expect(selectSessionWorkspaceLayout(parsed!, "A")).toEqual({
+      primary: "transcript",
+      secondary: "files",
+    });
   });
 
   it("does not grant consent to persisted preview selections from before the opt-in marker", () => {
@@ -390,6 +426,8 @@ describe("persistence", () => {
     expect("focusMode" in snapshot).toBe(false);
     expect("railQuery" in snapshot).toBe(false);
     expect("railFilter" in snapshot).toBe(false);
+    expect("openSurfaceIds" in snapshot).toBe(false);
+    expect("activeSurfaceId" in snapshot).toBe(false);
   });
 
   it("can clear an empty-project dismissal without disturbing other projects", () => {

@@ -1,22 +1,48 @@
 # Ownership and handoffs
 
-## Sole writers
+These boundaries coordinate changes across the released repository and planned architecture paths.
+They are defaults, not permanent titles or exclusive locks. When active work overlaps, name an
+integration owner or land the smaller shared contract first.
 
-| Path | Sole writer |
-|---|---|
-| `apps/web/**`, `packages/ui/**`, `apps/desktop/src/visible-strings.ts`, `apps/desktop/resources/**`, visible copy/assets/screenshots | Fable 5 |
-| OMP `packages/app-wire/**` | app-wire protocol lead |
-| OMP `packages/appserver/**` | appserver lead; delegated domain subtrees only after contracts freeze |
-| Desktop `packages/protocol/**` | protocol-facade owner; re-export only |
-| Desktop `packages/client/**`, `packages/fixture-server/**` | backend/client owners |
-| Desktop `apps/desktop/src/**` except `visible-strings.ts` | Electron systems owner; consumes but does not author visible copy/resources |
-| root manifests and `pnpm-lock.yaml` | integration lead (sole writer) |
-| `docs/adr/**`, this file, licenses/notices/provenance | architecture/provenance lead |
+## Current repository paths
 
-A PR exceeding 1,500 semantic LOC MUST split into serial batches with disjoint ownership and a handoff record. No agent edits another owner's path, even to fix a visible defect.
+| Path                                                                     | Primary owner                                                                            |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `apps/flutter/**`                                                        | Flutter client and provider owner                                                        |
+| `packages/host-wire/**`, network-frame changes in `packages/protocol/**` | Protocol owner                                                                           |
+| `packages/host-service/**`, `packages/host-daemon/**`                    | T4 Local systems owner                                                                   |
+| `packages/client/**`, `packages/fixture-server/**`                       | Client data and fixtures owner                                                           |
+| `packages/remote/**`, `packages/service-manager/**`                      | Pairing, remote connection, and native service-lifecycle owner                           |
+| `apps/web/**`, `packages/ui/**`, visible copy/assets/screenshots         | Compatibility client experience owner                                                    |
+| `apps/desktop/**`                                                        | Compatibility desktop systems owner; coordinate visible UI changes with the client owner |
+| Root manifests, workspace configuration, and `pnpm-lock.yaml`            | Integration owner                                                                        |
+| `docs/adr/**`, architecture, licenses, notices, and provenance           | Architecture/provenance owner                                                            |
 
-## Handoff contracts
+## Planned path reservations
 
-Backend-to-Fable handoff includes app-wire version/features, AppClient selectors/commands, deterministic scenario ID and manifest, IDs/revisions, and loading/empty/stale/reconnect/denied/error states. Fable supplies no shadow schema or invented state. OMP-to-Desktop handoff includes tagged source SHA, package version, tarball/manifest checksums, and golden corpus checksums; Desktop commits only the relative vendored artifact.
+These paths reserve ownership without requiring premature scaffolding:
 
-Reviewers and test agents are report-only for visible defects: provide reproducible evidence and return the issue to Fable. Root lockfile changes go only through the integration owner. Every T3 port requires an import record before merge.
+| Path                                                                 | Primary owner             |
+| -------------------------------------------------------------------- | ------------------------- |
+| Future `apps/hub/**`, `packages/hub-*/**`                            | Hub systems owner         |
+| Future `packages/hub-wire/**`, shared capability and client schemas  | Protocol owner            |
+| Future `packages/omp-runtime-adapter/**`, `packages/runtime-wire/**` | Runtime integration owner |
+| Future operator, release, and managed deployment paths               | Managed platform owner    |
+| Future native Workstation Runner package                             | Workstation systems owner |
+
+## Handoffs
+
+- OMP remains authoritative for runtime behavior. A published T4 release pins one exact compatible
+  official OMP artifact.
+- Changes to shared client, Hub Wire, Runtime Wire, capability, identifier, or error schemas require
+  executable fixtures before consumers enable the behavior.
+- Root manifests, workspace configuration, lockfiles, migration identifiers, CI workflows, OCI
+  builds, operator APIs, and deployment manifests require an integration owner when lanes overlap.
+- Client owners consume normalized capabilities and state; they do not reconstruct OMP behavior or
+  backend authority.
+- Security-sensitive logs, fixtures, and support data remain bounded and redacted.
+
+## Canonical architecture
+
+[`T4_ARCHITECTURE.html`](T4_ARCHITECTURE.html) is the sole specification for product profiles,
+authority, transport, storage, recovery, deployment, performance, and delivery gates.

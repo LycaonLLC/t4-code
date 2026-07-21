@@ -47,6 +47,11 @@ export interface SecurityInstallerLike {
   (options: BrowserSurfaceSecurityOptions): BrowserSurfaceSecurityController;
 }
 
+interface BrowserAutomationCoordinatorLike {
+  call(call: BrowserCall): Promise<BrowserCallResult>;
+  dispose(): void;
+}
+
 export interface BrowserRuntimeOptions {
   readonly window: BrowserWindow;
   readonly emit: (event: BrowserEvent) => void;
@@ -57,6 +62,8 @@ export interface BrowserRuntimeOptions {
   readonly installSecurity?: SecurityInstallerLike;
   readonly allowFileUrls?: boolean;
   readonly prewarmTtlMs?: number;
+  /** Test seam for proving owner-scoped dispatch without a real Electron preload. */
+  readonly automationCoordinator?: BrowserAutomationCoordinatorLike;
 }
 
 export class BrowserRuntimeError extends Error {
@@ -163,7 +170,7 @@ export class BrowserRuntime {
   private readonly restoredOwners = new Set<OwnerSessionId>();
   private readonly restoringOwners = new Map<OwnerSessionId, Promise<readonly BrowserSurfaceState[]>>();
   private restoringSurfaceCount = 0;
-  private readonly automationCoordinator: BrowserAutomationCoordinator;
+  private readonly automationCoordinator: BrowserAutomationCoordinatorLike;
   private readonly captureCoordinator: BrowserCaptureCoordinator;
   private readonly inputCoordinator: BrowserInputCoordinator;
   private readonly profileAutomation: BrowserProfileAutomation;
@@ -183,7 +190,7 @@ export class BrowserRuntime {
     this.installSecurity = options.installSecurity ?? installBrowserSurfaceSecurity;
     this.allowFileUrls = options.allowFileUrls === true;
     this.prewarmTtlMs = Math.max(1_000, options.prewarmTtlMs ?? 30_000);
-    this.automationCoordinator = new BrowserAutomationCoordinator({
+    this.automationCoordinator = options.automationCoordinator ?? new BrowserAutomationCoordinator({
       resolveSurface: (surfaceId) => {
         try {
           // Runtime calls resolve an owner-scoped adapter before they reach this coordinator.
@@ -819,6 +826,8 @@ export class BrowserRuntime {
       case "browser.storage.get":
       case "browser.storage.set":
       case "browser.storage.clear":
+      case "browser.design_mode.set":
+      case "browser.design_mode.status":
       case "browser.console.list":
       case "browser.console.clear":
       case "browser.console.show":

@@ -819,7 +819,14 @@ export class DesktopRuntimeController {
     if (command === "session.list" || command === "host.list") {
       this.applySessionListResult(targetId, hostValue, result, expectedIdentity);
     } else if (command === "catalog.get") {
-      const catalog = decodeCatalog({ v: "omp-app/1", type: "catalog", hostId: hostValue, revision: result.revision, items: result.items });
+      const catalog = decodeCatalog({
+        v: "omp-app/1",
+        type: "catalog",
+        hostId: hostValue,
+        revision: result.revision,
+        items: result.items,
+        ...(result.operations === undefined ? {} : { operations: result.operations }),
+      });
       if (catalog.type !== "catalog") throw new DesktopRuntimeError("protocol", "catalog response decoded as settings");
       this.replace({ catalogs: mapValue(new Map(this.current.catalogs).set(hostValue, catalog)) });
     } else if (command === "workspace.list") {

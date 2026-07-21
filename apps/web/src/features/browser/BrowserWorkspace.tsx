@@ -34,6 +34,7 @@ import {
   Download,
   Focus,
   Globe2,
+  Layers3,
   LoaderCircle,
   Minus,
   PanelRightOpen,
@@ -54,9 +55,16 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 
+import { useActionRegistry } from "../../actions/index.ts";
 import type { WorkspaceProject, WorkspaceSession } from "../../lib/workspace-data.ts";
 import { rendererPlatform, useWorkspace, workspaceStore } from "../../state/store-instance.ts";
 import { selectSessionView } from "../../state/workspace-store.ts";
+import { useComposer } from "../composer/composer-store.ts";
+import {
+  captureBrowserSnapshotContext,
+  type BrowserPageContextSnapshot,
+  type ContextPacketItem,
+} from "../context-packet/context-packet.ts";
 import {
   applyBrowserEvent,
   browserCall,
@@ -70,7 +78,6 @@ import {
   ISOLATED_BROWSER_PROFILE,
   liveBrowserSurfaces,
   MAX_BROWSER_ADDRESS_LENGTH,
-  MAX_BROWSER_DESIGN_PROMPT_LENGTH,
   MAX_BROWSER_EVAL_LENGTH,
   nativeBoundsFromRect,
   normalizeBrowserAddress,
@@ -86,6 +93,9 @@ import {
 
 const FIELD_CLASS =
   "min-h-11 min-w-0 rounded-md border border-input bg-popover px-3 text-base text-foreground outline-none transition-shadow duration-(--motion-duration-fast) placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 sm:min-h-8 sm:text-sm";
+
+const EMPTY_CONTEXT_ITEMS = [] as const;
+export const BROWSER_CONTEXT_CAPTURE_METHOD = "browser.snapshot" as const;
 
 interface PendingTrustAction {
   readonly option: BrowserProfileOption;
@@ -132,6 +142,53 @@ export function settleBrowserWorkspaceCall<T>(
       },
     )
     .catch(() => undefined);
+}
+
+function browserPageContextSnapshot(value: unknown): BrowserPageContextSnapshot | null {
+  if (typeof value !== "object" || value === null || !("snapshot" in value)) return null;
+  const snapshot = (value as { readonly snapshot?: unknown }).snapshot;
+  if (
+    typeof snapshot !== "object" ||
+    snapshot === null ||
+    !("url" in snapshot) ||
+    typeof snapshot.url !== "string" ||
+    !("title" in snapshot) ||
+    typeof snapshot.title !== "string" ||
+    !("elements" in snapshot) ||
+    !Array.isArray(snapshot.elements)
+  ) {
+    return null;
+  }
+  const elements = snapshot.elements.filter(
+    (element): element is BrowserPageContextSnapshot["elements"][number] =>
+      typeof element === "object" &&
+      element !== null &&
+      "role" in element &&
+      typeof element.role === "string" &&
+      "name" in element &&
+      typeof element.name === "string" &&
+      (!("text" in element) || element.text === undefined || typeof element.text === "string") &&
+      (!("visible" in element) ||
+        element.visible === undefined ||
+        typeof element.visible === "boolean"),
+  );
+  return {
+    url: snapshot.url,
+    title: snapshot.title,
+    elements,
+    ...("truncated" in snapshot && snapshot.truncated === true ? { truncated: true } : {}),
+  };
+}
+
+export function captureBrowserPageResult(
+  sessionId: string,
+  surfaceId: SurfaceId,
+  result: unknown,
+): ContextPacketItem | null {
+  const snapshot = browserPageContextSnapshot(result);
+  return snapshot === null
+    ? null
+    : captureBrowserSnapshotContext(sessionId, surfaceId, snapshot);
 }
 
 
@@ -226,6 +283,7 @@ export function BrowserWorkspace({
   readonly session: WorkspaceSession;
   readonly project: WorkspaceProject;
 }) {
+  const actionRegistry = useActionRegistry();
   const port = rendererPlatform.browser;
   const callBrowser = useCallback(
     (method: BrowserMethod, request: Readonly<Record<string, unknown>>) =>
@@ -249,11 +307,13 @@ export function BrowserWorkspace({
   const [automationOpen, setAutomationOpen] = useState(false);
   const [automationResult, setAutomationResult] = useState("Run an automation action to inspect its result.");
   const [expression, setExpression] = useState("document.title");
-  const [designPrompt, setDesignPrompt] = useState("");
-  const [designMode, setDesignMode] = useState(false);
+  const [designMode, setDesignMode] = useState<boolean | "checking" | "unavailable">("checking");
   const [focusMode, setFocusMode] = useState(false);
   const [devtoolsOpen, setDevtoolsOpen] = useState(false);
   const [zoomBySurface, setZoomBySurface] = useState<Readonly<Record<string, number>>>({});
+  const stagedContext = useComposer(
+    (state) => state.contextItemsBySessionId[session.id] ?? EMPTY_CONTEXT_ITEMS,
+  );
   const modelRef = useRef(model);
   const lifecycleRef = useRef(0);
   const boundsLifecycleRef = useRef(0);
@@ -389,6 +449,30 @@ export function BrowserWorkspace({
   useEffect(() => {
     setAddress(activeSurface?.url === "about:blank" ? "" : (activeSurface?.url ?? ""));
   }, [activeSurface?.surfaceId, activeSurface?.url]);
+
+  useEffect(() => {
+    setDesignMode("checking");
+    if (port === null || activeSurface === null) return;
+    const generation = lifecycleRef.current;
+    const surfaceId = activeSurface.surfaceId;
+    let disposed = false;
+    settleBrowserWorkspaceCall(
+      port.call(callBrowser("browser.design_mode.status", { surfaceId })),
+      () =>
+        !disposed &&
+        lifecycleRef.current === generation &&
+        modelRef.current.activeSurfaceId === surfaceId,
+      (result) => {
+        if (typeof result !== "object" || result === null) return;
+        const enabled = (result as { readonly enabled?: unknown }).enabled;
+        if (typeof enabled === "boolean") setDesignMode(enabled);
+      },
+      () => setDesignMode("unavailable"),
+    );
+    return () => {
+      disposed = true;
+    };
+  }, [activeSurface?.surfaceId, callBrowser, port]);
 
   useEffect(() => {
     if (port === null || activeSurface === null) return;
@@ -625,6 +709,18 @@ export function BrowserWorkspace({
     return result;
   };
 
+  const capturePageContext = async () => {
+    if (activeSurface === null) return;
+    const result = await runAutomation("Capturing page context", BROWSER_CONTEXT_CAPTURE_METHOD, {});
+    if (result === null) return;
+    const item = captureBrowserPageResult(session.id, activeSurface.surfaceId, result);
+    if (item === null) {
+      setActionError("The browser did not return readable page context.");
+      return;
+    }
+    actionRegistry.execute({ id: "context.capture", args: { sessionId: session.id, item } });
+  };
+
   const setZoom = async (next: number) => {
     if (activeSurface === null) return;
     const generation = lifecycleRef.current;
@@ -656,6 +752,12 @@ export function BrowserWorkspace({
     [activeSurface?.surfaceId, model.runtimeErrors],
   );
   const currentZoom = activeSurface === null ? 1 : (zoomBySurface[activeSurface.surfaceId] ?? 1);
+  const contextAlreadyAdded =
+    activeSurface !== null &&
+    stagedContext.some(
+      (item) =>
+        item.source.kind === "browser" && item.source.surfaceId === activeSurface.surfaceId,
+    );
 
   if (port === null) return <BrowserUnsupported project={project} session={session} />;
 
@@ -961,20 +1063,27 @@ export function BrowserWorkspace({
                   <p className="text-muted-foreground text-xs">Edit page content in place.</p>
                 </div>
                 <button
-                  aria-checked={designMode}
+                  aria-checked={designMode === true}
                   className={cn(
                     "relative inline-flex h-6 w-11 shrink-0 rounded-full border outline-none transition-colors duration-(--motion-duration-fast) after:absolute after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 focus-visible:ring-2 focus-visible:ring-ring",
-                    designMode ? "border-primary bg-primary" : "border-input bg-secondary",
+                    designMode === true ? "border-primary bg-primary" : "border-input bg-secondary",
                   )}
-                  disabled={activeSurface === null || busyAction !== null}
+                  disabled={
+                    activeSurface === null ||
+                    busyAction !== null ||
+                    designMode === "checking" ||
+                    designMode === "unavailable"
+                  }
                   onClick={() => {
+                    if (typeof designMode !== "boolean") return;
                     const enabled = !designMode;
                     void runAutomation("Changing design mode", "browser.design_mode.set", {
                       enabled,
-                      prompt: designPrompt,
                     })
                       .then((result) => {
-                        if (result !== null) setDesignMode(enabled);
+                        if (typeof result !== "object" || result === null) return;
+                        const confirmed = (result as { readonly enabled?: unknown }).enabled;
+                        if (typeof confirmed === "boolean") setDesignMode(confirmed);
                       })
                       .catch(() => undefined);
                   }}
@@ -985,25 +1094,21 @@ export function BrowserWorkspace({
                     aria-hidden="true"
                     className={cn(
                       "mt-0.5 block size-4.5 rounded-full bg-primary-foreground shadow-xs transition-transform duration-(--motion-duration-fast)",
-                      designMode ? "translate-x-5.5" : "translate-x-0.5 bg-muted-foreground",
+                      designMode === true
+                        ? "translate-x-5.5"
+                        : "translate-x-0.5 bg-muted-foreground",
                     )}
                   />
                 </button>
               </div>
-              <label className="mt-3 block text-xs" htmlFor="browser-design-prompt">
-                Design brief
-              </label>
-              <textarea
-                className={cn(FIELD_CLASS, "mt-1 min-h-20 w-full resize-y py-2 text-xs")}
-                id="browser-design-prompt"
-                maxLength={MAX_BROWSER_DESIGN_PROMPT_LENGTH}
-                onChange={(event) => setDesignPrompt(event.target.value)}
-                placeholder="Describe the intended change"
-                value={designPrompt}
-              />
-              <p className="mt-1 text-right text-muted-foreground text-xs tabular-nums">
-                {designPrompt.length}/{MAX_BROWSER_DESIGN_PROMPT_LENGTH}
-              </p>
+              {designMode === "checking" && (
+                <p className="mt-2 text-muted-foreground text-xs">Checking this tab’s state…</p>
+              )}
+              {designMode === "unavailable" && (
+                <p className="mt-2 text-warning text-xs">
+                  Design Mode status is unavailable. Switch tabs or reload to retry.
+                </p>
+              )}
             </section>
 
             <section className="mt-4 border-border border-t pt-3">
@@ -1118,6 +1223,15 @@ export function BrowserWorkspace({
           </IconButton>
         </div>
 
+        <Button
+          disabled={activeSurface === null || busyAction !== null}
+          onClick={() => void capturePageContext()}
+          size="xs"
+          variant={contextAlreadyAdded ? "secondary" : "outline"}
+        >
+          <Layers3 aria-hidden="true" />
+          {contextAlreadyAdded ? "Refresh page" : "Add page"}
+        </Button>
         <span className="flex-1" />
         <Button
           onClick={() => {
