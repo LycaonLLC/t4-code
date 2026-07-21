@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, stat, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,6 +22,7 @@ import {
 	profileSocketPath,
 	unixSocketActive,
 } from "../src/identity.ts";
+import type { RpcSessionEntryFrame } from "../src/omp-rpc-contract.ts";
 import { SessionProjection } from "../src/projection.ts";
 import { RpcChildSupervisor, resolveRpcChildInvocation } from "../src/rpc-child.ts";
 import { createAppserver } from "../src/server.ts";
@@ -618,6 +619,203 @@ describe("projection, replay, and idempotency", () => {
 });
 
 describe("child supervision", () => {
+	test("reconciles official OMP JSONL and conservatively correlates the durable user entry", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-official-jsonl-"));
+		const path = join(root, "session.jsonl");
+		await writeFile(
+			path,
+			[
+				JSON.stringify({ type: "session", version: 3, id: "session", timestamp: stamp, cwd: root }),
+				JSON.stringify({
+					type: "message",
+					id: "existing-user",
+					message: { role: "user", content: "before" },
+				}),
+				JSON.stringify({
+					type: "message",
+					id: "existing-assistant",
+					message: { role: "assistant", content: "done" },
+				}),
+			].join("\n") + "\n",
+		);
+		const written = Promise.withResolvers<Record<string, unknown>>();
+		const finish = Promise.withResolvers<void>();
+		const exited = Promise.withResolvers<number>();
+		const child: ChildHandle = {
+			stdin: { write: data => written.resolve(JSON.parse(data) as Record<string, unknown>) },
+			stdout: (async function* () {
+				yield `${JSON.stringify({ type: "ready" })}\n`;
+				const command = await written.promise;
+				await appendFile(
+					path,
+					`${JSON.stringify({ type: "message", id: "official-user", message: { role: "user", content: command.message } })}\n`,
+				);
+				yield `${JSON.stringify({ type: "response", id: command.id, command: "prompt", success: true })}\n`;
+				await appendFile(
+					path,
+					`${JSON.stringify({ type: "message", id: "official-assistant", message: { role: "assistant", content: "after" } })}\n`,
+				);
+				yield `${JSON.stringify({ type: "message_end", message: { role: "assistant" } })}\n`;
+				await finish.promise;
+			})(),
+			stderr: (async function* () {})(),
+			exited: exited.promise,
+			kill: () => {
+				finish.resolve();
+				exited.resolve(0);
+			},
+		};
+		const session = { ...record("official-jsonl"), path, cwd: root };
+		const entries: Array<Record<string, unknown>> = [];
+		const reconciled = Promise.withResolvers<void>();
+		const supervisor = new RpcChildSupervisor(
+			{
+				spawn: () => child,
+				argv: sessionPath => ["omp", "--mode", "rpc", "--session", sessionPath],
+			},
+			session,
+			{
+				entry: frame => {
+					entries.push(frame.entry as Record<string, unknown>);
+					if (entries.length === 2) reconciled.resolve();
+				},
+				event: () => {},
+				crashed: error => reconciled.reject(error),
+			},
+		);
+		await supervisor.start();
+		expect(supervisor.loadedWatermark()).toEqual({
+			lastEntryId: "existing-assistant",
+			entryCount: 2,
+		});
+		await supervisor.prompt("outer", "after");
+		await reconciled.promise;
+		expect(entries).toEqual([
+			{
+				type: "message",
+				id: "official-user",
+				message: { role: "user", content: "after", clientCorrelationId: "outer:1" },
+			},
+			{
+				type: "message",
+				id: "official-assistant",
+				message: { role: "assistant", content: "after" },
+			},
+		]);
+		expect(supervisor.loadedWatermark()).toEqual({
+			lastEntryId: "official-assistant",
+			entryCount: 4,
+		});
+		supervisor.stop();
+	});
+
+	test("deduplicates a fork live entry against the same durable JSONL entry", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-fork-jsonl-"));
+		const path = join(root, "session.jsonl");
+		await writeFile(
+			path,
+			`${JSON.stringify({ type: "session", version: 3, id: "session", timestamp: stamp, cwd: root })}\n`,
+		);
+		const release = Promise.withResolvers<void>();
+		const exited = Promise.withResolvers<number>();
+		const entry = {
+			type: "message",
+			id: "shared-entry",
+			message: { role: "assistant", content: "once" },
+		};
+		const child: ChildHandle = {
+			stdin: { write: () => {} },
+			stdout: (async function* () {
+				yield `${JSON.stringify({ type: "ready", transcriptWatermark: { lastEntryId: null, entryCount: 0 } })}\n`;
+				await appendFile(path, `${JSON.stringify(entry)}\n`);
+				yield `${JSON.stringify({ type: "session_entry", entry })}\n`;
+				yield `${JSON.stringify({ type: "message_end", message: { role: "assistant" } })}\n`;
+				await release.promise;
+			})(),
+			stderr: (async function* () {})(),
+			exited: exited.promise,
+			kill: () => {
+				release.resolve();
+				exited.resolve(0);
+			},
+		};
+		const entries: unknown[] = [];
+		const seen = Promise.withResolvers<void>();
+		const settled = Promise.withResolvers<void>();
+		const supervisor = new RpcChildSupervisor(
+			{
+				spawn: () => child,
+				argv: sessionPath => ["omp", "--mode", "rpc", "--session", sessionPath],
+			},
+			{ ...record("fork-jsonl"), path, cwd: root },
+			{
+				entry: frame => {
+					entries.push(frame.entry);
+					seen.resolve();
+				},
+				event: frame => {
+					if (frame.type === "message_end") settled.resolve();
+				},
+				crashed: seen.reject,
+			},
+		);
+		await supervisor.start();
+		await seen.promise;
+		await settled.promise;
+		expect(entries).toEqual([entry]);
+		expect(supervisor.loadedWatermark()).toEqual({ lastEntryId: "shared-entry", entryCount: 1 });
+		supervisor.stop();
+	});
+
+	test("waits for a crash-truncated JSONL record to become durable", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-partial-jsonl-"));
+		const path = join(root, "session.jsonl");
+		const partial = JSON.stringify({
+			type: "message",
+			id: "completed-later",
+			message: { role: "assistant", content: "complete" },
+		});
+		const split = Math.floor(partial.length / 2);
+		await writeFile(
+			path,
+			`${JSON.stringify({ type: "session", version: 3, id: "session", timestamp: stamp, cwd: root })}\n${partial.slice(0, split)}`,
+		);
+		const complete = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const exited = Promise.withResolvers<number>();
+		const child: ChildHandle = {
+			stdin: { write: () => {} },
+			stdout: (async function* () {
+				yield `${JSON.stringify({ type: "ready" })}\n`;
+				await complete.promise;
+				yield `${JSON.stringify({ type: "message_end", message: { role: "assistant" } })}\n`;
+				await release.promise;
+			})(),
+			stderr: (async function* () {})(),
+			exited: exited.promise,
+			kill: () => {
+				release.resolve();
+				exited.resolve(0);
+			},
+		};
+		const seen = Promise.withResolvers<RpcSessionEntryFrame>();
+		const supervisor = new RpcChildSupervisor(
+			{
+				spawn: () => child,
+				argv: sessionPath => ["omp", "--mode", "rpc", "--session", sessionPath],
+			},
+			{ ...record("partial-jsonl"), path, cwd: root },
+			{ entry: seen.resolve, event: () => {}, crashed: seen.reject },
+		);
+		await supervisor.start();
+		expect(supervisor.loadedWatermark()).toEqual({ lastEntryId: null, entryCount: 0 });
+		await appendFile(path, `${partial.slice(split)}\n`);
+		complete.resolve();
+		expect((await seen.promise).entry).toEqual(JSON.parse(partial));
+		expect(supervisor.loadedWatermark()).toEqual({ lastEntryId: "completed-later", entryCount: 1 });
+		supervisor.stop();
+	});
+
 	test("daemon entrypoints resolve RPC children in source and installed layouts", () => {
 		const cases = [
 			["/checkout/packages/coding-agent/src/cli/ompd.ts", "/checkout/packages/coding-agent/src/cli.ts"],
