@@ -39,6 +39,7 @@ steps:
       - pnpm --filter @t4-code/t4-api-contract validate
       - pnpm --filter @t4-code/t4-api-contract check:generated
       - pnpm --filter @t4-code/t4-api-client typecheck
+      - pnpm --filter @t4-code/client typecheck
       - pnpm --filter @t4-code/client exec vp test run test/t4-api-v1-conformance.test.ts
     backend_options:
       kubernetes:

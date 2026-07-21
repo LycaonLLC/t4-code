@@ -122,7 +122,7 @@ export class T4ApiV1ConformanceService {
         if (request.headers.get("If-Match") !== String(workspace.revision)) {
           return problem(409, "revision_conflict", "Workspace revision changed");
         }
-        const updated = { ...workspace, name: body.name ?? workspace.name, revision: Number(workspace.revision) + 1 };
+        const updated: Record<string, unknown> = { ...workspace, name: body.name ?? workspace.name, revision: Number(workspace.revision) + 1 };
         this.#workspaces.set(id, updated);
         const { tenant: _tenant, ...visible } = updated;
         return json(200, visible);
@@ -181,7 +181,7 @@ export class T4ApiV1ConformanceService {
         if (request.headers.get("If-Match") !== String(session.revision)) {
           return problem(409, "revision_conflict", "Session revision changed");
         }
-        const updated = { ...session, title: body.title ?? session.title, revision: Number(session.revision) + 1 };
+        const updated: Record<string, unknown> = { ...session, title: body.title ?? session.title, revision: Number(session.revision) + 1 };
         this.#sessions.set(id, updated);
         const { tenant: _tenant, ...visible } = updated;
         return json(200, visible);
@@ -196,7 +196,7 @@ export class T4ApiV1ConformanceService {
     if (cancelMatch && request.method === "POST") {
       const session = this.#sessions.get(decodeURIComponent(cancelMatch[1]!));
       if (session?.tenant !== tenant) return problem(404, "not_found", "Session not found");
-      const cancelled = { ...session, state: "cancelled", revision: Number(session.revision) + 1 };
+      const cancelled: Record<string, unknown> = { ...session, state: "cancelled", revision: Number(session.revision) + 1 };
       this.#sessions.set(String(session.id), cancelled);
       const { tenant: _tenant, ...visible } = cancelled;
       return json(202, visible);
