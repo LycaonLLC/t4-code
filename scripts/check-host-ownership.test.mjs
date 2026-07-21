@@ -32,19 +32,18 @@ test("T4 owns the active host wire and generic host packages", () => {
   assert.equal(protocol.dependencies["@oh-my-pi/app-wire"], undefined);
 });
 
-test("planning documents describe the released T4-owned host boundary", () => {
+test("product and ownership documents link the canonical architecture", () => {
   const brief = readFileSync(join(root, "PRODUCT_BRIEF.md"), "utf8");
   const ownership = readFileSync(join(root, "docs", "OWNERSHIP.md"), "utf8");
+  const architecture = readFileSync(join(root, "docs", "T4_ARCHITECTURE.html"), "utf8");
 
-  assert.match(brief, /persistent T4 Host/u);
-  assert.match(brief, /packages\/host-service/u);
-  assert.doesNotMatch(brief, /persistent OMP appserver/u);
-  assert.doesNotMatch(brief, /OMP `packages\/appserver`/u);
+  assert.match(brief, /Flutter desktop, mobile, and web workspace/u);
+  assert.match(brief, /docs\/T4_ARCHITECTURE\.html/u);
+  assert.doesNotMatch(brief, /packages\/host-service/u);
   assert.match(ownership, /packages\/host-wire/u);
   assert.match(ownership, /packages\/host-service/u);
-  assert.match(brief, /shared OMP runtime adapter/u);
-  assert.match(ownership, /reused by the local T4 Host and\s+future T4 Nodes/u);
-  assert.doesNotMatch(ownership, /OMP `packages\/appserver`/u);
+  assert.match(ownership, /T4_ARCHITECTURE\.html/u);
+  assert.match(architecture, /T4 Code local and managed architecture/u);
 });
 
 test("generic host source has no private OMP source-tree dependency", () => {
