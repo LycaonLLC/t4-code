@@ -1,11 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-import OpenAPIParser from "@readme/openapi-parser";
+import { compileErrors, validate } from "@readme/openapi-parser";
 
 const source = new URL("../openapi.json", import.meta.url);
 const document = JSON.parse(await readFile(source, "utf8"));
-await OpenAPIParser.validate(fileURLToPath(source));
+const validation = await validate(fileURLToPath(source));
+if (!validation.valid || validation.warnings.length > 0) throw new Error(compileErrors(validation));
 
 if (document.openapi !== "3.1.0") throw new Error("T4 API contract must remain OpenAPI 3.1.0");
 if (!Array.isArray(document.servers) || document.servers.length === 0) throw new Error("T4 API contract requires an HTTPS server");
