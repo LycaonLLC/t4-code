@@ -374,6 +374,7 @@ const Set<String> _knownCommands = {
   'files.write',
   'files.patch',
   'files.list',
+  'files.search',
   'files.diff',
   'review.read',
   'review.apply',

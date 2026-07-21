@@ -27,8 +27,8 @@ The truthful-command foundation is split cleanly between merged host work and th
 - **Merged:** PR #113 queries official OMP's bounded `get_available_commands`, supplements omitted terminal-only commands from a pinned reviewed manifest, and blocks known terminal-only slash text before prompt dispatch.
 - **Merged:** PR #114 proves restart continuity through the official adapter on macOS.
 - **Merged:** PR #117 preserves `catalog.get.result.operations` through the desktop runtime.
-- **This sprint:** web/Electron and Flutter build their slash menus from those capabilities; typed commands such as `session.cancel` are no longer mistaken for slash commands; unsupported entries remain visible and disabled with OMP's reason.
-- **Already merged:** PR #106 provides confined project file search for the web/Electron Quick Open path. Flutter still needs its own Quick Open surface.
+- **Merged:** PRs #118 and #120 make web/Electron and Flutter build truthful slash menus from the runtime capability contract and fail closed when that contract is absent or unavailable.
+- **This sprint:** Flutter adds project Quick Open plus visible pause, resume, and manual compaction controls over existing typed commands. No new fork behavior is required.
 
 The tracker distinguishes merged source, work in this sprint, and public release state. None of the new adapter/client work is claimed as packaged desktop, Android, or iOS proof yet.
 
@@ -40,8 +40,10 @@ The tracker distinguishes merged source, work in this sprint, and public release
 | Official OMP command discovery and rejection | Merged | Receives through host | Receives through host | Receives through host | PR #113 green |
 | Restart continuity | macOS proof merged | Shared host behavior | Shared host behavior | Shared host behavior | PR #114 green; other Gate 0 rows open |
 | Preserve `catalog.get.operations` | Merged host response | Merged in PR #117 | Merged in PR #117 | Already decoded | Response and live-frame client tests pass |
-| Capability-aware slash menu | Host rejects unsafe fallback | Implemented this sprint | Implemented this sprint | Implemented this sprint | Web tests pass; Flutter tests authored but local SDK is unavailable |
-| Project Quick Open | `files.search` merged | Implemented on `main` | Implemented on `main` | Missing | PR #106 green; Flutter is next UI-only slice |
+| Capability-aware slash menu | Host rejects unsafe fallback | Implemented on `main` | Implemented on `main` | Implemented on `main` | PRs #118 and #120 are green and merged |
+| Project Quick Open | `files.search` merged | Implemented on `main` | Implemented on `main` | Implemented this sprint | Flutter analysis and the full 168-test suite pass locally; platform CI pending |
+| Pause/resume controls | Typed commands merged | Not consistently visible | Not consistently visible | Implemented this sprint | Controller and widget coverage pass locally; platform CI pending |
+| Manual compaction | Typed command merged | Partial slash/control UX | Partial slash/control UX | Implemented this sprint | Direct action is locally verified; richer strategy/result UX remains |
 
 This matrix is intentionally stricter than “the protocol supports it.” A row is complete only when the connected runtime advertises it, the client exposes an honest action or explanation, and the target package has been exercised.
 
@@ -52,7 +54,7 @@ This matrix is intentionally stricter than “the protocol supports it.” A row
 | Original OMP | [`can1357/oh-my-pi@89d6a8f6`](https://github.com/can1357/oh-my-pi/commit/89d6a8f6d14286f32f09ec9c8aa8af7b3451d2d6), version 17.0.6 | Current original product surface |
 | Lycaon OMP fork | [`lyc-aon/oh-my-pi@8476f445`](https://github.com/lyc-aon/oh-my-pi/commit/8476f4451ed95c5d5401785d279a93d3c659fac4), tag [`t4code-17.0.5-appserver-10`](https://github.com/lyc-aon/oh-my-pi/releases/tag/t4code-17.0.5-appserver-10) | Current released thin authority bridge; transitional compatibility input |
 | Shared upstream base | [`can1357/oh-my-pi@9fd6e971`](https://github.com/can1357/oh-my-pi/commit/9fd6e97113f5ed3a847e66d346970efdf8afcad9), version 17.0.5 | Last shared OMP point |
-| T4 `main` | [`fcc67cb1`](https://github.com/LycaonLLC/t4-code/commit/fcc67cb1b91aae357c02e00b2f1670eb6961bc93), version 0.1.30 in source | Official-OMP classification, restart proof, and desktop capability preservation are merged |
+| T4 `main` | [`298165bc`](https://github.com/LycaonLLC/t4-code/commit/298165bce4e6f57c19f9814798d50c4aa28b4bd8), version 0.1.30 in source | Official-OMP classification, restart proof, capability-aware clients, and contract hardening are merged |
 | Flutter merge | [`LycaonLLC/t4-code#104`](https://github.com/LycaonLLC/t4-code/pull/104) | New shared desktop/mobile client now on `main` |
 | Public T4 release | [`v0.1.28`](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.28) | Latest public release visible during the audit |
 
@@ -149,12 +151,11 @@ Fork PR [#22](https://github.com/lyc-aon/oh-my-pi/pull/22) removed more than 37,
 | Priority | Gap | Why it matters | Best patch path |
 |---|---|---|---|
 | T0 | Official adapter Gate 0 is incomplete | A clean command catalog is not enough to prove all lifecycle and failure behavior | Finish Linux, steer/follow-up, approval, cancellation, and dispatch-crash scenarios |
-| T0 | Client capability propagation is not on `main` | The host knows the truth, but current clients can drop or ignore it | Complete and merge this desktop/web/Flutter slice |
 | T0 | Release state is ambiguous | Source says v0.1.30 while public GitHub release remains v0.1.28 | Separate `on main`, `verified package`, and `publicly released` in the tracker/release gate |
 | T0 | Plan, goal, branch/fork/tree, handoff, and provider auth lack complete typed app flows | These are central OMP workflows, not decorative terminal features | Typed T4 commands backed by existing OMP RPC where possible |
-| T1 | Queue and pause/resume controls are not consistently exposed | Cross-device control needs explicit, predictable behavior | Finish client UI over existing wire commands |
+| T1 | Queue and pause/resume controls are not consistently exposed outside Flutter | Cross-device control needs explicit, predictable behavior | Add equally visible controls to web/Capacitor over the same typed commands |
 | T1 | Child agents can be viewed/cancelled but not fully steered or messaged | Agent orchestration is a major reason to use OMP | Add typed agent actions and OMP event projection |
-| T1 | Flutter project Quick Open is missing | Confined project search is merged in the host and web client but not exposed in Flutter | Add a shared Flutter search state and compact/wide picker over `files.search` |
+| T1 | Project/worktree context is not consistent across clients | Quick Open is now covered, but branch/worktree identity is still easy to miss | Project a shared read-only context summary from runtime truth |
 | T1 | Mobile tool output is mostly generic | It is safe, but harder to scan than desktop | Share semantic tool-view models, then use platform-specific layouts |
 | T2 | MCP, skills, plugins, extensions, and marketplaces are mainly catalog/settings data | Advanced OMP setup still requires the terminal | Start read-only, then add bounded management actions |
 | T2 | Memory, checkpoints, rewind, collaboration, and sharing lack first-class app flows | Useful but less common and higher-risk to expose casually | Typed commands with confirmation and clear results |
@@ -276,18 +277,17 @@ official OMP version + commit
 
 ### Phase 0: finish the official-OMP foundation
 
-1. Merge capability-aware desktop/web and Flutter presentation.
-2. Finish the open Gate 0 scenarios: Linux, steer/follow-up, approval, cancellation, and ambiguous dispatch-crash recovery.
-3. Generate a compatibility snapshot from the official adapter smoke.
-4. Track source, verified package, and public release status separately.
+1. Finish the open Gate 0 scenarios: Linux, steer/follow-up, approval, cancellation, and ambiguous dispatch-crash recovery.
+2. Generate a compatibility snapshot from the official adapter smoke.
+3. Track source, verified package, and public release status separately.
 
 ### Phase 1: close the daily-workflow gaps
 
 1. Plan and goal modes.
 2. Branch/fork/tree and handoff.
 3. Provider login/logout and setup.
-4. Queue controls plus visible pause/resume and manual compaction.
-5. Flutter Quick Open plus consistent project/worktree context.
+4. Queue controls plus matching pause/resume and compaction controls in web/Capacitor.
+5. Consistent project/worktree context across clients.
 6. Child-agent steer, follow-up, and wake/message actions.
 
 ### Phase 2: make desktop and mobile equally useful

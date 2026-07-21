@@ -28,6 +28,7 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
   bool _showSettings = false;
   bool _showSearch = false;
   bool _showUsage = false;
+  int _developerInitialTab = 0;
 
   Future<void> _connect() async {
     if (_connecting) return;
@@ -131,16 +132,39 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
 
   void _closeAttention() => setState(() => _showAttention = false);
 
-  void _openDeveloper() => setState(() {
+  void _openDeveloper({int initialTab = 0}) => setState(() {
     _showHostManager = false;
     _showAttention = false;
     _showDeveloper = true;
+    _developerInitialTab = initialTab;
     _showSettings = false;
     _showSearch = false;
     _showUsage = false;
   });
 
   void _closeDeveloper() => setState(() => _showDeveloper = false);
+
+  bool get _canQuickOpen =>
+      widget.state.connectionPhase == ConnectionPhase.ready &&
+      widget.state.selectedSession != null &&
+      widget.state.grantedCapabilities.contains('files.list') &&
+      widget.state.grantedCapabilities.contains('files.read') &&
+      widget.state.grantedFeatures.contains('files.search');
+
+  Future<void> _openQuickOpen() async {
+    if (!_canQuickOpen) return;
+    final path = await showDialog<String>(
+      context: context,
+      builder: (context) => _QuickOpenDialog(actions: widget.actions),
+    );
+    if (path == null || !mounted) return;
+    try {
+      await widget.actions.readFile(path);
+      if (mounted) _openDeveloper(initialTab: 1);
+    } on Object {
+      if (mounted) _showActionFailure('Could not open that project file.');
+    }
+  }
 
   void _openSettings({required bool closeDrawer}) {
     setState(() {
@@ -308,6 +332,7 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
       return _DeveloperSurfacesPane(
         state: widget.state,
         actions: widget.actions,
+        initialTab: _developerInitialTab,
         showHeader: showHeader,
         onDone: _closeDeveloper,
       );
@@ -321,6 +346,7 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
       onOpenSessions: showHeader ? null : _openNavigation,
       onOpenAttention: _openAttention,
       onOpenDeveloper: _openDeveloper,
+      onOpenQuickOpen: _openQuickOpen,
     );
   }
 
@@ -445,7 +471,13 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
                 !_showAttention &&
                 !_showDeveloper &&
                 !_showSearch &&
-                !_showUsage)
+                !_showUsage) ...[
+              if (_canQuickOpen)
+                IconButton(
+                  onPressed: () => unawaited(_openQuickOpen()),
+                  tooltip: 'Quick open project file',
+                  icon: const Icon(Icons.search),
+                ),
               Badge(
                 isLabelVisible: widget.state.urgentAttentionCount > 0,
                 label: Text('${widget.state.urgentAttentionCount}'),
@@ -455,6 +487,7 @@ final class _AdaptiveSessionShellState extends State<_AdaptiveSessionShell> {
                   icon: const Icon(Icons.inbox_outlined),
                 ),
               ),
+            ],
             if (!_showHostManager &&
                 !_showAttention &&
                 !_showSearch &&

@@ -1949,6 +1949,120 @@ void main() {
   });
 
   test(
+    'searches project files and runs pause resume and compact controls',
+    () async {
+      final profile = _profile('alpha');
+      final connector = _FakeConnector();
+      final controller = _controller(
+        _MemoryDirectoryStore(
+          directory: const HostDirectory.empty().upsert(profile),
+        ),
+        _MemoryCredentialStore(),
+        connector,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      final channel = connector.channels.single;
+      channel.emit(
+        _welcome(
+          'host-alpha',
+          capabilities: t4RequestedCapabilities,
+          features: const <String>['files.search'],
+        ),
+      );
+      await _flush();
+      final list = channel.sentJson.last;
+      channel.emit(
+        _response(
+          list,
+          command: 'session.list',
+          result: _sessionListResult('host-alpha'),
+        ),
+      );
+      await _flush();
+      channel.emit(
+        _snapshot(
+          'host-alpha',
+          'session-alpha',
+          revision: 'revision-session-alpha',
+        ),
+      );
+      await _flush();
+
+      final searching = controller.searchProjectFiles('  main  ', limit: 5);
+      await _flush();
+      final search = channel.sentJson.last;
+      expect(search['command'], 'files.search');
+      expect(search['args'], <String, Object?>{'query': 'main', 'limit': 5});
+      channel.emit(
+        _response(
+          search,
+          command: 'files.search',
+          result: <String, Object?>{
+            'matches': <Object?>[
+              <String, Object?>{'path': 'lib/main.dart'},
+              <String, Object?>{'path': 'test/main_test.dart'},
+            ],
+            'truncated': true,
+          },
+        ),
+      );
+      final searchResult = await searching;
+      expect(searchResult.paths, <String>[
+        'lib/main.dart',
+        'test/main_test.dart',
+      ]);
+      expect(searchResult.truncated, isTrue);
+
+      final pausing = controller.pauseSession();
+      await _flush();
+      final pause = channel.sentJson.last;
+      expect(pause['command'], 'session.pause');
+      channel.emit(
+        _response(
+          pause,
+          command: 'session.pause',
+          result: <String, Object?>{'paused': true, 'changed': true},
+        ),
+      );
+      await pausing;
+      expect(controller.state.composer.isPaused, isTrue);
+
+      final resuming = controller.resumeSession();
+      await _flush();
+      final resume = channel.sentJson.last;
+      expect(resume['command'], 'session.resume');
+      channel.emit(
+        _response(
+          resume,
+          command: 'session.resume',
+          result: <String, Object?>{'resumed': true, 'paused': false},
+        ),
+      );
+      await resuming;
+      expect(controller.state.composer.isPaused, isFalse);
+
+      final compacting = controller.compactSession(
+        instructions: 'Keep the current implementation plan.',
+      );
+      await _flush();
+      final compact = channel.sentJson.last;
+      expect(compact['command'], 'session.compact');
+      expect(compact['args'], <String, Object?>{
+        'instructions': 'Keep the current implementation plan.',
+      });
+      channel.emit(
+        _response(
+          compact,
+          command: 'session.compact',
+          result: <String, Object?>{'compacted': true},
+        ),
+      );
+      await compacting;
+    },
+  );
+
+  test(
     'projects terminal, files, audit, and preview developer state',
     () async {
       final profile = _profile('alpha');
