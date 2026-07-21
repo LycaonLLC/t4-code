@@ -311,6 +311,40 @@ describe("Quick Open providers", () => {
     expect(items.some((item) => item.key.includes("ghost"))).toBe(false);
   });
 
+  it("prefers trusted project-search matches and can open a file not in the loaded tree", () => {
+    const { inspector, registry } = setup();
+    const items = buildQuickOpenItems("config", {
+      registry,
+      groups,
+      activeSessionFiles: [{ path: "src/config.ts", name: "config.ts", isDir: false }],
+      projectFileMatches: [
+        { path: "src/config.ts" },
+        { path: "packages/config/runtime.ts" },
+      ],
+    });
+    const files = items.filter((item) => item.kind === "file");
+    expect(files).toHaveLength(2);
+    expect(files[0]).toMatchObject({
+      provider: "project-files",
+      indexScope: "project",
+      invocation: {
+        id: "file.open",
+        args: { sessionId: "session-a", path: "src/config.ts", source: "project-search" },
+      },
+    });
+    expect(
+      registry.execute({
+        id: "file.open",
+        args: {
+          sessionId: "session-a",
+          path: "packages/config/runtime.ts",
+          source: "project-search",
+        },
+      }).executed,
+    ).toBe(true);
+    expect(inspector.getState().files.selectedPath).toBe("packages/config/runtime.ts");
+  });
+
   it("adds transcript search only as a two-character fallback", () => {
     const { registry } = setup();
     const oneCharacter = buildQuickOpenItems("x", {

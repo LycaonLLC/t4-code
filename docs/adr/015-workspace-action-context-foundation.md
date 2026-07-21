@@ -52,9 +52,10 @@ effects. Each action reports whether it is available and, when unavailable, a pl
 store calls remain appropriate for state mechanics such as resizing a pane or closing a temporary
 sheet; those are not named user commands that need several entry points.
 
-Quick Open combines actions, sessions, and files the current inspector has already loaded. It does
-not claim to search the full repository because the current host has no general `files.search`
-contract. A transcript-search fallback remains explicit.
+Quick Open combines actions, sessions, bounded project-wide filename matches, and files the current
+inspector has already loaded. The project provider uses the host's negotiated `files.search`
+contract. Loaded files remain the immediate and compatibility fallback, and a transcript-search
+fallback remains explicit. ADR 017 records the search authority and safety boundaries.
 
 ### Reviewed context packets
 
@@ -84,19 +85,20 @@ item added while the network request is in flight survives.
 - T4 owns workspace presentation, action routing, and temporary reviewed context.
 - The file excerpt is reference material, not an instruction source. Redaction is a safety layer,
   not a guarantee that arbitrary source files contain no sensitive information.
-- Loaded-file Quick Open is capability-honest and does not recursively crawl the host filesystem.
+- Project-file Quick Open searches only beneath the OMP-resolved root and reports when the negotiated
+  capability is unavailable or the bounded scan is incomplete.
+- The renderer never receives or supplies an absolute project root and does not crawl the host filesystem.
 - Browser and Preview do not become ordinary panes or automatic prompt context.
 
 ## Follow-up
 
 Future context sources can use the same capture, review, and settlement rules after their authority
-and redaction behavior are explicit. A real host search capability can replace the loaded-file-only
-provider without changing action IDs. Multiple simultaneous docked panes would require a new layout
+and redaction behavior are explicit. Multiple simultaneous docked panes would require a new layout
 decision and a versioned persistence migration rather than silently changing this model.
 
 ## Verification
 
 Coverage includes surface routing and persistence, exhaustive renderer registration, action state and
-provider ranking, context capture/redaction/byte limits, same-file refresh, cross-session isolation,
-accepted/rejected/unknown prompt settlement, owner-scoped Browser Design Mode routing, type checks,
-and representative browser screenshots.
+provider ranking, bounded project search and loaded-file fallback, context capture/redaction/byte
+limits, same-file refresh, cross-session isolation, accepted/rejected/unknown prompt settlement,
+owner-scoped Browser Design Mode routing, type checks, and representative browser screenshots.

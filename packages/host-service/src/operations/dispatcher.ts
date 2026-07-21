@@ -30,6 +30,7 @@ export interface OperationContext {
 export interface DesktopOperationsAuthority {
 	filesRead?(args: CommandResult, context: OperationContext): Promise<CommandResult>;
 	filesList?(args: CommandResult, context: OperationContext): Promise<CommandResult>;
+	filesSearch?(args: CommandResult, context: OperationContext): Promise<CommandResult>;
 	filesDiff?(args: CommandResult, context: OperationContext): Promise<CommandResult>;
 	filesWrite?(args: CommandResult, context: OperationContext): Promise<CommandResult>;
 	filesPatch?(args: CommandResult, context: OperationContext): Promise<CommandResult>;
@@ -92,6 +93,7 @@ const CAPABILITY_BY_COMMAND: Record<string, DeviceCapability> = Object.fromEntri
 const OPERATION_METHOD_BY_COMMAND: Readonly<Record<string, keyof DesktopOperationsAuthority>> = {
 	"files.read": "filesRead",
 	"files.list": "filesList",
+	"files.search": "filesSearch",
 	"files.diff": "filesDiff",
 	"files.write": "filesWrite",
 	"files.patch": "filesPatch",
@@ -156,6 +158,7 @@ export const COMMAND_FEATURE_BY_COMMAND: Readonly<Record<string, string>> = {
 	"transcript.search": "transcript.search",
 	"transcript.context": "transcript.search",
 	"project.reveal": "project.reveal",
+	"files.search": "files.search",
 	...Object.fromEntries(
 		Object.keys(COMMAND_DESCRIPTORS)
 			.filter(command => command.startsWith("preview."))

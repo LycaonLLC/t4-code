@@ -219,6 +219,36 @@ export const loadedFilesProvider: QuickOpenProvider = {
   },
 };
 
+export const projectFilesProvider: QuickOpenProvider = {
+  id: "project-files",
+  search: (rawQuery, context) => {
+    const query = normalizeQuery(rawQuery);
+    const sessionId = context.registry.environment.workspace.getState().activeSessionId;
+    if (query === "" || sessionId === null) return [];
+    return (context.projectFileMatches ?? []).slice(0, FILE_RESULT_LIMIT).map(
+      (entry, index): QuickOpenItem => {
+        const invocation: ActionInvocation<"file.open"> = {
+          id: "file.open",
+          args: { sessionId, path: entry.path, source: "project-search" },
+        };
+        return {
+          key: `file:${sessionId}:${entry.path}`,
+          kind: "file",
+          provider: "project-files",
+          group: "files",
+          title: entry.path,
+          subtitle: "Current project",
+          invocation,
+          availability: context.registry.present(invocation).availability,
+          status: { kind: "icon", icon: "files" },
+          score: index,
+          indexScope: "project",
+        };
+      },
+    );
+  },
+};
+
 export const transcriptFallbackProvider: QuickOpenProvider = {
   id: "transcript-fallback",
   search: (rawQuery, context) => {
@@ -246,6 +276,7 @@ export const transcriptFallbackProvider: QuickOpenProvider = {
 
 export const QUICK_OPEN_PROVIDERS: readonly QuickOpenProvider[] = Object.freeze([
   sessionsProvider,
+  projectFilesProvider,
   loadedFilesProvider,
   actionsProvider,
   transcriptFallbackProvider,
