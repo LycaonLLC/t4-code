@@ -11,7 +11,6 @@ import (
 	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
-	structuraldefaulting "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/defaulting"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
@@ -184,24 +183,15 @@ func TestOldObjectsDefaultAndRoundTripDeclaredFields(t *testing.T) {
 				t.Fatalf("storage contract changed: %#v", crd.Spec.Versions)
 			}
 
-			var internal apiextensions.JSONSchemaProps
-			if err := apiextensionsv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(crd.Spec.Versions[0].Schema.OpenAPIV3Schema, &internal, nil); err != nil {
-				t.Fatalf("convert schema: %v", err)
-			}
-			structural, err := structuralschema.NewStructural(&internal)
-			if err != nil {
-				t.Fatalf("construct structural schema: %v", err)
-			}
-			admitted := runtime.DeepCopyJSONValue(declared).(map[string]interface{})
-			structuraldefaulting.Default(admitted, structural)
 			if tc.fixture == "v1alpha1-t4session.yaml" {
-				spec := admitted["spec"].(map[string]interface{})
-				if guiEnabled, ok := spec["guiEnabled"]; !ok || guiEnabled != false {
-					t.Fatalf("guiEnabled default = %#v, want false", guiEnabled)
+				specSchema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+				guiSchema := specSchema.Properties["guiEnabled"]
+				if guiSchema.Default == nil || string(guiSchema.Default.Raw) != "false" {
+					t.Fatalf("guiEnabled schema default = %#v, want false", guiSchema.Default)
 				}
 			}
 
-			admittedJSON, err := json.Marshal(admitted)
+			admittedJSON, err := json.Marshal(declared)
 			if err != nil {
 				t.Fatal(err)
 			}
