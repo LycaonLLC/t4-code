@@ -13,8 +13,8 @@ const option = (name) => {
   const index = process.argv.indexOf(`--${name}`);
   return index === -1 ? undefined : process.argv[index + 1];
 };
-const platform = option("platform");
-const arch = option("arch");
+const platform = option("platform") ?? process.platform;
+const arch = option("arch") ?? process.arch;
 const key = `${platform}-${arch}`;
 const runtime = matrix.verifiedRuntime;
 const artifact = runtime?.artifacts?.[key];
