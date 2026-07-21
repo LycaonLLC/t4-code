@@ -117,9 +117,10 @@ steps:
             ephemeral-storage: 1Gi
 
   legacy-authority-build:
-    depends_on: [legacy-authority-source]
-    image: mirror.gcr.io/oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4
+    depends_on: [legacy-authority-source, bun-runtime]
+    image: docker.io/library/rust:1.86-slim-bookworm@sha256:57d415bbd61ce11e2d5f73de068103c7bd9f3188dc132c97cef4a8f62989e944
     commands:
+      - sh scripts/cluster-ci/install-legacy-authority-toolchain.sh
       - (cd .continuity/omp && bun install --frozen-lockfile)
       - (cd .continuity/omp && bun run build:native)
     backend_options:
