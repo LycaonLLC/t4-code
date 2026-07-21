@@ -56,7 +56,7 @@ steps:
       - export PATH="$PWD/.ci:$PATH"
       - corepack enable
       - pnpm check
-      - pnpm test
+      - VP_RUN_CONCURRENCY_LIMIT=1 pnpm test
       - pnpm build
       - pnpm exec playwright install --with-deps chromium
       - pnpm test:e2e

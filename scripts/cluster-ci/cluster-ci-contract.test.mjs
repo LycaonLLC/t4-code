@@ -293,6 +293,7 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   assert.deepEqual(steps["publish-image-evidence"].depends_on, ["promote-images"]);
   assert.equal(steps["image-publication-manifest"].environment.HARBOR_REGISTRY, "harbor.tailb18de3.ts.net");
   assert.match(pipeline.clone.git.image, /@sha256:[0-9a-f]{64}$/u);
+  assert.ok(steps["upstream-core"].commands.includes("VP_RUN_CONCURRENCY_LIMIT=1 pnpm test"));
 
   const orderedBuilds = ["build-controller", "build-cluster-server", "build-session-runtime"];
   for (const [index, name] of orderedBuilds.entries()) {
