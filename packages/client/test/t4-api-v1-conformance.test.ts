@@ -323,15 +323,13 @@ describe("generated T4 API v1 client conformance", () => {
       body: { command: "ok", metadata: Object.fromEntries(Array.from({ length: 8 }, (_, index) => [`field-${index}`, "x".repeat(32)])) },
     });
     expect(requestOversized.response.status).toBe(422);
-    const defaultedMetadataResponse = await service.fetch(`${service.origin}/v1/sessions/ses-1/commands`, {
-      method: "POST",
-      headers: { Authorization: "Bearer token-a", "T4-API-Version": "1", "Idempotency-Key": "command-default-0001", "Content-Type": "application/json" },
-      body: '{"command":"ok"}',
+    const defaultedMetadata = await client.http.POST("/v1/sessions/{sessionId}/commands", {
+      params: { header: idempotencyHeaders("command-default-0001"), path: { sessionId: "ses-1" } }, body: { command: "ok" },
     });
     const explicitMetadata = await client.http.POST("/v1/sessions/{sessionId}/commands", {
       params: { header: idempotencyHeaders("command-default-0001"), path: { sessionId: "ses-1" } }, body: { command: "ok", metadata: {} },
     });
-    expect(explicitMetadata.data).toEqual(await defaultedMetadataResponse.json());
+    expect(explicitMetadata.data).toEqual(defaultedMetadata.data);
     const cancelled = await client.http.POST("/v1/sessions/{sessionId}/cancel", {
       params: { header: idempotencyHeaders("session-cancel-0001"), path: { sessionId: "ses-1" } },
     });
