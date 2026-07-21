@@ -6,6 +6,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   admitAttachments,
+  materializeAttachmentCandidates,
   MAX_STAGED_ATTACHMENT_BYTES,
   MAX_STAGED_ATTACHMENTS,
   toPromptAttachment,
@@ -120,6 +121,66 @@ describe("slash commands", () => {
 });
 
 describe("attachments", () => {
+  it("reads Android picker Files immediately and stages an owned byte-backed copy", async () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0x00, 0x10]);
+    const source = new File([jpeg], "1000049502.jpg", {
+      type: "application/octet-stream",
+      lastModified: 1,
+    });
+    let readerStarted = false;
+    let sourceArrayBufferCalls = 0;
+    Object.defineProperty(source, "arrayBuffer", {
+      configurable: true,
+      value: () => {
+        sourceArrayBufferCalls += 1;
+        return Promise.reject(new DOMException("picker grant expired", "NotReadableError"));
+      },
+    });
+
+    const originalFileReader = Object.getOwnPropertyDescriptor(globalThis, "FileReader");
+    class PickerFileReader {
+      result: string | ArrayBuffer | null = null;
+      error: DOMException | null = null;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onabort: (() => void) | null = null;
+
+      readAsArrayBuffer(file: Blob): void {
+        expect(file).toBe(source);
+        readerStarted = true;
+        const buffer = new ArrayBuffer(jpeg.byteLength);
+        new Uint8Array(buffer).set(jpeg);
+        this.result = buffer;
+        queueMicrotask(() => this.onload?.());
+      }
+    }
+    Object.defineProperty(globalThis, "FileReader", {
+      configurable: true,
+      value: PickerFileReader,
+    });
+
+    try {
+      const pending = materializeAttachmentCandidates([{ file: source }]);
+      expect(readerStarted).toBe(true);
+
+      const result = await pending;
+      expect(result.rejections).toEqual([]);
+      expect(result.accepted).toHaveLength(1);
+      const owned = result.accepted[0]?.file;
+      if (owned === undefined) throw new Error("materialized attachment omitted its owned File");
+      expect(owned).toBeInstanceOf(File);
+      expect(owned).not.toBe(source);
+      expect(owned.name).toBe("1000049502.jpg");
+      expect(owned.type).toBe("image/jpeg");
+      expect(owned.size).toBe(jpeg.byteLength);
+      expect(sourceArrayBufferCalls).toBe(0);
+      expect(new Uint8Array(await owned.arrayBuffer())).toEqual(jpeg);
+    } finally {
+      if (originalFileReader === undefined) Reflect.deleteProperty(globalThis, "FileReader");
+      else Object.defineProperty(globalThis, "FileReader", originalFileReader);
+    }
+  });
+
   it("uses crypto-backed collision-resistant ids by default", () => {
     const result = admitAttachments(
       [],
