@@ -1,32 +1,43 @@
 import { expect } from "vite-plus/test";
 
 const encoder = new TextEncoder();
+const COMMAND_BYTES_MAX = 32;
+const COMMAND_REQUEST_BYTES_MAX = 256;
+const METADATA_VALUE_BYTES_MAX = 32;
 
 function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
   return Response.json(body, { status, headers: { "T4-API-Version": "1.0", ...headers } });
 }
 
 function problem(status: number, code: string, message: string, extra: Record<string, unknown> = {}): Response {
-  return json(status, {
-    error: {
-      code,
-      message,
-      requestId: `req-${code}`,
-      retryable: status >= 500,
-      ...extra,
-    },
-  });
+  return json(status, { error: { code, message, requestId: `req-${code}`, retryable: status >= 500, ...extra } });
 }
 
-function bodyKey(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(bodyKey).join(",")}]`;
-  if (value !== null && typeof value === "object") {
+function compareUtf16(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+export function canonicalJson(value: unknown): string {
+  if (value === null || typeof value === "boolean" || typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError("JCS only permits finite JSON numbers");
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (typeof value === "object") {
     return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${bodyKey(item)}`)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => compareUtf16(left, right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
       .join(",")}}`;
   }
-  return JSON.stringify(value) ?? "null";
+  throw new TypeError("JCS identity requires a JSON value");
+}
+
+interface ReplayRecord {
+  readonly identity: string;
+  readonly body: unknown;
+  readonly replayStatus: number;
 }
 
 export class T4ApiV1ConformanceService {
@@ -40,7 +51,7 @@ export class T4ApiV1ConformanceService {
   #commandSequence = 0;
   readonly #workspaces = new Map<string, Record<string, unknown>>();
   readonly #sessions = new Map<string, Record<string, unknown>>();
-  readonly #replays = new Map<string, { body: string; response: Record<string, unknown> }>();
+  readonly #replays = new Map<string, ReplayRecord>();
 
   readonly fetch: typeof globalThis.fetch = async (input, init) => {
     const request = new Request(input, init);
@@ -49,30 +60,26 @@ export class T4ApiV1ConformanceService {
     this.calls.push({ method: request.method, path: url.pathname, authorization });
     if (url.origin !== this.origin) return problem(400, "invalid_origin", "HTTPS API origin is fixed for this client");
     if (url.protocol !== "https:") return problem(400, "https_required", "HTTPS is required");
-    if (authorization !== "Bearer token-a" && authorization !== "Bearer token-b") {
+    if (authorization !== "Bearer token-a" && authorization !== "Bearer token-b" && authorization !== "Bearer token-denied") {
       return problem(401, "unauthenticated", "A valid bearer credential is required");
     }
     if (request.headers.get("T4-API-Version") !== "1") {
-      return problem(406, "incompatible_version", "No compatible T4 API major version", {
-        supportedMajors: [1],
-      });
+      return problem(406, "incompatible_version", "No compatible T4 API major version", { supportedMajors: [1] });
     }
+    if (authorization === "Bearer token-denied") return problem(403, "forbidden", "Credential lacks the required operation scope");
     const tenant = authorization === "Bearer token-a" ? "tenant-a" : "tenant-b";
 
     if (request.method === "GET" && url.pathname === "/v1") {
       return json(200, {
         apiVersion: "1.0",
         supportedMajors: [1],
-        capabilities: [
-          "workspace.lifecycle",
-          "session.lifecycle",
-          "session.commands",
-          "session.watch.sse",
-        ],
+        capabilities: ["workspace.lifecycle", "session.lifecycle", "session.commands", "session.watch.sse"],
         limits: {
           pageSizeDefault: 2,
           pageSizeMax: 3,
-          commandBytesMax: 32,
+          commandBytesMax: COMMAND_BYTES_MAX,
+          commandRequestBytesMax: COMMAND_REQUEST_BYTES_MAX,
+          commandMetadataValueBytesMax: METADATA_VALUE_BYTES_MAX,
           watchEventsMax: 4,
           heartbeatSeconds: 15,
         },
@@ -81,14 +88,10 @@ export class T4ApiV1ConformanceService {
 
     if (request.method === "POST" && url.pathname === "/v1/workspaces") {
       const body = await request.json() as Record<string, unknown>;
-      if (typeof body.name !== "string" || body.name.length < 1 || body.name.length > 128) {
-        return problem(422, "invalid_request", "Request validation failed", {
-          violations: [{ field: "name", rule: "length", message: "name must contain 1 to 128 characters" }],
-        });
-      }
-      return this.#idempotent(request, tenant, body, () => {
+      if (typeof body.name !== "string" || body.name.length < 1 || body.name.length > 128) return this.#invalid("name", "length", "name must contain 1 to 128 characters");
+      return this.#idempotent(request, tenant, "createWorkspace", [], body, 202, 200, () => {
         const id = `ws-${++this.#workspaceSequence}`;
-        const workspace = { id, name: body.name, state: "accepted", revision: 1, tenant };
+        const workspace = { id, name: body.name, ...(body.labels === undefined ? {} : { labels: body.labels }), state: "accepted", revision: 1, tenant };
         this.#workspaces.set(id, workspace);
         return workspace;
       });
@@ -96,11 +99,7 @@ export class T4ApiV1ConformanceService {
 
     if (request.method === "GET" && url.pathname === "/v1/workspaces") {
       const pageSize = Number(url.searchParams.get("pageSize") ?? "2");
-      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 3) {
-        return problem(422, "invalid_request", "Request validation failed", {
-          violations: [{ field: "pageSize", rule: "range", message: "pageSize must be between 1 and 3" }],
-        });
-      }
+      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 3) return this.#invalid("pageSize", "range", "pageSize must be between 1 and 3");
       const start = Number(url.searchParams.get("cursor")?.replace("page-", "") ?? "0");
       const visible = [...this.#workspaces.values()].filter((item) => item.tenant === tenant);
       const items = visible.slice(start, start + pageSize).map(({ tenant: _tenant, ...item }) => item);
@@ -113,23 +112,21 @@ export class T4ApiV1ConformanceService {
       const id = decodeURIComponent(workspaceMatch[1]!);
       const workspace = this.#workspaces.get(id);
       if (workspace?.tenant !== tenant) return problem(404, "not_found", "Workspace not found");
-      if (request.method === "GET") {
-        const { tenant: _tenant, ...visible } = workspace;
-        return json(200, visible);
-      }
+      if (request.method === "GET") return json(200, this.#visible(workspace));
       if (request.method === "PATCH") {
         const body = await request.json() as Record<string, unknown>;
-        if (request.headers.get("If-Match") !== String(workspace.revision)) {
-          return problem(409, "revision_conflict", "Workspace revision changed");
-        }
-        const updated: Record<string, unknown> = { ...workspace, name: body.name ?? workspace.name, revision: Number(workspace.revision) + 1 };
-        this.#workspaces.set(id, updated);
-        const { tenant: _tenant, ...visible } = updated;
-        return json(200, visible);
+        if (request.headers.get("If-Match") !== String(workspace.revision)) return problem(409, "revision_conflict", "Workspace revision changed");
+        return this.#idempotent(request, tenant, "mutateWorkspace", [id], body, 200, 200, () => {
+          const updated = { ...workspace, name: body.name ?? workspace.name, revision: Number(workspace.revision) + 1 };
+          this.#workspaces.set(id, updated);
+          return updated;
+        });
       }
       if (request.method === "DELETE") {
-        this.#workspaces.delete(id);
-        return new Response(null, { status: 204, headers: { "T4-API-Version": "1.0" } });
+        return this.#idempotent(request, tenant, "deleteWorkspace", [id], null, 204, 204, () => {
+          this.#workspaces.delete(id);
+          return null;
+        });
       }
     }
 
@@ -140,12 +137,8 @@ export class T4ApiV1ConformanceService {
       if (workspace?.tenant !== tenant) return problem(404, "not_found", "Workspace not found");
       if (request.method === "POST") {
         const body = await request.json() as Record<string, unknown>;
-        if (typeof body.title !== "string" || body.title.length < 1 || body.title.length > 128) {
-          return problem(422, "invalid_request", "Request validation failed", {
-            violations: [{ field: "title", rule: "length", message: "title must contain 1 to 128 characters" }],
-          });
-        }
-        return this.#idempotent(request, tenant, body, () => {
+        if (typeof body.title !== "string" || body.title.length < 1 || body.title.length > 128) return this.#invalid("title", "length", "title must contain 1 to 128 characters");
+        return this.#idempotent(request, tenant, "spawnSession", [workspaceId], body, 202, 200, () => {
           const id = `ses-${++this.#sessionSequence}`;
           const session = { id, workspaceId, title: body.title, state: "accepted", revision: 1, tenant };
           this.#sessions.set(id, session);
@@ -154,14 +147,10 @@ export class T4ApiV1ConformanceService {
       }
       if (request.method === "GET") {
         const pageSize = Number(url.searchParams.get("pageSize") ?? "2");
-        if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 3) {
-          return problem(422, "invalid_request", "Request validation failed", {
-            violations: [{ field: "pageSize", rule: "range", message: "pageSize must be between 1 and 3" }],
-          });
-        }
+        if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 3) return this.#invalid("pageSize", "range", "pageSize must be between 1 and 3");
         const start = Number(url.searchParams.get("cursor")?.replace("page-", "") ?? "0");
         const visible = [...this.#sessions.values()].filter((item) => item.workspaceId === workspaceId && item.tenant === tenant);
-        const items = visible.slice(start, start + pageSize).map(({ tenant: _tenant, ...item }) => item);
+        const items = visible.slice(start, start + pageSize).map((item) => this.#visible(item));
         const next = start + items.length < visible.length ? `page-${start + items.length}` : undefined;
         return json(200, { items, ...(next === undefined ? {} : { nextCursor: next }) });
       }
@@ -172,49 +161,50 @@ export class T4ApiV1ConformanceService {
       const id = decodeURIComponent(sessionMatch[1]!);
       const session = this.#sessions.get(id);
       if (session?.tenant !== tenant) return problem(404, "not_found", "Session not found");
-      if (request.method === "GET") {
-        const { tenant: _tenant, ...visible } = session;
-        return json(200, visible);
-      }
+      if (request.method === "GET") return json(200, this.#visible(session));
       if (request.method === "PATCH") {
         const body = await request.json() as Record<string, unknown>;
-        if (request.headers.get("If-Match") !== String(session.revision)) {
-          return problem(409, "revision_conflict", "Session revision changed");
-        }
-        const updated: Record<string, unknown> = { ...session, title: body.title ?? session.title, revision: Number(session.revision) + 1 };
-        this.#sessions.set(id, updated);
-        const { tenant: _tenant, ...visible } = updated;
-        return json(200, visible);
+        if (request.headers.get("If-Match") !== String(session.revision)) return problem(409, "revision_conflict", "Session revision changed");
+        return this.#idempotent(request, tenant, "mutateSession", [id], body, 200, 200, () => {
+          const updated = { ...session, title: body.title ?? session.title, revision: Number(session.revision) + 1 };
+          this.#sessions.set(id, updated);
+          return updated;
+        });
       }
       if (request.method === "DELETE") {
-        this.#sessions.delete(id);
-        return new Response(null, { status: 204, headers: { "T4-API-Version": "1.0" } });
+        return this.#idempotent(request, tenant, "deleteSession", [id], null, 204, 204, () => {
+          this.#sessions.delete(id);
+          return null;
+        });
       }
     }
 
     const cancelMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/cancel$/u);
     if (cancelMatch && request.method === "POST") {
-      const session = this.#sessions.get(decodeURIComponent(cancelMatch[1]!));
+      const id = decodeURIComponent(cancelMatch[1]!);
+      const session = this.#sessions.get(id);
       if (session?.tenant !== tenant) return problem(404, "not_found", "Session not found");
-      const cancelled: Record<string, unknown> = { ...session, state: "cancelled", revision: Number(session.revision) + 1 };
-      this.#sessions.set(String(session.id), cancelled);
-      const { tenant: _tenant, ...visible } = cancelled;
-      return json(202, visible);
+      return this.#idempotent(request, tenant, "cancelSession", [id], null, 202, 200, () => {
+        const cancelled = { ...session, state: "cancelled", revision: Number(session.revision) + 1 };
+        this.#sessions.set(id, cancelled);
+        return cancelled;
+      });
     }
 
     const commandMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/commands$/u);
     if (commandMatch && request.method === "POST") {
-      const session = this.#sessions.get(decodeURIComponent(commandMatch[1]!));
+      const id = decodeURIComponent(commandMatch[1]!);
+      const session = this.#sessions.get(id);
       if (session?.tenant !== tenant) return problem(404, "not_found", "Session not found");
-      const body = await request.json() as Record<string, unknown>;
-      if (typeof body.command !== "string" || body.command.length < 1 || encoder.encode(body.command).byteLength > 32) {
-        return problem(422, "invalid_request", "Request validation failed", {
-          violations: [{ field: "command", rule: "maxBytes", message: "command must contain 1 to 32 UTF-8 bytes" }],
-        });
-      }
+      const text = await request.text();
+      if (encoder.encode(text).byteLength > COMMAND_REQUEST_BYTES_MAX) return this.#invalid("body", "maxBytes", `request must not exceed ${COMMAND_REQUEST_BYTES_MAX} UTF-8 bytes`);
+      let body: Record<string, unknown>;
+      try { body = JSON.parse(text) as Record<string, unknown>; } catch { return problem(400, "invalid_request", "Malformed JSON request"); }
+      if (typeof body.command !== "string" || body.command.length < 1 || encoder.encode(body.command).byteLength > COMMAND_BYTES_MAX) return this.#invalid("command", "maxBytes", `command must contain 1 to ${COMMAND_BYTES_MAX} UTF-8 bytes`);
+      if (!this.#validMetadata(body.metadata)) return this.#invalid("metadata", "bounds", "metadata keys and values exceed the discovered bounds");
       const states: Record<string, true> = { accepted: true, rejected: true, conflict: true, unavailable: true, indeterminate: true };
       const state = states[body.command] === true ? body.command : "accepted";
-      return this.#idempotent(request, tenant, body, () => ({ commandId: `cmd-${++this.#commandSequence}`, state }));
+      return this.#idempotent(request, tenant, "submitCommand", [id], { metadata: {}, ...body }, 202, 200, () => ({ commandId: `cmd-${++this.#commandSequence}`, state }));
     }
 
     const snapshotMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/snapshot$/u);
@@ -229,71 +219,95 @@ export class T4ApiV1ConformanceService {
       const id = decodeURIComponent(watchMatch[1]!);
       const session = this.#sessions.get(id);
       if (session?.tenant !== tenant) return problem(404, "not_found", "Session not found");
+      const maxEvents = Number(url.searchParams.get("maxEvents") ?? "100");
+      const heartbeat = Number(url.searchParams.get("heartbeatSeconds") ?? "15");
+      if (!Number.isInteger(maxEvents) || maxEvents < 1 || maxEvents > 4) return this.#invalid("maxEvents", "range", "maxEvents exceeds the discovered bound");
+      if (!Number.isInteger(heartbeat) || heartbeat < 5 || heartbeat > 60) return this.#invalid("heartbeatSeconds", "range", "heartbeatSeconds must be between 5 and 60");
       const queryCursor = url.searchParams.get("cursor");
       const headerCursor = request.headers.get("Last-Event-ID");
       this.watchCursors.push({ query: queryCursor, header: headerCursor });
-      if (queryCursor !== null && headerCursor !== null && queryCursor !== headerCursor) {
-        return problem(400, "invalid_request", "Reconnect cursors disagree");
-      }
+      if (queryCursor !== null && headerCursor !== null && queryCursor !== headerCursor) return problem(400, "invalid_request", "Reconnect cursors disagree");
       const cursor = queryCursor ?? headerCursor;
-      if (cursor === "expired") {
-        return problem(410, "cursor_expired", "Watch cursor is no longer retained", {
-          resync: { snapshotUrl: `/v1/sessions/${id}/snapshot`, cursor: "cursor-2" },
-        });
-      }
-      const frames = cursor === "cursor-4"
+      if (cursor === "expired") return problem(410, "cursor_expired", "Watch cursor is no longer retained", { resync: { snapshotUrl: `/v1/sessions/${id}/snapshot`, cursor: "cursor-2" } });
+      const allFrames = cursor === "cursor-4"
         ? [`id: cursor-5\r\nevent: heartbeat\r\ndata: {"type":"heartbeat","cursor":"cursor-5","observedAt":"2026-07-21T00:00:15Z"}\r\n\r\n`]
-        : [
-            `id: cursor-3\r\nevent: heartbeat\r\ndata: {"type":"heartbeat","cursor":"cursor-3","observedAt":"2026-07-21T00:00:00Z"}\r\n\r\n`,
-            `id: cursor-4\r\nevent: session\r\ndata: {"type":"session","cursor":"cursor-4","state":"accepted","revision":2}\r\n\r\n`,
-          ];
+        : cursor === "cursor-5"
+          ? [`id: cursor-6\nevent: command\ndata: {"type":"command","cursor":"cursor-6","commandId":"cmd-1","state":"accepted"}\n\n`]
+          : [
+              `id: cursor-3\r\nevent: heartbeat\r\ndata: {"type":"heartbeat","cursor":"cursor-3","observedAt":"2026-07-21T00:00:00Z"}\r\n\r\n`,
+              `id: cursor-4\r\nevent: session\r\ndata: {"type":"session","cursor":"cursor-4","state":"accepted","revision":2}\r\n\r\n`,
+            ];
+      const frames = allFrames.slice(0, maxEvents);
       const stream = new ReadableStream<Uint8Array>({
         start: (controller) => {
           const payload = encoder.encode(frames.join(""));
           const split = Math.max(1, payload.byteLength - 3);
           controller.enqueue(payload.slice(0, split));
           controller.enqueue(payload.slice(split));
-          request.signal.addEventListener("abort", () => {
-            this.abortedWatches.push(id);
-            try { controller.close(); } catch { /* already closed */ }
-          }, { once: true });
+          controller.close();
+          request.signal.addEventListener("abort", () => this.abortedWatches.push(id), { once: true });
         },
       });
-      return new Response(stream, {
-        status: 200,
-        headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-store", "T4-API-Version": "1.0" },
-      });
+      return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-store", "T4-API-Version": "1.0" } });
     }
 
     return problem(404, "not_found", "Resource not found");
   };
 
   expectNoCredentialLeak(): void {
-    expect(this.calls.every((call) => call.authorization === "Bearer token-a" || call.authorization === "Bearer token-b")).toBe(true);
+    expect(this.calls.every((call) => call.authorization === "Bearer token-a" || call.authorization === "Bearer token-b" || call.authorization === "Bearer token-denied")).toBe(true);
+  }
+
+  #invalid(field: string, rule: string, message: string): Response {
+    return problem(422, "invalid_request", "Request validation failed", { violations: [{ field, rule, message }] });
+  }
+
+  #visible(value: Record<string, unknown>): Record<string, unknown> {
+    const { tenant: _tenant, ...visible } = value;
+    return visible;
+  }
+
+  #validMetadata(value: unknown): boolean {
+    if (value === undefined) return true;
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+    const entries = Object.entries(value as Record<string, unknown>);
+    return entries.length <= 32 && entries.every(([key, item]) =>
+      /^[a-z][a-z0-9.-]{0,62}$/u.test(key) &&
+      (item === null || typeof item === "boolean" ||
+        (typeof item === "number" && Number.isSafeInteger(item)) ||
+        (typeof item === "string" && encoder.encode(item).byteLength <= METADATA_VALUE_BYTES_MAX)));
   }
 
   #idempotent(
     request: Request,
-    tenant: string,
-    body: Record<string, unknown>,
-    create: () => Record<string, unknown>,
+    principal: string,
+    operationId: string,
+    targets: readonly string[],
+    body: unknown,
+    firstStatus: number,
+    replayStatus: number,
+    create: () => unknown,
   ): Response {
     const key = request.headers.get("Idempotency-Key");
     if (key === null) return problem(400, "idempotency_key_required", "Idempotency-Key is required");
-    if (!/^[A-Za-z0-9._~-]{16,128}$/u.test(key)) {
-      return problem(400, "invalid_request", "Idempotency-Key is invalid", {
-        violations: [{ field: "Idempotency-Key", rule: "format", message: "Idempotency-Key must be a 16 to 128 character token" }],
-      });
+    if (!/^[A-Za-z0-9._~-]{16,128}$/u.test(key)) return problem(400, "invalid_request", "Idempotency-Key is invalid");
+    const preconditions = request.headers.has("If-Match") ? { "if-match": request.headers.get("If-Match") } : {};
+    const identity = canonicalJson({ operationId, targets, preconditions, body });
+    const scope = canonicalJson({ principal, operationId, targets, key });
+    const prior = this.#replays.get(scope);
+    if (prior !== undefined) {
+      if (prior.identity !== identity) return problem(409, "idempotency_conflict", "Idempotency key was reused with a different canonical request");
+      return prior.body === null
+        ? new Response(null, { status: prior.replayStatus, headers: { "T4-API-Version": "1.0", "Idempotency-Replayed": "true" } })
+        : json(prior.replayStatus, prior.body, { "Idempotency-Replayed": "true" });
     }
-    const replayKey = `${tenant}:${request.method}:${new URL(request.url).pathname}:${key}`;
-    const prior = this.#replays.get(replayKey);
-    if (prior) {
-      if (prior.body !== bodyKey(body)) return problem(409, "idempotency_conflict", "Idempotency key was reused with a different request");
-      return json(200, prior.response, { "Idempotency-Replayed": "true" });
-    }
-    const response = create();
-    const { tenant: _tenant, ...visible } = response;
-    this.#replays.set(replayKey, { body: bodyKey(body), response: visible });
-    return json(202, visible, { "Idempotency-Replayed": "false" });
+    const created = create();
+    const visible = created !== null && typeof created === "object" && !Array.isArray(created)
+      ? this.#visible(created as Record<string, unknown>)
+      : created;
+    this.#replays.set(scope, { identity, body: visible, replayStatus });
+    return visible === null
+      ? new Response(null, { status: firstStatus, headers: { "T4-API-Version": "1.0", "Idempotency-Replayed": "false" } })
+      : json(firstStatus, visible, { "Idempotency-Replayed": "false" });
   }
 }
