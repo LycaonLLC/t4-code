@@ -294,7 +294,9 @@ jobs:
 
       - name: Run operator tests
         working-directory: packages/cluster-operator
-        run: GOFLAGS=-mod=readonly go test ./...
+        env:
+          GOFLAGS: -mod=readonly
+        run: go test ./...
 
       - name: Lint cluster chart
         run: helm lint deploy/charts/t4-cluster
