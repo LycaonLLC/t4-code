@@ -81,16 +81,28 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: us-east-1
 
-      - name: Confirm the live demo permits the Flutter renderer
+      - name: Check whether the live demo permits the Flutter renderer
+        id: demo_csp
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --head https://t4code.net/demo \
+          headers=$(curl --fail --silent --show-error --head https://t4code.net/demo)
+          if printf '%s\n' "$headers" \
             | tr -d '\r' \
             | grep -i '^content-security-policy:' \
-            | grep -Fq "'wasm-unsafe-eval'"
+            | grep -Fq "'wasm-unsafe-eval'"; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Flutter demo deployment is deferred until the demo CloudFront CSP permits wasm-unsafe-eval."
+          fi
+
+      - name: Defer Flutter demo until its response policy is active
+        if: ${{ steps.demo_csp.outputs.ready != 'true' }}
+        run: echo "Apply infra/site/cloudformation.yml, then rerun this workflow from a main push."
 
       - name: Build and deploy current Flutter demo
+        if: ${{ steps.demo_csp.outputs.ready == 'true' }}
         env:
           T4_SITE_BUCKET: ${{ vars.T4_SITE_BUCKET }}
           T4_CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.T4_CLOUDFRONT_DISTRIBUTION_ID }}

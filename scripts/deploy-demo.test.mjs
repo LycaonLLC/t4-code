@@ -40,8 +40,11 @@ test("site workflow deploys the Flutter demo independently from release publicat
   assert.match(workflow, /- "apps\/flutter\/\*\*"/u);
   assert.doesNotMatch(workflow, /- "apps\/web\/\*\*"/u);
   assert.match(workflow, /demo:\n    if: \$\{\{ github\.event_name == 'push' \}\}/u);
-  assert.match(workflow, /run: pnpm deploy:demo/u);
+  assert.match(workflow, /id: demo_csp/u);
   assert.match(workflow, /grep -Fq "'wasm-unsafe-eval'"/u);
+  assert.match(workflow, /if: \$\{\{ steps\.demo_csp\.outputs\.ready == 'true' \}\}/u);
+  assert.match(workflow, /Defer Flutter demo until its response policy is active/u);
+  assert.match(workflow, /run: pnpm deploy:demo/u);
   assert.match(workflow, /run: pnpm deploy:site/u);
   assert.doesNotMatch(workflow, /deploy:site-bundle/u);
   assert.match(infrastructure, /PathPattern: demo\*/u);
