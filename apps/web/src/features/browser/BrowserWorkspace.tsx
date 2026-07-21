@@ -20,6 +20,7 @@ import {
 import type {
   BrowserMethod,
   BrowserProfile,
+  BrowserSnapshot,
   BrowserSurfaceState,
   SurfaceId,
 } from "@t4-code/protocol/browser-ipc";
@@ -34,6 +35,7 @@ import {
   Download,
   Focus,
   Globe2,
+  Layers3,
   LoaderCircle,
   Minus,
   PanelRightOpen,
@@ -54,9 +56,15 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 
+import { useActionRegistry } from "../../actions/index.ts";
 import type { WorkspaceProject, WorkspaceSession } from "../../lib/workspace-data.ts";
 import { rendererPlatform, useWorkspace, workspaceStore } from "../../state/store-instance.ts";
 import { selectSessionView } from "../../state/workspace-store.ts";
+import { useComposer } from "../composer/composer-store.ts";
+import {
+  captureBrowserSnapshotContext,
+  sanitizeBrowserContextUrl,
+} from "../context-packet/context-packet.ts";
 import {
   applyBrowserEvent,
   browserCall,
@@ -85,6 +93,8 @@ import {
 
 const FIELD_CLASS =
   "min-h-11 min-w-0 rounded-md border border-input bg-popover px-3 text-base text-foreground outline-none transition-shadow duration-(--motion-duration-fast) placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 sm:min-h-8 sm:text-sm";
+
+const EMPTY_CONTEXT_ITEMS = [] as const;
 
 interface PendingTrustAction {
   readonly option: BrowserProfileOption;
@@ -225,6 +235,7 @@ export function BrowserWorkspace({
   readonly session: WorkspaceSession;
   readonly project: WorkspaceProject;
 }) {
+  const actionRegistry = useActionRegistry();
   const port = rendererPlatform.browser;
   const callBrowser = useCallback(
     (method: BrowserMethod, request: Readonly<Record<string, unknown>>) =>
@@ -252,6 +263,9 @@ export function BrowserWorkspace({
   const [focusMode, setFocusMode] = useState(false);
   const [devtoolsOpen, setDevtoolsOpen] = useState(false);
   const [zoomBySurface, setZoomBySurface] = useState<Readonly<Record<string, number>>>({});
+  const stagedContext = useComposer(
+    (state) => state.contextItemsBySessionId[session.id] ?? EMPTY_CONTEXT_ITEMS,
+  );
   const modelRef = useRef(model);
   const lifecycleRef = useRef(0);
   const boundsLifecycleRef = useRef(0);
@@ -647,6 +661,27 @@ export function BrowserWorkspace({
     return result;
   };
 
+  const capturePageContext = async () => {
+    const result = await runAutomation("Capturing page context", "surface.snapshot", {
+      includeText: true,
+    });
+    if (result === null) return;
+    const snapshot =
+      typeof result === "object" && result !== null && "snapshot" in result
+        ? ((result as { readonly snapshot?: BrowserSnapshot }).snapshot ?? null)
+        : null;
+    if (snapshot === null) {
+      setActionError("The browser did not return readable page context.");
+      return;
+    }
+    const item = captureBrowserSnapshotContext(session.id, snapshot);
+    if (item === null) {
+      setActionError("This page does not expose readable text to add to the working set.");
+      return;
+    }
+    actionRegistry.execute({ id: "context.capture", args: { sessionId: session.id, item } });
+  };
+
   const setZoom = async (next: number) => {
     if (activeSurface === null) return;
     const generation = lifecycleRef.current;
@@ -678,6 +713,13 @@ export function BrowserWorkspace({
     [activeSurface?.surfaceId, model.runtimeErrors],
   );
   const currentZoom = activeSurface === null ? 1 : (zoomBySurface[activeSurface.surfaceId] ?? 1);
+  const activeContextUrl =
+    activeSurface === null ? null : sanitizeBrowserContextUrl(activeSurface.url);
+  const contextAlreadyAdded =
+    activeContextUrl !== null &&
+    stagedContext.some(
+      (item) => item.source.kind === "browser" && item.source.url === activeContextUrl,
+    );
 
   if (port === null) return <BrowserUnsupported project={project} session={session} />;
 
@@ -1143,6 +1185,15 @@ export function BrowserWorkspace({
           </IconButton>
         </div>
 
+        <Button
+          disabled={activeSurface === null || busyAction !== null}
+          onClick={() => void capturePageContext()}
+          size="xs"
+          variant={contextAlreadyAdded ? "secondary" : "outline"}
+        >
+          <Layers3 aria-hidden="true" />
+          {contextAlreadyAdded ? "Refresh page" : "Add page"}
+        </Button>
         <span className="flex-1" />
         <Button
           onClick={() => {
