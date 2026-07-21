@@ -1299,12 +1299,12 @@ OperationCapability _operationCapability(Object? value, String path) {
   );
 }
 
-List<OperationCapability> _operationCapabilities(
+List<OperationCapability>? _operationCapabilities(
   Map<String, Object?> raw,
   String path,
 ) {
   if (!raw.containsKey('operations')) {
-    return const <OperationCapability>[];
+    return null;
   }
   final values = _list(raw['operations'], path);
   return List<OperationCapability>.unmodifiable([

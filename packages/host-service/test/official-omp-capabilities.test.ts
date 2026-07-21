@@ -24,13 +24,18 @@ describe("official OMP capability adapter", () => {
     expect(adapter.assertOperationSupported("session.prompt")).toMatchObject({
       execution: "typed",
       supported: true,
+      capabilities: ["sessions.prompt"],
     });
     expect(adapter.operations().find((item) => item.operationId === "slash.plan")).toMatchObject({
       label: "/plan",
       execution: "terminal-only",
       supported: false,
+      capabilities: ["sessions.prompt"],
       disabledReason: { code: OPERATION_DISABLED_REASON_CODES.terminalOnly },
     });
+    expect(adapter.operations().some((item) => item.operationId === "slash.continue-in-t4")).toBe(
+      false,
+    );
     expect(() => adapter.assertPromptSupported("/plan implement this")).toThrow(
       OfficialOmpOperationError,
     );
@@ -60,6 +65,7 @@ describe("official OMP capability adapter", () => {
             name: "compact",
             aliases: ["c"],
             description: "Compact the session",
+            input: { hint: "[focus]" },
             source: "builtin",
           },
           {
@@ -74,6 +80,8 @@ describe("official OMP capability adapter", () => {
       operationId: "slash.compact",
       execution: "headless",
       supported: true,
+      capabilities: ["sessions.prompt"],
+      metadata: { inlineHint: "[focus]" },
     });
     expect(String(adapter.assertPromptSupported("/c now")?.operationId)).toBe("slash.compact");
     expect(adapter.assertPromptSupported("/plan now")).toMatchObject({
@@ -84,6 +92,27 @@ describe("official OMP capability adapter", () => {
     expect(adapter.operations().filter((item) => item.operationId === "slash.plan")).toHaveLength(
       1,
     );
+  });
+
+  test("withholds pinned terminal rows from unreviewed OMP versions while retaining dispatch guards", () => {
+    const adapter = new OfficialOmpCapabilityAdapter("17.1.0");
+    expect(adapter.operations().some((item) => item.operationId === "slash.plan")).toBe(false);
+    expect(() => adapter.assertPromptSupported("/plan inspect this")).toThrow(
+      OfficialOmpOperationError,
+    );
+  });
+
+  test("lets discovered names and aliases win over pinned terminal aliases", () => {
+    const adapter = new OfficialOmpCapabilityAdapter();
+    adapter.update([{ name: "status", aliases: ["settings"], source: "extension" }]);
+    expect(adapter.operations().filter((item) => item.operationId === "slash.status")).toHaveLength(
+      1,
+    );
+    expect(adapter.operations().some((item) => item.operationId === "slash.settings")).toBe(false);
+    expect(adapter.assertPromptSupported("/settings")).toMatchObject({
+      operationId: "slash.status",
+      execution: "headless",
+    });
   });
 
   test("rejects ambiguous and malformed capability updates", () => {

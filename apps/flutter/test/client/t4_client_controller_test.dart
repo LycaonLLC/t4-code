@@ -522,7 +522,6 @@ void main() {
             'description': 'Compact the active conversation',
             'execution': 'headless',
             'supported': true,
-            'capabilities': <Object?>['sessions.prompt'],
             'metadata': <String, Object?>{
               'aliases': <Object?>['compress'],
             },
@@ -552,6 +551,86 @@ void main() {
       expect(
         commands.last.disabledReason,
         '/plan requires the OMP terminal interface.',
+      );
+
+      channel.emit(<String, Object?>{
+        'v': 'omp-app/1',
+        'type': 'catalog',
+        'hostId': 'host-alpha',
+        'revision': 'catalog-authoritative-empty',
+        'items': <Object?>[
+          <String, Object?>{
+            'id': 'command:legacy-compact',
+            'kind': 'command',
+            'name': '/compact',
+          },
+          <String, Object?>{
+            'id': 'command:session.cancel',
+            'kind': 'command',
+            'name': 'session.cancel',
+          },
+        ],
+        'operations': <Object?>[],
+      });
+      await _flush();
+      expect(controller.state.composer.slashCommands, isEmpty);
+    },
+  );
+
+  test(
+    'read-only catalog clients see official headless commands disabled',
+    () async {
+      final profile = _profile('alpha');
+      final connector = _FakeConnector();
+      final controller = _controller(
+        _MemoryDirectoryStore(
+          directory: const HostDirectory.empty().upsert(profile),
+        ),
+        _MemoryCredentialStore(),
+        connector,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      final channel = connector.channels.single;
+
+      channel.emit(
+        _welcome(
+          'host-alpha',
+          capabilities: const <String>['sessions.read', 'catalog.read'],
+          features: const <String>['catalog.metadata'],
+        ),
+      );
+      await _flush();
+      final list = channel.sentJson.firstWhere(
+        (frame) => frame['command'] == 'session.list',
+      );
+      channel.emit(
+        _response(
+          list,
+          command: 'session.list',
+          result: _sessionListResult('host-alpha'),
+        ),
+      );
+      channel.emit(<String, Object?>{
+        'v': 'omp-app/1',
+        'type': 'catalog',
+        'hostId': 'host-alpha',
+        'revision': 'catalog-read-only',
+        'items': <Object?>[],
+        'operations': <Object?>[
+          <String, Object?>{
+            'operationId': 'slash.compact',
+            'label': '/compact',
+            'execution': 'headless',
+            'supported': true,
+          },
+        ],
+      });
+      await _flush();
+
+      expect(
+        controller.state.composer.slashCommands.single.disabledReason,
+        'Not granted on this host',
       );
     },
   );

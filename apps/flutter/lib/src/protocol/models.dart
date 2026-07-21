@@ -585,12 +585,12 @@ final class CatalogResult {
   const CatalogResult({
     required this.revision,
     required this.items,
-    this.operations = const <OperationCapability>[],
+    this.operations,
   });
 
   final String revision;
   final List<CatalogItem> items;
-  final List<OperationCapability> operations;
+  final List<OperationCapability>? operations;
 }
 
 final class SettingsResult {
@@ -1235,14 +1235,14 @@ final class CatalogFrame extends WireFrame {
     required this.hostId,
     required this.revision,
     required this.items,
-    this.operations = const <OperationCapability>[],
+    this.operations,
     required super.raw,
   });
 
   final String hostId;
   final String revision;
   final List<CatalogItem> items;
-  final List<OperationCapability> operations;
+  final List<OperationCapability>? operations;
 }
 
 final class SettingsFrame extends WireFrame {

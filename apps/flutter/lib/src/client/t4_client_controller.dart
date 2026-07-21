@@ -188,8 +188,7 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
     final choices = <ComposerModelChoice>[];
     final seen = <String>{};
     final slashCommands = <String, ComposerSlashCommand>{};
-    final operationCapabilities =
-        _catalogFrame?.operations ?? const <OperationCapability>[];
+    final operationCapabilities = _catalogFrame?.operations;
     for (final item in _catalogItems) {
       if (item.kind == 'model') {
         final selector = modelItemSelector(item);
@@ -207,7 +206,11 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         );
         continue;
       }
-      if (item.kind != 'command' || operationCapabilities.isNotEmpty) continue;
+      if (item.kind != 'command' || operationCapabilities != null) continue;
+      final metadata = item.metadata ?? const <String, Object?>{};
+      if (!item.name.startsWith('/') && metadata['slashCommand'] != true) {
+        continue;
+      }
       final bareName = item.name.replaceFirst(RegExp(r'^/+'), '');
       final missingCapability = item.capabilities
           ?.where((capability) => !_grantedCapabilities.contains(capability))
@@ -225,7 +228,8 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         disabledReason: disabledReason,
       );
     }
-    for (final operation in operationCapabilities) {
+    for (final operation
+        in operationCapabilities ?? const <OperationCapability>[]) {
       if (!operation.operationId.startsWith('slash.')) continue;
       final bareName = operation.operationId.substring('slash.'.length);
       if (bareName.isEmpty) continue;
@@ -241,8 +245,12 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
                 .map((alias) => '/${alias.replaceFirst(RegExp(r'^/+'), '')}')
                 .toList(growable: false)
           : const <String>[];
-      final missingCapability = operation.capabilities
-          ?.where((capability) => !_grantedCapabilities.contains(capability))
+      final requiredCapabilities = <String>{
+        'sessions.prompt',
+        ...?operation.capabilities,
+      };
+      final missingCapability = requiredCapabilities
+          .where((capability) => !_grantedCapabilities.contains(capability))
           .firstOrNull;
       String? disabledReason;
       if (!operation.supported) {
@@ -252,11 +260,9 @@ final class T4ClientController extends ChangeNotifier implements T4Actions {
         disabledReason = missingCapability == 'terminal.io'
             ? 'Needs terminal access on this host'
             : 'Not granted on this host';
-      } else if ((session.turnActive || _submitting) &&
-          bareName == 'compact') {
+      } else if ((session.turnActive || _submitting) && bareName == 'compact') {
         disabledReason = 'Wait for the turn to finish';
-      } else if ((session.turnActive || _submitting) &&
-          bareName == 'retry') {
+      } else if ((session.turnActive || _submitting) && bareName == 'retry') {
         disabledReason = 'A turn is already running';
       }
       slashCommands[name] = ComposerSlashCommand(

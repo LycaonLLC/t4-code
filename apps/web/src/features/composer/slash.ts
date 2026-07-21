@@ -42,7 +42,7 @@ export function slashCommandsFromCatalog(
   items: readonly CatalogItem[],
   context: SlashCatalogContext,
   granted: readonly string[],
-  operations: readonly OperationCapability[] = [],
+  operations?: readonly OperationCapability[],
 ): SlashCommand[] {
   const offlineReason =
     context.link === "cached"
@@ -55,12 +55,13 @@ export function slashCommandsFromCatalog(
   // Fall back to legacy command items only when an older host does not expose
   // the new contract at all; otherwise typed commands such as session.cancel
   // would be mistaken for slash commands.
-  if (operations.length === 0) {
+  if (operations === undefined) {
     for (const item of items) {
       if (item.kind !== "command") continue;
+      const metadata = item.metadata ?? {};
+      if (!item.name.startsWith("/") && metadata.slashCommand !== true) continue;
       const bareName = item.name.replace(/^\/+/, "");
       const name = `/${bareName}`;
-      const metadata = item.metadata ?? {};
       const rawAliases = Array.isArray(metadata.aliases) ? metadata.aliases : [];
       const aliases = rawAliases
         .filter((alias): alias is string => typeof alias === "string" && alias !== "")
@@ -93,7 +94,7 @@ export function slashCommandsFromCatalog(
       });
     }
   }
-  for (const operation of operations) {
+  for (const operation of operations ?? []) {
     const operationId = String(operation.operationId);
     if (!operationId.startsWith("slash.")) continue;
     const bareName = operationId.slice("slash.".length);
@@ -107,7 +108,8 @@ export function slashCommandsFromCatalog(
     const aliases = rawAliases
       .filter((alias): alias is string => typeof alias === "string" && alias !== "")
       .map((alias) => `/${alias.replace(/^\/+/, "")}`);
-    const missingCapability = (operation.capabilities ?? []).find(
+    const requiredCapabilities = ["sessions.prompt", ...(operation.capabilities ?? [])];
+    const missingCapability = requiredCapabilities.find(
       (capability) => !granted.includes(capability),
     );
     const disabledReason =
@@ -128,7 +130,7 @@ export function slashCommandsFromCatalog(
       name,
       aliases,
       description: operation.description ?? "",
-      argsHint: "",
+      argsHint: typeof metadata.inlineHint === "string" ? metadata.inlineHint : "",
       disabledReason,
       insert: `${name} `,
     });

@@ -12,11 +12,12 @@ const MAX_AVAILABLE_COMMANDS = 1_000;
 const MAX_COMMAND_ALIASES = 32;
 const MAX_COMMAND_NAME_BYTES = 128;
 const MAX_COMMAND_DESCRIPTION_BYTES = 4_096;
+const MAX_COMMAND_INPUT_HINT_BYTES = 512;
 const MAX_COMMAND_SOURCE_BYTES = 64;
 
 export const OFFICIAL_OMP_TERMINAL_ONLY_EVIDENCE = Object.freeze({
-  packageVersion: "17.0.5",
-  sourceCommit: "772e5e41eb1537177349247add96a851721c5bfa",
+  packageVersion: "17.0.6",
+  sourceCommit: "89d6a8f6d14286f32f09ec9c8aa8af7b3451d2d6",
 });
 
 interface TerminalOnlyCommand {
@@ -64,7 +65,6 @@ const TERMINAL_ONLY_COMMANDS: readonly TerminalOnlyCommand[] = Object.freeze([
   { name: "retry", description: "Retry the last failed agent turn" },
   { name: "debug", description: "Open debug tools selector" },
   { name: "exit", description: "Exit the application" },
-  { name: "continue-in-t4", description: "Persist and continue this session in T4" },
   { name: "pause", description: "Freeze all agents until resumed" },
   { name: "quit", aliases: ["q"], description: "Quit the application" },
 ]);
@@ -73,6 +73,7 @@ interface HeadlessCommand {
   readonly name: string;
   readonly aliases: readonly string[];
   readonly description?: string;
+  readonly inputHint?: string;
   readonly source: string;
 }
 
@@ -122,8 +123,15 @@ function decodeHeadlessCommands(value: unknown): readonly HeadlessCommand[] {
       item.description === undefined
         ? undefined
         : controlFree(item.description, `${path}.description`, MAX_COMMAND_DESCRIPTION_BYTES);
+    const input = item.input === undefined ? undefined : boundedMap(item.input, `${path}.input`, 4);
+    const inputHint =
+      input?.hint === undefined
+        ? undefined
+        : controlFree(input.hint, `${path}.input.hint`, MAX_COMMAND_INPUT_HINT_BYTES);
     const source = controlFree(item.source, `${path}.source`, MAX_COMMAND_SOURCE_BYTES);
-    commands.push(Object.freeze({ name, aliases: Object.freeze(aliases), description, source }));
+    commands.push(
+      Object.freeze({ name, aliases: Object.freeze(aliases), description, inputHint, source }),
+    );
   }
   return Object.freeze(commands);
 }
@@ -140,8 +148,11 @@ export class OfficialOmpCapabilityAdapter {
   #operations: readonly OperationCapability[];
   #operationsById = new Map<string, OperationCapability>();
   #promptOperations = new Map<string, OperationCapability>();
+  readonly #includePinnedTerminalOnly: boolean;
 
-  constructor() {
+  constructor(runtimeVersion: string = OFFICIAL_OMP_TERMINAL_ONLY_EVIDENCE.packageVersion) {
+    this.#includePinnedTerminalOnly =
+      runtimeVersion === OFFICIAL_OMP_TERMINAL_ONLY_EVIDENCE.packageVersion;
     this.#operations = this.buildCatalog([]);
   }
 
@@ -202,11 +213,12 @@ export class OfficialOmpCapabilityAdapter {
         description: "Send a typed prompt to the active OMP session",
         execution: "typed",
         supported: true,
+        capabilities: ["sessions.prompt"],
         metadata: Object.freeze({ rpcCommand: "prompt" }),
       }),
     ];
     const promptOperations = new Map<string, OperationCapability>();
-    const headlessNames = new Set<string>();
+    const discoveredPromptNames = new Set<string>();
     for (const command of headlessCommands) {
       const capability: OperationCapability = Object.freeze({
         operationId: operationId(`slash.${command.name}`),
@@ -214,34 +226,45 @@ export class OfficialOmpCapabilityAdapter {
         ...(command.description ? { description: command.description } : {}),
         execution: "headless",
         supported: true,
-        metadata: Object.freeze({ source: command.source, aliases: command.aliases }),
+        capabilities: ["sessions.prompt"],
+        metadata: Object.freeze({
+          source: command.source,
+          aliases: command.aliases,
+          ...(command.inputHint ? { inlineHint: command.inputHint } : {}),
+        }),
       });
       operations.push(capability);
-      headlessNames.add(command.name);
+      discoveredPromptNames.add(command.name);
       promptOperations.set(command.name, capability);
-      for (const alias of command.aliases)
+      for (const alias of command.aliases) {
+        discoveredPromptNames.add(alias);
         if (!promptOperations.has(alias)) promptOperations.set(alias, capability);
+      }
     }
     for (const command of TERMINAL_ONLY_COMMANDS) {
-      if (headlessNames.has(command.name)) continue;
+      if (discoveredPromptNames.has(command.name)) continue;
+      const aliases = Object.freeze(
+        [...(command.aliases ?? [])].filter((alias) => !discoveredPromptNames.has(alias)),
+      );
       const capability: OperationCapability = Object.freeze({
         operationId: operationId(`slash.${command.name}`),
         label: `/${command.name}`,
         description: command.description,
         execution: "terminal-only",
         supported: false,
+        capabilities: ["sessions.prompt"],
         disabledReason: Object.freeze({
           code: OPERATION_DISABLED_REASON_CODES.terminalOnly,
           message: `/${command.name} requires the OMP terminal interface.`,
         }),
         metadata: Object.freeze({
-          aliases: Object.freeze([...(command.aliases ?? [])]),
+          aliases,
           evidence: OFFICIAL_OMP_TERMINAL_ONLY_EVIDENCE,
         }),
       });
-      operations.push(capability);
+      if (this.#includePinnedTerminalOnly) operations.push(capability);
       if (!promptOperations.has(command.name)) promptOperations.set(command.name, capability);
-      for (const alias of command.aliases ?? [])
+      for (const alias of aliases)
         if (!promptOperations.has(alias)) promptOperations.set(alias, capability);
     }
     this.#operationsById = new Map(

@@ -337,8 +337,18 @@ describe("gateComposerControls", () => {
 
 describe("slash gating", () => {
   const items = [
-    { kind: "command", name: "retry", description: "Retry the last turn" },
-    { kind: "command", name: "compact", description: "Compact context" },
+    {
+      kind: "command",
+      name: "retry",
+      description: "Retry the last turn",
+      metadata: { slashCommand: true },
+    },
+    {
+      kind: "command",
+      name: "compact",
+      description: "Compact context",
+      metadata: { slashCommand: true },
+    },
   ] as unknown as readonly CatalogItem[];
 
   it("gates every command with the observer reason on a live link", () => {

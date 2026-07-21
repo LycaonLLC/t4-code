@@ -151,14 +151,16 @@ export class RpcChildSupervisor {
 	#stderr = "";
 	#ready = false;
 	#termination?: Promise<void>;
-	#operationCapabilities = new OfficialOmpCapabilityAdapter();
+	#operationCapabilities: OfficialOmpCapabilityAdapter;
 	constructor(
 		private readonly factory: RpcChildFactory,
 		private readonly session: SessionRecord,
 		private readonly callbacks: ChildCallbacks,
 		private readonly argv = ["omp", "--mode", "rpc"],
 		private readonly failureStopGraceMs = FAILURE_STOP_GRACE_MS,
+		private readonly runtimeVersion?: string,
 	) {
+		this.#operationCapabilities = new OfficialOmpCapabilityAdapter(runtimeVersion);
 		if (!Number.isSafeInteger(failureStopGraceMs) || failureStopGraceMs <= 0 || failureStopGraceMs > 60_000)
 			throw new Error("failureStopGraceMs must be between 1 and 60000");
 	}

@@ -710,6 +710,47 @@ void main() {
     },
   );
   testWidgets(
+    'composer stays disabled when prompt permission was not granted',
+    (tester) async {
+      final profile = HostProfile.parseTailnetAddress(
+        'https://alpha.tailnet-name.ts.net',
+      );
+      final state = T4ViewState(
+        connectionPhase: ConnectionPhase.ready,
+        hostDirectory: HostDirectory.empty().upsert(profile),
+        authenticationPhase: AuthenticationPhase.paired,
+        grantedCapabilities: const <String>{'sessions.read', 'catalog.read'},
+        selectedSessionId: 'session-alpha',
+        sessions: const <SessionSummary>[
+          SessionSummary(
+            hostId: 'host-alpha',
+            sessionId: 'session-alpha',
+            projectId: 'project-alpha',
+            projectName: 'Project Alpha',
+            title: 'Read-only session',
+            revision: 'revision-alpha',
+            status: 'idle',
+          ),
+        ],
+      );
+
+      await pumpApp(
+        tester,
+        state: state,
+        actions: _FakeActions(),
+        size: compactPhone,
+      );
+      await tester.enterText(find.byType(TextField).last, 'Cannot send');
+      await tester.pump();
+      expect(
+        tester
+            .widget<FilledButton>(find.widgetWithText(FilledButton, 'Send'))
+            .onPressed,
+        isNull,
+      );
+    },
+  );
+  testWidgets(
     'Fast toggle reads as an inactive toggle when available and off, and selected when on',
     (tester) async {
       final profile = HostProfile.parseTailnetAddress(

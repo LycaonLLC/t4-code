@@ -760,7 +760,7 @@ export class LocalAppserver implements AppserverHandle {
 	#createdPending = new Map<SessionId, { record: SessionRecord; refreshesRemaining: number }>();
 	#projections = new Map<SessionId, SessionProjection>();
 	#supervisors = new Map<SessionId, RpcChildSupervisor>();
-	#baseOperationCapabilities = new OfficialOmpCapabilityAdapter().operations();
+	#baseOperationCapabilities: readonly OperationCapability[];
 	#externalRuntimes = new Map<SessionId, ExternalRuntimeOwner>();
 	readonly #openingExternalRuntimes = new Map<string, number>();
 	readonly #archivingWorkspaces = new Set<string>();
@@ -915,6 +915,7 @@ export class LocalAppserver implements AppserverHandle {
 			throw new Error("usageReadTimeoutMs must be between 1 and 60000");
 		this.#ompVersion = options.ompVersion ?? "local";
 		this.#ompBuild = options.ompBuild ?? "local";
+		this.#baseOperationCapabilities = new OfficialOmpCapabilityAdapter(this.#ompVersion).operations();
 		this.#appserverVersion = options.appserverVersion ?? "0.1.0";
 		this.#appserverBuild = options.appserverBuild ?? "local";
 		this.#supportedFeatures = new Set(appserverSupportedFeatures(options));
@@ -3517,6 +3518,8 @@ export class LocalAppserver implements AppserverHandle {
 				},
 			},
 			this.#factory.argv(record.path),
+			undefined,
+			this.#ompVersion,
 		);
 		this.#supervisors.set(sessionId, supervisor);
 		try {

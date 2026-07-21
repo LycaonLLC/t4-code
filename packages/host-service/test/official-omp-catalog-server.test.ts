@@ -110,6 +110,7 @@ test("catalog.get merges normalized official OMP operation capabilities", async 
   const appserver = createAppserver({
     hostId: host,
     socketPath,
+    ompVersion: "17.0.6",
     discovery: { list: async () => [] },
     operationsAuthority: {
       catalogGet: async () => ({
@@ -209,6 +210,7 @@ test("attached catalog refresh and terminal-only rejection stay on the runtime b
   const appserver = createAppserver({
     hostId: host,
     socketPath,
+    ompVersion: "17.0.6",
     discovery: { list: async () => [session] },
     childFactory: factory,
     lockCheck: () => {},

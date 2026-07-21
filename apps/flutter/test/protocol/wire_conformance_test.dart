@@ -207,7 +207,7 @@ void main() {
 
       expect(result.revision, 'capabilities-v1');
       expect(
-        result.operations.map((operation) => operation.operationId),
+        result.operations!.map((operation) => operation.operationId),
         <String>[
           'session.prompt',
           'slash.compact',
@@ -216,7 +216,7 @@ void main() {
         ],
       );
       expect(
-        result.operations.map((operation) => operation.execution),
+        result.operations!.map((operation) => operation.execution),
         <OperationExecution>[
           OperationExecution.typed,
           OperationExecution.headless,
@@ -225,13 +225,13 @@ void main() {
         ],
       );
       expect(
-        result.operations
+        result.operations!
             .skip(2)
             .map((operation) => operation.disabledReason!.code),
         <String>['terminal_only', 'capability_unavailable'],
       );
       expect(
-        () => result.operations.add(result.operations.first),
+        () => result.operations!.add(result.operations!.first),
         throwsUnsupportedError,
       );
 
@@ -244,6 +244,31 @@ void main() {
         'capability_unavailable',
       ]);
     });
+
+    test(
+      'catalog decoding preserves missing versus authoritative empty operations',
+      () {
+        Map<String, Object?> catalog([List<Object?>? operations]) {
+          final frame = <String, Object?>{
+            'v': 'omp-app/1',
+            'type': 'catalog',
+            'hostId': 'host-alpha',
+            'revision': operations == null ? 'legacy' : 'authoritative-empty',
+            'items': <Object?>[],
+          };
+          if (operations != null) frame['operations'] = operations;
+          return frame;
+        }
+
+        final legacy =
+            WireDecoder.decode(jsonEncode(catalog())) as CatalogFrame;
+        final authoritative =
+            WireDecoder.decode(jsonEncode(catalog(<Object?>[])))
+                as CatalogFrame;
+        expect(legacy.operations, isNull);
+        expect(authoritative.operations, isEmpty);
+      },
+    );
 
     test(
       'every non-corpus ServerFrame branch rejects a missing requirement',

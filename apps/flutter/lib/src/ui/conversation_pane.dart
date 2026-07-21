@@ -930,6 +930,7 @@ final class _PromptComposerState extends State<_PromptComposer> {
   bool get _ready =>
       widget.state.connectionPhase == ConnectionPhase.ready &&
       widget.state.selectedSession != null &&
+      widget.state.grantedCapabilities.contains('sessions.prompt') &&
       !_sending;
 
   bool get _canSubmit =>
