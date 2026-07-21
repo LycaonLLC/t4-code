@@ -281,6 +281,16 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   );
   assert.match(legacyInstaller, /apt-get install[^\n]*\blld\b/u);
   assert.match(legacyInstaller, /command -v ld\.lld >\/dev\/null/u);
+  assert.equal(
+    steps["legacy-authority-build"].backend_options.kubernetes.resources.limits.memory,
+    "6Gi",
+  );
+  assert.equal(
+    steps["legacy-authority-build"].backend_options.kubernetes.resources.limits[
+      "ephemeral-storage"
+    ],
+    "12Gi",
+  );
   assert.deepEqual(steps["legacy-authority-build"].commands, [
     "sh scripts/cluster-ci/install-legacy-authority-toolchain.sh",
     "(cd .continuity/omp && bun install --frozen-lockfile)",
