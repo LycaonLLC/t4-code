@@ -76,24 +76,15 @@ jobs:
         with:
           node-version: 24.13.1
 
-      - name: Install generation dependencies from the recovered lockfile
+      - name: Install dependencies from the committed lockfile
         run: pnpm install --frozen-lockfile
 
-      - name: Generate and validate the T4 API contract artifact
+      - name: Validate OpenAPI and deterministic generation
         run: |
-          pnpm --filter @t4-code/t4-api-contract generate:ci
           pnpm --filter @t4-code/t4-api-contract validate
-
-      - name: Upload deterministic T4 API generation inputs
-        if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: t4-api-generation-${{ github.run_id }}
-          path: |
-            pnpm-lock.yaml
-            artifacts/t4-api/generated/schema.ts
-          if-no-files-found: error
-          retention-days: 14
+          pnpm --filter @t4-code/t4-api-contract check:generated
+          pnpm --filter @t4-code/t4-api-client typecheck
+          pnpm --filter @t4-code/client exec vp test run test/t4-api-v1-conformance.test.ts
 
   core:
     runs-on: ubuntu-24.04

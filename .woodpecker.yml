@@ -12,31 +12,7 @@ clone:
       partial: false
 
 steps:
-  t4-api-artifact-bootstrap:
-    image: mirror.gcr.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7
-    commands:
-      - corepack enable
-      - pnpm install --frozen-lockfile
-      - pnpm --filter @t4-code/t4-api-contract generate:ci
-      - pnpm --filter @t4-code/t4-api-contract validate
-    when:
-      - event: push
-        branch: agent/t4-op03-public-api-contract
-    backend_options:
-      kubernetes:
-        serviceAccountName: woodpecker-ci-untrusted
-        resources:
-          requests:
-            cpu: "0"
-            memory: 512Mi
-            ephemeral-storage: 1Gi
-          limits:
-            cpu: "1"
-            memory: 2Gi
-            ephemeral-storage: 4Gi
-
   dependencies:
-    depends_on: [t4-api-artifact-bootstrap]
     image: mirror.gcr.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7
     commands:
       - corepack enable
@@ -61,7 +37,7 @@ steps:
     commands:
       - corepack enable
       - pnpm --filter @t4-code/t4-api-contract validate
-      - pnpm --filter @t4-code/t4-api-contract generate:ci
+      - pnpm --filter @t4-code/t4-api-contract check:generated
       - pnpm --filter @t4-code/t4-api-client typecheck
       - pnpm --filter @t4-code/client exec vp test run test/t4-api-v1-conformance.test.ts
     backend_options:
