@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { BrowserSnapshot } from "@t4-code/protocol/browser-ipc";
+import type { SurfaceId } from "@t4-code/protocol/browser-ipc";
 
 import {
   admitContextItem,
@@ -15,6 +15,9 @@ import {
 } from "../src/features/context-packet/context-packet.ts";
 import { createComposerStore } from "../src/features/composer/composer-store.ts";
 import { createSubmissionGate } from "../src/features/composer/submission.ts";
+
+const FIRST_SURFACE_ID = "12345678-1234-4abc-8def-1234567890ab" as SurfaceId;
+const SECOND_SURFACE_ID = "87654321-4321-4cba-9fed-ba0987654321" as SurfaceId;
 
 function capture(path: string, text: string, id = path) {
   const item = captureFileContext(
@@ -117,24 +120,30 @@ describe("context packets", () => {
     );
     const browser = captureBrowserSnapshotContext(
       "session-a",
+      FIRST_SURFACE_ID,
       {
-        surfaceId: "surface-1",
-        handle: "handle-1",
         url: "https://user:password@example.com/docs?token=hidden#private",
         title: "API token=super-secret",
-        readyState: "complete",
-        viewport: { x: 0, y: 0, width: 800, height: 600 },
-        capturedAt: 1,
         elements: [
           {
-            ref: "element-1",
             role: "heading",
             name: "Architecture",
             text: "One workspace",
+            visible: true,
+          },
+          {
+            role: "textbox",
+            name: "Password",
             value: "never-capture-form-values",
+            visible: true,
+          },
+          {
+            role: "generic",
+            name: "hidden secret instructions",
+            visible: false,
           },
         ],
-      } as unknown as BrowserSnapshot,
+      },
       { id: "browser", capturedAt: "2026-07-20T12:00:00.000Z" },
     );
     expect(transcript?.source).toEqual({
@@ -151,11 +160,14 @@ describe("context packets", () => {
     });
     expect(browser?.source).toEqual({
       kind: "browser",
+      surfaceId: FIRST_SURFACE_ID,
       title: "API token= [secret redacted]",
       url: "https://example.com/docs",
     });
     expect(browser?.body).toContain("heading: Architecture — One workspace");
     expect(browser?.body).not.toContain("never-capture-form-values");
+    expect(browser?.body).not.toContain("hidden secret instructions");
+    expect(browser?.redacted).toBe(true);
 
     const items = [transcript, review, terminal, browser].filter(
       (item): item is NonNullable<typeof item> => item !== null,
@@ -164,6 +176,35 @@ describe("context packets", () => {
     expect(renderContextPacket(items)).toContain("[REVIEW DIFF 2]");
     expect(renderContextPacket(items)).toContain("[TERMINAL 3]");
     expect(renderContextPacket(items)).toContain("[WEB PAGE 4]");
+  });
+
+  it("refreshes one browser tab without conflating another tab at the same URL", () => {
+    const snapshot = {
+      url: "https://example.com/dashboard",
+      title: "Dashboard",
+      elements: [{ role: "heading", name: "Account dashboard", visible: true }],
+    } as const;
+    const first = captureBrowserSnapshotContext("session-a", FIRST_SURFACE_ID, snapshot, {
+      id: "first-tab",
+    });
+    const refreshed = captureBrowserSnapshotContext("session-a", FIRST_SURFACE_ID, snapshot, {
+      id: "refreshed-tab",
+    });
+    const second = captureBrowserSnapshotContext("session-a", SECOND_SURFACE_ID, snapshot, {
+      id: "second-tab",
+    });
+    if (first === null || refreshed === null || second === null) {
+      throw new Error("expected browser context");
+    }
+
+    expect(admitContextItem([first], refreshed)).toEqual({
+      accepted: true,
+      items: [refreshed],
+    });
+    expect(admitContextItem([refreshed], second)).toEqual({
+      accepted: true,
+      items: [refreshed, second],
+    });
   });
 
   it("keeps the same path as separate file and review sources", () => {

@@ -20,7 +20,6 @@ import {
 import type {
   BrowserMethod,
   BrowserProfile,
-  BrowserSnapshot,
   BrowserSurfaceState,
   SurfaceId,
 } from "@t4-code/protocol/browser-ipc";
@@ -63,7 +62,8 @@ import { selectSessionView } from "../../state/workspace-store.ts";
 import { useComposer } from "../composer/composer-store.ts";
 import {
   captureBrowserSnapshotContext,
-  sanitizeBrowserContextUrl,
+  type BrowserPageContextSnapshot,
+  type ContextPacketItem,
 } from "../context-packet/context-packet.ts";
 import {
   applyBrowserEvent,
@@ -95,6 +95,7 @@ const FIELD_CLASS =
   "min-h-11 min-w-0 rounded-md border border-input bg-popover px-3 text-base text-foreground outline-none transition-shadow duration-(--motion-duration-fast) placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 sm:min-h-8 sm:text-sm";
 
 const EMPTY_CONTEXT_ITEMS = [] as const;
+export const BROWSER_CONTEXT_CAPTURE_METHOD = "browser.snapshot" as const;
 
 interface PendingTrustAction {
   readonly option: BrowserProfileOption;
@@ -141,6 +142,53 @@ export function settleBrowserWorkspaceCall<T>(
       },
     )
     .catch(() => undefined);
+}
+
+function browserPageContextSnapshot(value: unknown): BrowserPageContextSnapshot | null {
+  if (typeof value !== "object" || value === null || !("snapshot" in value)) return null;
+  const snapshot = (value as { readonly snapshot?: unknown }).snapshot;
+  if (
+    typeof snapshot !== "object" ||
+    snapshot === null ||
+    !("url" in snapshot) ||
+    typeof snapshot.url !== "string" ||
+    !("title" in snapshot) ||
+    typeof snapshot.title !== "string" ||
+    !("elements" in snapshot) ||
+    !Array.isArray(snapshot.elements)
+  ) {
+    return null;
+  }
+  const elements = snapshot.elements.filter(
+    (element): element is BrowserPageContextSnapshot["elements"][number] =>
+      typeof element === "object" &&
+      element !== null &&
+      "role" in element &&
+      typeof element.role === "string" &&
+      "name" in element &&
+      typeof element.name === "string" &&
+      (!("text" in element) || element.text === undefined || typeof element.text === "string") &&
+      (!("visible" in element) ||
+        element.visible === undefined ||
+        typeof element.visible === "boolean"),
+  );
+  return {
+    url: snapshot.url,
+    title: snapshot.title,
+    elements,
+    ...("truncated" in snapshot && snapshot.truncated === true ? { truncated: true } : {}),
+  };
+}
+
+export function captureBrowserPageResult(
+  sessionId: string,
+  surfaceId: SurfaceId,
+  result: unknown,
+): ContextPacketItem | null {
+  const snapshot = browserPageContextSnapshot(result);
+  return snapshot === null
+    ? null
+    : captureBrowserSnapshotContext(sessionId, surfaceId, snapshot);
 }
 
 
@@ -662,21 +710,12 @@ export function BrowserWorkspace({
   };
 
   const capturePageContext = async () => {
-    const result = await runAutomation("Capturing page context", "surface.snapshot", {
-      includeText: true,
-    });
+    if (activeSurface === null) return;
+    const result = await runAutomation("Capturing page context", BROWSER_CONTEXT_CAPTURE_METHOD, {});
     if (result === null) return;
-    const snapshot =
-      typeof result === "object" && result !== null && "snapshot" in result
-        ? ((result as { readonly snapshot?: BrowserSnapshot }).snapshot ?? null)
-        : null;
-    if (snapshot === null) {
-      setActionError("The browser did not return readable page context.");
-      return;
-    }
-    const item = captureBrowserSnapshotContext(session.id, snapshot);
+    const item = captureBrowserPageResult(session.id, activeSurface.surfaceId, result);
     if (item === null) {
-      setActionError("This page does not expose readable text to add to the working set.");
+      setActionError("The browser did not return readable page context.");
       return;
     }
     actionRegistry.execute({ id: "context.capture", args: { sessionId: session.id, item } });
@@ -713,12 +752,11 @@ export function BrowserWorkspace({
     [activeSurface?.surfaceId, model.runtimeErrors],
   );
   const currentZoom = activeSurface === null ? 1 : (zoomBySurface[activeSurface.surfaceId] ?? 1);
-  const activeContextUrl =
-    activeSurface === null ? null : sanitizeBrowserContextUrl(activeSurface.url);
   const contextAlreadyAdded =
-    activeContextUrl !== null &&
+    activeSurface !== null &&
     stagedContext.some(
-      (item) => item.source.kind === "browser" && item.source.url === activeContextUrl,
+      (item) =>
+        item.source.kind === "browser" && item.source.surfaceId === activeSurface.surfaceId,
     );
 
   if (port === null) return <BrowserUnsupported project={project} session={session} />;

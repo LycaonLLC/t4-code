@@ -33,7 +33,8 @@ active, non-archived session, then hands the item to the existing composer store
 the same registry. A source refresh replaces the older item with the same source identity instead of
 silently adding a duplicate. Each deliberate terminal selection has its own identity, so two
 selections from one shell can coexist. A file and a review diff remain separate sources even when
-they name the same path.
+they name the same path. Browser refresh identity uses the durable surface ID, so two tabs or
+profiles at the same sanitized URL remain separate.
 
 The working set stays a compact composer tray, not another permanent pane. Each item shows its source,
 flags when text was shortened or redacted, and lets the user inspect the exact captured body.
@@ -50,8 +51,9 @@ flags when text was shortened or redacted, and lets the user inspect the exact c
 
 All sources pass through the existing control-character cleanup, common-secret redaction, 8 KiB item
 limit, 8-item limit, 24 KiB packet limit, and 65,536-byte compiled-prompt limit. Browser capture uses
-the already owner-scoped `surface.snapshot` operation and asks for text explicitly; it adds no new
-desktop protocol or browser authority.
+the already owner-scoped `browser.snapshot` accessibility operation. The producer excludes hidden
+DOM, and the renderer excludes form controls and values before redaction. This adds no new desktop
+protocol or browser authority.
 
 ## Prompt and storage behavior
 

@@ -1,4 +1,4 @@
-import type { BrowserSnapshot } from "@t4-code/protocol/browser-ipc";
+import type { SurfaceId } from "@t4-code/protocol/browser-ipc";
 
 import type { FilePreview } from "../panes/model.ts";
 
@@ -8,6 +8,18 @@ export const MAX_CONTEXT_PACKET_BYTES = 24 * 1024;
 export const MAX_COMPILED_PROMPT_BYTES = 65_536;
 
 const encoder = new TextEncoder();
+const FORM_CONTROL_ROLES = new Set([
+  "checkbox",
+  "combobox",
+  "listbox",
+  "option",
+  "radio",
+  "searchbox",
+  "slider",
+  "spinbutton",
+  "switch",
+  "textbox",
+]);
 
 export interface FileContextSource {
   readonly kind: "file";
@@ -34,9 +46,25 @@ export interface TerminalContextSource {
 
 export interface BrowserContextSource {
   readonly kind: "browser";
+  /** Stable per-tab identity. Never rendered into the compiled prompt. */
+  readonly surfaceId: SurfaceId;
   readonly title: string;
   /** Query and hash are removed before the URL enters renderer-owned context. */
   readonly url: string;
+}
+
+export interface BrowserPageContextSnapshot {
+  readonly url: string;
+  readonly title: string;
+  readonly elements: readonly {
+    readonly role: string;
+    readonly name: string;
+    readonly text?: string;
+    /** Deliberately ignored by working-set capture so form values never enter prompts. */
+    readonly value?: unknown;
+    readonly visible?: boolean;
+  }[];
+  readonly truncated?: boolean;
 }
 
 export type ContextItemSource =
@@ -74,6 +102,11 @@ export interface CaptureFileContextOptions {
 export interface CaptureTextContextOptions extends CaptureFileContextOptions {
   readonly label: string;
   readonly truncated?: boolean;
+}
+
+interface Sanitized<T> {
+  readonly value: T;
+  readonly redacted: boolean;
 }
 
 function hasUnsafeControl(value: string): boolean {
@@ -161,19 +194,28 @@ function safeOpaqueIdentity(value: string, maxLength = 2_048): boolean {
   return value.length > 0 && value.length <= maxLength && !hasUnsafeControl(value);
 }
 
-export function sanitizeBrowserContextUrl(value: string): string | null {
+function sanitizeBrowserContextUrlWithStatus(value: string): Sanitized<string> | null {
   try {
     const parsed = new URL(value);
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
+    const redacted =
+      parsed.username.length > 0 ||
+      parsed.password.length > 0 ||
+      parsed.search.length > 0 ||
+      parsed.hash.length > 0;
     parsed.username = "";
     parsed.password = "";
     parsed.search = "";
     parsed.hash = "";
     const safe = parsed.toString();
-    return safe.length <= 2_048 && !hasUnsafeControl(safe) ? safe : null;
+    return safe.length <= 2_048 && !hasUnsafeControl(safe) ? { value: safe, redacted } : null;
   } catch {
     return null;
   }
+}
+
+export function sanitizeBrowserContextUrl(value: string): string | null {
+  return sanitizeBrowserContextUrlWithStatus(value)?.value ?? null;
 }
 
 export function isSafeWorkspacePath(path: string): boolean {
@@ -227,31 +269,39 @@ function redactSensitiveText(value: string): { readonly text: string; readonly r
   return { text, redacted: text !== original };
 }
 
-function sanitizeLabel(value: string): string | null {
-  const normalized = redactSensitiveText(value).text.trim();
+function sanitizeLabel(value: string): Sanitized<string> | null {
+  const sanitized = redactSensitiveText(value);
+  const normalized = sanitized.text.trim();
   if (normalized.length === 0) return null;
-  return truncateUtf8(normalized, 256).text;
+  return { value: truncateUtf8(normalized, 256).text, redacted: sanitized.redacted };
 }
 
-function validateSource(source: ContextItemSource): ContextItemSource | null {
+function validateSource(source: ContextItemSource): Sanitized<ContextItemSource> | null {
   switch (source.kind) {
     case "file":
     case "review":
-      return isSafeWorkspacePath(source.path) ? source : null;
+      return isSafeWorkspacePath(source.path) ? { value: source, redacted: false } : null;
     case "transcript":
-      return safeOpaqueIdentity(source.entryId) ? source : null;
+      return safeOpaqueIdentity(source.entryId) ? { value: source, redacted: false } : null;
     case "terminal": {
       const title = sanitizeLabel(source.title);
       return safeOpaqueIdentity(source.terminalId, 256) &&
         safeOpaqueIdentity(source.selectionId, 256) &&
         title !== null
-        ? { ...source, title }
+        ? { value: { ...source, title: title.value }, redacted: title.redacted }
         : null;
     }
     case "browser": {
       const title = sanitizeLabel(source.title);
-      const url = sanitizeBrowserContextUrl(source.url);
-      return title !== null && url !== null ? { ...source, title, url } : null;
+      const url = sanitizeBrowserContextUrlWithStatus(source.url);
+      return title !== null &&
+        url !== null &&
+        safeOpaqueIdentity(source.surfaceId, 256)
+        ? {
+            value: { ...source, title: title.value, url: url.value },
+            redacted: title.redacted || url.redacted,
+          }
+        : null;
     }
   }
 }
@@ -267,7 +317,7 @@ export function contextSourceKey(source: ContextItemSource): string {
     case "terminal":
       return `terminal:${source.terminalId}:${source.selectionId}`;
     case "browser":
-      return `browser:${source.url}`;
+      return `browser:${source.surfaceId}`;
   }
 }
 
@@ -300,13 +350,13 @@ export function captureTextContext(
   return {
     id: options.id ?? crypto.randomUUID(),
     sessionId,
-    source: safeSource,
-    label,
+    source: safeSource.value,
+    label: label.value,
     body: bounded.text,
     bodyBytes: utf8Bytes(bounded.text),
     capturedAt: options.capturedAt ?? new Date().toISOString(),
     truncated: options.truncated === true || bounded.truncated,
-    redacted: sanitized.redacted,
+    redacted: sanitized.redacted || safeSource.redacted || label.redacted,
   };
 }
 
@@ -376,12 +426,16 @@ export function captureTerminalContext(
 
 export function captureBrowserSnapshotContext(
   sessionId: string,
-  snapshot: BrowserSnapshot,
+  surfaceId: SurfaceId,
+  snapshot: BrowserPageContextSnapshot,
   options: CaptureFileContextOptions = {},
 ): ContextPacketItem | null {
   const seen = new Set<string>();
   const lines: string[] = [];
   for (const element of snapshot.elements) {
+    if (element.visible === false || element.value !== undefined || FORM_CONTROL_ROLES.has(element.role)) {
+      continue;
+    }
     const parts = [...new Set([element.name, element.text].map((value) => value?.trim()))].filter(
       (value): value is string => typeof value === "string" && value.length > 0,
     );
@@ -396,11 +450,16 @@ export function captureBrowserSnapshotContext(
   const url = sanitizeBrowserContextUrl(snapshot.url);
   if (url === null) return null;
   const title = snapshot.title.trim() || new URL(url).hostname;
-  return captureTextContext(sessionId, { kind: "browser", title, url }, lines.join("\n"), {
-    ...options,
-    label: title,
-    truncated: snapshot.truncated === true,
-  });
+  return captureTextContext(
+    sessionId,
+    { kind: "browser", surfaceId, title, url: snapshot.url },
+    lines.join("\n"),
+    {
+      ...options,
+      label: title,
+      truncated: snapshot.truncated === true,
+    },
+  );
 }
 
 function packetMetadata(source: ContextItemSource, index: number): readonly string[] {
