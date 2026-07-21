@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   T4ApiError,
@@ -60,6 +60,17 @@ function requireData<T>(result: { data?: T; error?: unknown }): T {
   return result.data!;
 }
 
+async function seededClient(service: T4ApiV1ConformanceService, key: string) {
+  const client = createT4ApiClient({ baseUrl: service.origin, credential: "token-a", majorVersion: 1, fetch: service.fetch });
+  requireData(await client.http.POST("/v1/workspaces", {
+    body: { name: "workspace" }, params: { header: idempotencyHeaders(`workspace-${key}-0001`) },
+  }));
+  requireData(await client.http.POST("/v1/workspaces/{workspaceId}/sessions", {
+    body: { title: "agent" }, params: { header: idempotencyHeaders(`session-${key}-00001`), path: { workspaceId: "ws-1" } },
+  }));
+  return client;
+}
+
 describe("generated T4 API v1 client conformance", () => {
   it("negotiates discovery, capabilities, bounds, and rejects an incompatible major", async () => {
     const service = new T4ApiV1ConformanceService();
@@ -81,7 +92,7 @@ describe("generated T4 API v1 client conformance", () => {
     const denied = createT4ApiClient({ baseUrl: service.origin, credential: "token-denied", majorVersion: 1, fetch: service.fetch });
     const forbidden = await denied.http.GET("/v1", { params: { header: VERSION_HEADERS } });
     expect(forbidden.response.status).toBe(403);
-    expect(forbidden.error).toEqual(typedErrors.forbidden);
+    expect(forbidden.error).toMatchObject({ error: { code: "forbidden" } });
     expect(discovery.limits).toMatchObject({ commandBytesMax: 32, commandRequestBytesMax: 256, commandMetadataValueBytesMax: 32 });
   });
 
@@ -131,12 +142,12 @@ describe("generated T4 API v1 client conformance", () => {
       }));
     }
     const pageOne = requireData(await owner.http.GET("/v1/workspaces", {
-      params: { header: VERSION_HEADERS, query: { pageSize: 2 } },
+      params: { header: VERSION_HEADERS, query: { pageSize: 3 } },
     }));
-    expect(pageOne.items).toHaveLength(2);
-    expect(pageOne.nextCursor).toBe("page-2");
+    expect(pageOne.items).toHaveLength(3);
+    expect(pageOne.nextCursor).toBe("page-3");
     const pageTwo = requireData(await owner.http.GET("/v1/workspaces", {
-      params: { header: VERSION_HEADERS, query: { pageSize: 2, cursor: pageOne.nextCursor! } },
+      params: { header: VERSION_HEADERS, query: { pageSize: 3, cursor: pageOne.nextCursor! } },
     }));
     expect(pageTwo.items).toHaveLength(2);
     expect(pageTwo.nextCursor).toBeUndefined();
@@ -290,7 +301,7 @@ describe("generated T4 API v1 client conformance", () => {
     expect(snapshot).toMatchObject({ sessionId: "ses-1", cursor: "cursor-2", entries: [{ sequence: 2 }] });
 
     const received: Array<components["schemas"]["WatchEvent"]> = [];
-    for await (const event of client.watchSession("ses-1", { cursor: snapshot.cursor, maxEvents: 3, maxReconnectAttempts: 2, retryBackoffMs: 0 })) {
+    for await (const event of client.watchSession("ses-1", { cursor: snapshot.cursor, maxEvents: 3, heartbeatSeconds: 20, maxReconnectAttempts: 2, retryBackoffMs: 0 })) {
       received.push(event);
     }
     expect(received).toEqual([
@@ -301,6 +312,10 @@ describe("generated T4 API v1 client conformance", () => {
     expect(received.map(exhaustWatchEvent)).toEqual(["2026-07-21T00:00:00Z", "accepted:2", "2026-07-21T00:00:15Z"]);
     expect(service.watchCursors[0]).toEqual({ query: "cursor-2", header: "cursor-2" });
     expect(service.watchCursors[1]).toEqual({ query: "cursor-4", header: "cursor-4" });
+    expect(service.watchQueries.slice(0, 2)).toEqual([
+      { maxEvents: "3", heartbeatSeconds: "20" },
+      { maxEvents: "1", heartbeatSeconds: "20" },
+    ]);
 
     await expect(async () => {
       for await (const _event of client.watchSession("ses-1", { cursor: "expired", maxEvents: 1 })) {
@@ -321,7 +336,7 @@ describe("generated T4 API v1 client conformance", () => {
     expect(created.status).toBe(202);
     const missingSpawn = await service.fetch(`${service.origin}/v1/workspaces/ws-1/sessions`, { method: "POST", headers: baseHeaders, body: '{"title":"agent"}' });
     expect(missingSpawn.status).toBe(400);
-    expect(await missingSpawn.json()).toMatchObject(typedErrors.badSpawn);
+    expect(await missingSpawn.json()).toMatchObject({ error: { code: "idempotency_key_required" } });
     const invalidSpawn = await service.fetch(`${service.origin}/v1/workspaces/ws-1/sessions`, { method: "POST", headers: { ...baseHeaders, "Idempotency-Key": "short" }, body: '{"title":"agent"}' });
     expect(invalidSpawn.status).toBe(400);
     const spawned = await service.fetch(`${service.origin}/v1/workspaces/ws-1/sessions`, { method: "POST", headers: { ...baseHeaders, "Idempotency-Key": "session-raw-00001" }, body: '{"title":"agent"}' });
@@ -338,6 +353,16 @@ describe("generated T4 API v1 client conformance", () => {
       expect(response.status).toBe(400);
       expect(await response.json()).toMatchObject({ error: { code: "idempotency_key_required" } });
     }
+    for (const [method, path, headers] of [
+      ["POST", "/v1/workspaces", { ...baseHeaders, "Idempotency-Key": "malformed-workspace-01" }],
+      ["PATCH", "/v1/workspaces/ws-1", { ...baseHeaders, "If-Match": "1", "Idempotency-Key": "malformed-workspace-02" }],
+      ["POST", "/v1/workspaces/ws-1/sessions", { ...baseHeaders, "Idempotency-Key": "malformed-session-0001" }],
+      ["PATCH", "/v1/sessions/ses-1", { ...baseHeaders, "If-Match": "1", "Idempotency-Key": "malformed-session-0002" }],
+    ] as const) {
+      const response = await service.fetch(`${service.origin}${path}`, { method, headers, body: "{" });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: { code: "invalid_request" } });
+    }
     for (const query of ["maxEvents=0", "maxEvents=5", "heartbeatSeconds=4", "heartbeatSeconds=61"]) {
       const response = await service.fetch(`${service.origin}/v1/sessions/ses-1/events?${query}`, { headers: baseHeaders });
       expect(response.status).toBe(422);
@@ -345,27 +370,21 @@ describe("generated T4 API v1 client conformance", () => {
     }
   });
 
-  it("parses per-frame byte bounds across arbitrary chunks and split UTF-8", async () => {
-    const sse = (chunks: Uint8Array[]): typeof globalThis.fetch => async () => new Response(new ReadableStream<Uint8Array>({
-      start(controller) { for (const chunk of chunks) controller.enqueue(chunk); controller.close(); },
-    }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
-    const encoder = new TextEncoder();
-    const valid = `: 💚\nid: c1\ndata: {"type":"heartbeat","cursor":"c1","observedAt":"2026-07-21T00:00:00Z"}\n\n`;
-    const bytes = encoder.encode(valid);
-    const split = [...bytes].map((byte) => Uint8Array.of(byte));
-    const splitClient = createT4ApiClient({ baseUrl: "https://split.test", credential: "token-a", majorVersion: 1, fetch: sse(split) });
-    const iterator = splitClient.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 });
-    expect((await iterator.next()).value).toMatchObject({ type: "heartbeat", cursor: "c1" });
+  it("parses service frames incrementally across split UTF-8 and per-frame bounds", async () => {
+    const bytewiseService = new T4ApiV1ConformanceService({ watchTransport: "bytewise" });
+    const bytewiseClient = await seededClient(bytewiseService, "bytewise");
+    const event = await bytewiseClient.watchSession("ses-1", { maxEvents: 1, heartbeatSeconds: 20, maxReconnectAttempts: 0 }).next();
+    expect(event.value).toMatchObject({ type: "heartbeat", cursor: "cursor-3" });
+    expect(bytewiseService.watchQueries[0]).toEqual({ maxEvents: "1", heartbeatSeconds: "20" });
 
-    const small = `data: {"type":"heartbeat","cursor":"c1","observedAt":"2026-07-21T00:00:00Z"}\n${`: ${"x".repeat(1010)}\n`}\n`;
-    const manyClient = createT4ApiClient({ baseUrl: "https://many.test", credential: "token-a", majorVersion: 1, fetch: sse([encoder.encode(small.repeat(1000))]) });
+    const manyService = new T4ApiV1ConformanceService({ watchTransport: "many-small" });
+    const manyClient = await seededClient(manyService, "many-small");
     let count = 0;
     for await (const _event of manyClient.watchSession("ses-1", { maxEvents: 1000, maxReconnectAttempts: 0 })) count += 1;
     expect(count).toBe(1000);
 
-    const oversized = encoder.encode(`: ${"x".repeat(1024 * 1024)}\ndata: {"type":"heartbeat","cursor":"c1","observedAt":"2026-07-21T00:00:00Z"}\n\n`);
-    const oversizedChunks = Array.from({ length: Math.ceil(oversized.byteLength / 1024) }, (_, index) => oversized.slice(index * 1024, (index + 1) * 1024));
-    const oversizedClient = createT4ApiClient({ baseUrl: "https://large.test", credential: "token-a", majorVersion: 1, fetch: sse(oversizedChunks) });
+    const oversizedService = new T4ApiV1ConformanceService({ watchTransport: "oversized" });
+    const oversizedClient = await seededClient(oversizedService, "oversized");
     await expect(oversizedClient.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ code: "indeterminate", status: 502 });
   });
 
@@ -378,6 +397,38 @@ describe("generated T4 API v1 client conformance", () => {
       const client = createT4ApiClient({ baseUrl: "https://errors.test", credential: "token-a", majorVersion: 1, fetch });
       await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ code: "indeterminate", status });
     }
+    for (const [status, code] of [[401, "not_found"], [403, "unauthenticated"], [404, "forbidden"], [409, "unavailable"], [503, "revision_conflict"]] as const) {
+      const fetch: typeof globalThis.fetch = async () => Response.json({ error: { code, message: "wrong status class", requestId: "r", retryable: false } }, { status });
+      const client = createT4ApiClient({ baseUrl: "https://status-errors.test", credential: "token-a", majorVersion: 1, fetch });
+      await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({ code: "indeterminate", status });
+    }
+  });
+
+  it("rejects unknown fields in every public JSON response family", async () => {
+    const discoveryService = new T4ApiV1ConformanceService({ invalidPayload: "discovery" });
+    const discoveryClient = createT4ApiClient({ baseUrl: discoveryService.origin, credential: "token-a", majorVersion: 1, fetch: discoveryService.fetch });
+    await expect(discoveryClient.http.GET("/v1", { params: { header: VERSION_HEADERS } })).rejects.toMatchObject({ code: "indeterminate", status: 502 });
+
+    const workspaceService = new T4ApiV1ConformanceService({ invalidPayload: "workspace" });
+    const workspaceClient = createT4ApiClient({ baseUrl: workspaceService.origin, credential: "token-a", majorVersion: 1, fetch: workspaceService.fetch });
+    await expect(workspaceClient.http.POST("/v1/workspaces", {
+      body: { name: "workspace" }, params: { header: idempotencyHeaders("invalid-workspace-0001") },
+    })).rejects.toMatchObject({ code: "indeterminate", status: 502 });
+
+    const sessionService = new T4ApiV1ConformanceService({ invalidPayload: "session" });
+    const sessionClient = createT4ApiClient({ baseUrl: sessionService.origin, credential: "token-a", majorVersion: 1, fetch: sessionService.fetch });
+    requireData(await sessionClient.http.POST("/v1/workspaces", {
+      body: { name: "workspace" }, params: { header: idempotencyHeaders("invalid-session-work-01") },
+    }));
+    await expect(sessionClient.http.POST("/v1/workspaces/{workspaceId}/sessions", {
+      body: { title: "agent" }, params: { header: idempotencyHeaders("invalid-session-00001"), path: { workspaceId: "ws-1" } },
+    })).rejects.toMatchObject({ code: "indeterminate", status: 502 });
+
+    const commandService = new T4ApiV1ConformanceService({ invalidPayload: "command" });
+    const commandClient = await seededClient(commandService, "invalid-command");
+    await expect(commandClient.http.POST("/v1/sessions/{sessionId}/commands", {
+      body: { command: "ok", metadata: {} }, params: { header: idempotencyHeaders("invalid-command-0001"), path: { sessionId: "ses-1" } },
+    })).rejects.toMatchObject({ code: "indeterminate", status: 502 });
   });
 
   it("bounds automatic EOF retry and supports explicit abort", async () => {
@@ -396,10 +447,14 @@ describe("generated T4 API v1 client conformance", () => {
       reconnectHeaders.push(new Headers(init?.headers).get("Last-Event-ID"));
       networkAttempt += 1;
       if (networkAttempt === 1) {
+        let sent = false;
         return new Response(new ReadableStream<Uint8Array>({
-          start(stream) {
-            stream.enqueue(new TextEncoder().encode('data: {"type":"heartbeat","cursor":"network-1","observedAt":"2026-07-21T00:00:00Z"}\n\n'));
-            stream.error(new TypeError("transient network loss"));
+          pull(stream) {
+            if (sent) stream.error(new TypeError("transient network loss"));
+            else {
+              sent = true;
+              stream.enqueue(new TextEncoder().encode('data: {"type":"heartbeat","cursor":"network-1","observedAt":"2026-07-21T00:00:00Z"}\n\n'));
+            }
           },
         }), { headers: { "Content-Type": "text/event-stream" } });
       }
@@ -410,6 +465,47 @@ describe("generated T4 API v1 client conformance", () => {
     for await (const event of networkClient.watchSession("ses-1", { maxEvents: 2, maxReconnectAttempts: 1, retryBackoffMs: 0 })) networkEvents.push(event);
     expect(networkEvents.map((event) => event.cursor)).toEqual(["network-1", "network-2"]);
     expect(reconnectHeaders).toEqual([null, "network-1"]);
+
+    let retryableAttempts = 0;
+    const retryableFetch: typeof globalThis.fetch = async () => {
+      retryableAttempts += 1;
+      if (retryableAttempts === 1) return Response.json({ error: { code: "unavailable", message: "retry", requestId: "r", retryable: true } }, { status: 503, headers: { "Retry-After": "0" } });
+      return new Response('data: {"type":"heartbeat","cursor":"retry-1","observedAt":"2026-07-21T00:00:00Z"}\n\n', { headers: { "Content-Type": "text/event-stream" } });
+    };
+    const retryableClient = createT4ApiClient({ baseUrl: "https://retryable.test", credential: "token-a", majorVersion: 1, fetch: retryableFetch });
+    expect((await retryableClient.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 1, retryBackoffMs: 0 }).next()).value).toMatchObject({ cursor: "retry-1" });
+    expect(retryableAttempts).toBe(2);
+
+    let progressAttempts = 0;
+    const progressFetch: typeof globalThis.fetch = async () => {
+      progressAttempts += 1;
+      if (progressAttempts === 1 || progressAttempts === 3) return new Response(null, { headers: { "Content-Type": "text/event-stream" } });
+      const cursor = progressAttempts === 2 ? "progress-1" : "progress-2";
+      return new Response(`data: {"type":"heartbeat","cursor":"${cursor}","observedAt":"2026-07-21T00:00:00Z"}\n\n`, { headers: { "Content-Type": "text/event-stream" } });
+    };
+    const progressClient = createT4ApiClient({ baseUrl: "https://progress.test", credential: "token-a", majorVersion: 1, fetch: progressFetch });
+    const progressEvents: WatchEvent[] = [];
+    for await (const item of progressClient.watchSession("ses-1", { maxEvents: 2, maxReconnectAttempts: 1, retryBackoffMs: 0 })) progressEvents.push(item);
+    expect(progressEvents.map((item) => item.cursor)).toEqual(["progress-1", "progress-2"]);
+
+    vi.useFakeTimers();
+    try {
+      const retryAfterController = new AbortController();
+      let retryAfterAttempts = 0;
+      const retryAfterFetch: typeof globalThis.fetch = async () => {
+        retryAfterAttempts += 1;
+        return Response.json({ error: { code: "unavailable", message: "later", requestId: "r", retryable: true } }, { status: 503, headers: { "Retry-After": "30" } });
+      };
+      const retryAfterClient = createT4ApiClient({ baseUrl: "https://retry-after.test", credential: "token-a", majorVersion: 1, fetch: retryAfterFetch });
+      const retryAfterPending = retryAfterClient.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 2, retryBackoffMs: 0, signal: retryAfterController.signal }).next();
+      const retryAfterAssertion = expect(retryAfterPending).resolves.toMatchObject({ done: true });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(retryAfterAttempts).toBe(1);
+      retryAfterController.abort();
+      await retryAfterAssertion;
+    } finally {
+      vi.useRealTimers();
+    }
 
     const controller = new AbortController();
     const abortFetch: typeof globalThis.fetch = async (_input, init) => new Response(new ReadableStream<Uint8Array>({

@@ -40,11 +40,17 @@ interface ReplayRecord {
   readonly replayStatus: number;
 }
 
+export interface T4ApiV1ConformanceOptions {
+  readonly invalidPayload?: "discovery" | "workspace" | "session" | "command";
+  readonly watchTransport?: "normal" | "bytewise" | "oversized" | "many-small";
+}
+
 export class T4ApiV1ConformanceService {
   readonly origin = "https://t4-api.conformance.test";
   readonly calls: Array<{ method: string; path: string; authorization: string | null }> = [];
   readonly abortedWatches: string[] = [];
   readonly watchCursors: Array<{ query: string | null; header: string | null }> = [];
+  readonly watchQueries: Array<{ maxEvents: string | null; heartbeatSeconds: string | null }> = [];
 
   #workspaceSequence = 0;
   #sessionSequence = 0;
@@ -52,6 +58,8 @@ export class T4ApiV1ConformanceService {
   readonly #workspaces = new Map<string, Record<string, unknown>>();
   readonly #sessions = new Map<string, Record<string, unknown>>();
   readonly #replays = new Map<string, ReplayRecord>();
+
+  constructor(readonly options: T4ApiV1ConformanceOptions = {}) {}
 
   readonly fetch: typeof globalThis.fetch = async (input, init) => {
     const request = new Request(input, init);
@@ -70,7 +78,7 @@ export class T4ApiV1ConformanceService {
     const tenant = authorization === "Bearer token-a" ? "tenant-a" : "tenant-b";
 
     if (request.method === "GET" && url.pathname === "/v1") {
-      return json(200, {
+      return json(200, this.#payload("discovery", {
         apiVersion: "1.0",
         supportedMajors: [1],
         capabilities: ["workspace.lifecycle", "session.lifecycle", "session.commands", "session.watch.sse"],
@@ -80,14 +88,16 @@ export class T4ApiV1ConformanceService {
           commandBytesMax: COMMAND_BYTES_MAX,
           commandRequestBytesMax: COMMAND_REQUEST_BYTES_MAX,
           commandMetadataValueBytesMax: METADATA_VALUE_BYTES_MAX,
-          watchEventsMax: 4,
+          watchEventsMax: this.options.watchTransport === "many-small" ? 1000 : 4,
           heartbeatSeconds: 15,
         },
-      });
+      }));
     }
 
     if (request.method === "POST" && url.pathname === "/v1/workspaces") {
-      const body = await request.json() as Record<string, unknown>;
+      const parsed = await this.#jsonBody(request);
+      if (parsed instanceof Response) return parsed;
+      const body = parsed;
       if (typeof body.name !== "string" || body.name.length < 1 || body.name.length > 128) return this.#invalid("name", "length", "name must contain 1 to 128 characters");
       return this.#idempotent(request, tenant, "createWorkspace", [], body, 202, 200, () => {
         const id = `ws-${++this.#workspaceSequence}`;
@@ -112,9 +122,11 @@ export class T4ApiV1ConformanceService {
       const id = decodeURIComponent(workspaceMatch[1]!);
       const workspace = this.#workspaces.get(id);
       if (workspace?.tenant !== tenant) return problem(404, "not_found", "Workspace not found");
-      if (request.method === "GET") return json(200, this.#visible(workspace));
+      if (request.method === "GET") return json(200, this.#payload("workspace", this.#visible(workspace)));
       if (request.method === "PATCH") {
-        const body = await request.json() as Record<string, unknown>;
+        const parsed = await this.#jsonBody(request);
+        if (parsed instanceof Response) return parsed;
+        const body = parsed;
         if (request.headers.get("If-Match") !== String(workspace.revision)) return problem(409, "revision_conflict", "Workspace revision changed");
         return this.#idempotent(request, tenant, "mutateWorkspace", [id], body, 200, 200, () => {
           const updated = { ...workspace, name: body.name ?? workspace.name, revision: Number(workspace.revision) + 1 };
@@ -136,7 +148,9 @@ export class T4ApiV1ConformanceService {
       const workspace = this.#workspaces.get(workspaceId);
       if (workspace?.tenant !== tenant) return problem(404, "not_found", "Workspace not found");
       if (request.method === "POST") {
-        const body = await request.json() as Record<string, unknown>;
+        const parsed = await this.#jsonBody(request);
+        if (parsed instanceof Response) return parsed;
+        const body = parsed;
         if (typeof body.title !== "string" || body.title.length < 1 || body.title.length > 128) return this.#invalid("title", "length", "title must contain 1 to 128 characters");
         return this.#idempotent(request, tenant, "spawnSession", [workspaceId], body, 202, 200, () => {
           const id = `ses-${++this.#sessionSequence}`;
@@ -161,9 +175,11 @@ export class T4ApiV1ConformanceService {
       const id = decodeURIComponent(sessionMatch[1]!);
       const session = this.#sessions.get(id);
       if (session?.tenant !== tenant) return problem(404, "not_found", "Session not found");
-      if (request.method === "GET") return json(200, this.#visible(session));
+      if (request.method === "GET") return json(200, this.#payload("session", this.#visible(session)));
       if (request.method === "PATCH") {
-        const body = await request.json() as Record<string, unknown>;
+        const parsed = await this.#jsonBody(request);
+        if (parsed instanceof Response) return parsed;
+        const body = parsed;
         if (request.headers.get("If-Match") !== String(session.revision)) return problem(409, "revision_conflict", "Session revision changed");
         return this.#idempotent(request, tenant, "mutateSession", [id], body, 200, 200, () => {
           const updated = { ...session, title: body.title ?? session.title, revision: Number(session.revision) + 1 };
@@ -221,7 +237,8 @@ export class T4ApiV1ConformanceService {
       if (session?.tenant !== tenant) return problem(404, "not_found", "Session not found");
       const maxEvents = Number(url.searchParams.get("maxEvents") ?? "100");
       const heartbeat = Number(url.searchParams.get("heartbeatSeconds") ?? "15");
-      if (!Number.isInteger(maxEvents) || maxEvents < 1 || maxEvents > 4) return this.#invalid("maxEvents", "range", "maxEvents exceeds the discovered bound");
+      this.watchQueries.push({ maxEvents: url.searchParams.get("maxEvents"), heartbeatSeconds: url.searchParams.get("heartbeatSeconds") });
+      if (!Number.isInteger(maxEvents) || maxEvents < 1 || maxEvents > (this.options.watchTransport === "many-small" ? 1000 : 4)) return this.#invalid("maxEvents", "range", "maxEvents exceeds the discovered bound");
       if (!Number.isInteger(heartbeat) || heartbeat < 5 || heartbeat > 60) return this.#invalid("heartbeatSeconds", "range", "heartbeatSeconds must be between 5 and 60");
       const queryCursor = url.searchParams.get("cursor");
       const headerCursor = request.headers.get("Last-Event-ID");
@@ -237,13 +254,24 @@ export class T4ApiV1ConformanceService {
               `id: cursor-3\r\nevent: heartbeat\r\ndata: {"type":"heartbeat","cursor":"cursor-3","observedAt":"2026-07-21T00:00:00Z"}\r\n\r\n`,
               `id: cursor-4\r\nevent: session\r\ndata: {"type":"session","cursor":"cursor-4","state":"accepted","revision":2}\r\n\r\n`,
             ];
-      const frames = allFrames.slice(0, maxEvents);
+      let payload: Uint8Array;
+      if (this.options.watchTransport === "oversized") {
+        payload = encoder.encode(`: ${"x".repeat(1024 * 1024)}\ndata: {"type":"heartbeat","cursor":"large-1","observedAt":"2026-07-21T00:00:00Z"}\n\n`);
+      } else if (this.options.watchTransport === "many-small") {
+        payload = encoder.encode(Array.from({ length: maxEvents }, (_, index) => `: ${"x".repeat(1010)}\ndata: {"type":"heartbeat","cursor":"bulk-${index}","observedAt":"2026-07-21T00:00:00Z"}\n\n`).join(""));
+      } else {
+        const prefix = this.options.watchTransport === "bytewise" ? ": 💚\n" : "";
+        payload = encoder.encode(prefix + frames.join(""));
+      }
       const stream = new ReadableStream<Uint8Array>({
         start: (controller) => {
-          const payload = encoder.encode(frames.join(""));
-          const split = Math.max(1, payload.byteLength - 3);
-          controller.enqueue(payload.slice(0, split));
-          controller.enqueue(payload.slice(split));
+          if (this.options.watchTransport === "bytewise") {
+            for (const byte of payload) controller.enqueue(Uint8Array.of(byte));
+          } else {
+            const split = Math.max(1, payload.byteLength - 3);
+            controller.enqueue(payload.slice(0, split));
+            controller.enqueue(payload.slice(split));
+          }
           controller.close();
           request.signal.addEventListener("abort", () => this.abortedWatches.push(id), { once: true });
         },
@@ -256,6 +284,20 @@ export class T4ApiV1ConformanceService {
 
   expectNoCredentialLeak(): void {
     expect(this.calls.every((call) => call.authorization === "Bearer token-a" || call.authorization === "Bearer token-b" || call.authorization === "Bearer token-denied")).toBe(true);
+  }
+
+  async #jsonBody(request: Request): Promise<Record<string, unknown> | Response> {
+    try {
+      const value: unknown = await request.json();
+      if (value === null || typeof value !== "object" || Array.isArray(value)) return problem(400, "invalid_request", "JSON request body must be an object");
+      return value as Record<string, unknown>;
+    } catch {
+      return problem(400, "invalid_request", "Malformed JSON request");
+    }
+  }
+
+  #payload(kind: T4ApiV1ConformanceOptions["invalidPayload"], value: Record<string, unknown>): Record<string, unknown> {
+    return this.options.invalidPayload === kind ? { ...value, unknown: true } : value;
   }
 
   #invalid(field: string, rule: string, message: string): Response {
@@ -302,9 +344,19 @@ export class T4ApiV1ConformanceService {
         : json(prior.replayStatus, prior.body, { "Idempotency-Replayed": "true" });
     }
     const created = create();
-    const visible = created !== null && typeof created === "object" && !Array.isArray(created)
+    const visibleValue = created !== null && typeof created === "object" && !Array.isArray(created)
       ? this.#visible(created as Record<string, unknown>)
       : created;
+    const responseKind = operationId === "submitCommand"
+      ? "command"
+      : operationId === "spawnSession" || operationId === "mutateSession" || operationId === "cancelSession"
+        ? "session"
+        : operationId === "createWorkspace" || operationId === "mutateWorkspace"
+          ? "workspace"
+          : undefined;
+    const visible = visibleValue !== null && typeof visibleValue === "object" && !Array.isArray(visibleValue) && responseKind !== undefined
+      ? this.#payload(responseKind, visibleValue as Record<string, unknown>)
+      : visibleValue;
     this.#replays.set(scope, { identity, body: visible, replayStatus });
     return visible === null
       ? new Response(null, { status: firstStatus, headers: { "T4-API-Version": "1.0", "Idempotency-Replayed": "false" } })
