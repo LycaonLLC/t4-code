@@ -22,29 +22,14 @@ final class _DeveloperSurfacesPane extends StatefulWidget {
 final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
     with SingleTickerProviderStateMixin {
   late final TabController _tabs;
-  late List<DeveloperActivity> _activitySnapshot;
-  final TextEditingController _launchUrlController = TextEditingController();
-  final TextEditingController _navigationUrlController =
-      TextEditingController();
-  final FocusNode _navigationUrlFocus = FocusNode();
-  final TextEditingController _fileEditorController = TextEditingController();
-
-  String? _activityCategory;
-  String? _busyAction;
-  String? _actionError;
-  String? _selectedFilePath;
-  String _directoryPath = '';
-  String? _editedFilePath;
-  bool _fileDirty = false;
-  bool _activityPaused = false;
-
-  bool get _connected => widget.state.connectionPhase == ConnectionPhase.ready;
-
-  bool _hasCapability(String capability) =>
-      widget.state.grantedCapabilities.contains(capability);
+  late final DeveloperPanelActionController _panelActions;
+  late final ActivityPanelController _activity;
+  late final FilesPanelController _files;
+  late final PreviewPanelController _preview;
 
   bool get _busy =>
-      _busyAction != null || widget.state.developerOperationPending;
+      _panelActions.busyAction != null ||
+      widget.state.developerOperationPending;
 
   @override
   void initState() {
@@ -54,16 +39,17 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
       initialIndex: _boundedDeveloperTab(widget.initialTab),
       vsync: this,
     );
-    _activitySnapshot = List<DeveloperActivity>.of(widget.state.activities);
-    final workspace = widget.state.fileWorkspace;
-    if (workspace.content != null && workspace.path.isNotEmpty) {
-      _selectedFilePath = workspace.path;
-      _directoryPath = _parentPath(workspace.path);
-    } else {
-      _directoryPath = workspace.path;
-    }
-    _syncPreviewAddress(force: true);
-    _syncFileEditor(force: true);
+    _panelActions = DeveloperPanelActionController()
+      ..addListener(_onPanelChanged);
+    _activity = ActivityPanelController(widget.state)
+      ..addListener(_onPanelChanged);
+    _files = FilesPanelController(widget.state)..addListener(_onPanelChanged);
+    _preview = PreviewPanelController(widget.state)
+      ..addListener(_onPanelChanged);
+  }
+
+  void _onPanelChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -73,216 +59,19 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
         _tabs.index != widget.initialTab) {
       _tabs.animateTo(_boundedDeveloperTab(widget.initialTab));
     }
-    if (!_activityPaused &&
-        !identical(oldWidget.state.activities, widget.state.activities)) {
-      _activitySnapshot = List<DeveloperActivity>.of(widget.state.activities);
-    }
-    final oldPreview = oldWidget.state.activePreview;
-    final preview = widget.state.activePreview;
-    if (oldPreview?.previewId != preview?.previewId ||
-        oldPreview?.url != preview?.url) {
-      _syncPreviewAddress();
-    }
-    final oldWorkspace = oldWidget.state.fileWorkspace;
-    final workspace = widget.state.fileWorkspace;
-    if (oldWorkspace.path != workspace.path ||
-        oldWorkspace.content != workspace.content) {
-      _syncFileEditor();
-    }
+    _activity.syncFromState(oldWidget.state, widget.state);
+    _preview.syncFromState(oldWidget.state, widget.state);
+    _files.syncFromState(oldWidget.state, widget.state);
   }
 
   @override
   void dispose() {
     _tabs.dispose();
-    _launchUrlController.dispose();
-    _navigationUrlController.dispose();
-    _navigationUrlFocus.dispose();
-    _fileEditorController.dispose();
+    _panelActions.dispose();
+    _activity.dispose();
+    _files.dispose();
+    _preview.dispose();
     super.dispose();
-  }
-
-  void _syncPreviewAddress({bool force = false}) {
-    if (!force && _navigationUrlFocus.hasFocus) return;
-    final url = widget.state.activePreview?.url ?? '';
-    _navigationUrlController.value = TextEditingValue(
-      text: url,
-      selection: TextSelection.collapsed(offset: url.length),
-    );
-  }
-
-  void _syncFileEditor({bool force = false}) {
-    final workspace = widget.state.fileWorkspace;
-    final content = workspace.content;
-    if (content == null || workspace.path.isEmpty) return;
-    if (!force && _fileDirty && _editedFilePath == workspace.path) return;
-    _editedFilePath = workspace.path;
-    _fileDirty = false;
-    _fileEditorController.value = TextEditingValue(
-      text: content,
-      selection: TextSelection.collapsed(offset: content.length),
-    );
-  }
-
-  Future<bool> _confirmDiscardFileChanges() async {
-    if (!_fileDirty) return true;
-    final discard = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Discard unsaved changes?'),
-        content: Text(
-          'Your edits to ${_editedFilePath ?? 'this file'} have not been saved.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Keep editing'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Discard'),
-          ),
-        ],
-      ),
-    );
-    if (discard == true && mounted) {
-      setState(() => _fileDirty = false);
-    }
-    return discard == true;
-  }
-
-  void _onFileChanged(String content) {
-    final workspace = widget.state.fileWorkspace;
-    final dirty =
-        _editedFilePath == workspace.path && content != workspace.content;
-    if (dirty != _fileDirty) setState(() => _fileDirty = dirty);
-  }
-
-  Future<void> _saveFile() async {
-    final path = _editedFilePath;
-    if (path == null || !_fileDirty) return;
-    await _runAction('files-write', 'Could not save the file.', () async {
-      await widget.actions.writeFile(path, _fileEditorController.text);
-      if (mounted) setState(() => _fileDirty = false);
-    });
-  }
-
-  Future<void> _runAction(
-    String key,
-    String failureMessage,
-    Future<void> Function() action,
-  ) async {
-    if (_busy) return;
-    setState(() {
-      _busyAction = key;
-      _actionError = null;
-    });
-    try {
-      await action();
-    } on Object catch (error) {
-      if (!mounted) return;
-      final detail = error.toString().replaceFirst('Bad state: ', '').trim();
-      setState(() {
-        _actionError = detail.isEmpty ? failureMessage : detail;
-      });
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text(failureMessage)));
-    } finally {
-      if (mounted) setState(() => _busyAction = null);
-    }
-  }
-
-  void _toggleActivityPause() {
-    setState(() {
-      _activityPaused = !_activityPaused;
-      if (!_activityPaused) {
-        _activitySnapshot = List<DeveloperActivity>.of(widget.state.activities);
-      }
-    });
-  }
-
-  Future<void> _listDirectory(String path) async {
-    if (!await _confirmDiscardFileChanges() || !mounted) return;
-    setState(() {
-      _directoryPath = path;
-      _selectedFilePath = null;
-      _editedFilePath = null;
-      _fileEditorController.clear();
-    });
-    await _runAction(
-      'files-list',
-      'Could not list that directory.',
-      () => widget.actions.listFiles(path),
-    );
-  }
-
-  Future<void> _selectFile(String path) async {
-    if (path != _editedFilePath &&
-        (!await _confirmDiscardFileChanges() || !mounted)) {
-      return;
-    }
-    setState(() => _selectedFilePath = path);
-    await _runAction(
-      'files-read',
-      'Could not read that file.',
-      () => widget.actions.readFile(path),
-    );
-  }
-
-  Future<void> _launchPreview() async {
-    final url = _launchUrlController.text.trim();
-    if (url.isEmpty) return;
-    await _runAction(
-      'preview-launch',
-      'Could not launch the preview.',
-      () async {
-        await widget.actions.launchPreview(url);
-        _launchUrlController.clear();
-      },
-    );
-  }
-
-  Future<void> _navigatePreview(PreviewWorkspaceState preview) async {
-    final url = _navigationUrlController.text.trim();
-    if (url.isEmpty || url == preview.url) return;
-    await _runAction(
-      'preview-navigate',
-      'Could not navigate the preview.',
-      () => widget.actions.navigatePreview(preview.previewId, url),
-    );
-  }
-
-  Future<void> _previewAction(PreviewWorkspaceState preview, String action) =>
-      _runAction(
-        'preview-$action',
-        'Could not $action the preview.',
-        () => widget.actions.runPreviewAction(preview.previewId, action),
-      );
-
-  Future<void> _openPreviewInteraction(
-    PreviewWorkspaceState preview, {
-    required bool allowInput,
-    required bool allowHandoff,
-  }) async {
-    final request = await showModalBottomSheet<_PreviewInteractionRequest>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (context) => _PreviewInteractionSheet(
-        allowInput: allowInput,
-        allowHandoff: allowHandoff,
-      ),
-    );
-    if (request == null || !mounted) return;
-    await _runAction(
-      'preview-${request.action}',
-      'Could not ${request.action} in the preview.',
-      () => widget.actions.runPreviewInteraction(
-        preview.previewId,
-        request.action,
-        request.args,
-      ),
-    );
   }
 
   @override
@@ -290,10 +79,10 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
     return Column(
       children: [
         if (widget.showHeader) _DeveloperSurfacesHeader(onDone: widget.onDone),
-        if (_actionError case final error?)
+        if (_panelActions.actionError case final error?)
           _DeveloperErrorBanner(
             message: error,
-            onDismiss: () => setState(() => _actionError = null),
+            onDismiss: _panelActions.clearError,
           ),
         if (_busy)
           const LinearProgressIndicator(
@@ -316,20 +105,351 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
           child: TabBarView(
             controller: _tabs,
             children: [
-              _buildActivity(),
-              _buildFiles(),
-              _buildReview(),
-              _TerminalPane(state: widget.state, actions: widget.actions),
-              _buildPreview(),
+              ActivityPanelBody(
+                state: widget.state,
+                actions: widget.actions,
+                controller: _activity,
+                actionController: _panelActions,
+              ),
+              FilesPanelBody(
+                state: widget.state,
+                actions: widget.actions,
+                controller: _files,
+                actionController: _panelActions,
+              ),
+              ReviewPanelBody(
+                state: widget.state,
+                actions: widget.actions,
+                selectedFilePath: _files.selectedFilePath,
+                onOpenFiles: () => _tabs.animateTo(1),
+                actionController: _panelActions,
+              ),
+              TerminalPanelBody(state: widget.state, actions: widget.actions),
+              PreviewPanelBody(
+                state: widget.state,
+                actions: widget.actions,
+                controller: _preview,
+                actionController: _panelActions,
+              ),
             ],
           ),
         ),
       ],
     );
   }
+}
 
-  Widget _buildActivity() {
-    if (!_connected && _activitySnapshot.isEmpty) {
+/// Base for developer panel state holders: setState-style [mutate] with safe
+/// change notification after disposal.
+abstract base class DeveloperPanelController extends ChangeNotifier {
+  bool _panelControllerDisposed = false;
+
+  void mutate(VoidCallback fn) {
+    fn();
+    if (!_panelControllerDisposed) notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _panelControllerDisposed = true;
+    super.dispose();
+  }
+}
+
+/// Shared busy/error state for developer panel operations. The tabbed
+/// takeover owns one instance across all tabs; an embedded panel body creates
+/// its own when none is supplied.
+final class DeveloperPanelActionController extends DeveloperPanelController {
+  String? _busyAction;
+  String? _actionError;
+
+  String? get busyAction => _busyAction;
+  String? get actionError => _actionError;
+
+  void clearError() => mutate(() => _actionError = null);
+
+  Future<void> run(
+    BuildContext context, {
+    required bool externallyPending,
+    required String key,
+    required String failureMessage,
+    required Future<void> Function() action,
+  }) async {
+    if (_busyAction != null || externallyPending) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    mutate(() {
+      _busyAction = key;
+      _actionError = null;
+    });
+    try {
+      await action();
+    } on Object catch (error) {
+      if (_panelControllerDisposed) return;
+      final detail = error.toString().replaceFirst('Bad state: ', '').trim();
+      mutate(() {
+        _actionError = detail.isEmpty ? failureMessage : detail;
+      });
+      messenger
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(failureMessage)));
+    } finally {
+      if (!_panelControllerDisposed) {
+        mutate(() => _busyAction = null);
+      }
+    }
+  }
+}
+
+/// Per-tab state for the Activity panel.
+final class ActivityPanelController extends DeveloperPanelController {
+  ActivityPanelController(T4ViewState state)
+    : snapshot = List<DeveloperActivity>.of(state.activities);
+
+  List<DeveloperActivity> snapshot;
+  String? category;
+  bool paused = false;
+
+  void selectCategory(String? value) => mutate(() => category = value);
+
+  void togglePause(T4ViewState state) => mutate(() {
+    paused = !paused;
+    if (!paused) {
+      snapshot = List<DeveloperActivity>.of(state.activities);
+    }
+  });
+
+  /// Refreshes the snapshot on state updates. Intentionally silent: callers
+  /// invoke this from didUpdateWidget and rebuild right after.
+  void syncFromState(T4ViewState oldState, T4ViewState newState) {
+    if (!paused && !identical(oldState.activities, newState.activities)) {
+      snapshot = List<DeveloperActivity>.of(newState.activities);
+    }
+  }
+}
+
+/// Per-tab state for the Files panel; also feeds the Review panel's selected
+/// file when both are driven by the tabbed takeover.
+final class FilesPanelController extends DeveloperPanelController {
+  FilesPanelController(T4ViewState state) {
+    final workspace = state.fileWorkspace;
+    if (workspace.content != null && workspace.path.isNotEmpty) {
+      selectedFilePath = workspace.path;
+      directoryPath = _parentPath(workspace.path);
+    } else {
+      directoryPath = workspace.path;
+    }
+    syncEditor(state, force: true);
+  }
+
+  final TextEditingController editor = TextEditingController();
+  String? selectedFilePath;
+  String directoryPath = '';
+  String? editedFilePath;
+  bool dirty = false;
+
+  void syncEditor(T4ViewState state, {bool force = false}) {
+    final workspace = state.fileWorkspace;
+    final content = workspace.content;
+    if (content == null || workspace.path.isEmpty) return;
+    if (!force && dirty && editedFilePath == workspace.path) return;
+    editedFilePath = workspace.path;
+    dirty = false;
+    editor.value = TextEditingValue(
+      text: content,
+      selection: TextSelection.collapsed(offset: content.length),
+    );
+  }
+
+  /// Mirrors the editor sync previously done in the pane's didUpdateWidget.
+  void syncFromState(T4ViewState oldState, T4ViewState newState) {
+    final oldWorkspace = oldState.fileWorkspace;
+    final workspace = newState.fileWorkspace;
+    if (oldWorkspace.path != workspace.path ||
+        oldWorkspace.content != workspace.content) {
+      syncEditor(newState);
+    }
+  }
+
+  @override
+  void dispose() {
+    editor.dispose();
+    super.dispose();
+  }
+}
+
+/// Per-tab state for the Preview panel.
+final class PreviewPanelController extends DeveloperPanelController {
+  PreviewPanelController(T4ViewState state) {
+    syncAddress(state, force: true);
+  }
+
+  final TextEditingController launchUrl = TextEditingController();
+  final TextEditingController navigationUrl = TextEditingController();
+  final FocusNode navigationFocus = FocusNode();
+
+  void syncAddress(T4ViewState state, {bool force = false}) {
+    if (!force && navigationFocus.hasFocus) return;
+    final url = state.activePreview?.url ?? '';
+    navigationUrl.value = TextEditingValue(
+      text: url,
+      selection: TextSelection.collapsed(offset: url.length),
+    );
+  }
+
+  /// Mirrors the address sync previously done in the pane's didUpdateWidget.
+  void syncFromState(T4ViewState oldState, T4ViewState newState) {
+    final oldPreview = oldState.activePreview;
+    final preview = newState.activePreview;
+    if (oldPreview?.previewId != preview?.previewId ||
+        oldPreview?.url != preview?.url) {
+      syncAddress(newState);
+    }
+  }
+
+  @override
+  void dispose() {
+    launchUrl.dispose();
+    navigationUrl.dispose();
+    navigationFocus.dispose();
+    super.dispose();
+  }
+}
+
+/// Error banner and progress indicator wrapper used by panel bodies that own
+/// their action controller (embedded use). The tabbed takeover renders these
+/// itself, above the tab strip.
+final class _PanelActionChrome extends StatelessWidget {
+  const _PanelActionChrome({
+    required this.controller,
+    required this.busy,
+    required this.child,
+  });
+
+  final DeveloperPanelActionController controller;
+  final bool busy;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (controller.actionError case final error?)
+          _DeveloperErrorBanner(
+            message: error,
+            onDismiss: controller.clearError,
+          ),
+        if (busy)
+          const LinearProgressIndicator(
+            minHeight: _T4Size.thinStroke,
+            semanticsLabel: 'Developer operation in progress',
+          ),
+        Expanded(child: child),
+      ],
+    );
+  }
+}
+
+/// Embeddable body of the developer Activity tab.
+final class ActivityPanelBody extends StatefulWidget {
+  const ActivityPanelBody({
+    required this.state,
+    required this.actions,
+    this.controller,
+    this.actionController,
+    super.key,
+  });
+
+  final T4ViewState state;
+  final T4Actions actions;
+
+  /// Optional external per-tab state; the body owns its own when omitted.
+  final ActivityPanelController? controller;
+
+  /// Optional shared busy/error state; the body owns its own (and renders its
+  /// own error banner and progress indicator) when omitted.
+  final DeveloperPanelActionController? actionController;
+
+  @override
+  State<ActivityPanelBody> createState() => _ActivityPanelBodyState();
+}
+
+final class _ActivityPanelBodyState extends State<ActivityPanelBody> {
+  late ActivityPanelController _activity;
+  late DeveloperPanelActionController _action;
+
+  bool get _ownsController => widget.controller == null;
+  bool get _ownsActionController => widget.actionController == null;
+  bool get _connected => widget.state.connectionPhase == ConnectionPhase.ready;
+  bool get _busy =>
+      _action.busyAction != null || widget.state.developerOperationPending;
+
+  bool _hasCapability(String capability) =>
+      widget.state.grantedCapabilities.contains(capability);
+
+  @override
+  void initState() {
+    super.initState();
+    _activity = widget.controller ?? ActivityPanelController(widget.state);
+    _action = widget.actionController ?? DeveloperPanelActionController();
+    _activity.addListener(_onPanelChanged);
+    _action.addListener(_onPanelChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant ActivityPanelBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      _activity.removeListener(_onPanelChanged);
+      if (oldWidget.controller == null) _activity.dispose();
+      _activity = widget.controller ?? ActivityPanelController(widget.state);
+      _activity.addListener(_onPanelChanged);
+    }
+    if (oldWidget.actionController != widget.actionController) {
+      _action.removeListener(_onPanelChanged);
+      if (oldWidget.actionController == null) _action.dispose();
+      _action = widget.actionController ?? DeveloperPanelActionController();
+      _action.addListener(_onPanelChanged);
+    }
+    if (_ownsController) {
+      _activity.syncFromState(oldWidget.state, widget.state);
+    }
+  }
+
+  @override
+  void dispose() {
+    _activity.removeListener(_onPanelChanged);
+    _action.removeListener(_onPanelChanged);
+    if (_ownsController) _activity.dispose();
+    if (_ownsActionController) _action.dispose();
+    super.dispose();
+  }
+
+  void _onPanelChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _runAction(
+    String key,
+    String failureMessage,
+    Future<void> Function() action,
+  ) => _action.run(
+    context,
+    externallyPending: widget.state.developerOperationPending,
+    key: key,
+    failureMessage: failureMessage,
+    action: action,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final content = _buildContent(context);
+    if (!_ownsActionController) return content;
+    return _PanelActionChrome(controller: _action, busy: _busy, child: content);
+  }
+
+  Widget _buildContent(BuildContext context) {
+    if (!_connected && _activity.snapshot.isEmpty) {
       return const _DeveloperUnavailable(
         icon: Icons.cloud_off_outlined,
         title: 'Activity is offline',
@@ -345,21 +465,22 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
     }
 
     final categories =
-        _activitySnapshot
+        _activity.snapshot
             .map((activity) => activity.category.trim())
             .where((category) => category.isNotEmpty)
             .toSet()
             .toList(growable: false)
           ..sort();
-    if (_activityCategory != null && !categories.contains(_activityCategory)) {
-      _activityCategory = null;
+    if (_activity.category != null &&
+        !categories.contains(_activity.category)) {
+      _activity.category = null;
     }
     final activities =
-        _activitySnapshot
+        _activity.snapshot
             .where(
               (activity) =>
-                  _activityCategory == null ||
-                  activity.category == _activityCategory,
+                  _activity.category == null ||
+                  activity.category == _activity.category,
             )
             .toList(growable: false)
           ..sort((a, b) => b.at.compareTo(a.at));
@@ -368,12 +489,11 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
       children: [
         _ActivityToolbar(
           categories: categories,
-          selectedCategory: _activityCategory,
-          paused: _activityPaused,
+          selectedCategory: _activity.category,
+          paused: _activity.paused,
           busy: _busy,
-          onSelectCategory: (category) =>
-              setState(() => _activityCategory = category),
-          onTogglePause: _toggleActivityPause,
+          onSelectCategory: _activity.selectCategory,
+          onTogglePause: () => _activity.togglePause(widget.state),
           onRefresh: !_connected
               ? null
               : () => _runAction(
@@ -382,7 +502,7 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
                   widget.actions.refreshActivity,
                 ),
         ),
-        if (_activityPaused)
+        if (_activity.paused)
           const _DeveloperNotice(
             icon: Icons.pause_circle_outline,
             message: 'Activity is paused. New rows are held until you resume.',
@@ -391,10 +511,10 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
           child: activities.isEmpty
               ? _DeveloperUnavailable(
                   icon: Icons.filter_alt_off_outlined,
-                  title: _activitySnapshot.isEmpty
+                  title: _activity.snapshot.isEmpty
                       ? 'No activity yet'
                       : 'No matching activity',
-                  message: _activitySnapshot.isEmpty
+                  message: _activity.snapshot.isEmpty
                       ? 'Refresh to request the latest host activity.'
                       : 'Choose a different category filter.',
                 )
@@ -410,8 +530,178 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
       ],
     );
   }
+}
 
-  Widget _buildFiles() {
+/// Embeddable body of the developer Files tab.
+final class FilesPanelBody extends StatefulWidget {
+  const FilesPanelBody({
+    required this.state,
+    required this.actions,
+    this.controller,
+    this.actionController,
+    super.key,
+  });
+
+  final T4ViewState state;
+  final T4Actions actions;
+
+  /// Optional external per-tab state; the body owns its own when omitted.
+  final FilesPanelController? controller;
+
+  /// Optional shared busy/error state; the body owns its own (and renders its
+  /// own error banner and progress indicator) when omitted.
+  final DeveloperPanelActionController? actionController;
+
+  @override
+  State<FilesPanelBody> createState() => _FilesPanelBodyState();
+}
+
+final class _FilesPanelBodyState extends State<FilesPanelBody> {
+  late FilesPanelController _files;
+  late DeveloperPanelActionController _action;
+
+  bool get _ownsController => widget.controller == null;
+  bool get _ownsActionController => widget.actionController == null;
+  bool get _connected => widget.state.connectionPhase == ConnectionPhase.ready;
+  bool get _busy =>
+      _action.busyAction != null || widget.state.developerOperationPending;
+
+  bool _hasCapability(String capability) =>
+      widget.state.grantedCapabilities.contains(capability);
+
+  @override
+  void initState() {
+    super.initState();
+    _files = widget.controller ?? FilesPanelController(widget.state);
+    _action = widget.actionController ?? DeveloperPanelActionController();
+    _files.addListener(_onPanelChanged);
+    _action.addListener(_onPanelChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant FilesPanelBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      _files.removeListener(_onPanelChanged);
+      if (oldWidget.controller == null) _files.dispose();
+      _files = widget.controller ?? FilesPanelController(widget.state);
+      _files.addListener(_onPanelChanged);
+    }
+    if (oldWidget.actionController != widget.actionController) {
+      _action.removeListener(_onPanelChanged);
+      if (oldWidget.actionController == null) _action.dispose();
+      _action = widget.actionController ?? DeveloperPanelActionController();
+      _action.addListener(_onPanelChanged);
+    }
+    if (_ownsController) {
+      _files.syncFromState(oldWidget.state, widget.state);
+    }
+  }
+
+  @override
+  void dispose() {
+    _files.removeListener(_onPanelChanged);
+    _action.removeListener(_onPanelChanged);
+    if (_ownsController) _files.dispose();
+    if (_ownsActionController) _action.dispose();
+    super.dispose();
+  }
+
+  void _onPanelChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _runAction(
+    String key,
+    String failureMessage,
+    Future<void> Function() action,
+  ) => _action.run(
+    context,
+    externallyPending: widget.state.developerOperationPending,
+    key: key,
+    failureMessage: failureMessage,
+    action: action,
+  );
+
+  Future<bool> _confirmDiscardFileChanges() async {
+    if (!_files.dirty) return true;
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Discard unsaved changes?'),
+        content: Text(
+          'Your edits to ${_files.editedFilePath ?? 'this file'} have not been saved.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Keep editing'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Discard'),
+          ),
+        ],
+      ),
+    );
+    if (discard == true && mounted) {
+      _files.mutate(() => _files.dirty = false);
+    }
+    return discard == true;
+  }
+
+  void _onFileChanged(String content) {
+    final workspace = widget.state.fileWorkspace;
+    final dirty =
+        _files.editedFilePath == workspace.path && content != workspace.content;
+    if (dirty != _files.dirty) _files.mutate(() => _files.dirty = dirty);
+  }
+
+  Future<void> _saveFile() async {
+    final path = _files.editedFilePath;
+    if (path == null || !_files.dirty) return;
+    await _runAction('files-write', 'Could not save the file.', () async {
+      await widget.actions.writeFile(path, _files.editor.text);
+      _files.mutate(() => _files.dirty = false);
+    });
+  }
+
+  Future<void> _listDirectory(String path) async {
+    if (!await _confirmDiscardFileChanges() || !mounted) return;
+    _files.mutate(() {
+      _files.directoryPath = path;
+      _files.selectedFilePath = null;
+      _files.editedFilePath = null;
+      _files.editor.clear();
+    });
+    await _runAction(
+      'files-list',
+      'Could not list that directory.',
+      () => widget.actions.listFiles(path),
+    );
+  }
+
+  Future<void> _selectFile(String path) async {
+    if (path != _files.editedFilePath &&
+        (!await _confirmDiscardFileChanges() || !mounted)) {
+      return;
+    }
+    _files.mutate(() => _files.selectedFilePath = path);
+    await _runAction(
+      'files-read',
+      'Could not read that file.',
+      () => widget.actions.readFile(path),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final content = _buildContent(context);
+    if (!_ownsActionController) return content;
+    return _PanelActionChrome(controller: _action, busy: _busy, child: content);
+  }
+
+  Widget _buildContent(BuildContext context) {
     final canList = _hasCapability('files.list');
     final canRead = _hasCapability('files.read');
     if (!_connected && widget.state.fileWorkspace.entries.isEmpty) {
@@ -432,22 +722,22 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
 
     final workspace = widget.state.fileWorkspace;
     final filePath =
-        _selectedFilePath ??
+        _files.selectedFilePath ??
         (workspace.content == null ? null : workspace.path);
     final content = filePath == workspace.path ? workspace.content : null;
     return LayoutBuilder(
       builder: (context, constraints) {
         final list = _FileBrowser(
-          directoryPath: _directoryPath,
+          directoryPath: _files.directoryPath,
           entries: workspace.entries,
           selectedPath: filePath,
           busy: _busy || workspace.loading,
           error: workspace.error,
           onRefresh: _connected && !_busy
-              ? () => _listDirectory(_directoryPath)
+              ? () => _listDirectory(_files.directoryPath)
               : null,
-          onParent: _connected && !_busy && _directoryPath.isNotEmpty
-              ? () => _listDirectory(_parentPath(_directoryPath))
+          onParent: _connected && !_busy && _files.directoryPath.isNotEmpty
+              ? () => _listDirectory(_parentPath(_files.directoryPath))
               : null,
           onOpenDirectory: _connected && !_busy ? _listDirectory : null,
           onOpenFile: _connected && !_busy ? _selectFile : null,
@@ -455,17 +745,16 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
         final viewer = _SourceViewer(
           path: filePath,
           content: content,
-          loading: _busyAction == 'files-read',
-          controller: _fileEditorController,
+          loading: _action.busyAction == 'files-read',
+          controller: _files.editor,
           editable: _hasCapability('files.write') && _connected && !_busy,
-          dirty: _fileDirty,
+          dirty: _files.dirty,
           onChanged: _onFileChanged,
-          onSave: _fileDirty && !_busy ? _saveFile : null,
-          onDiscard: _fileDirty
-              ? () => setState(() {
-                  _fileEditorController.text =
-                      widget.state.fileWorkspace.content ?? '';
-                  _fileDirty = false;
+          onSave: _files.dirty && !_busy ? _saveFile : null,
+          onDiscard: _files.dirty
+              ? () => _files.mutate(() {
+                  _files.editor.text = widget.state.fileWorkspace.content ?? '';
+                  _files.dirty = false;
                 })
               : null,
         );
@@ -488,12 +777,102 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
       },
     );
   }
+}
 
-  Widget _buildReview() {
+/// Embeddable body of the developer Review tab.
+final class ReviewPanelBody extends StatefulWidget {
+  const ReviewPanelBody({
+    required this.state,
+    required this.actions,
+    this.selectedFilePath,
+    this.onOpenFiles,
+    this.actionController,
+    super.key,
+  });
+
+  final T4ViewState state;
+  final T4Actions actions;
+
+  /// Externally selected file (from the Files panel); falls back to the
+  /// workspace's loaded file when omitted.
+  final String? selectedFilePath;
+
+  /// Invoked by the "Open files" affordance; the affordance is disabled when
+  /// omitted.
+  final VoidCallback? onOpenFiles;
+
+  /// Optional shared busy/error state; the body owns its own (and renders its
+  /// own error banner and progress indicator) when omitted.
+  final DeveloperPanelActionController? actionController;
+
+  @override
+  State<ReviewPanelBody> createState() => _ReviewPanelBodyState();
+}
+
+final class _ReviewPanelBodyState extends State<ReviewPanelBody> {
+  late DeveloperPanelActionController _action;
+
+  bool get _ownsActionController => widget.actionController == null;
+  bool get _connected => widget.state.connectionPhase == ConnectionPhase.ready;
+  bool get _busy =>
+      _action.busyAction != null || widget.state.developerOperationPending;
+
+  bool _hasCapability(String capability) =>
+      widget.state.grantedCapabilities.contains(capability);
+
+  @override
+  void initState() {
+    super.initState();
+    _action = widget.actionController ?? DeveloperPanelActionController();
+    _action.addListener(_onPanelChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant ReviewPanelBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.actionController != widget.actionController) {
+      _action.removeListener(_onPanelChanged);
+      if (oldWidget.actionController == null) _action.dispose();
+      _action = widget.actionController ?? DeveloperPanelActionController();
+      _action.addListener(_onPanelChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    _action.removeListener(_onPanelChanged);
+    if (_ownsActionController) _action.dispose();
+    super.dispose();
+  }
+
+  void _onPanelChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _runAction(
+    String key,
+    String failureMessage,
+    Future<void> Function() action,
+  ) => _action.run(
+    context,
+    externallyPending: widget.state.developerOperationPending,
+    key: key,
+    failureMessage: failureMessage,
+    action: action,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final content = _buildContent(context);
+    if (!_ownsActionController) return content;
+    return _PanelActionChrome(controller: _action, busy: _busy, child: content);
+  }
+
+  Widget _buildContent(BuildContext context) {
     final workspace = widget.state.fileWorkspace;
     final reviews = widget.state.reviews;
     final selectedPath =
-        _selectedFilePath ??
+        widget.selectedFilePath ??
         (workspace.content == null ? null : workspace.path);
     if (!_connected && workspace.diff == null && reviews.isEmpty) {
       return const _DeveloperUnavailable(
@@ -543,7 +922,7 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
                   : 'No file diff selected',
               message: 'Select a file in Files to inspect its current diff.',
               action: TextButton.icon(
-                onPressed: () => _tabs.animateTo(1),
+                onPressed: widget.onOpenFiles,
                 icon: const Icon(Icons.folder_open_outlined),
                 label: const Text('Open files'),
               ),
@@ -610,8 +989,179 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
       ],
     );
   }
+}
 
-  Widget _buildPreview() {
+/// Embeddable body of the developer Terminal tab.
+final class TerminalPanelBody extends StatelessWidget {
+  const TerminalPanelBody({
+    required this.state,
+    required this.actions,
+    super.key,
+  });
+
+  final T4ViewState state;
+  final T4Actions actions;
+
+  @override
+  Widget build(BuildContext context) =>
+      _TerminalPane(state: state, actions: actions);
+}
+
+/// Embeddable body of the developer Preview tab.
+final class PreviewPanelBody extends StatefulWidget {
+  const PreviewPanelBody({
+    required this.state,
+    required this.actions,
+    this.controller,
+    this.actionController,
+    super.key,
+  });
+
+  final T4ViewState state;
+  final T4Actions actions;
+
+  /// Optional external per-tab state; the body owns its own when omitted.
+  final PreviewPanelController? controller;
+
+  /// Optional shared busy/error state; the body owns its own (and renders its
+  /// own error banner and progress indicator) when omitted.
+  final DeveloperPanelActionController? actionController;
+
+  @override
+  State<PreviewPanelBody> createState() => _PreviewPanelBodyState();
+}
+
+final class _PreviewPanelBodyState extends State<PreviewPanelBody> {
+  late PreviewPanelController _preview;
+  late DeveloperPanelActionController _action;
+
+  bool get _ownsController => widget.controller == null;
+  bool get _ownsActionController => widget.actionController == null;
+  bool get _connected => widget.state.connectionPhase == ConnectionPhase.ready;
+  bool get _busy =>
+      _action.busyAction != null || widget.state.developerOperationPending;
+
+  bool _hasCapability(String capability) =>
+      widget.state.grantedCapabilities.contains(capability);
+
+  @override
+  void initState() {
+    super.initState();
+    _preview = widget.controller ?? PreviewPanelController(widget.state);
+    _action = widget.actionController ?? DeveloperPanelActionController();
+    _preview.addListener(_onPanelChanged);
+    _action.addListener(_onPanelChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant PreviewPanelBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      _preview.removeListener(_onPanelChanged);
+      if (oldWidget.controller == null) _preview.dispose();
+      _preview = widget.controller ?? PreviewPanelController(widget.state);
+      _preview.addListener(_onPanelChanged);
+    }
+    if (oldWidget.actionController != widget.actionController) {
+      _action.removeListener(_onPanelChanged);
+      if (oldWidget.actionController == null) _action.dispose();
+      _action = widget.actionController ?? DeveloperPanelActionController();
+      _action.addListener(_onPanelChanged);
+    }
+    if (_ownsController) {
+      _preview.syncFromState(oldWidget.state, widget.state);
+    }
+  }
+
+  @override
+  void dispose() {
+    _preview.removeListener(_onPanelChanged);
+    _action.removeListener(_onPanelChanged);
+    if (_ownsController) _preview.dispose();
+    if (_ownsActionController) _action.dispose();
+    super.dispose();
+  }
+
+  void _onPanelChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _runAction(
+    String key,
+    String failureMessage,
+    Future<void> Function() action,
+  ) => _action.run(
+    context,
+    externallyPending: widget.state.developerOperationPending,
+    key: key,
+    failureMessage: failureMessage,
+    action: action,
+  );
+
+  Future<void> _launchPreview() async {
+    final url = _preview.launchUrl.text.trim();
+    if (url.isEmpty) return;
+    await _runAction(
+      'preview-launch',
+      'Could not launch the preview.',
+      () async {
+        await widget.actions.launchPreview(url);
+        _preview.launchUrl.clear();
+      },
+    );
+  }
+
+  Future<void> _navigatePreview(PreviewWorkspaceState preview) async {
+    final url = _preview.navigationUrl.text.trim();
+    if (url.isEmpty || url == preview.url) return;
+    await _runAction(
+      'preview-navigate',
+      'Could not navigate the preview.',
+      () => widget.actions.navigatePreview(preview.previewId, url),
+    );
+  }
+
+  Future<void> _previewAction(PreviewWorkspaceState preview, String action) =>
+      _runAction(
+        'preview-$action',
+        'Could not $action the preview.',
+        () => widget.actions.runPreviewAction(preview.previewId, action),
+      );
+
+  Future<void> _openPreviewInteraction(
+    PreviewWorkspaceState preview, {
+    required bool allowInput,
+    required bool allowHandoff,
+  }) async {
+    final request = await showModalBottomSheet<_PreviewInteractionRequest>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => _PreviewInteractionSheet(
+        allowInput: allowInput,
+        allowHandoff: allowHandoff,
+      ),
+    );
+    if (request == null || !mounted) return;
+    await _runAction(
+      'preview-${request.action}',
+      'Could not ${request.action} in the preview.',
+      () => widget.actions.runPreviewInteraction(
+        preview.previewId,
+        request.action,
+        request.args,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final content = _buildContent(context);
+    if (!_ownsActionController) return content;
+    return _PanelActionChrome(controller: _action, busy: _busy, child: content);
+  }
+
+  Widget _buildContent(BuildContext context) {
     final canRead = _hasCapability('preview.read');
     final canControl = _hasCapability('preview.control');
     final canInput = _hasCapability('preview.input');
@@ -635,7 +1185,7 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
     return Column(
       children: [
         _PreviewLaunchBar(
-          controller: _launchUrlController,
+          controller: _preview.launchUrl,
           enabled: _connected && canControl && !_busy,
           onLaunch: _launchPreview,
         ),
@@ -676,8 +1226,8 @@ final class _DeveloperSurfacesPaneState extends State<_DeveloperSurfacesPane>
       children: [
         _PreviewNavigationBar(
           preview: preview,
-          controller: _navigationUrlController,
-          focusNode: _navigationUrlFocus,
+          controller: _preview.navigationUrl,
+          focusNode: _preview.navigationFocus,
           controlsEnabled: controlsEnabled,
           captureEnabled: _connected && canRead && !_busy,
           interactionEnabled: _connected && (canInput || canControl) && !_busy,
