@@ -13,6 +13,7 @@ import (
 	apiresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -1212,6 +1213,8 @@ func TestSessionDeletionRefusesForeignDeterministicResources(t *testing.T) {
 			} else {
 				service.OwnerReferences = nil
 			}
+			beforePod := pod.DeepCopy()
+			beforeService := service.DeepCopy()
 			c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Session{}).WithObjects(session, pod, service).Build()
 			if err := c.Delete(context.Background(), session); err != nil {
 				t.Fatal(err)
@@ -1220,7 +1223,28 @@ func TestSessionDeletionRefusesForeignDeterministicResources(t *testing.T) {
 			if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
 				t.Fatal(err)
 			}
-			assertObjectCounts(t, c, 1, 1)
+			if foreignKind == "Pod" {
+				assertObjectCounts(t, c, 1, 0)
+			} else {
+				assertObjectCounts(t, c, 0, 1)
+			}
+			if foreignKind == "Pod" {
+				var got corev1.Pod
+				if err := c.Get(context.Background(), client.ObjectKeyFromObject(pod), &got); err != nil {
+					t.Fatalf("foreign Pod was deleted: %v", err)
+				}
+				if !reflect.DeepEqual(got.ObjectMeta, beforePod.ObjectMeta) || !reflect.DeepEqual(got.Spec, beforePod.Spec) {
+					t.Fatalf("foreign Pod was mutated during finalizer cleanup: %#v", got)
+				}
+			} else {
+				var got corev1.Service
+				if err := c.Get(context.Background(), client.ObjectKeyFromObject(service), &got); err != nil {
+					t.Fatalf("foreign Service was deleted: %v", err)
+				}
+				if !reflect.DeepEqual(got.ObjectMeta, beforeService.ObjectMeta) || !reflect.DeepEqual(got.Spec, beforeService.Spec) {
+					t.Fatalf("foreign Service was mutated during finalizer cleanup: %#v", got)
+				}
+			}
 			var waiting clusterv1alpha1.T4Session
 			if err := c.Get(context.Background(), client.ObjectKeyFromObject(session), &waiting); err != nil {
 				t.Fatalf("session finalizer was removed on cleanup conflict: %v", err)
@@ -1828,6 +1852,70 @@ func TestSessionResourcesWithAnyForeignOwnerFailClosed(t *testing.T) {
 	}
 }
 
+func TestSessionCreateAlreadyExistsRefetchesForeignWinner(t *testing.T) {
+	for _, kind := range []string{"Pod", "Service"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx := context.Background()
+			scheme := testScheme(t)
+			workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
+			workspace.UID = "workspace-uid"
+			workspace.Status.PVCName = controllers.WorkspacePVCName(workspace)
+			session := testSession()
+			session.UID = "session-uid"
+			pod, service := ownedSessionResources(session)
+			objects := []client.Object{testHost(), workspace, ownedWorkspacePVC(workspace), session}
+			if kind == "Pod" {
+				objects = append(objects, service)
+			} else {
+				objects = append(objects, pod)
+			}
+			base := fake.NewClientBuilder().WithScheme(scheme).
+				WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).
+				WithObjects(objects...).Build()
+			c := &createAlreadyExistsClient{Client: base, raceKind: kind}
+			r := configuredSessionReconciler(c, scheme)
+			if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
+				t.Fatal(err)
+			}
+			if c.winner == nil {
+				t.Fatalf("%s create race was not exercised", kind)
+			}
+			if kind == "Pod" {
+				var got corev1.Pod
+				if err := base.Get(ctx, client.ObjectKeyFromObject(c.winner), &got); err != nil {
+					t.Fatalf("foreign Pod winner was deleted: %v", err)
+				}
+				want := c.winner.(*corev1.Pod)
+				if !reflect.DeepEqual(got.ObjectMeta, want.ObjectMeta) || !reflect.DeepEqual(got.Spec, want.Spec) {
+					t.Fatalf("foreign Pod winner was mutated: %#v", got)
+				}
+				assertObjectCounts(t, base, 1, 0)
+			} else {
+				var got corev1.Service
+				if err := base.Get(ctx, client.ObjectKeyFromObject(c.winner), &got); err != nil {
+					t.Fatalf("foreign Service winner was deleted: %v", err)
+				}
+				want := c.winner.(*corev1.Service)
+				if !reflect.DeepEqual(got.ObjectMeta, want.ObjectMeta) || !reflect.DeepEqual(got.Spec, want.Spec) {
+					t.Fatalf("foreign Service winner was mutated: %#v", got)
+				}
+				assertObjectCounts(t, base, 0, 1)
+			}
+			var failed clusterv1alpha1.T4Session
+			if err := base.Get(ctx, client.ObjectKeyFromObject(session), &failed); err != nil {
+				t.Fatal(err)
+			}
+			assertCurrentSessionConditions(t, &failed, map[string]metav1.ConditionStatus{
+				"HostReady": metav1.ConditionTrue, "WorkspaceReady": metav1.ConditionTrue, "RuntimeConfigured": metav1.ConditionTrue, "Available": metav1.ConditionFalse,
+			})
+			available := findCondition(failed.Status.Conditions, "Available")
+			if available.Reason != kind+"OwnershipConflict" {
+				t.Fatalf("Available reason = %q, want %sOwnershipConflict", available.Reason, kind)
+			}
+		})
+	}
+}
+
 func TestWorkspaceTerminalPVCFailuresRevokePublishedAuthority(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -2032,6 +2120,35 @@ func hasReadOnlyMount(mounts []corev1.VolumeMount, name, path string) bool {
 		}
 	}
 	return false
+}
+
+type createAlreadyExistsClient struct {
+	client.Client
+	raceKind string
+	winner   client.Object
+}
+
+func (c *createAlreadyExistsClient) Create(ctx context.Context, object client.Object, options ...client.CreateOption) error {
+	var winner client.Object
+	switch object := object.(type) {
+	case *corev1.Pod:
+		if c.raceKind == "Pod" {
+			winner = object.DeepCopy()
+		}
+	case *corev1.Service:
+		if c.raceKind == "Service" {
+			winner = object.DeepCopy()
+		}
+	}
+	if winner == nil || c.winner != nil {
+		return c.Client.Create(ctx, object, options...)
+	}
+	winner.SetOwnerReferences(nil)
+	if err := c.Client.Create(ctx, winner, options...); err != nil {
+		return err
+	}
+	c.winner = winner.DeepCopyObject().(client.Object)
+	return apierrors.NewAlreadyExists(schema.GroupResource{Resource: strings.ToLower(c.raceKind) + "s"}, object.GetName())
 }
 
 func ptr[T any](value T) *T { return &value }
