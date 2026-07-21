@@ -361,6 +361,51 @@ describe("generated T4 API v1 client conformance", () => {
     })).response.status).toBe(404);
   });
 
+  it("validates mutations before state changes and idempotency recording", async () => {
+    const workspaceService = new T4ApiV1ConformanceService();
+    const workspaceClient = createT4ApiClient({ baseUrl: workspaceService.origin, credential: "token-a", majorVersion: 1, fetch: workspaceService.fetch });
+    requireData(await workspaceClient.http.POST("/v1/workspaces", {
+      body: { name: "original" }, params: { header: idempotencyHeaders("mutation-workspace-setup") },
+    }));
+    const invalidWorkspaceBodies = [
+      {}, { unknown: true }, { name: 42 }, { name: "" }, { name: "😀".repeat(129) },
+      { labels: { Invalid: "value" } }, { labels: { valid: "😀".repeat(129) } },
+    ];
+    for (const [index, body] of invalidWorkspaceBodies.entries()) {
+      const result = await workspaceClient.http.PATCH("/v1/workspaces/{workspaceId}", {
+        params: { header: mutationHeaders(1, `invalid-workspace-${index}`), path: { workspaceId: "ws-1" } }, body: body as never,
+      });
+      expect(result.response.status).toBe(422);
+      expect(result.error).toMatchObject({ error: { code: "invalid_request" } });
+    }
+    expect(requireData(await workspaceClient.http.GET("/v1/workspaces/{workspaceId}", {
+      params: { header: VERSION_HEADERS, path: { workspaceId: "ws-1" } },
+    }))).toMatchObject({ name: "original", revision: 1 });
+    expect((await workspaceClient.http.PATCH("/v1/workspaces/{workspaceId}", {
+      params: { header: mutationHeaders(1, "invalid-workspace-0"), path: { workspaceId: "ws-1" } }, body: { name: "valid" },
+    })).response.status).toBe(200);
+
+    const sessionService = new T4ApiV1ConformanceService();
+    const sessionClient = await seededClient(sessionService, "mutation-validation");
+    const invalidSessionBodies = [
+      {}, { unknown: true }, { title: 42 }, { title: "" }, { title: "😀".repeat(129) },
+      { labels: { Invalid: "value" } }, { labels: { valid: "😀".repeat(129) } },
+    ];
+    for (const [index, body] of invalidSessionBodies.entries()) {
+      const result = await sessionClient.http.PATCH("/v1/sessions/{sessionId}", {
+        params: { header: mutationHeaders(1, `invalid-session-${index}`), path: { sessionId: "ses-1" } }, body: body as never,
+      });
+      expect(result.response.status).toBe(422);
+      expect(result.error).toMatchObject({ error: { code: "invalid_request" } });
+    }
+    expect(requireData(await sessionClient.http.GET("/v1/sessions/{sessionId}", {
+      params: { header: VERSION_HEADERS, path: { sessionId: "ses-1" } },
+    }))).toMatchObject({ title: "agent", revision: 1 });
+    expect((await sessionClient.http.PATCH("/v1/sessions/{sessionId}", {
+      params: { header: mutationHeaders(1, "invalid-session-0"), path: { sessionId: "ses-1" } }, body: { title: "valid" },
+    })).response.status).toBe(200);
+  });
+
   it("takes a snapshot and watches bounded SSE with heartbeat, reconnect, cancellation, and typed resync", async () => {
     const service = new T4ApiV1ConformanceService();
     const client = createT4ApiClient({ baseUrl: service.origin, credential: "token-a", majorVersion: 1, fetch: service.fetch });
