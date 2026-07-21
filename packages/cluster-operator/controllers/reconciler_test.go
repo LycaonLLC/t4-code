@@ -1387,6 +1387,22 @@ func TestSessionDeletionUsesAuthoritativeChildReader(t *testing.T) {
 	}
 }
 
+func TestSessionDependencyCleanupUsesAuthoritativeChildReader(t *testing.T) {
+	ctx := context.Background()
+	scheme := testScheme(t)
+	session := testSession()
+	session.UID = "session-uid"
+	pod, service := ownedSessionResources(session)
+	base := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.Pod{}).WithObjects(session, pod, service).Build()
+	c := &createAlreadyExistsClient{Client: base, raceKind: "Pod", winner: pod, hideWinnerFromCache: true}
+	r := configuredSessionReconciler(c, scheme)
+	r.APIReader = base
+	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
+		t.Fatal(err)
+	}
+	assertObjectCounts(t, base, 0, 0)
+}
+
 func TestSessionDeletionCleansResourcesBeforeFinalizer(t *testing.T) {
 	scheme := testScheme(t)
 	session := testSession()
