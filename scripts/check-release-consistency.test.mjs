@@ -245,8 +245,8 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [core, legacy-bridge-continuity, tooling, android-debug, flutter, flutter-android, flutter-apple]",
-          "needs: [core, tooling, android-debug]",
+          "needs: [changes, core, legacy-bridge-continuity, tooling, android-debug, flutter, flutter-android, flutter-apple]",
+          "needs: [changes, core, tooling, android-debug]",
         ),
     ],
     [
@@ -545,16 +545,13 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("if: ${{ always() }}"));
   assert.ok(
     ciWorkflow.includes(
-      "needs: [core, legacy-bridge-continuity, tooling, android-debug, flutter, flutter-android, flutter-apple]",
+      "needs: [changes, core, legacy-bridge-continuity, tooling, android-debug, flutter, flutter-android, flutter-apple]",
     ),
   );
+  assert.ok(ciWorkflow.includes('test "$CHANGES_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$CORE_RESULT" = success'));
-  assert.ok(ciWorkflow.includes('test "$CONTINUITY_RESULT" = success'));
-  assert.ok(ciWorkflow.includes('test "$TOOLING_RESULT" = success'));
-  assert.ok(ciWorkflow.includes('test "$ANDROID_RESULT" = success'));
-  assert.ok(ciWorkflow.includes('test "$FLUTTER_RESULT" = success'));
-  assert.ok(ciWorkflow.includes('test "$FLUTTER_ANDROID_RESULT" = success'));
-  assert.ok(ciWorkflow.includes('test "$FLUTTER_APPLE_RESULT" = success'));
+  assert.ok(ciWorkflow.includes("for result in \\"));
+  assert.ok(ciWorkflow.includes("success|skipped) ;;"));
   assert.ok(ciWorkflow.includes("github.event_name == 'pull_request' && github.ref || github.sha"));
   assert.ok(ciWorkflow.includes("cancel-in-progress: ${{ github.event_name == 'pull_request' }}"));
   assert.ok(ciWorkflow.includes('java-version: "21"'));
