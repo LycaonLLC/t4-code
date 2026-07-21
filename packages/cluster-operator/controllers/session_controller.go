@@ -783,7 +783,11 @@ func (r *SessionReconciler) reconcileDelete(ctx context.Context, session *cluste
 }
 
 func (r *SessionReconciler) deleteOwnedSessionResources(ctx context.Context, session *clusterv1alpha1.T4Session) error {
-	return r.deleteOwnedSessionResourcesWithFailure(ctx, r.Client, session, true, false, false, "ResourceOwnershipConflict", "one or more deterministic session resources have an unexpected owner")
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
+	return r.deleteOwnedSessionResourcesWithFailure(ctx, reader, session, true, false, false, "ResourceOwnershipConflict", "one or more deterministic session resources have an unexpected owner")
 }
 
 func (r *SessionReconciler) deleteOwnedSessionResourcesAfterVerifiedDependencies(ctx context.Context, session *clusterv1alpha1.T4Session, reason, message string) error {
