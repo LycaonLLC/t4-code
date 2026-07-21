@@ -23,13 +23,15 @@ That declaration does not make a non-RWX backend safe. Missing classes, classes 
 
 ## Install
 
-Installing with defaults creates no controller, gateway, session workload, RBAC, Secret, or network policy:
+Installing with defaults creates no controller, gateway, session workload, RBAC, Secret, or network policy. Use the lifecycle runner even for a fresh install so the CRDs are server-validated, established, fixture-checked, and storage-version-checked before Helm runs:
 
 ```sh
-helm install t4-cluster deploy/charts/t4-cluster --namespace t4-system --create-namespace
+scripts/cluster-ci/crd-lifecycle.sh install -- \
+  helm install t4-cluster deploy/charts/t4-cluster \
+  --namespace t4-system --create-namespace --skip-crds
 ```
 
-Helm processes files in `crds/` separately. Use `--skip-crds` if CRD lifecycle is administered independently. To enable the control plane, provide a private values file or a deployment controller values source:
+Helm processes files in `crds/` separately on a direct install, but does not upgrade or delete them later. The release procedure therefore administers CRDs independently and always passes `--skip-crds` to Helm. To enable the control plane, provide a private values file or a deployment controller values source:
 
 ```yaml
 enabled: true
@@ -112,11 +114,7 @@ The controller uses uncached, exact-name `get` permission for only that administ
 
 Reusable credential projection is unsupported because OMP and arbitrary session tools share one workload security boundary. `allowUnauthenticated: true` with empty `credentialSecret` and `credentialKey` is therefore mandatory. The two credential fields remain only as cutover sentinels: Helm, the controller, and the image entrypoint all reject an old credential-mode configuration instead of exposing it. Before OMP starts, the image requires the pinned `auth_credentials` table to be empty, rejects the pinned secret settings (`auth.broker.token`, `hindsight.apiToken`, `searxng.token`, and `dev.autoqaPush.token`), rejects broker token and encrypted snapshot files, and fails closed on unknown schemas or linked profile paths. It never deletes or rewrites durable user state. Because Helm rejects legacy credential values before rendering the new Deployment, a failed upgrade leaves the prior release unchanged. Stop development sessions and clear any legacy values and credential state explicitly before adopting this pre-production boundary. Provider authentication must live behind a private model gateway that authorizes the session through infrastructure identity or network policy while presenting an `auth: none` endpoint inside the session's allowed route. Do not expose that endpoint to the Internet or a shared untrusted network. The chart remains provider- and model-neutral.
 
-Install or enable with immutable digests:
-
-```sh
-helm upgrade --install t4-cluster deploy/charts/t4-cluster --namespace t4-system --values operator-values.yaml
-```
+Install a new release with immutable digests by adding `--values operator-values.yaml` to the lifecycle-runner `install` command above. For an existing release, use the lifecycle-runner `upgrade` procedure below. Do not use `helm upgrade --install`: install and upgrade have different compatibility preflights.
 
 The controller always has two replicas and uses a Kubernetes Lease named from `t4-cluster-operator.cluster.t4.dev`; one replica reconciles at a time. The server defaults to three stateless replicas and supports a minimum of two. Its Deployment uses `maxUnavailable: 0`, a `minAvailable: 2` PDB, topology spread, anti-affinity, readiness draining, and an explicit `k3s-worker-02` exclusion. Session pods also exclude that node by default. Additional cluster-specific exclusions belong in deployment values, not this portable chart.
 
@@ -150,28 +148,71 @@ The session runtime verifies and builds the exact OMP tag `t4code-17.0.5-appserv
 
 Session pods do not receive an automatically mounted ServiceAccount token. The explicit projected reviewer token can only create TokenReviews and is not resource-authorized. The namespace-local ConfigMap projection contains credential-free `auth: none` OMP models and credential-free settings; session Pods receive no provider Secret reference or reusable provider credential. All containers drop capabilities, disallow privilege escalation, use RuntimeDefault seccomp, and use read-only root filesystems. No per-session NodePort, LoadBalancer, host network, host PID, host display, or hostPath is created.
 
-## Upgrade and rollback
+## Upgrade, storage migration, and rollback
 
-CRD changes must remain structural and additive. Helm installs files under `crds/` on first install but does not upgrade or delete them. Before every `helm upgrade`, an administrator must review and apply each newer CRD independently, wait for API discovery to serve the updated schemas, and only then upgrade workloads with the new immutable image digests:
+The three namespaced CRDs have exactly one version: `cluster.t4.dev/v1alpha1`, with `served: true`, `storage: true`, a structural schema, and a status subresource. Changes in this version must remain additive: existing fields keep their meaning and validation, while new fields are optional or have safe defaults. The compatibility fixtures in `packages/cluster-operator/api/v1alpha1/testdata/compat/` are persisted old-object shapes, including status and finalizers, and must continue to validate and round-trip without losing any declared field.
 
-```sh
-kubectl apply --server-side -f deploy/charts/t4-cluster/crds/
-kubectl wait --for=condition=Established crd/t4clusterhosts.cluster.t4.dev crd/t4workspaces.cluster.t4.dev crd/t4sessions.cluster.t4.dev
-```
-
-Do not rely on `helm upgrade` to change CRDs. If a CRD pre-upgrade apply fails validation, stop the upgrade and keep the currently deployed controller/server images; do not force-replace the CRD or remove stored versions.
+Helm does not upgrade CRDs. For every workload upgrade, run the fail-closed lifecycle command:
 
 ```sh
-helm upgrade t4-cluster deploy/charts/t4-cluster --namespace t4-system --values operator-values.yaml
+scripts/cluster-ci/crd-lifecycle.sh upgrade -- \
+  helm upgrade t4-cluster deploy/charts/t4-cluster \
+  --namespace t4-system --values operator-values.yaml --skip-crds
 ```
 
-For an application rollback, retain the additive CRDs and use the previous known-compatible values and image digest set:
+The command performs this exact order:
+
+1. Server-side dry-run the reviewed CRDs with strict validation.
+2. Server-side dry-run the old-object fixtures against the currently served schema. Upgrades stop here, before any mutation, if either preflight fails.
+3. Apply the CRDs server-side without force conflicts.
+4. Wait for all three CRDs to report `Established`.
+5. Validate the compatibility fixtures again against the newly established schema.
+6. Require each CRD's `status.storedVersions` to be exactly `v1alpha1`.
+7. Execute the supplied Helm command, which must use `--skip-crds`.
+
+The corresponding administrative checks are executable independently:
+
+```sh
+kubectl apply --server-side --dry-run=server --validate=strict \
+  --field-manager=t4-crd-lifecycle -f deploy/charts/t4-cluster/crds/
+kubectl apply --dry-run=server --validate=strict --namespace default \
+  -f packages/cluster-operator/api/v1alpha1/testdata/compat/
+kubectl apply --server-side --validate=strict \
+  --field-manager=t4-crd-lifecycle -f deploy/charts/t4-cluster/crds/
+kubectl wait --for=condition=Established --timeout=120s \
+  crd/t4clusterhosts.cluster.t4.dev \
+  crd/t4workspaces.cluster.t4.dev \
+  crd/t4sessions.cluster.t4.dev
+for crd in t4clusterhosts.cluster.t4.dev t4workspaces.cluster.t4.dev t4sessions.cluster.t4.dev; do
+  test "$(kubectl get "crd/$crd" -o 'jsonpath={.status.storedVersions[*]}')" = v1alpha1
+done
+```
+
+Do not rely on `helm upgrade` to change CRDs. Never use `kubectl replace --force`, `kubectl apply --force-conflicts`, delete/recreate a CRD, or manually remove a stored version. A preflight failure leaves the live CRDs, custom resources, controller/server workloads, and session workloads untouched. A failure after additive CRD apply but before Helm leaves the prior workloads running against the still-backward-compatible schema; investigate and rerun the gates rather than attempting CRD rollback.
+
+### Future `v1beta1` conversion and storage procedure
+
+There is no `v1beta1` API today. A future proposal is a separate incompatible lifecycle change and may proceed only through these gates:
+
+1. Back up all three CRDs and every custom resource, record per-kind object counts, and prove a restore in an isolated cluster.
+2. Review separate `v1beta1` schemas, defaults, conversion semantics, downgrade semantics, and old/new/old fixture round-trips. Every field represented in either version must survive conversion; conversion may not manufacture product or runtime state in status.
+3. Deploy a highly available conversion webhook with a PodDisruptionBudget, strict TLS/service identity, readiness checks, failure policy, metrics, and alerts. Prove conversion availability before adding a served version to any CRD.
+4. Add `v1beta1` as served but not storage, retain `v1alpha1` as served and storage, wait for `Established`, and prove reads and writes through both versions plus all compatibility fixtures. Do not advance while any controller, gateway, backup, or recovery tool cannot read both versions.
+5. In a later reviewed CRD apply, set `v1beta1` storage to true and `v1alpha1` storage to false while keeping both served. Reconfirm conversion health before rewriting objects through the Kubernetes API using an approved storage-version migrator.
+6. Compare pre/post object counts and read every object through both served versions. Require each CRD's `status.storedVersions` to become exactly `v1beta1`; merely changing `spec.versions[*].storage` does not migrate stored objects.
+7. Keep `v1alpha1` served, the webhook available, the verified backup, and dual-read binaries for the entire rollback window. Removing the old served version is a later explicit change after the window expires. Removing `v1alpha1` from `status.storedVersions` is allowed only after the migration and exact-version checks pass.
+
+If conversion or migration fails, stop forward rollout. Do not force-replace or downgrade CRDs. While both versions remain served and conversion is healthy, roll workloads back to the prior dual-read image set. If in-place compatibility cannot be proven, stop mutations and restore the verified backup under the reviewed recovery procedure before resuming service.
+
+### Workload rollback
+
+CRDs remain additive and installed. Roll back the known-compatible controller, server, T4 session runtime, and OMP digest set together:
 
 ```sh
 helm rollback t4-cluster REVISION --namespace t4-system
 ```
 
-Do not roll OMP independently of the T4 session runtime. Roll back the known-compatible T4/OMP image set together. The pinned authority boundary is not negotiated down.
+Do not roll OMP independently of the T4 session runtime. The pinned authority boundary is not negotiated down.
 
 ## Uninstall
 

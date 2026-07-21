@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
 
@@ -140,3 +140,14 @@ test("an unexpected stored version stops workload rollout", async () => {
   assert.ok(log.some((line) => line.includes("status.storedVersions")));
   assert.ok(log.every((line) => !line.startsWith("helm\t")), log.join("\n"));
 });
+
+test("force replacement and implicit Helm CRD handling are rejected before cluster access", async () => {
+  const value = await fixture();
+  for (const args of [
+    ["upgrade", "--", "helm", "upgrade", "t4-cluster", "chart", "--skip-crds", "--force"],
+    ["upgrade", "--", "helm", "upgrade", "t4-cluster", "chart"],
+  ]) {
+    const result = await runLifecycle(args, value.env);
+    assert.equal(result.code, 64, `${result.stdout}\n${result.stderr}`);
+  }
+}
