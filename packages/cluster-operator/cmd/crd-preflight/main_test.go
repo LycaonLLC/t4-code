@@ -93,6 +93,57 @@ status:
 	}
 }
 
+func TestValidateFixturesRejectsUnchangedLegacyValuesUnderTransitionCEL(t *testing.T) {
+	tests := []struct {
+		name       string
+		fixture    string
+		candidate  func(string) string
+	}{
+		{
+			name: "spec transition rule",
+			fixture: `apiVersion: cluster.t4.dev/v1alpha1
+kind: Widget
+metadata:
+  name: legacy
+spec:
+  code: bad
+status:
+  phase: Ready
+`,
+			candidate: func(crd string) string {
+				crd = strings.Replace(crd, "rule: self.code.startsWith('ok')", `rule: "true"`, 1)
+				return strings.Replace(crd, "                  maxLength: 3", "                  maxLength: 3\n                  x-kubernetes-validations:\n                    - rule: oldSelf.startsWith('ok')", 1)
+			},
+		},
+		{
+			name: "status transition rule",
+			fixture: `apiVersion: cluster.t4.dev/v1alpha1
+kind: Widget
+metadata:
+  name: legacy
+spec:
+  code: ok
+status:
+  phase: Pending
+`,
+			candidate: func(crd string) string {
+				return strings.Replace(crd, "                  enum: [Ready]", "                  enum: [Ready, Pending]\n                  x-kubernetes-validations:\n                    - rule: oldSelf == 'Ready'", 1)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			crds, fixtures := writeCandidate(t, test.fixture)
+			if err := os.WriteFile(filepath.Join(crds, "widget.yaml"), []byte(test.candidate(candidateCRD)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := validateFixtures(crds, fixtures); err == nil {
+				t.Fatal("unchanged persisted value blocked by transition CEL was accepted")
+			}
+		})
+	}
+}
+
 func TestVerifyServedSchemasRejectsRetainedEstablishedWithStaleSchema(t *testing.T) {
 	crds, _ := writeCandidate(t, `apiVersion: cluster.t4.dev/v1alpha1
 kind: Widget
