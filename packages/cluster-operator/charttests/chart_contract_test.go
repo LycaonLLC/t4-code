@@ -552,6 +552,8 @@ func TestCRDsRemainExplicitAcrossUpgradeAndUninstall(t *testing.T) {
 		"helm rollback",
 		"helm uninstall",
 		"kubectl apply --server-side --dry-run=server",
+		"--force-conflicts",
+		"crd-preflight compatible",
 		"condition=Established",
 		"status.storedVersions",
 		"Do not rely on `helm upgrade` to change CRDs",

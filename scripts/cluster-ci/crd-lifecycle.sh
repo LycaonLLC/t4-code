@@ -12,6 +12,8 @@ Environment:
   T4_VALIDATION_NAMESPACE existing namespace used for server dry-runs (default: default)
   T4_CRD_VALIDATOR        proposed-schema validator executable (default: Go validator)
   T4_DISCOVERY_OBSERVATIONS consecutive matching OpenAPI observations required (default: 3)
+  T4_DISCOVERY_ATTEMPTS   maximum OpenAPI fetch attempts (default: 30)
+  T4_DISCOVERY_INTERVAL_SECONDS delay between OpenAPI attempts (default: 2)
 EOF
   exit 64
 }
@@ -52,7 +54,19 @@ field_manager=t4-crd-lifecycle
 crds="crd/t4clusterhosts.cluster.t4.dev crd/t4workspaces.cluster.t4.dev crd/t4sessions.cluster.t4.dev"
 live_resources="t4clusterhosts.cluster.t4.dev t4workspaces.cluster.t4.dev t4sessions.cluster.t4.dev"
 discovery_observations=${T4_DISCOVERY_OBSERVATIONS:-3}
+discovery_attempts=${T4_DISCOVERY_ATTEMPTS:-30}
+discovery_interval_seconds=${T4_DISCOVERY_INTERVAL_SECONDS:-2}
 
+case "$discovery_observations:$discovery_attempts:$discovery_interval_seconds" in
+  *[!0-9:]*|0:*|*:0:*)
+    echo "T4 discovery observations and attempts must be positive integers; interval must be a non-negative integer" >&2
+    exit 64
+    ;;
+esac
+if [ "$discovery_attempts" -lt "$discovery_observations" ]; then
+  echo "T4_DISCOVERY_ATTEMPTS must be at least T4_DISCOVERY_OBSERVATIONS" >&2
+  exit 64
+fi
 case "$discovery_observations" in
   ''|*[!0-9]*|0)
     echo "T4_DISCOVERY_OBSERVATIONS must be a positive integer" >&2
@@ -79,27 +93,35 @@ run_validator fixtures "$crd_directory" "$compat_directory"
 # schema engine before a CRD or workload can be mutated. A denied or malformed
 # list fails closed under set -e.
 live_objects=$(mktemp)
-trap 'rm -f "$live_objects"' EXIT
+installed_crds=$(mktemp -d)
+cleanup_preflight() {
+  rm -f "$live_objects"
+  rm -rf "$installed_crds"
+}
+trap 'cleanup_preflight' EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 for resource in $live_resources; do
-  installed_crd=$("$kubectl" get "crd/$resource" --ignore-not-found -o name)
-  if [ -z "$installed_crd" ]; then
+  installed_crd="$installed_crds/$resource.yaml"
+  "$kubectl" get "crd/$resource" --ignore-not-found -o yaml >"$installed_crd"
+  if [ ! -s "$installed_crd" ]; then
+    rm -f "$installed_crd"
     continue
   fi
   "$kubectl" get "$resource" --all-namespaces -o json >"$live_objects"
   run_validator objects "$crd_directory" <"$live_objects"
 done
-rm -f "$live_objects"
+run_validator compatible "$crd_directory" "$installed_crds"
+cleanup_preflight
 trap - EXIT HUP INT TERM
 
 # Every kubectl operation before the first non-dry-run apply is read-only.
 "$kubectl" apply --server-side --dry-run=server --validate=strict \
-  --field-manager="$field_manager" -f "$crd_directory" >/dev/null
+  --field-manager="$field_manager" --force-conflicts -f "$crd_directory" >/dev/null
 
 "$kubectl" apply --server-side --validate=strict \
-  --field-manager="$field_manager" -f "$crd_directory"
+  --field-manager="$field_manager" --force-conflicts -f "$crd_directory"
 # Discovery and admission must converge before compatibility validation or any
 # workload rollout uses the new schema.
 # shellcheck disable=SC2086 # The fixed CRD words are intentional argv entries.
@@ -114,10 +136,23 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 observation=0
+attempt=0
 while [ "$observation" -lt "$discovery_observations" ]; do
-  "$kubectl" get --raw /openapi/v3/apis/cluster.t4.dev/v1alpha1 >"$openapi_document"
-  run_validator served "$crd_directory" <"$openapi_document"
-  observation=$((observation + 1))
+  attempt=$((attempt + 1))
+  if "$kubectl" get --raw /openapi/v3/apis/cluster.t4.dev/v1alpha1 >"$openapi_document" && \
+    run_validator served "$crd_directory" <"$openapi_document"; then
+    observation=$((observation + 1))
+  else
+    observation=0
+  fi
+  if [ "$observation" -ge "$discovery_observations" ]; then
+    break
+  fi
+  if [ "$attempt" -ge "$discovery_attempts" ]; then
+    echo "served OpenAPI did not converge after $discovery_attempts attempts" >&2
+    exit 65
+  fi
+  sleep "$discovery_interval_seconds"
 done
 
 "$kubectl" apply --dry-run=server --validate=strict \

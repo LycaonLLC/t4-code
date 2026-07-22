@@ -63,6 +63,15 @@ printf '\\n' >>"$COMMAND_LOG"
 case "\${1:-}:\${FAIL_PROPOSED_VALIDATION:-}" in
   fixtures:spec|fixtures:status|objects:live|served:stale) exit 43 ;;
 esac
+if [ "\${1:-}" = served ] && [ -n "\${SERVED_RESULTS:-}" ]; then
+  served_counter_file="\${SERVED_COUNTER_FILE:-$COMMAND_LOG.served-count}"
+  served_count=0
+  if [ -f "$served_counter_file" ]; then served_count=$(cat "$served_counter_file"); fi
+  served_count=$((served_count + 1))
+  printf '%s' "$served_count" >"$served_counter_file"
+  served_result=$(printf '%s' "$SERVED_RESULTS" | awk -F, -v index="$served_count" '{print $index}')
+  if [ "$served_result" = stale ]; then exit 43; fi
+fi
 cat >/dev/null
 `,
   );
@@ -81,7 +90,7 @@ printf '\\n' >>"$COMMAND_LOG"
   return {
     root,
     log,
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, COMMAND_LOG: log, T4_CRD_VALIDATOR: join(bin, "crd-preflight") },
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, COMMAND_LOG: log, T4_CRD_VALIDATOR: join(bin, "crd-preflight"), T4_DISCOVERY_INTERVAL_SECONDS: "0" },
   };
 }
 
@@ -125,9 +134,10 @@ test("upgrade validates proposed schemas, proves served convergence, verifies st
   assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
   const log = await commands(value.log);
   const proposedPreflight = findCommand(log, (line) => line.startsWith("validator\tfixtures\t"), "local proposed-schema fixture preflight");
-  const crdReads = log.map((line, index) => ({ line, index })).filter(({ line }) => /^kubectl\tget\tcrd\/t4(?:clusterhosts|workspaces|sessions)\.cluster\.t4\.dev\t--ignore-not-found\t-o\tname$/u.test(line));
+  const crdReads = log.map((line, index) => ({ line, index })).filter(({ line }) => /^kubectl\tget\tcrd\/t4(?:clusterhosts|workspaces|sessions)\.cluster\.t4\.dev\t--ignore-not-found\t-o\tyaml$/u.test(line));
   const liveLists = log.map((line, index) => ({ line, index })).filter(({ line }) => /^kubectl\tget\tt4(?:clusterhosts|workspaces|sessions)\.cluster\.t4\.dev\t--all-namespaces\t-o\tjson$/u.test(line));
   const liveValidations = log.map((line, index) => ({ line, index })).filter(({ line }) => line.startsWith("validator\tobjects\t"));
+  const structuralCompatibility = findCommand(log, (line) => line.startsWith("validator\tcompatible\t"), "installed-schema additive compatibility gate");
   const crdPreflight = findCommand(log, (line) => line.includes("apply") && line.includes("--server-side") && line.includes("--dry-run=server") && line.includes("deploy/charts/t4-cluster/crds"), "server-side CRD preflight");
   const crdApply = findCommand(log, (line) => line.includes("apply") && line.includes("--server-side") && !line.includes("--dry-run=server"), "CRD apply");
   const established = findCommand(log, (line) => line.includes("wait") && line.includes("condition=Established") && line.includes("t4clusterhosts.cluster.t4.dev") && line.includes("t4workspaces.cluster.t4.dev") && line.includes("t4sessions.cluster.t4.dev"), "Established wait");
@@ -150,14 +160,18 @@ test("upgrade validates proposed schemas, proves served convergence, verifies st
   assert.ok(liveValidations[1].index < crdReads[2].index);
   assert.ok(crdReads[2].index < liveLists[2].index);
   assert.ok(liveLists[2].index < liveValidations[2].index);
-  assert.ok(liveValidations[2].index < crdPreflight);
+  assert.ok(liveValidations[2].index < structuralCompatibility);
+  assert.ok(structuralCompatibility < crdPreflight);
   assert.ok(crdPreflight < crdApply);
   assert.ok(crdApply < established);
   assert.ok(established < servedChecks[0].index);
   assert.ok(servedChecks.at(-1).index < admissionPreflight);
   assert.ok(admissionPreflight < storageChecks[0].index);
   assert.ok(storageChecks.every(({ index }) => index < workload));
-  assert.ok(log.every((line) => !line.includes("--force") && !line.includes("replace") && !line.includes("delete\tcrd")), log.join("\n"));
+  const crdApplies = log.filter((line) => line.startsWith("kubectl\tapply\t--server-side"));
+  assert.equal(crdApplies.length, 2, log.join("\n"));
+  assert.ok(crdApplies.every((line) => line.includes("--force-conflicts")), log.join("\n"));
+  assert.ok(log.every((line) => !line.includes("replace") && !line.includes("delete\tcrd")), log.join("\n"));
 });
 
 test("fresh install establishes and validates CRDs before Helm installs with CRD handling disabled", async () => {
@@ -216,7 +230,7 @@ test("live object incompatibility fails before non-dry-run CRD, object, or Helm 
 test("live object definition read or list denial fails closed before non-dry-run mutation", async () => {
   const deniedResource = "t4workspaces.cluster.t4.dev";
   for (const scenario of [
-    { env: { FAIL_CRD_READ: `crd/${deniedResource}` }, expected: `kubectl\tget\tcrd/${deniedResource}\t--ignore-not-found\t-o\tname` },
+    { env: { FAIL_CRD_READ: `crd/${deniedResource}` }, expected: `kubectl\tget\tcrd/${deniedResource}\t--ignore-not-found\t-o\tyaml` },
     { env: { FAIL_LIVE_LIST: deniedResource }, expected: `kubectl\tget\t${deniedResource}\t--all-namespaces\t-o\tjson` },
   ]) {
     const value = await fixture();
@@ -247,7 +261,7 @@ test("retained Established cannot pass readiness while served OpenAPI is stale",
   const value = await fixture();
   const result = await runLifecycle(
     ["upgrade", "--", "helm", "upgrade", "t4-cluster", "chart", "--skip-crds"],
-    { ...value.env, FAIL_PROPOSED_VALIDATION: "stale" },
+    { ...value.env, FAIL_PROPOSED_VALIDATION: "stale", T4_DISCOVERY_ATTEMPTS: "3" },
   );
   assert.notEqual(result.code, 0);
   const log = await commands(value.log);
@@ -258,6 +272,24 @@ test("retained Established cannot pass readiness while served OpenAPI is stale",
   assert.ok(log.every((line) => !line.startsWith("helm\t")), log.join("\n"));
 });
 
+test("served OpenAPI waits for three consecutive matching observations", async () => {
+  for (const sequence of ["stale,fresh,fresh,fresh", "fresh,stale,fresh,fresh,fresh"]) {
+    const value = await fixture();
+    const result = await runLifecycle(
+      ["upgrade", "--", "helm", "upgrade", "t4-cluster", "chart", "--skip-crds"],
+      { ...value.env, SERVED_RESULTS: sequence, T4_DISCOVERY_ATTEMPTS: "6" },
+    );
+    assert.equal(result.code, 0, `${sequence}\n${result.stdout}\n${result.stderr}`);
+    const log = await commands(value.log);
+    assert.equal(
+      log.filter((line) => line.startsWith("validator\tserved\t")).length,
+      sequence.split(",").length,
+      log.join("\n"),
+    );
+    assert.ok(log.some((line) => line.startsWith("helm\tupgrade\t")), log.join("\n"));
+  }
+});
+
 test("failed server preflight leaves CRDs and workloads untouched", async () => {
   const value = await fixture();
   const result = await runLifecycle(
@@ -266,7 +298,7 @@ test("failed server preflight leaves CRDs and workloads untouched", async () => 
   );
   assert.notEqual(result.code, 0);
   const log = await commands(value.log);
-  assert.equal(log.length, 11, log.join("\n"));
+  assert.equal(log.length, 12, log.join("\n"));
   assert.match(log[0], /^validator\tfixtures\t/u);
   assert.match(log.at(-1), /apply.*--server-side.*--dry-run=server/u);
   assert.ok(log.every((line) => !line.startsWith("helm\t") && !/kubectl\tapply(?!.*--dry-run=server)/u.test(line)), log.join("\n"));

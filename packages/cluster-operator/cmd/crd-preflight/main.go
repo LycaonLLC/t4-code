@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	perCallCELCostLimit = 1_000_000
+	perCallCELCostLimit  = 1_000_000
 	runtimeCELCostBudget = 10_000_000
 )
 
@@ -58,6 +58,11 @@ func main() {
 			usage()
 		}
 		err = validateObjects(os.Args[2], os.Stdin)
+	case "compatible":
+		if len(os.Args) != 4 {
+			usage()
+		}
+		err = validateCompatibility(os.Args[2], os.Args[3])
 	case "served":
 		if len(os.Args) != 3 {
 			usage()
@@ -73,7 +78,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: crd-preflight fixtures CRD_DIRECTORY FIXTURE_DIRECTORY | objects CRD_DIRECTORY | served CRD_DIRECTORY")
+	fmt.Fprintln(os.Stderr, "usage: crd-preflight fixtures CRD_DIRECTORY FIXTURE_DIRECTORY | objects CRD_DIRECTORY | compatible CANDIDATE_CRD_DIRECTORY INSTALLED_CRD_DIRECTORY | served CRD_DIRECTORY")
 	os.Exit(64)
 }
 
@@ -142,6 +147,154 @@ func validateObjects(crdDirectory string, input io.Reader) error {
 		validationErrors = append(validationErrors, validateCandidateObject(path, "object", object, candidates)...)
 	}
 	return errors.Join(validationErrors...)
+}
+
+func validateCompatibility(candidateDirectory, installedDirectory string) error {
+	installedPaths, err := yamlPaths(installedDirectory)
+	if err != nil {
+		return err
+	}
+	if len(installedPaths) == 0 {
+		return nil
+	}
+	candidates, err := loadCandidates(candidateDirectory)
+	if err != nil {
+		return err
+	}
+	installed, err := loadCandidates(installedDirectory)
+	if err != nil {
+		return err
+	}
+	var compatibilityErrors []error
+	for gvk, current := range installed {
+		proposed, found := candidates[gvk]
+		if !found {
+			compatibilityErrors = append(compatibilityErrors, fmt.Errorf("installed schema for %s/%s %s is removed", gvk.Group, gvk.Version, gvk.Kind))
+			continue
+		}
+		path := fmt.Sprintf("%s/%s %s", gvk.Group, gvk.Version, gvk.Kind)
+		if current.crd.Spec.Scope != proposed.crd.Spec.Scope {
+			compatibilityErrors = append(compatibilityErrors, fmt.Errorf("%s changes scope from %s to %s", path, current.crd.Spec.Scope, proposed.crd.Spec.Scope))
+		}
+		if !reflect.DeepEqual(current.crd.Spec.Names, proposed.crd.Spec.Names) {
+			compatibilityErrors = append(compatibilityErrors, fmt.Errorf("%s changes resource names", path))
+		}
+		if current.version.Storage != proposed.version.Storage {
+			compatibilityErrors = append(compatibilityErrors, fmt.Errorf("%s changes the storage flag", path))
+		}
+		if !reflect.DeepEqual(current.version.Subresources, proposed.version.Subresources) {
+			compatibilityErrors = append(compatibilityErrors, fmt.Errorf("%s changes subresources", path))
+		}
+		currentSchema, err := schemaMap(current.version.Schema.OpenAPIV3Schema)
+		if err != nil {
+			compatibilityErrors = append(compatibilityErrors, fmt.Errorf("%s: encode installed schema: %w", path, err))
+			continue
+		}
+		proposedSchema, err := schemaMap(proposed.version.Schema.OpenAPIV3Schema)
+		if err != nil {
+			compatibilityErrors = append(compatibilityErrors, fmt.Errorf("%s: encode proposed schema: %w", path, err))
+			continue
+		}
+		stripDescriptions(currentSchema)
+		stripDescriptions(proposedSchema)
+		compatibilityErrors = append(compatibilityErrors, compareAdditiveSchema(path, currentSchema, proposedSchema)...)
+	}
+	return errors.Join(compatibilityErrors...)
+}
+
+func schemaMap(schema *apiextensionsv1.JSONSchemaProps) (map[string]interface{}, error) {
+	raw, err := json.Marshal(schema)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// compareAdditiveSchema deliberately accepts a narrow evolution surface: an
+// existing schema node must keep exactly the same semantics, while an object
+// may add new optional properties. This is stricter than merely proving that a
+// snapshot of live objects happens to validate and therefore remains safe when
+// another writer creates an object immediately before the CRD apply.
+func compareAdditiveSchema(path string, current, proposed map[string]interface{}) []error {
+	var result []error
+	for keyword, currentValue := range current {
+		proposedValue, found := proposed[keyword]
+		if !found {
+			result = append(result, fmt.Errorf("%s removes schema keyword %s", path, keyword))
+			continue
+		}
+		if keyword == "properties" {
+			currentProperties, currentOK := currentValue.(map[string]interface{})
+			proposedProperties, proposedOK := proposedValue.(map[string]interface{})
+			if !currentOK || !proposedOK {
+				result = append(result, fmt.Errorf("%s changes properties representation", path))
+				continue
+			}
+			for name, currentProperty := range currentProperties {
+				proposedProperty, exists := proposedProperties[name]
+				if !exists {
+					result = append(result, fmt.Errorf("%s.%s removes an existing property", path, name))
+					continue
+				}
+				currentMap, currentIsMap := currentProperty.(map[string]interface{})
+				proposedMap, proposedIsMap := proposedProperty.(map[string]interface{})
+				if !currentIsMap || !proposedIsMap {
+					if !reflect.DeepEqual(currentProperty, proposedProperty) {
+						result = append(result, fmt.Errorf("%s.%s changes schema semantics", path, name))
+					}
+					continue
+				}
+				result = append(result, compareAdditiveSchema(path+"."+name, currentMap, proposedMap)...)
+			}
+			continue
+		}
+		if keyword == "required" {
+			if !sameStringSet(currentValue, proposedValue) {
+				result = append(result, fmt.Errorf("%s changes required properties", path))
+			}
+			continue
+		}
+		if !reflect.DeepEqual(currentValue, proposedValue) {
+			result = append(result, fmt.Errorf("%s changes schema keyword %s", path, keyword))
+		}
+	}
+	for keyword := range proposed {
+		if _, found := current[keyword]; found || keyword == "properties" {
+			continue
+		}
+		result = append(result, fmt.Errorf("%s adds schema keyword %s to an existing node", path, keyword))
+	}
+	return result
+}
+
+func sameStringSet(left, right interface{}) bool {
+	leftValues, leftOK := left.([]interface{})
+	rightValues, rightOK := right.([]interface{})
+	if !leftOK || !rightOK || len(leftValues) != len(rightValues) {
+		return false
+	}
+	counts := make(map[string]int, len(leftValues))
+	for _, value := range leftValues {
+		text, ok := value.(string)
+		if !ok {
+			return false
+		}
+		counts[text]++
+	}
+	for _, value := range rightValues {
+		text, ok := value.(string)
+		if !ok || counts[text] == 0 {
+			return false
+		}
+		counts[text]--
+	}
+	return true
 }
 
 func liveObjectPath(index int, object map[string]interface{}) (string, error) {
