@@ -36,8 +36,32 @@ interface KubernetesOutboxApplier {
 interface OutboxClaim {
 	readonly outboxId: bigint;
 	readonly commandId: string;
+	readonly principalId: string;
+	readonly idempotencyKey: string;
+	readonly kind: string;
+	readonly targetId: string;
+	readonly targetRevision: bigint;
+	readonly mutation: Readonly<Record<string, unknown>>;
 	readonly ownerId: string;
 	readonly ownerEpoch: bigint;
+	readonly expiresAt: number;
+}
+interface AuthoritativeKubernetesStatusObservation {
+	readonly resourceId: string;
+	readonly principalId: string;
+	readonly workspaceId?: string;
+	readonly uid: string;
+	readonly resourceVersion: string;
+	readonly generation: bigint;
+	readonly observedGeneration: bigint;
+	readonly phase: "Pending" | "Ready" | "Running" | "Failed" | "Terminating" | "Unknown";
+}
+interface AuthoritativeKubernetesStatusIngress {
+	ingestKubernetesStatus(
+		lease: { ownerId: string; epoch: bigint },
+		collection: "t4workspaces" | "t4sessions",
+		observation: AuthoritativeKubernetesStatusObservation,
+	): Promise<void>;
 }
 interface DurableOutboxWorkerLike {
 	acquireLease(): Promise<{ ownerId: string; epoch: bigint }>;
@@ -52,8 +76,10 @@ type WorkerConstructor = new (options: { ledger: PostgresLedgerLike; ownerId: st
 const DATABASE_URL = process.env.T4_TEST_POSTGRES_URL;
 const VERSION = "1";
 const OWNER_TOKEN = "opaque-owner-token-with-sufficient-entropy";
+const MIXED_CASE_OWNER_TOKEN = "Opaque-Owner-Token-With-Mixed-Case-Entropy";
 const OTHER_TOKEN = "opaque-other-token-with-sufficient-entropy";
 const INVALID_PRINCIPAL_TOKEN = "invalid-principal-token-with-sufficient-entropy";
+const STALE_APPLY_DEADLINE_SECONDS = 5;
 const ALL_SCOPES = new Set([
 	"discovery.read",
 	"workspaces.read",
@@ -75,6 +101,7 @@ let DurableOutboxWorker: WorkerConstructor | undefined;
 class TestAuthenticator implements PrincipalAuthenticator {
 	readonly #principals: Record<string, ApiPrincipal> = {
 		[OWNER_TOKEN]: { id: "owner@example.com", scopes: ALL_SCOPES },
+		[MIXED_CASE_OWNER_TOKEN]: { id: "owner@example.com", scopes: ALL_SCOPES },
 		[OTHER_TOKEN]: { id: "other@example.com", scopes: ALL_SCOPES },
 		[INVALID_PRINCIPAL_TOKEN]: { id: "Not A CRD Owner", scopes: ALL_SCOPES },
 	};
@@ -647,6 +674,342 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 		const takeover = await ledger.acquireLease("lease-owner-b", 30);
 		expect(takeover.epoch).toBe(first.epoch + 1n);
 		await ledger.close();
+	});
+
+	it("rejects forged acknowledge claims unless command, kind, and target match the locked outbox row", async () => {
+		const ledger = await newLedger();
+		const api = newApi(ledger);
+		const first = await json(await call(api, "POST", "/v1/workspaces", { key: "ack-binding-workspace-01", body: { name: "claimed" } }));
+		const unrelated = await json(await call(api, "POST", "/v1/workspaces", { key: "ack-binding-workspace-02", body: { name: "unrelated" } }));
+		const lease = await ledger.acquireLease("ack-binding-owner", 30);
+		const claim = await ledger.claimNext(lease);
+		expect(claim).toBeDefined();
+		expect(claim!.targetId).toBe(first.id);
+		const commands = await admin`SELECT command_id, idempotency_key, lifecycle_state FROM t4_commands WHERE idempotency_key IN ('ack-binding-workspace-01', 'ack-binding-workspace-02')` as Array<{ command_id: string; idempotency_key: string; lifecycle_state: string }>;
+		const unrelatedCommandId = commands.find(row => row.idempotency_key === "ack-binding-workspace-02")!.command_id;
+
+		expect(await ledger.acknowledge({ ...claim!, commandId: unrelatedCommandId })).toBe(false);
+		expect(await ledger.acknowledge({ ...claim!, kind: "workspace.patch" })).toBe(false);
+		expect(await ledger.acknowledge({ ...claim!, targetId: unrelated.id })).toBe(false);
+		const unchanged = await admin`SELECT
+			(SELECT state FROM t4_outbox WHERE outbox_id = ${claim!.outboxId}) AS outbox_state,
+			(SELECT lifecycle_state FROM t4_commands WHERE command_id = ${claim!.commandId}) AS claimed_command_state,
+			(SELECT lifecycle_state FROM t4_commands WHERE command_id = ${unrelatedCommandId}) AS unrelated_command_state` as Array<{ outbox_state: string; claimed_command_state: string; unrelated_command_state: string }>;
+		expect(unchanged[0]).toEqual({ outbox_state: "claimed", claimed_command_state: "accepted", unrelated_command_state: "accepted" });
+		expect(await ledger.acknowledge(claim!)).toBe(true);
+		await ledger.close();
+	});
+
+	it("rejects claimed outbox rows with null or empty owners and nonpositive owner epochs at the table boundary", async () => {
+		const ledger = await newLedger();
+		const api = newApi(ledger);
+		await call(api, "POST", "/v1/workspaces", { key: "claimed-row-constraint-01", body: { name: "claim constraints" } });
+		const rows = await admin`SELECT outbox_id FROM t4_outbox WHERE idempotency_key = 'claimed-row-constraint-01'` as Array<{ outbox_id: bigint }>;
+		const outboxId = rows[0]!.outbox_id;
+		await expect(admin`UPDATE t4_outbox SET state = 'claimed', owner_id = NULL, owner_epoch = 1, claimed_at = clock_timestamp() WHERE outbox_id = ${outboxId}`).rejects.toMatchObject({ code: "23514" });
+		await expect(admin`UPDATE t4_outbox SET state = 'claimed', owner_id = 'constraint-owner', owner_epoch = NULL, claimed_at = clock_timestamp() WHERE outbox_id = ${outboxId}`).rejects.toMatchObject({ code: "23514" });
+		await expect(admin`UPDATE t4_outbox SET state = 'claimed', owner_id = 'constraint-owner', owner_epoch = 0, claimed_at = clock_timestamp() WHERE outbox_id = ${outboxId}`).rejects.toMatchObject({ code: "23514" });
+		await expect(admin`UPDATE t4_outbox SET state = 'claimed', owner_id = '', owner_epoch = 1, claimed_at = clock_timestamp() WHERE outbox_id = ${outboxId}`).rejects.toMatchObject({ code: "23514" });
+		await expect(admin`UPDATE t4_outbox SET state = 'claimed', owner_id = 'constraint-owner', owner_epoch = -1, claimed_at = clock_timestamp() WHERE outbox_id = ${outboxId}`).rejects.toMatchObject({ code: "23514" });
+		const unchanged = await admin`SELECT state, owner_id, owner_epoch FROM t4_outbox WHERE outbox_id = ${outboxId}` as Array<{ state: string; owner_id: string | null; owner_epoch: bigint | null }>;
+		expect(unchanged[0]).toEqual({ state: "pending", owner_id: null, owner_epoch: null });
+		await ledger.close();
+	});
+
+	it("retries a current recordFailure serialization failure while preventing a stale owner from resetting the reclaimed item", async () => {
+		const ledger = await newLedger();
+		const api = newApi(ledger);
+		await call(api, "POST", "/v1/workspaces", { key: "failure-takeover-workspace", body: { name: "failure takeover" } });
+		const staleLease = await ledger.acquireLease("failure-stale-owner", 30);
+		const staleClaim = await ledger.claimNext(staleLease);
+		expect(staleClaim).toBeDefined();
+		await admin`UPDATE t4_owner_leases SET expires_at = clock_timestamp() - interval '1 second' WHERE lease_name = 'gateway-outbox'`;
+		const currentLease = await ledger.acquireLease("failure-current-owner", 30);
+		const currentClaim = await ledger.claimNext(currentLease);
+		expect(currentClaim?.outboxId).toBe(staleClaim!.outboxId);
+		expect(currentClaim?.ownerEpoch).toBeGreaterThan(staleClaim!.ownerEpoch);
+
+		expect(await ledger.recordFailure(staleClaim!, "late stale failure")).toBe(false);
+		const retained = await admin`SELECT state, owner_id, owner_epoch, attempts, last_error FROM t4_outbox WHERE outbox_id = ${staleClaim!.outboxId}` as Array<{ state: string; owner_id: string; owner_epoch: bigint; attempts: number; last_error: string | null }>;
+		expect(retained[0]).toEqual({ state: "claimed", owner_id: currentLease.ownerId, owner_epoch: currentLease.epoch, attempts: 2, last_error: null });
+
+		let retryFixtureInstalled = false;
+		try {
+			await admin.unsafe(`
+				CREATE SEQUENCE t4_test_record_failure_attempt;
+				CREATE FUNCTION t4_test_fail_first_record_failure() RETURNS trigger LANGUAGE plpgsql AS $$
+				BEGIN
+					IF OLD.state = 'claimed' AND NEW.state = 'pending' AND nextval('t4_test_record_failure_attempt') = 1 THEN
+						RAISE EXCEPTION 'injected recordFailure serialization failure' USING ERRCODE = '40001';
+					END IF;
+					RETURN NEW;
+				END $$;
+				CREATE TRIGGER t4_test_fail_first_record_failure_trigger BEFORE UPDATE ON t4_outbox
+				FOR EACH ROW EXECUTE FUNCTION t4_test_fail_first_record_failure();
+			`);
+			retryFixtureInstalled = true;
+			expect(await ledger.recordFailure(currentClaim!, "retryable current failure")).toBe(true);
+			const released = await admin`SELECT
+				(SELECT last_value FROM t4_test_record_failure_attempt) AS retry_attempts,
+				state, owner_id, owner_epoch, attempts, last_error
+				FROM t4_outbox WHERE outbox_id = ${currentClaim!.outboxId}` as Array<{ retry_attempts: bigint; state: string; owner_id: string | null; owner_epoch: bigint | null; attempts: number; last_error: string | null }>;
+			expect(released[0]).toEqual({ retry_attempts: 2n, state: "pending", owner_id: null, owner_epoch: null, attempts: 2, last_error: "retryable current failure" });
+		} finally {
+			if (retryFixtureInstalled) await admin.unsafe("DROP TRIGGER IF EXISTS t4_test_fail_first_record_failure_trigger ON t4_outbox; DROP FUNCTION IF EXISTS t4_test_fail_first_record_failure(); DROP SEQUENCE IF EXISTS t4_test_record_failure_attempt");
+			await ledger.close();
+		}
+	});
+
+	it("persists and exactly replays two distinct DELETE requests while enqueueing one provider deletion and one revision transition", async () => {
+		const ledger = await newLedger();
+		const api = newApi(ledger);
+		const workspace = await json(await call(api, "POST", "/v1/workspaces", { key: "double-delete-workspace-01", body: { name: "double delete" } }));
+		const session = await json(await call(api, "POST", `/v1/workspaces/${workspace.id}/sessions`, { key: "double-delete-session-001", body: { title: "double delete" } }));
+		const firstKey = "double-delete-request-001";
+		const secondKey = "double-delete-request-002";
+		const first = await call(api, "DELETE", `/v1/sessions/${session.id}`, { key: firstKey });
+		const second = await call(api, "DELETE", `/v1/sessions/${session.id}`, { key: secondKey });
+		expect([first.status, second.status]).toEqual([204, 204]);
+		expect([first.headers.get("idempotency-replayed"), second.headers.get("idempotency-replayed")]).toEqual(["false", "false"]);
+		const firstBody = await first.text();
+		const secondBody = await second.text();
+		const firstReplay = await call(api, "DELETE", `/v1/sessions/${session.id}`, { key: firstKey });
+		const secondReplay = await call(api, "DELETE", `/v1/sessions/${session.id}`, { key: secondKey });
+		expect([firstReplay.status, secondReplay.status]).toEqual([204, 204]);
+		expect([firstReplay.headers.get("idempotency-replayed"), secondReplay.headers.get("idempotency-replayed")]).toEqual(["true", "true"]);
+		expect([await firstReplay.text(), await secondReplay.text()]).toEqual([firstBody, secondBody]);
+
+		const persisted = await admin`SELECT
+			(SELECT count(*) FROM t4_commands WHERE operation = 'deleteSession' AND target_scope = ${`session:${session.id}`}) AS commands,
+			(SELECT count(*) FROM t4_outbox WHERE mutation_kind = 'session.delete' AND target_id = ${session.id}) AS deletions,
+			(SELECT revision FROM t4_session_intents WHERE session_id = ${session.id}) AS revision,
+			(SELECT generation FROM t4_session_intents WHERE session_id = ${session.id}) AS generation,
+			(SELECT deletion_requested FROM t4_session_intents WHERE session_id = ${session.id}) AS deletion_requested` as Array<{ commands: bigint; deletions: bigint; revision: bigint; generation: bigint; deletion_requested: boolean }>;
+		expect(persisted[0]).toEqual({ commands: 2n, deletions: 1n, revision: 2n, generation: 2n, deletion_requested: true });
+		const kubernetes = new ObservableKubernetes();
+		const worker = newWorker(ledger, "double-delete-owner", kubernetes);
+		const lease = await worker.acquireLease();
+		kubernetes.currentEpoch = lease.epoch;
+		await worker.drain();
+		expect(kubernetes.attempts.filter(mutation => mutation.kind === "session.delete" && mutation.targetId === session.id)).toHaveLength(1);
+		await ledger.close();
+	});
+
+	it("reclaims a same-owner claim only after the named stale-apply deadline and immediately fences the abandoned claim", async () => {
+		let ledger = await newLedger();
+		let api = newApi(ledger);
+		await call(api, "POST", "/v1/workspaces", { key: "same-owner-restart-claim", body: { name: "restart claim" } });
+		const firstWorker = newWorker(ledger, "stable-restart-owner", new ObservableKubernetes());
+		const firstLease = await firstWorker.acquireLease();
+		const abandoned = await firstWorker.claimNext();
+		expect(abandoned).toBeDefined();
+		await ledger.close();
+
+		ledger = await newLedger();
+		api = newApi(ledger);
+		const kubernetes = new ObservableKubernetes();
+		const restarted = newWorker(ledger, "stable-restart-owner", kubernetes);
+		const restartedLease = await restarted.acquireLease();
+		expect(restartedLease).toEqual(firstLease);
+		await expect(ledger.acquireLease("concurrent-thief", 30)).rejects.toThrow("lease");
+		expect(await restarted.claimNext()).toBeUndefined();
+		await admin`UPDATE t4_outbox SET claimed_at = clock_timestamp() - (${STALE_APPLY_DEADLINE_SECONDS - 1} * interval '1 second') WHERE outbox_id = ${abandoned!.outboxId}`;
+		expect(await restarted.claimNext()).toBeUndefined();
+		await admin`UPDATE t4_outbox SET claimed_at = clock_timestamp() - (${STALE_APPLY_DEADLINE_SECONDS + 1} * interval '1 second') WHERE outbox_id = ${abandoned!.outboxId}`;
+		const reclaimed = await restarted.claimNext();
+		expect(reclaimed?.outboxId).toBe(abandoned!.outboxId);
+		expect(reclaimed?.ownerEpoch).toBe(firstLease.epoch);
+		expect(await ledger.claimIsCurrent(abandoned!)).toBe(false);
+		kubernetes.currentEpoch = restartedLease.epoch;
+		expect(await restarted.applyClaim(reclaimed!)).toBe("applied");
+		expect(kubernetes.attempts).toHaveLength(1);
+		await ledger.close();
+	});
+
+	it("case-folds lowercase and mixed-case Bearer schemes without altering mixed-case credential bytes", async () => {
+		const ledger = await newLedger();
+		const api = newApi(ledger);
+		for (const scheme of ["bearer", "bEaReR"]) {
+			const requestHeaders = headers();
+			requestHeaders.set("authorization", `${scheme} ${MIXED_CASE_OWNER_TOKEN}`);
+			const response = await api.handle(new Request("https://t4.example.test/v1", { headers: requestHeaders }));
+			expect(response.status).toBe(200);
+		}
+		await ledger.close();
+	});
+
+	it("returns the generated incompatible-version Error406 envelope for malformed or non-SSE Accept", async () => {
+		const ledger = await newLedger();
+		const api = newApi(ledger);
+		const workspace = await json(await call(api, "POST", "/v1/workspaces", { key: "accept-406-workspace-01", body: { name: "accept contract" } }));
+		const session = await json(await call(api, "POST", `/v1/workspaces/${workspace.id}/sessions`, { key: "accept-406-session-001", body: { title: "accept contract" } }));
+		for (const accept of ["application/json", "text/event-stream;q=bogus"]) {
+			const response = await call(api, "GET", `/v1/sessions/${session.id}/events`, { headers: { accept } });
+			expect(response.status).toBe(406);
+			expect(response.headers.get("content-type")).toContain("application/json");
+			expect(response.headers.get("t4-api-version")).toBe("1.0");
+			expect(await json(response)).toEqual({
+				error: {
+					code: "incompatible_version",
+					message: expect.any(String),
+					requestId: expect.stringMatching(/^req_[0-9a-f-]{36}$/u),
+					retryable: false,
+					supportedMajors: [1],
+				},
+			});
+		}
+		await ledger.close();
+	});
+
+	it("marks successful Kubernetes outbox application projected, never completed, while public command replay stays accepted", async () => {
+		const ledger = await newLedger();
+		const api = newApi(ledger);
+		const workspace = await json(await call(api, "POST", "/v1/workspaces", { key: "projected-workspace-0001", body: { name: "projected" } }));
+		const session = await json(await call(api, "POST", `/v1/workspaces/${workspace.id}/sessions`, { key: "projected-session-00001", body: { title: "projected" } }));
+		const kubernetes = new ObservableKubernetes();
+		const worker = newWorker(ledger, "projection-lifecycle-owner", kubernetes);
+		const lease = await worker.acquireLease();
+		kubernetes.currentEpoch = lease.epoch;
+		expect(await worker.drain()).toBeGreaterThan(0);
+
+		const key = "projected-command-00001";
+		const input = { command: "printf projected", metadata: { contract: "lifecycle" } };
+		const acceptedResponse = await call(api, "POST", `/v1/sessions/${session.id}/commands`, { key, body: input });
+		expect(acceptedResponse.status).toBe(202);
+		const accepted = await json(acceptedResponse);
+		expect(accepted).toMatchObject({ state: "accepted" });
+		expect(await worker.drain()).toBe(1);
+		const replay = await call(api, "POST", `/v1/sessions/${session.id}/commands`, { key, body: input });
+		expect(replay.status).toBe(200);
+		expect(replay.headers.get("idempotency-replayed")).toBe("true");
+		expect(await json(replay)).toEqual(accepted);
+		const lifecycle = await admin`SELECT command.lifecycle_state, item.state AS outbox_state
+			FROM t4_commands command JOIN t4_outbox item USING (command_id)
+			WHERE command.command_id = ${String(accepted.commandId)}` as Array<{ lifecycle_state: string; outbox_state: string }>;
+		expect(lifecycle[0]).toEqual({ lifecycle_state: "projected", outbox_state: "applied" });
+		expect(kubernetes.attempts.filter(mutation => mutation.kind === "command.submit" && mutation.targetId === session.id)).toHaveLength(1);
+		await ledger.close();
+	});
+
+	it("atomically converges one complete session status event and opaque cursor while cancellation absorbs later status", async () => {
+		const ledger = await newLedger();
+		const api = newApi(ledger);
+		const workspace = await json(await call(api, "POST", "/v1/workspaces", { key: "status-ingress-workspace", body: { name: "status ingress" } }));
+		const session = await json(await call(api, "POST", `/v1/workspaces/${workspace.id}/sessions`, { key: "status-ingress-session-01", body: { title: "status ingress" } }));
+		const lease = await ledger.acquireLease("status-ingress-owner", 30);
+		const ingress = ledger as PostgresLedgerLike & AuthoritativeKubernetesStatusIngress;
+		let rejectionTriggerInstalled = false;
+		try {
+			const eventsBeforeWorkspace = await admin`SELECT count(*) AS count FROM t4_events` as Array<{ count: bigint }>;
+			await ingress.ingestKubernetesStatus(lease, "t4workspaces", {
+				resourceId: workspace.id,
+				principalId: "owner@example.com",
+				uid: "workspace-authority-uid",
+				resourceVersion: "workspace-rv-101",
+				generation: 1n,
+				observedGeneration: 1n,
+				phase: "Ready",
+			});
+			const workspaceConvergence = await admin`SELECT
+				(SELECT state FROM t4_workspace_intents WHERE workspace_id = ${workspace.id}) AS state,
+				(SELECT count(*) FROM t4_events) AS event_count,
+				(SELECT resource_version FROM t4_kubernetes_status_cursors WHERE collection = 't4workspaces') AS cursor` as Array<{ state: string; event_count: bigint; cursor: string }>;
+			expect(workspaceConvergence[0]).toEqual({ state: "ready", event_count: eventsBeforeWorkspace[0]!.count, cursor: "workspace-rv-101" });
+
+			const beforeSessionStatus = await admin`SELECT count(*) AS event_count, max(sequence) AS latest_event FROM t4_events WHERE session_id = ${session.id}` as Array<{ event_count: bigint; latest_event: bigint }>;
+			await ingress.ingestKubernetesStatus(lease, "t4sessions", {
+				resourceId: session.id,
+				principalId: "owner@example.com",
+				workspaceId: workspace.id,
+				uid: "session-authority-uid",
+				resourceVersion: "900",
+				generation: 1n,
+				observedGeneration: 1n,
+				phase: "Running",
+			});
+			const converged = await admin`SELECT
+				(SELECT state FROM t4_session_intents WHERE session_id = ${session.id}) AS state,
+				(SELECT count(*) FROM t4_events WHERE session_id = ${session.id} AND sequence > ${beforeSessionStatus[0]!.latest_event}) AS new_event_count,
+				(SELECT sequence FROM t4_events WHERE session_id = ${session.id} ORDER BY sequence DESC LIMIT 1) AS latest_event,
+				(SELECT payload FROM t4_events WHERE session_id = ${session.id} ORDER BY sequence DESC LIMIT 1) AS event_payload,
+				(SELECT owner_epoch FROM t4_events WHERE session_id = ${session.id} ORDER BY sequence DESC LIMIT 1) AS event_epoch,
+				(SELECT latest_sequence FROM t4_event_retention WHERE principal_id = 'owner@example.com' AND session_id = ${session.id}) AS retained_event,
+				(SELECT resource_version FROM t4_kubernetes_status_cursors WHERE collection = 't4sessions') AS cursor` as Array<{ state: string; new_event_count: bigint; latest_event: bigint; event_payload: Record<string, unknown>; event_epoch: bigint; retained_event: bigint; cursor: string }>;
+			expect(converged[0]!.state).toBe("ready");
+			expect(converged[0]!.new_event_count).toBe(1n);
+			expect(converged[0]!.event_payload).toEqual({ state: "ready", revision: session.revision });
+			expect(converged[0]!.event_epoch).toBe(lease.epoch);
+			expect(converged[0]!.cursor).toBe("900");
+			expect(converged[0]!.latest_event).toBeGreaterThan(beforeSessionStatus[0]!.latest_event);
+			expect(converged[0]!.retained_event).toBe(converged[0]!.latest_event);
+
+			await admin.unsafe(`
+				CREATE OR REPLACE FUNCTION t4_test_reject_authoritative_status_event() RETURNS trigger LANGUAGE plpgsql AS $$
+				BEGIN
+					IF NEW.event_type = 'session' AND NEW.payload->>'state' = 'failed' THEN RAISE EXCEPTION 'injected authoritative status event failure'; END IF;
+					RETURN NEW;
+				END $$;
+				CREATE TRIGGER t4_test_reject_authoritative_status_event_trigger BEFORE INSERT ON t4_events
+				FOR EACH ROW EXECUTE FUNCTION t4_test_reject_authoritative_status_event();
+			`);
+			rejectionTriggerInstalled = true;
+			const beforeFailure = await admin`SELECT
+				state, revision, kube_uid, kube_resource_version, kube_generation, kube_observed_generation,
+				(SELECT count(*) FROM t4_events WHERE session_id = ${session.id}) AS event_count,
+				(SELECT min(sequence) FROM t4_events WHERE session_id = ${session.id}) AS first_event,
+				(SELECT max(sequence) FROM t4_events WHERE session_id = ${session.id}) AS latest_event,
+				(SELECT first_retained_sequence FROM t4_event_retention WHERE principal_id = 'owner@example.com' AND session_id = ${session.id}) AS first_retained_event,
+				(SELECT latest_sequence FROM t4_event_retention WHERE principal_id = 'owner@example.com' AND session_id = ${session.id}) AS latest_retained_event,
+				(SELECT resource_version FROM t4_kubernetes_status_cursors WHERE collection = 't4sessions') AS cursor_resource_version,
+				(SELECT owner_epoch FROM t4_kubernetes_status_cursors WHERE collection = 't4sessions') AS cursor_owner_epoch
+				FROM t4_session_intents WHERE session_id = ${session.id}`;
+			await expect(ingress.ingestKubernetesStatus(lease, "t4sessions", {
+				resourceId: session.id,
+				principalId: "owner@example.com",
+				workspaceId: workspace.id,
+				uid: "session-authority-uid",
+				resourceVersion: "901",
+				generation: 2n,
+				observedGeneration: 2n,
+				phase: "Failed",
+			})).rejects.toThrow("injected authoritative status event failure");
+			const afterFailure = await admin`SELECT
+				state, revision, kube_uid, kube_resource_version, kube_generation, kube_observed_generation,
+				(SELECT count(*) FROM t4_events WHERE session_id = ${session.id}) AS event_count,
+				(SELECT min(sequence) FROM t4_events WHERE session_id = ${session.id}) AS first_event,
+				(SELECT max(sequence) FROM t4_events WHERE session_id = ${session.id}) AS latest_event,
+				(SELECT first_retained_sequence FROM t4_event_retention WHERE principal_id = 'owner@example.com' AND session_id = ${session.id}) AS first_retained_event,
+				(SELECT latest_sequence FROM t4_event_retention WHERE principal_id = 'owner@example.com' AND session_id = ${session.id}) AS latest_retained_event,
+				(SELECT resource_version FROM t4_kubernetes_status_cursors WHERE collection = 't4sessions') AS cursor_resource_version,
+				(SELECT owner_epoch FROM t4_kubernetes_status_cursors WHERE collection = 't4sessions') AS cursor_owner_epoch
+				FROM t4_session_intents WHERE session_id = ${session.id}`;
+			expect(afterFailure).toEqual(beforeFailure);
+
+			const cancellationResponse = await call(api, "POST", `/v1/sessions/${session.id}/cancel`, { key: "status-ingress-cancel-001" });
+			expect(cancellationResponse.status).toBe(202);
+			const cancelling = await json(cancellationResponse);
+			expect(cancelling).toMatchObject({ id: session.id, state: "cancelling", revision: session.revision + 1 });
+			const afterCancellation = await admin`SELECT count(*) AS event_count FROM t4_events WHERE session_id = ${session.id}` as Array<{ event_count: bigint }>;
+			await ingress.ingestKubernetesStatus(lease, "t4sessions", {
+				resourceId: session.id,
+				principalId: "owner@example.com",
+				workspaceId: workspace.id,
+				uid: "session-authority-uid",
+				resourceVersion: "10",
+				generation: 1n,
+				observedGeneration: 1n,
+				phase: "Running",
+			});
+			const afterLowerOpaqueVersion = await admin`SELECT
+				(SELECT state FROM t4_session_intents WHERE session_id = ${session.id}) AS state,
+				(SELECT count(*) FROM t4_events WHERE session_id = ${session.id}) AS event_count,
+				(SELECT resource_version FROM t4_kubernetes_status_cursors WHERE collection = 't4sessions') AS cursor_resource_version,
+				(SELECT owner_epoch FROM t4_kubernetes_status_cursors WHERE collection = 't4sessions') AS cursor_owner_epoch` as Array<{ state: string; event_count: bigint; cursor_resource_version: string; cursor_owner_epoch: bigint }>;
+			expect(afterLowerOpaqueVersion[0]).toEqual({ state: "cancelling", event_count: afterCancellation[0]!.event_count, cursor_resource_version: "10", cursor_owner_epoch: lease.epoch });
+		} finally {
+			if (rejectionTriggerInstalled) await admin.unsafe("DROP TRIGGER IF EXISTS t4_test_reject_authoritative_status_event_trigger ON t4_events; DROP FUNCTION IF EXISTS t4_test_reject_authoritative_status_event()");
+			await ledger.close();
+		}
 	});
 
 	it("allows exact Unicode code-point bounds and denies browser Origin by default", async () => {

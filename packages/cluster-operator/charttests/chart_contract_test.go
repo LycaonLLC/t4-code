@@ -501,6 +501,19 @@ func TestPublicAPIRenderGuardsSurviveSchemaBypass(t *testing.T) {
 	}
 }
 
+func TestPublicAPIRejectsCollidingSecretProjectionKeysUnderSchemaBypass(t *testing.T) {
+	values := append(enabledValues(),
+		"--skip-schema-validation",
+		"--set", "publicApi.enabled=true",
+		"--set-string", "publicApi.existingSecret=t4-public-api",
+		"--set-string", "publicApi.postgresURLKey=credentials.json",
+		"--set-string", "publicApi.credentialsKey=credentials.json",
+		"--set", "networkPolicy.postgresCIDRs[0]=198.51.100.20/32",
+		"--set", "networkPolicy.postgresPorts[0]=5432",
+	)
+	helmTemplateMustFailBeforeWorkloads(t, "publicApi.postgresURLKey and publicApi.credentialsKey must be different", values...)
+}
+
 func TestUnauthenticatedOMPControllerCannotReadSecrets(t *testing.T) {
 	output := helmTemplate(t, enabledValues()...)
 	controllerRole := documentContaining(t, output, "name: \"release-name-t4-cluster-controller\"")

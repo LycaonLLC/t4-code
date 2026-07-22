@@ -10,6 +10,8 @@ import {
 	semanticResourceHash,
 } from "../src/kubernetes-client.ts";
 import { PublicKubernetesOutboxApplier } from "../src/public-kubernetes-applier.ts";
+import { ClusterInfrastructureProjection } from "../src/kubernetes-projection.ts";
+import { KubernetesProjectionRunner } from "../src/kubernetes-runner.ts";
 import type { OutboxMutation } from "../src/outbox-worker.ts";
 
 const PRINCIPAL = "owner@example.com";
@@ -237,6 +239,164 @@ describe("durable public Kubernetes applier", () => {
 		"cluster.t4.dev/ledger-semantic-hash": "sha256:prior",
 	};
 
+	it("does not compensate an objectless non-success POST with fallback GET or DELETE", async () => {
+		const requests: Array<{ url: string; init?: RequestInit }> = [];
+		const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+			requests.push({ url: String(input), init });
+			return init?.method === "POST"
+				? Response.json({ reason: "ServiceUnavailable" }, { status: 503 })
+				: Response.json({ reason: "NotFound" }, { status: 404 });
+		}) as typeof globalThis.fetch;
+		const applier = new PublicKubernetesOutboxApplier({
+			client: new KubernetesApiClient({ baseUrl: "https://kubernetes.default.svc", namespace: "development", token: "token", fetch }),
+			hostRef: "primary",
+		});
+		const createMutation: OutboxMutation = {
+			...workspaceMutation,
+			kind: "workspace.create",
+			payload: { id: "workspace-one", name: "created", revision: 1 },
+		};
+
+		await expect(applier.apply(createMutation, fence)).rejects.toMatchObject({ status: 503 });
+		expect(requests.map(request => request.init?.method ?? "GET")).toEqual(["POST"]);
+	});
+
+	it("cleans a stale successful create by its returned UID while protecting a replacement UID", async () => {
+		const requests: Array<{ url: string; init?: RequestInit }> = [];
+		const replacementUid = "workspace-replacement-uid";
+		let replacementProtected = false;
+		const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+			requests.push({ url: String(input), init });
+			if (init?.method === "POST") {
+				const posted = JSON.parse(String(init.body));
+				return Response.json({
+					...posted,
+					metadata: { ...posted.metadata, uid: "workspace-created-uid", resourceVersion: "81" },
+				}, { status: 201 });
+			}
+			if (init?.method === "DELETE") {
+				const deletion = JSON.parse(String(init.body));
+				replacementProtected = deletion.preconditions.uid !== replacementUid;
+				return replacementProtected
+					? Response.json({ reason: "Conflict" }, { status: 409 })
+					: Response.json({});
+			}
+			return Response.json({
+				apiVersion: "cluster.t4.dev/v1alpha1",
+				kind: "T4Workspace",
+				metadata: { name: "workspace-one", uid: replacementUid, resourceVersion: "82" },
+			}, { status: 200 });
+		}) as typeof globalThis.fetch;
+		const applier = new PublicKubernetesOutboxApplier({
+			client: new KubernetesApiClient({ baseUrl: "https://kubernetes.default.svc", namespace: "development", token: "token", fetch }),
+			hostRef: "primary",
+		});
+		const createMutation: OutboxMutation = {
+			...workspaceMutation,
+			kind: "workspace.create",
+			payload: { id: "workspace-one", name: "created", revision: 1 },
+		};
+		let currencyChecks = 0;
+
+		await expect(applier.apply(createMutation, fence, {
+			claimIsCurrent: async () => ++currencyChecks === 1,
+		})).rejects.toThrow("no longer current");
+		expect(requests.map(request => request.init?.method ?? "GET")).toEqual(["POST", "DELETE"]);
+		expect(JSON.parse(String(requests[1]?.init?.body))).toMatchObject({
+			preconditions: { uid: "workspace-created-uid", resourceVersion: "81" },
+		});
+		expect(replacementProtected).toBe(true);
+	});
+
+	it.each([409, 503])("persists and safely replays exact-UID stale-create cleanup after DELETE %i", async cleanupStatus => {
+		interface StaleCreateCleanup {
+			readonly resourceType: "t4workspaces" | "t4sessions";
+			readonly targetId: string;
+			readonly uid: string;
+			readonly resourceVersion: string;
+		}
+		interface StaleCreateCleanupReplayer {
+			replayStaleCreateCleanup(cleanup: StaleCreateCleanup, context: { claimIsCurrent(): Promise<boolean> }): Promise<void>;
+		}
+		const durableCleanups: StaleCreateCleanup[] = [];
+		const requests: Array<{ url: string; init?: RequestInit }> = [];
+		let phase: "initial" | "same-uid" | "replacement-uid" = "initial";
+		const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+			requests.push({ url: String(input), init });
+			if (phase === "initial" && init?.method === "POST") {
+				const posted = JSON.parse(String(init.body));
+				return Response.json({
+					...posted,
+					metadata: { ...posted.metadata, uid: "workspace-created-uid", resourceVersion: "91" },
+				}, { status: 201 });
+			}
+			if (phase === "initial") {
+				return Response.json({ reason: cleanupStatus === 409 ? "Conflict" : "ServiceUnavailable" }, { status: cleanupStatus });
+			}
+			if (!init?.method) {
+				return Response.json({
+					apiVersion: "cluster.t4.dev/v1alpha1",
+					kind: "T4Workspace",
+					metadata: {
+						name: "workspace-one",
+						uid: phase === "same-uid" ? "workspace-created-uid" : "workspace-replacement-uid",
+						resourceVersion: phase === "same-uid" ? "92" : "93",
+					},
+				}, { status: 200 });
+			}
+			return Response.json({}, { status: 200 });
+		}) as typeof globalThis.fetch;
+		const applier = new PublicKubernetesOutboxApplier({
+			client: new KubernetesApiClient({ baseUrl: "https://kubernetes.default.svc", namespace: "development", token: "token", fetch }),
+			hostRef: "primary",
+		});
+		const createMutation: OutboxMutation = {
+			...workspaceMutation,
+			kind: "workspace.create",
+			payload: { id: "workspace-one", name: "created", revision: 1 },
+		};
+		let currencyChecks = 0;
+		const cleanupAwareContext = {
+			claimIsCurrent: async () => ++currencyChecks === 1,
+			persistStaleCreateCleanup: async (cleanup: StaleCreateCleanup) => { durableCleanups.push(cleanup); },
+		};
+
+		await expect(applier.apply(createMutation, fence, cleanupAwareContext)).rejects.toThrow();
+		expect(requests.map(request => request.init?.method ?? "GET")).toEqual(["POST", "DELETE"]);
+		expect(durableCleanups).toEqual([{
+			resourceType: "t4workspaces",
+			targetId: "workspace-one",
+			uid: "workspace-created-uid",
+			resourceVersion: "91",
+		}]);
+
+		const replayer = applier as unknown as StaleCreateCleanupReplayer;
+		let replayCurrencyChecks = 0;
+		const currentOwner = { claimIsCurrent: async () => { replayCurrencyChecks += 1; return true; } };
+		phase = "same-uid";
+		const sameUidRequestStart = requests.length;
+		await expect(replayer.replayStaleCreateCleanup(durableCleanups[0]!, currentOwner)).resolves.toBeUndefined();
+		const sameUidRequests = requests.slice(sameUidRequestStart);
+		expect(sameUidRequests.map(request => request.init?.method ?? "GET")).toEqual(["GET", "DELETE"]);
+		expect(sameUidRequests[0]?.url).toBe("https://kubernetes.default.svc/apis/cluster.t4.dev/v1alpha1/namespaces/development/t4workspaces/workspace-one");
+		expect(JSON.parse(String(sameUidRequests[1]?.init?.body))).toEqual({
+			apiVersion: "v1",
+			kind: "DeleteOptions",
+			propagationPolicy: "Foreground",
+			preconditions: { uid: "workspace-created-uid", resourceVersion: "92" },
+		});
+		expect(replayCurrencyChecks).toBeGreaterThanOrEqual(1);
+		const currencyChecksBeforeReplacement = replayCurrencyChecks;
+
+		phase = "replacement-uid";
+		const replacementRequestStart = requests.length;
+		await expect(replayer.replayStaleCreateCleanup(durableCleanups[0]!, currentOwner)).resolves.toBeUndefined();
+		const replacementRequests = requests.slice(replacementRequestStart);
+		expect(replacementRequests.map(request => request.init?.method ?? "GET")).toEqual(["GET"]);
+		expect(replacementRequests[0]?.url).toBe("https://kubernetes.default.svc/apis/cluster.t4.dev/v1alpha1/namespaces/development/t4workspaces/workspace-one");
+		expect(replayCurrencyChecks).toBeGreaterThan(currencyChecksBeforeReplacement);
+	});
+
 	it("carries observed resourceVersion and owner epoch on every existing-resource PATCH", async () => {
 		const values = recordingFetch([{
 			apiVersion: "cluster.t4.dev/v1alpha1",
@@ -401,6 +561,73 @@ describe("durable public Kubernetes applier", () => {
 		expect(new TextEncoder().encode(JSON.stringify(patch.metadata)).byteLength).toBeLessThan(4_096);
 	});
 
+	it("removes the legacy full command payload on submit while replacing the bounded pointer", async () => {
+		const values = recordingFetch([{
+			apiVersion: "cluster.t4.dev/v1alpha1", kind: "T4Session",
+			metadata: { name: "session-one", resourceVersion: "66", annotations: {
+				...priorAnnotations,
+				"cluster.t4.dev/pending-command": "legacy full command payload",
+				"cluster.t4.dev/pending-command-id": "prior-command-id",
+				"cluster.t4.dev/pending-command-epoch": "6",
+			} },
+			spec: { hostRef: "primary", workspaceRef: "workspace-one" },
+		}, {
+			apiVersion: "cluster.t4.dev/v1alpha1", kind: "T4Workspace",
+			metadata: { name: "workspace-one", resourceVersion: "65", annotations: priorAnnotations },
+			spec: { hostRef: "primary", owner: PRINCIPAL },
+		}, {}]);
+		const applier = new PublicKubernetesOutboxApplier({
+			client: new KubernetesApiClient({ baseUrl: "https://kubernetes.default.svc", namespace: "development", token: "token", fetch: values.fetch }),
+			hostRef: "primary",
+		});
+		const commandMutation: OutboxMutation = {
+			...workspaceMutation,
+			kind: "command.submit",
+			targetId: "session-one",
+			payload: { sessionId: "session-one", command: "printf replacement" },
+		};
+
+		await applier.apply(commandMutation, fence);
+		expect(new Headers(values.requests.at(-1)?.init?.headers).get("content-type")).toBe("application/merge-patch+json");
+		const annotations = JSON.parse(String(values.requests.at(-1)?.init?.body)).metadata.annotations;
+		expect(annotations["cluster.t4.dev/pending-command"]).toBeNull();
+		expect(annotations["cluster.t4.dev/pending-command-id"]).toBe(commandMutation.commandId);
+		expect(annotations["cluster.t4.dev/pending-command-epoch"]).toBe(fence.epoch.toString());
+	});
+
+	it("removes the legacy full command payload on session patch without clearing the bounded pointer", async () => {
+		const values = recordingFetch([{
+			apiVersion: "cluster.t4.dev/v1alpha1", kind: "T4Session",
+			metadata: { name: "session-one", resourceVersion: "68", annotations: {
+				...priorAnnotations,
+				"cluster.t4.dev/pending-command": "legacy full command payload",
+				"cluster.t4.dev/pending-command-id": "bounded-command-id",
+				"cluster.t4.dev/pending-command-epoch": "6",
+			} },
+			spec: { hostRef: "primary", workspaceRef: "workspace-one" },
+		}, {
+			apiVersion: "cluster.t4.dev/v1alpha1", kind: "T4Workspace",
+			metadata: { name: "workspace-one", resourceVersion: "67", annotations: priorAnnotations },
+			spec: { hostRef: "primary", owner: PRINCIPAL },
+		}, {}]);
+		const applier = new PublicKubernetesOutboxApplier({
+			client: new KubernetesApiClient({ baseUrl: "https://kubernetes.default.svc", namespace: "development", token: "token", fetch: values.fetch }),
+			hostRef: "primary",
+		});
+
+		await applier.apply({
+			...workspaceMutation,
+			kind: "session.patch",
+			targetId: "session-one",
+			payload: { id: "session-one", workspaceId: "workspace-one", title: "patched", revision: 2 },
+		}, fence);
+		expect(new Headers(values.requests.at(-1)?.init?.headers).get("content-type")).toBe("application/merge-patch+json");
+		const annotations = JSON.parse(String(values.requests.at(-1)?.init?.body)).metadata.annotations;
+		expect(annotations["cluster.t4.dev/pending-command"]).toBeNull();
+		expect(annotations).not.toHaveProperty("cluster.t4.dev/pending-command-id");
+		expect(annotations).not.toHaveProperty("cluster.t4.dev/pending-command-epoch");
+	});
+
 	it("verifies a session kind and its owning workspace relation before patching", async () => {
 		const values = recordingFetch([{
 			apiVersion: "cluster.t4.dev/v1alpha1", kind: "T4Session",
@@ -429,6 +656,64 @@ describe("durable public Kubernetes applier", () => {
 		}, fence);
 		expect(values.requests.map(value => value.init?.method ?? "GET")).toEqual(["GET", "GET", "PATCH"]);
 		expect(values.requests[1]?.url).toContain("/t4workspaces/workspace-one");
+	});
+});
+
+describe("Kubernetes legacy annotation reconciliation", () => {
+
+	it("reconciles legacy full command payload annotations on untouched listed sessions", async () => {
+		const patches: Array<{ resource: string; name: string; body: unknown }> = [];
+		const client = {
+			listInfrastructure: async () => ({
+				host: {
+					apiVersion: "cluster.t4.dev/v1alpha1", kind: "T4ClusterHost",
+					metadata: { name: "primary", uid: "host-uid", resourceVersion: "100" }, spec: {},
+				},
+				workspaces: [{
+					apiVersion: "cluster.t4.dev/v1alpha1", kind: "T4Workspace",
+					metadata: { name: "workspace-one", uid: "workspace-uid", resourceVersion: "101" },
+					spec: { hostRef: "primary", owner: PRINCIPAL, displayName: "Workspace", retentionPolicy: "Retain", size: "20Gi" },
+				}],
+				sessions: [{
+					apiVersion: "cluster.t4.dev/v1alpha1", kind: "T4Session",
+					metadata: { name: "session-legacy", uid: "session-uid", resourceVersion: "102", annotations: {
+						"cluster.t4.dev/pending-command": "legacy full command payload",
+						"cluster.t4.dev/pending-command-id": "bounded-command-id",
+						"cluster.t4.dev/pending-command-epoch": "6",
+					} },
+					spec: { hostRef: "primary", workspaceRef: "workspace-one", title: "Session", runtimeProfile: "default", guiEnabled: true },
+				}],
+				resourceVersion: "102",
+				resourceVersions: { t4clusterhosts: "100", t4workspaces: "101", t4sessions: "102" },
+			}),
+			patch: async (resource: string, name: string, body: unknown) => {
+				patches.push({ resource, name, body });
+				return { metadata: { name, resourceVersion: "103" } };
+			},
+			watch: (_resource: string, _version: string, _onEvent: unknown, signal: AbortSignal) => new Promise<void>(resolve => {
+				if (signal.aborted) resolve();
+				else signal.addEventListener("abort", () => resolve(), { once: true });
+			}),
+		} as unknown as KubernetesApiClient;
+		const projection = new ClusterInfrastructureProjection({ epoch: "replica-one", namespace: "development" });
+		const runner = new KubernetesProjectionRunner({ client, projection, hostName: "primary", retryMs: 0 });
+
+		try {
+			await runner.start();
+			expect(patches).toHaveLength(1);
+			expect(patches[0]).toEqual({
+				resource: "t4sessions",
+				name: "session-legacy",
+				body: {
+					metadata: {
+						resourceVersion: "102",
+						annotations: { "cluster.t4.dev/pending-command": null },
+					},
+				},
+			});
+		} finally {
+			await runner.stop();
+		}
 	});
 });
 
