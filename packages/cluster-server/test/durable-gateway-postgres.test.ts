@@ -1,5 +1,5 @@
 import { SQL } from "bun";
-import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 interface DurableLedgerOptions {
 	readonly url: string;
 	readonly cursorSecret: string;
@@ -124,7 +124,6 @@ async function newLedger(overrides: Partial<DurableLedgerOptions> = {}): Promise
 	if (!PostgresLedger) throw new Error("PostgreSQL ledger implementation is unavailable");
 	const ledger = new PostgresLedger(ledgerOptions(overrides));
 	await ledger.migrate();
-	await admin.unsafe("TRUNCATE t4_outbox, t4_event_retention, t4_events, t4_snapshot_entries, t4_session_intents, t4_workspace_intents, t4_commands, t4_owner_leases RESTART IDENTITY CASCADE");
 	return ledger;
 }
 
@@ -202,6 +201,14 @@ beforeAll(async () => {
 	PostgresLedger = (modules[0] as { PostgresLedger?: LedgerConstructor } | undefined)?.PostgresLedger;
 	T4PublicApiV1 = (modules[1] as { T4PublicApiV1?: ApiConstructor } | undefined)?.T4PublicApiV1;
 	DurableOutboxWorker = (modules[2] as { DurableOutboxWorker?: WorkerConstructor } | undefined)?.DurableOutboxWorker;
+});
+
+beforeEach(async () => {
+	if (!PostgresLedger) return;
+	const ledger = new PostgresLedger(ledgerOptions());
+	await ledger.migrate();
+	await ledger.close();
+	await admin.unsafe("TRUNCATE t4_outbox, t4_event_retention, t4_events, t4_snapshot_entries, t4_session_intents, t4_workspace_intents, t4_commands, t4_owner_leases RESTART IDENTITY CASCADE");
 });
 
 afterAll(async () => {
