@@ -243,7 +243,7 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 		expect(replay.status).toBe(200);
 		expect(replay.headers.get("idempotency-replayed")).toBe("true");
 		expect(await json(replay)).toEqual(acceptedBody);
-		const secondWorker = newWorker(ledger, "worker-b", kubernetes);
+		const secondWorker = newWorker(ledger, "worker-a", kubernetes);
 		const secondLease = await secondWorker.acquireLease();
 		kubernetes.currentEpoch = secondLease.epoch;
 		expect(await secondWorker.drain()).toBe(0);
