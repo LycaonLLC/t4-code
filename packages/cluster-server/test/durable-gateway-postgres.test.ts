@@ -755,12 +755,12 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 		await blockerReady.promise;
 		await admin.unsafe(`
 			CREATE SEQUENCE t4_test_event_pause_reached;
-			ALTER TABLE t4_events RENAME TO t4_events_base;
+			ALTER TABLE t4_event_retention RENAME TO t4_event_retention_base;
 			CREATE FUNCTION t4_test_pause_event(value bigint) RETURNS bigint LANGUAGE plpgsql VOLATILE AS $$
 			BEGIN PERFORM nextval('t4_test_event_pause_reached'); PERFORM pg_advisory_xact_lock(741408); RETURN value; END $$;
-			CREATE VIEW t4_events AS
-			SELECT t4_test_pause_event(sequence) AS sequence, principal_id, session_id, event_type, payload, owner_epoch, created_at
-			FROM t4_events_base;
+			CREATE VIEW t4_event_retention AS
+			SELECT principal_id, session_id, first_retained_sequence, t4_test_pause_event(latest_sequence) AS latest_sequence, updated_at
+			FROM t4_event_retention_base;
 		`);
 		const pendingWindow = call(api, "GET", `/v1/sessions/${session.id}/events?cursor=${encodeURIComponent(snapshot.cursor)}&maxEvents=1`, { headers: { accept: "text/event-stream" } });
 		const concurrent = new SQL(DATABASE_URL!, { max: 1, bigint: true });
@@ -768,8 +768,8 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 		try {
 			await waitForDatabase(async () => (await admin`SELECT is_called FROM t4_test_event_pause_reached` as Array<{ is_called: boolean }>)[0]?.is_called === true);
 			await concurrent.begin(async transaction => {
-				await transaction`DELETE FROM t4_events_base WHERE sequence = ${target[0]!.sequence}`;
-				await transaction`UPDATE t4_event_retention SET first_retained_sequence = ${target[0]!.sequence + 1n} WHERE principal_id = 'owner@example.com' AND session_id = ${session.id}`;
+				await transaction`DELETE FROM t4_events WHERE sequence = ${target[0]!.sequence}`;
+				await transaction`UPDATE t4_event_retention_base SET first_retained_sequence = ${target[0]!.sequence + 1n} WHERE principal_id = 'owner@example.com' AND session_id = ${session.id}`;
 			});
 			releaseBlocker.resolve();
 			await blockerTask;
@@ -780,7 +780,7 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 			await blocker.close();
 			await Promise.allSettled([pendingWindow]);
 			await concurrent.close();
-			await admin.unsafe("DROP VIEW IF EXISTS t4_events; ALTER TABLE t4_events_base RENAME TO t4_events; DROP FUNCTION IF EXISTS t4_test_pause_event(bigint); DROP SEQUENCE IF EXISTS t4_test_event_pause_reached");
+			await admin.unsafe("DROP VIEW IF EXISTS t4_event_retention; ALTER TABLE t4_event_retention_base RENAME TO t4_event_retention; DROP FUNCTION IF EXISTS t4_test_pause_event(bigint); DROP SEQUENCE IF EXISTS t4_test_event_pause_reached");
 		}
 		expect(response).toBeDefined();
 		expect(response!.status).toBe(200);
