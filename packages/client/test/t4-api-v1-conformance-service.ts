@@ -254,6 +254,8 @@ export class T4ApiV1ConformanceService {
       const id = decodeURIComponent(commandMatch[1]!);
       const session = this.#sessions.get(id);
       if (session?.tenant !== tenant) return problem(404, "not_found", "Session not found");
+      const mediaError = this.#jsonMediaError(request);
+      if (mediaError !== undefined) return mediaError;
       const text = await request.text();
       if (encoder.encode(text).byteLength > COMMAND_REQUEST_BYTES_MAX) return this.#invalid("body", "maxBytes", `request must not exceed ${COMMAND_REQUEST_BYTES_MAX} UTF-8 bytes`);
       let decoded: unknown;
@@ -332,7 +334,14 @@ export class T4ApiV1ConformanceService {
     expect(this.calls.every((call) => call.authorization === "Bearer token-a" || call.authorization === "Bearer token-b" || call.authorization === "Bearer token-denied")).toBe(true);
   }
 
+  #jsonMediaError(request: Request): Response | undefined {
+    const mediaType = request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase();
+    return mediaType === "application/json" ? undefined : problem(400, "invalid_request", "Content-Type must be application/json");
+  }
+
   async #jsonBody(request: Request): Promise<Record<string, unknown> | Response> {
+    const mediaError = this.#jsonMediaError(request);
+    if (mediaError !== undefined) return mediaError;
     try {
       const value: unknown = await request.json();
       if (value === null || typeof value !== "object" || Array.isArray(value)) return problem(400, "invalid_request", "JSON request body must be an object");

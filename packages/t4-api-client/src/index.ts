@@ -255,12 +255,17 @@ function httpDateTimestamp(value: string): number | undefined {
   }
   const rfc850 = /^(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday), ([0-9]{2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2}) GMT$/u.exec(value);
   if (rfc850 !== null) {
-    const currentYear = new Date(Date.now()).getUTCFullYear();
-    let year = Math.floor(currentYear / 100) * 100 + Number(rfc850[4]);
-    if (year - currentYear > 50) year -= 100;
+    const now = new Date(Date.now());
+    let year = Math.floor(now.getUTCFullYear() / 100) * 100 + Number(rfc850[4]);
     const date = new Date(0);
     date.setUTCFullYear(year, HTTP_MONTHS[rfc850[3]!]!, Number(rfc850[2]));
     date.setUTCHours(Number(rfc850[5]), Number(rfc850[6]), Number(rfc850[7]), 0);
+    const fiftyYearsFromNow = new Date(now.getTime());
+    fiftyYearsFromNow.setUTCFullYear(now.getUTCFullYear() + 50);
+    if (date.getTime() > fiftyYearsFromNow.getTime()) {
+      year -= 100;
+      date.setUTCFullYear(year);
+    }
     const timestamp = date.getTime();
     return matchingHttpDate(timestamp, rfc850, { weekday: 1, day: 2, month: 3, year: 4, hour: 5, minute: 6, second: 7 }, year) ? timestamp : undefined;
   }
