@@ -951,10 +951,10 @@ describe("generated T4 API v1 client conformance", () => {
     expect(terminalIndex).toBeGreaterThanOrEqual(0);
     const aliasMask = (1 << unusedBits) - 1;
     expect(terminalIndex & aliasMask).toBe(0);
-    const signatureAliases = [...base64UrlAlphabet.slice(
+    const signatureAliases = base64UrlAlphabet.slice(
       terminalIndex & ~aliasMask,
       (terminalIndex & ~aliasMask) + aliasMask + 1,
-    )].filter((terminal) => terminal !== signatureSegment.at(-1));
+    ).replace(signatureSegment.at(-1)!, "");
     expect(signatureAliases.length).toBeGreaterThan(0);
     expect(signatureAliases).toHaveLength(3);
     for (const signatureAlias of signatureAliases) {
