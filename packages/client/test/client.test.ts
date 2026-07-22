@@ -702,6 +702,38 @@ describe("OmpClient protocol state machine", () => {
     ]);
   });
 
+  it("publishes an authoritative snapshot behind the persisted cursor so a cold projection can hydrate", async () => {
+    const store = new FakeStore([{
+      hostId: HOST,
+      sessionId: SESSION,
+      cursor: { epoch: "epoch-a", seq: 6 },
+    }]);
+    const transport = new FakeTransport({ welcome: welcome() });
+    const client = await readyClient(transport, { cursorStore: store });
+    const events: PublicOmpServerEvent[] = [];
+    client.onEvent((event) => events.push(event));
+
+    transport.emit(snapshot(0));
+
+    expect(events.map((event) => event.kind)).toEqual(["snapshot"]);
+    expect(client.snapshot().cursor).toEqual({ epoch: "epoch-a", seq: 0 });
+    await client.close();
+  });
+
+  it("persists an authoritative snapshot that resets a cursor in the current transport generation", async () => {
+    const store = new FakeStore();
+    const transport = new FakeTransport({ welcome: welcome() });
+    const client = await readyClient(transport, { cursorStore: store });
+
+    transport.emit(snapshot(6));
+    await Promise.resolve();
+    await Promise.resolve();
+    transport.emit(snapshot(0));
+    await client.close();
+
+    expect(store.saved.map((record) => record.cursor.seq)).toEqual([6, 0]);
+  });
+
   it("never invokes privileged pairing sink for unsolicited, replayed, or wrong-kind pair.ok", async () => {
     let callbacks = 0;
     const unsolicitedTransport = new FakeTransport({ welcome: welcome() });

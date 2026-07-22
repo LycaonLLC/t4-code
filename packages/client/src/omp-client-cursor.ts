@@ -3,7 +3,7 @@ import type { CursorRecord, CursorStore, OmpClientError } from "./omp-client-con
 import { MAX_SAVED, sessionKey } from "./omp-client-contracts.ts";
 
 interface SaveQueue {
-  latest: CursorRecord | undefined;
+  latest: { readonly record: CursorRecord; readonly authoritative: boolean } | undefined;
   running: boolean;
 }
 type EmitError = (error: OmpClientError) => void;
@@ -35,7 +35,7 @@ export class CursorJournal {
       this.saved.delete(key);
     }
   }
-  remember(record: CursorRecord): void {
+  remember(record: CursorRecord, authoritative = false): void {
     let cursor: Cursor;
     try {
       cursor = decodeCursor(record.cursor);
@@ -61,7 +61,7 @@ export class CursorJournal {
     }
     if (this.store === undefined) return;
     const queue = this.queues.get(key) ?? { latest: undefined, running: false };
-    queue.latest = normalized;
+    queue.latest = { record: normalized, authoritative };
     this.queues.set(key, queue);
     if (!queue.running) this.drain(key, queue);
   }
@@ -102,10 +102,11 @@ export class CursorJournal {
     drain = (async () => {
       try {
         while (queue.latest !== undefined) {
-          const record = queue.latest;
+          const { record, authoritative } = queue.latest;
           queue.latest = undefined;
           const saved = this.saved.get(key);
           if (
+            !authoritative &&
             saved !== undefined &&
             saved.epoch === record.cursor.epoch &&
             saved.seq >= record.cursor.seq

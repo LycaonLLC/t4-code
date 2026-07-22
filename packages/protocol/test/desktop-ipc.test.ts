@@ -495,6 +495,19 @@ describe("desktop IPC boundary", () => {
       value: currentValue,
     });
 
+    const largeCurrentValue = JSON.stringify({
+      kind: "t4-code-projection",
+      version: 2,
+      data: { padding: "x".repeat(1_100_000) },
+    });
+    expect(decodeDesktopInvokeRequest({
+      channel: "app:projection-cache:save",
+      payload: { value: largeCurrentValue },
+    })).toEqual({
+      channel: "app:projection-cache:save",
+      payload: { value: largeCurrentValue },
+    });
+
     for (const invalid of [
       { channel: "app:projection-cache:load", payload: { storageKey: "renderer-choice" } },
       { channel: "app:projection-cache:save", payload: { value: JSON.stringify({ kind: "t4-code-projection", version: 3, data: {} }) } },

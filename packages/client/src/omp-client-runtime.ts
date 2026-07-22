@@ -998,8 +998,10 @@ export class OmpClient {
   private acceptSnapshot(event: PublicEvent<"snapshot">): void {
     const frame = event.payload;
     const currentKey = sessionKey(String(frame.hostId), String(frame.sessionId));
-    const previous = this.cursorJournal.bySession.get(currentKey);
-    if (previous?.epoch === frame.cursor.epoch && frame.cursor.seq <= previous.seq) return;
+    // Inbound dispatch is generation-scoped and ordered, so a snapshot from the
+    // current transport is authoritative even when its cursor is equal to or
+    // below the durable journal. The journal can outlive renderer state, and a
+    // host may rebuild a transient session projection within the same epoch.
     this.desyncedSessions.delete(currentKey);
     this.epochValue = frame.cursor.epoch;
     this.cursorValue = frame.cursor;
@@ -1007,7 +1009,7 @@ export class OmpClient {
       hostId: String(frame.hostId),
       sessionId: String(frame.sessionId),
       cursor: frame.cursor,
-    });
+    }, true);
     this.reconnectHealth.acceptReplayProgress(this.generation, currentKey, frame.cursor, true);
     this.publish(event);
   }

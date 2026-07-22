@@ -1755,18 +1755,15 @@ function applyProjectionInput(
       const sessionInventoryCursors = mapWithout(snapshot.sessionInventoryCursors, String(frame.hostId));
       const sessions = immutableMap(
         [...snapshot.sessions.entries()].map(
-          ([sessionKey, session]) =>
-            [
+          ([sessionKey, session]) => {
+            if (String(session.hostId) !== String(frame.hostId)) return [sessionKey, session] as const;
+            return [
               sessionKey,
               Object.freeze({
                 ...session,
-                ...(snapshot.epoch === undefined || snapshot.epoch === frame.epoch
-                  ? {}
-                  : {
-                      freshness: "catching-up" as const,
-                      transcriptEventArrivalOrdinal: 0,
-                      contextMaintenanceEventArrivalOrdinal: 0,
-                    }),
+                freshness: "catching-up" as const,
+                transcriptEventArrivalOrdinal: 0,
+                contextMaintenanceEventArrivalOrdinal: 0,
                 previews: immutableMap(
                   [...session.previews.entries()].map(
                     ([previewMapKey, preview]) =>
@@ -1777,7 +1774,8 @@ function applyProjectionInput(
                   ),
                 ),
               }),
-            ] as const,
+            ] as const;
+          },
         ),
       );
       if (snapshot.epoch === undefined || snapshot.epoch === frame.epoch) {

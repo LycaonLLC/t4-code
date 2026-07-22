@@ -849,7 +849,29 @@ export function decodeProjectionCacheSaveResult(value: unknown): ProjectionCache
 export function decodeProjectionCacheSaveRequestValue(value: unknown): string {
   return projectionCacheSerialized(value);
 }
+
+/**
+ * Projection caches intentionally have a larger budget than ordinary app-wire
+ * input. Electron IPC delivers this request as an already-cloned object, so
+ * recognize the one large channel before the generic 1 MiB object guard and
+ * apply its stricter cache-specific schema and 2 MiB bound instead.
+ */
+function decodeLargeProjectionCacheSaveRequest(input: unknown): DesktopInvokeRequest | null {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) return null;
+  const frame = object(input, "frame");
+  if (frame.channel !== "app:projection-cache:save") return null;
+  exact(frame, ["channel", "payload"]);
+  const payload = object(frame.payload, "payload");
+  exact(payload, ["value"]);
+  return {
+    channel: "app:projection-cache:save",
+    payload: { value: projectionCacheSerialized(payload.value) },
+  };
+}
+
 export function decodeDesktopInvokeRequest(input: unknown): DesktopInvokeRequest {
+  const largeProjectionCache = decodeLargeProjectionCacheSaveRequest(input);
+  if (largeProjectionCache !== null) return largeProjectionCache;
   const frame = inputObject(input);
   exact(frame, ["channel", "payload"]);
   if (!(DESKTOP_IPC_CHANNELS as readonly string[]).includes(frame.channel as string))

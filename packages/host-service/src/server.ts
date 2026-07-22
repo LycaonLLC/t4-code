@@ -41,6 +41,7 @@ import {
 	sessionId,
 	type TranscriptContextArguments,
 	type TranscriptPageArguments,
+	type TranscriptPageResult,
 	type TranscriptSearchArguments,
 	type UsageReadResult,
 	utf8ByteLength,
@@ -1674,7 +1675,15 @@ export class LocalAppserver implements AppserverHandle {
 					) as unknown as TranscriptPageArguments;
 					const record = this.#records.get(command.sessionId!);
 					if (!record) throw new TranscriptPageError("transcript_page_unavailable");
-					const result = await this.#discovery.page(record, args);
+					const authorityResult = await this.#discovery.page(record, args);
+					const result: TranscriptPageResult = {
+						...authorityResult,
+						entries: authorityResult.entries.map(entry => ({
+							...entry,
+							hostId: this.hostId,
+							sessionId: command.sessionId!,
+						})),
+					};
 					outcome = { frame: response(this.hostId, command, true, result) };
 				}
 			} else if (command.command === "transcript.search") {

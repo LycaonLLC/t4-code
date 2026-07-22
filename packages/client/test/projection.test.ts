@@ -297,6 +297,27 @@ describe("client projections", () => {
     });
   });
 
+  it("scopes welcome catch-up invalidation to the host that reconnected", () => {
+    const hostB = hostId("projection-host-b");
+    let state = applyPublicFrame(createProjectionSnapshot(), frame("snapshot", "session-a"));
+    state = applyPublicFrame(state, {
+      ...frame("snapshot", "session-b"),
+      hostId: hostB,
+      cursor: { epoch: "host-b-epoch", seq: 0 },
+    } as ProjectionFrame);
+    expect(state.sessions.get(sessionKey("session-a"))?.freshness).toBe("fresh");
+    expect(state.sessions.get(`${String(hostB)}\u0000session-b`)?.freshness).toBe("fresh");
+
+    state = applyPublicFrame(state, {
+      ...frame("welcome"),
+      hostId: hostB,
+      epoch: "host-b-epoch",
+    } as ProjectionFrame);
+
+    expect(state.sessions.get(sessionKey("session-a"))?.freshness).toBe("fresh");
+    expect(state.sessions.get(`${String(hostB)}\u0000session-b`)?.freshness).toBe("catching-up");
+  });
+
   it("reconciles authoritative session lists per host without retaining stale subagent rows", () => {
     const hostB = "projection-host-b";
     let state = applyPublicFrame(createProjectionSnapshot(), {
