@@ -11,7 +11,8 @@ export default defineConfig(({ mode }) => ({
       ? [
           {
             name: "t4-demo-document-root",
-            transformIndexHtml: (html: string) => html.replaceAll('="./', '="/demo/'),
+            transformIndexHtml: (html: string) =>
+              html.replace("<head>", '<head>\n    <base href="/demo/">').replaceAll('="./', '="/demo/'),
           },
         ]
       : []),

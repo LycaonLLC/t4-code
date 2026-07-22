@@ -46,15 +46,6 @@ const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const PATCH_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 
-function compareStableVersions(left, right) {
-  const leftParts = left.split(".").map(Number);
-  const rightParts = right.split(".").map(Number);
-  for (let index = 0; index < 3; index += 1) {
-    if (leftParts[index] !== rightParts[index]) return leftParts[index] - rightParts[index];
-  }
-  return 0;
-}
-
 export function expectedReleaseAssetNames(version) {
   return [
     `T4-Code-${version}-android.apk`,
@@ -823,15 +814,9 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   }
 
   const securityPolicy = files.get("SECURITY.md") ?? "";
-  const firstSignedVersion = String(macosIdentity?.firstSignedReleaseTag ?? "").replace(/^v/u, "");
-  const signedRelease = VERSION_PATTERN.test(firstSignedVersion)
-    ? compareStableVersions(version, firstSignedVersion) >= 0
-    : false;
   requireText(
     securityPolicy,
-    signedRelease
-      ? `The macOS ${expectedTag} build is signed with Apple Developer ID and notarized by Apple`
-      : `The macOS ${expectedTag} build is unsigned and unnotarized`,
+    "Published macOS builds are signed with Apple Developer ID and notarized by Apple",
     "SECURITY.md",
     errors,
   );
@@ -957,18 +942,9 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "run: go test ./...",
     "run: helm lint deploy/charts/t4-cluster",
     "android-debug:",
-    "flutter:",
-    "flutter-android:",
-    "flutter-apple:",
-    "Run Flutter iOS launch smoke test",
-    'xcrun simctl install "$DEVICE_ID" build/ios/iphonesimulator/Runner.app',
-    'kill -0 "$app_pid"',
-    "Build standalone T4 host for Flutter macOS",
-    "Verify bundled Flutter macOS host",
-    "test -x apps/flutter/build/macos/Build/Products/Debug/t4code.app/Contents/Resources/runtime/t4-host",
     "name: verify",
     "if: ${{ always() }}",
-    "needs: [changes, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug, flutter, flutter-android, flutter-apple]",
+    "needs: [changes, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
     'test "$CHANGES_RESULT" = success',
     'test "$CORE_RESULT" = success',
     "for result in \\",

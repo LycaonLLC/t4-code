@@ -120,7 +120,7 @@ test("pins official OMP artifacts and the Gate 0 proof contract", () => {
 test("rejects a tag that differs from the package version", () => {
   assert.ok(
     collectReleaseConsistencyErrors(files, "v9.9.9").some((error) =>
-      error.includes("release tag v9.9.9 does not match v0.1.30"),
+      error.includes("release tag v9.9.9 does not match v0.1.31"),
     ),
   );
 });
@@ -149,7 +149,7 @@ test("tagged releases reject published provenance drift", () => {
   for (const [field, mutate] of appWireCases) {
     const drifted = changedRuntime("publishedAppWire", mutate);
     assert.ok(
-      collectReleaseConsistencyErrors(drifted, "v0.1.30").some((error) =>
+      collectReleaseConsistencyErrors(drifted, "v0.1.31").some((error) =>
         error.includes(
           `published app-wire ${field} must match current app-wire for tagged releases`,
         ),
@@ -192,7 +192,7 @@ test("tagged releases reject published provenance drift", () => {
   for (const [field, mutate] of runtimeCases) {
     const drifted = changedRuntime("publishedRuntime", mutate);
     assert.ok(
-      collectReleaseConsistencyErrors(drifted, "v0.1.30").some((error) =>
+      collectReleaseConsistencyErrors(drifted, "v0.1.31").some((error) =>
         error.includes(
           `published runtime ${field} must match current verified runtime for tagged releases`,
         ),
@@ -204,7 +204,7 @@ test("tagged releases reject published provenance drift", () => {
     runtime.artifactSha256 = "0".repeat(64);
   });
   assert.ok(
-    collectReleaseConsistencyErrors(extended, "v0.1.30").some((error) =>
+    collectReleaseConsistencyErrors(extended, "v0.1.31").some((error) =>
       error.includes(
         "published runtime must exactly match current verified runtime for tagged releases",
       ),
@@ -214,15 +214,15 @@ test("tagged releases reject published provenance drift", () => {
 
 test("rejects workspace, site, README, and runtime version drift", () => {
   const cases = [
-    ["apps/web/package.json", (text) => text.replace('"version": "0.1.30"', '"version": "0.1.3"')],
+    ["apps/web/package.json", (text) => text.replace('"version": "0.1.31"', '"version": "0.1.3"')],
     [
       "apps/site/src/release.ts",
-      (text) => text.replace('RELEASE_TAG = "v0.1.30"', 'RELEASE_TAG = "v0.1.3"'),
+      (text) => text.replace('RELEASE_TAG = "v0.1.31"', 'RELEASE_TAG = "v0.1.3"'),
     ],
-    ["README.md", (text) => text.replace("Download v0.1.30", "Download v0.1.3")],
+    ["README.md", (text) => text.replace("Download v0.1.31", "Download v0.1.3")],
     [
       "apps/desktop/src/target-manager.ts",
-      (text) => text.replace('version: "0.1.30"', 'version: "0.1.3"'),
+      (text) => text.replace('version: "0.1.31"', 'version: "0.1.3"'),
     ],
     [
       "apps/site/src/docs/content.ts",
@@ -275,7 +275,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug, flutter, flutter-android, flutter-apple]",
+          "needs: [changes, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
           "needs: [changes, core, tooling, android-debug]",
         ),
     ],
@@ -519,7 +519,7 @@ test("rejects stale README release URLs while allowing historical prose", () => 
   const staleLink = changed("README.md", (text) => `${text}\n[Old release](${oldReleaseUrl})\n`);
   assert.ok(
     collectReleaseConsistencyErrors(staleLink).some((error) =>
-      error.includes("release URL for v0.1.3; expected v0.1.30"),
+      error.includes("release URL for v0.1.3; expected v0.1.31"),
     ),
   );
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);
@@ -559,28 +559,11 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("run: pnpm test:cluster:ci"));
   assert.ok(ciWorkflow.includes("run: go test ./..."));
   assert.ok(ciWorkflow.includes("run: helm lint deploy/charts/t4-cluster"));
-  assert.ok(ciWorkflow.includes("flutter:"));
-  assert.ok(ciWorkflow.includes("flutter-android:"));
-  assert.ok(ciWorkflow.includes("flutter-apple:"));
-  assert.ok(ciWorkflow.includes("Run Flutter iOS launch smoke test"));
-  assert.ok(
-    ciWorkflow.includes(
-      'xcrun simctl install "$DEVICE_ID" build/ios/iphonesimulator/Runner.app',
-    ),
-  );
-  assert.ok(ciWorkflow.includes('kill -0 "$app_pid"'));
-  assert.ok(ciWorkflow.includes("Build standalone T4 host for Flutter macOS"));
-  assert.ok(ciWorkflow.includes("Verify bundled Flutter macOS host"));
-  assert.ok(
-    ciWorkflow.includes(
-      "test -x apps/flutter/build/macos/Build/Products/Debug/t4code.app/Contents/Resources/runtime/t4-host",
-    ),
-  );
   assert.ok(ciWorkflow.includes("name: verify"));
   assert.ok(ciWorkflow.includes("if: ${{ always() }}"));
   assert.ok(
     ciWorkflow.includes(
-      "needs: [changes, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug, flutter, flutter-android, flutter-apple]",
+      "needs: [changes, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
     ),
   );
   assert.ok(ciWorkflow.includes('test "$CHANGES_RESULT" = success'));

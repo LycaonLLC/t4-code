@@ -8,13 +8,13 @@ integration owner or land the smaller shared contract first.
 
 | Path                                                                     | Primary owner                                                                            |
 | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `apps/flutter/**`                                                        | Flutter client and provider owner                                                        |
 | `packages/host-wire/**`, network-frame changes in `packages/protocol/**` | Protocol owner                                                                           |
 | `packages/host-service/**`, `packages/host-daemon/**`                    | T4 Local systems owner                                                                   |
 | `packages/client/**`, `packages/fixture-server/**`                       | Client data and fixtures owner                                                           |
 | `packages/remote/**`, `packages/service-manager/**`                      | Pairing, remote connection, and native service-lifecycle owner                           |
-| `apps/web/**`, `packages/ui/**`, visible copy/assets/screenshots         | Compatibility client experience owner                                                    |
-| `apps/desktop/**`                                                        | Compatibility desktop systems owner; coordinate visible UI changes with the client owner |
+| `apps/web/**`, `packages/ui/**`, visible copy/assets/screenshots         | Canonical React client experience owner                                                  |
+| `apps/desktop/**`                                                        | Primary Electron desktop systems owner; coordinate visible UI changes with the client owner |
+| `apps/mobile/**`                                                         | React/Capacitor Android compatibility owner                                              |
 | Root manifests, workspace configuration, and `pnpm-lock.yaml`            | Integration owner                                                                        |
 | `docs/adr/**`, architecture, licenses, notices, and provenance           | Architecture/provenance owner                                                            |
 

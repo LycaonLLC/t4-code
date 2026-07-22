@@ -30,8 +30,8 @@ export function assertDemoDocumentPaths(document) {
       !url.startsWith("https:") &&
       !url.startsWith("#"),
   );
-  if (!localUrls.includes("flutter_bootstrap.js")) {
-    throw new Error("demo index is not a Flutter web build");
+  if (!localUrls.some((url) => url?.startsWith("/demo/assets/"))) {
+    throw new Error("demo index is not a React production build");
   }
   const escaped = localUrls.find((url) => {
     const resolved = new URL(url, "https://t4code.net/demo/");
@@ -43,18 +43,8 @@ export function assertDemoDocumentPaths(document) {
 export function validateDemoBuild(repoRoot) {
   const document = readFileSync(resolve(repoRoot, "apps/site/dist/demo/index.html"), "utf8");
   assertDemoDocumentPaths(document);
-  const bootstrap = readFileSync(
-    resolve(repoRoot, "apps/site/dist/demo/flutter_bootstrap.js"),
-    "utf8",
-  );
-  if (!bootstrap.includes("registration.unregister()")) {
-    throw new Error("demo bootstrap must retire stale service workers");
-  }
-  if (!bootstrap.includes('"useLocalCanvasKit":true')) {
-    throw new Error("demo bootstrap must use local Flutter renderer assets");
-  }
-  if (existsSync(resolve(repoRoot, "apps/site/dist/demo/flutter_service_worker.js"))) {
-    throw new Error("demo build must not publish a Flutter service worker");
+  if (existsSync(resolve(repoRoot, "apps/site/dist/demo/service-worker.js"))) {
+    throw new Error("demo build must not publish a service worker");
   }
 }
 
