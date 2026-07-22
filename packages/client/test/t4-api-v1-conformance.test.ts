@@ -926,6 +926,39 @@ describe("generated T4 API v1 client conformance", () => {
     }
   });
 
+  it("accepts only pagination cursors issued for the principal and collection", async () => {
+    const service = new T4ApiV1ConformanceService();
+    const headers = { Authorization: "Bearer token-a", "T4-API-Version": "1", "Content-Type": "application/json" };
+    for (const [key, name] of [["issued-workspace-1", "one"], ["issued-workspace-2", "two"], ["issued-workspace-3", "three"]]) {
+      expect((await service.fetch(`${service.origin}/v1/workspaces`, {
+        method: "POST", headers: { ...headers, "Idempotency-Key": key }, body: JSON.stringify({ name }),
+      })).status).toBe(202);
+    }
+    for (const [key, title] of [["issued-session-01", "one"], ["issued-session-02", "two"]]) {
+      expect((await service.fetch(`${service.origin}/v1/workspaces/ws-1/sessions`, {
+        method: "POST", headers: { ...headers, "Idempotency-Key": key }, body: JSON.stringify({ title }),
+      })).status).toBe(202);
+    }
+
+    const workspacePage = await service.fetch(`${service.origin}/v1/workspaces?pageSize=1`, { headers });
+    const workspaceCursor = (await workspacePage.json() as { nextCursor: string }).nextCursor;
+    expect((await service.fetch(`${service.origin}/v1/workspaces?pageSize=1&cursor=${workspaceCursor}`, { headers })).status).toBe(200);
+    const sessionPage = await service.fetch(`${service.origin}/v1/workspaces/ws-1/sessions?pageSize=1`, { headers });
+    const sessionCursor = (await sessionPage.json() as { nextCursor: string }).nextCursor;
+
+    for (const [path, cursor, authorization] of [
+      ["/v1/workspaces", "page-999", "Bearer token-a"],
+      ["/v1/workspaces/ws-1/sessions", "page-999", "Bearer token-a"],
+      ["/v1/workspaces/ws-1/sessions", workspaceCursor, "Bearer token-a"],
+      ["/v1/workspaces", sessionCursor, "Bearer token-a"],
+      ["/v1/workspaces", workspaceCursor, "Bearer token-b"],
+    ]) {
+      const response = await service.fetch(`${service.origin}${path}?pageSize=1&cursor=${cursor}`, { headers: { ...headers, Authorization: authorization } });
+      expect(response.status, `${path} accepted unissued cursor ${cursor}`).toBe(422);
+      expect(await response.json()).toMatchObject({ error: { code: "invalid_request", violations: [{ field: "cursor", rule: "issued" }] } });
+    }
+  });
+
   it("parses service frames incrementally across split UTF-8 and per-frame bounds", async () => {
     const bytewiseService = new T4ApiV1ConformanceService({ watchTransport: "bytewise" });
     const bytewiseClient = await seededClient(bytewiseService, "bytewise");
