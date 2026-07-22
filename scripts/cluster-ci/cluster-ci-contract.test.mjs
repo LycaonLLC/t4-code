@@ -525,6 +525,8 @@ test("proof schema is strict and enumerates every bounded evidence domain", asyn
   assert.deepEqual(schema.$defs.scenario.properties.id.enum, PROOF_SCENARIOS);
   assert.deepEqual(schema.$defs.observation.properties.system.enum, OBSERVATION_SYSTEMS);
   assert.deepEqual(schema.$defs.image.properties.component.enum, IMAGE_COMPONENTS);
+  assert.equal(schema.properties.images.minItems, IMAGE_COMPONENTS.length);
+  assert.equal(schema.properties.images.maxItems, IMAGE_COMPONENTS.length);
   assert.equal(schema.$defs.source.properties.repository.const, CANONICAL_BUILD_SOURCE_REPOSITORY);
   assert.equal(
     schema.$defs.source.properties.woodpecker.properties.repository.const,
