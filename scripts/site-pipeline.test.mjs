@@ -49,14 +49,18 @@ test("Woodpecker has a complete main-only site chain independent of controller p
     pipeline.steps["deploy-site"].backend_options.kubernetes.serviceAccountName,
     "woodpecker-dev-verifier",
   );
+  assert.equal(pipeline.steps["harbor-auth-site"].environment, undefined);
   assert.equal(
     pipeline.steps["build-site"].environment.T4_REGISTRY_AUTH_DIR,
-    ".cluster-ci/site-registry-auth",
+    undefined,
   );
   assert.equal(
     pipeline.steps["promote-site"].environment.T4_REGISTRY_AUTH_DIR,
-    ".cluster-ci/site-registry-auth",
+    undefined,
   );
+  assert.deepEqual(pipeline.steps["cleanup-site-registry-auth"].commands, [
+    "rm -rf .site-ci",
+  ]);
 });
 
 test("site image build and promotion use only the immutable Woodpecker commit SHA", async () => {

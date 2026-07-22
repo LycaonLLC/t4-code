@@ -338,8 +338,6 @@ steps:
   harbor-auth-site:
     depends_on: [dependencies]
     image: harbor.tailb18de3.ts.net/linkedin-bot/woodpecker-buildkit-deploy-tools@sha256:7936be1edac8ce3c225b148cff0e89b1446fc88185d72379398617f7279ad8cc
-    environment:
-      T4_REGISTRY_AUTH_DIR: .cluster-ci/site-registry-auth
     commands:
       - sh scripts/cluster-ci/load-registry-auth.sh
     when:
@@ -368,7 +366,6 @@ steps:
       BUILDKIT_ADDR: tcp://woodpecker-buildkitd.linkedin-ci.svc.cluster.local:1234
       HARBOR_REGISTRY: harbor.tailb18de3.ts.net
       HARBOR_PROJECT: linkedin-bot
-      T4_REGISTRY_AUTH_DIR: .cluster-ci/site-registry-auth
     commands:
       - scripts/build-site-image.sh
     when:
@@ -395,7 +392,6 @@ steps:
     environment:
       HARBOR_REGISTRY: harbor.tailb18de3.ts.net
       HARBOR_PROJECT: linkedin-bot
-      T4_REGISTRY_AUTH_DIR: .cluster-ci/site-registry-auth
     commands:
       - scripts/promote-site-image.sh
     when:
@@ -445,7 +441,7 @@ steps:
     depends_on: [deploy-site]
     image: mirror.gcr.io/library/busybox:1.37.0-musl@sha256:222ad6d973c0d198014546a65cd02c5fdedcc172123c5b4c2bf0af636550bd94
     commands:
-      - rm -rf .site-ci .cluster-ci/site-registry-auth
+      - rm -rf .site-ci
     when:
       - event: push
         branch: main
