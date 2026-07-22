@@ -129,6 +129,34 @@ test("authenticated capability omission uses the explicit default, while empty i
 	policy.close();
 });
 
+test("heartbeat ping stays authorized while pairing and after authentication", () => {
+	const registry = new Registry();
+	const policy = new TailscaleRemotePolicy({ registry });
+	const heartbeat = {
+		v: "omp-app/1",
+		type: "ping",
+		nonce: "heartbeat",
+		timestamp: "2026-07-22T00:00:00.000Z",
+	} as ClientFrame;
+	const pairing = connection("pairing", { count: 0 });
+	const pairingContext = { connectionId: pairing.connectionId, peer: pairing.peer };
+	expect(policy.authorize(pairing, heartbeat, pairingContext)).toBe(false);
+	expect(
+		policy.authenticate(pairing, { ...hello("pairing"), authentication: undefined } as HelloFrame).authentication,
+	).toBe("pairing-required");
+	expect(policy.authorize(pairing, heartbeat, pairingContext)).toBe(true);
+
+	const paired = connection("paired", { count: 0 });
+	expect(policy.authenticate(paired, hello("paired")).authentication).toBe("paired");
+	expect(
+		policy.authorize(paired, { ...heartbeat, nonce: "paired-heartbeat" } as ClientFrame, {
+			connectionId: paired.connectionId,
+			peer: paired.peer,
+		}),
+	).toBe(true);
+	policy.close();
+});
+
 test("controller lease feature gates interception and replay is idempotent", () => {
 	const registry = new Registry();
 	const policy = new TailscaleRemotePolicy({ registry, supportedFeatures: ["controller.lease"] });
