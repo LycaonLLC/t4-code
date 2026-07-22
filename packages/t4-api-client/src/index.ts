@@ -805,6 +805,8 @@ async function* watch(
   let delivered = 0;
   let reconnectAttempts = 0;
   let cursor = options.cursor;
+  const deliveredCursors = new Set<string>();
+  if (cursor !== undefined) deliveredCursors.add(cursor);
   try {
     while (delivered < maxEvents && !controller.signal.aborted) {
       const deliveredAtAttemptStart = delivered;
@@ -859,6 +861,8 @@ async function* watch(
           const chunk = await reader.read();
           const events = chunk.done ? decodedFrames(parser, undefined) : decodedFrames(parser, chunk.value);
           for (const event of events) {
+            if (deliveredCursors.has(event.cursor)) throw protocolError(502, "T4 API watch repeated a durable event cursor");
+            deliveredCursors.add(event.cursor);
             cursor = event.cursor;
             delivered += 1;
             reconnectAttempts = 0;

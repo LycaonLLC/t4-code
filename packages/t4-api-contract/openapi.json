@@ -634,6 +634,7 @@
       "SessionSnapshot": {
         "type": "object",
         "additionalProperties": false,
+        "x-t4-maxUtf8Bytes": 16777216,
         "required": ["sessionId", "cursor", "state", "entries"],
         "properties": {
           "sessionId": { "$ref": "#/components/schemas/ResourceId" },

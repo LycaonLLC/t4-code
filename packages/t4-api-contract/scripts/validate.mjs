@@ -22,6 +22,7 @@ if (commandCreate?.["x-t4-maxUtf8Bytes"] !== 1048576) throw new Error("CommandCr
 if (commandCreate?.properties?.command?.["x-t4-maxUtf8Bytes"] !== 262144) throw new Error("command must retain its UTF-8 byte bound");
 const metadataString = commandCreate?.properties?.metadata?.additionalProperties?.oneOf?.find((item) => item?.type === "string");
 if (metadataString?.["x-t4-maxUtf8Bytes"] !== 262144) throw new Error("command metadata strings must retain their UTF-8 byte bound");
+if (schemas.SessionSnapshot?.["x-t4-maxUtf8Bytes"] !== 16777216) throw new Error("SessionSnapshot must retain its aggregate UTF-8 response-byte bound");
 
 for (const [schema, property] of [["Discovery", "supportedMajors"], ["ApiError", "supportedMajors"]]) {
   if (schemas[schema]?.properties?.[property]?.uniqueItems !== true) throw new Error(`${schema}.${property} must retain uniqueItems`);
