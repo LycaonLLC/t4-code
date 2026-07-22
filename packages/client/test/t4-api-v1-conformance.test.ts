@@ -182,7 +182,7 @@ describe("generated T4 API v1 client conformance", () => {
       params: { header: VERSION_HEADERS, query: { pageSize: 3 } },
     }));
     expect(pageOne.items).toHaveLength(3);
-    expect(pageOne.nextCursor).toBe("page-3");
+    expect(pageOne.nextCursor).toMatch(/^[A-Za-z0-9._~-]+$/u);
     const pageTwo = requireData(await owner.http.GET("/v1/workspaces", {
       params: { header: VERSION_HEADERS, query: { pageSize: 3, cursor: pageOne.nextCursor! } },
     }));
@@ -289,7 +289,7 @@ describe("generated T4 API v1 client conformance", () => {
       params: { header: VERSION_HEADERS, path: { workspaceId: "ws-1" }, query: { pageSize: 2 } },
     }));
     expect(sessionPageOne.items).toHaveLength(2);
-    expect(sessionPageOne.nextCursor).toBe("page-2");
+    expect(sessionPageOne.nextCursor).toMatch(/^[A-Za-z0-9._~-]+$/u);
     const sessionPageTwo = requireData(await client.http.GET("/v1/workspaces/{workspaceId}/sessions", {
       params: { header: VERSION_HEADERS, path: { workspaceId: "ws-1" }, query: { pageSize: 2, cursor: sessionPageOne.nextCursor! } },
     }));

@@ -85,6 +85,7 @@ function decodePageCursor(value: string, principal: string, collection: string):
   if (match === null) return { error: "format" };
   const expected = createHmac("sha256", PAGE_CURSOR_SECRET).update(match[1]!).digest();
   const signature = Buffer.from(match[2]!, "base64url");
+  if (signature.toString("base64url") !== match[2]) return { error: "format" };
   if (signature.byteLength !== expected.byteLength || !timingSafeEqual(signature, expected)) return { error: "issued" };
   let decoded: unknown;
   try { decoded = JSON.parse(Buffer.from(match[1]!, "base64url").toString("utf8")); } catch { return { error: "format" }; }
