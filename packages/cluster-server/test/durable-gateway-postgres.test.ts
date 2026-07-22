@@ -8,6 +8,11 @@ interface DurableLedgerOptions {
 interface PostgresLedgerLike {
 	migrate(): Promise<void>;
 	close(): Promise<void>;
+	acquireLease(ownerId: string, leaseSeconds?: number): Promise<{ ownerId: string; epoch: bigint }>;
+	claimNext(lease: { ownerId: string; epoch: bigint }): Promise<OutboxClaim | undefined>;
+	claimIsCurrent(claim: OutboxClaim): Promise<boolean>;
+	acknowledge(claim: OutboxClaim): Promise<boolean>;
+	recordFailure(claim: OutboxClaim, message: string): Promise<boolean>;
 }
 interface ApiPrincipal {
 	readonly id: string;
@@ -23,12 +28,16 @@ interface OutboxMutation {
 	readonly idempotencyToken: string;
 	readonly targetId: string;
 	readonly kind: string;
+	readonly payload: Readonly<Record<string, unknown>>;
 }
 interface KubernetesOutboxApplier {
 	apply(mutation: OutboxMutation, fence: { ownerId: string; epoch: bigint }): Promise<void>;
 }
 interface OutboxClaim {
 	readonly outboxId: bigint;
+	readonly commandId: string;
+	readonly ownerId: string;
+	readonly ownerEpoch: bigint;
 }
 interface DurableOutboxWorkerLike {
 	acquireLease(): Promise<{ ownerId: string; epoch: bigint }>;
@@ -37,13 +46,14 @@ interface DurableOutboxWorkerLike {
 	applyClaim(claim: OutboxClaim): Promise<string>;
 }
 type LedgerConstructor = new (options: DurableLedgerOptions) => PostgresLedgerLike;
-type ApiConstructor = new (options: { ledger: PostgresLedgerLike; authenticator: PrincipalAuthenticator }) => T4PublicApiV1Like;
+type ApiConstructor = new (options: { ledger: PostgresLedgerLike; authenticator: PrincipalAuthenticator; allowedOrigins?: readonly string[] }) => T4PublicApiV1Like;
 type WorkerConstructor = new (options: { ledger: PostgresLedgerLike; ownerId: string; applier: KubernetesOutboxApplier }) => DurableOutboxWorkerLike;
 
 const DATABASE_URL = process.env.T4_TEST_POSTGRES_URL;
 const VERSION = "1";
 const OWNER_TOKEN = "opaque-owner-token-with-sufficient-entropy";
 const OTHER_TOKEN = "opaque-other-token-with-sufficient-entropy";
+const INVALID_PRINCIPAL_TOKEN = "invalid-principal-token-with-sufficient-entropy";
 const ALL_SCOPES = new Set([
 	"discovery.read",
 	"workspaces.read",
@@ -66,6 +76,7 @@ class TestAuthenticator implements PrincipalAuthenticator {
 	readonly #principals: Record<string, ApiPrincipal> = {
 		[OWNER_TOKEN]: { id: "owner@example.com", scopes: ALL_SCOPES },
 		[OTHER_TOKEN]: { id: "other@example.com", scopes: ALL_SCOPES },
+		[INVALID_PRINCIPAL_TOKEN]: { id: "Not A CRD Owner", scopes: ALL_SCOPES },
 	};
 	async authenticate(token: string): Promise<ApiPrincipal | undefined> {
 		return this.#principals[token];
@@ -82,6 +93,22 @@ class ObservableKubernetes implements KubernetesOutboxApplier {
 		this.applied.set(mutation.idempotencyToken, mutation);
 	}
 }
+class PausedCreateKubernetes implements KubernetesOutboxApplier {
+	readonly resources = new Set<string>();
+	readonly createStarted = Promise.withResolvers<void>();
+	readonly releaseCreate = Promise.withResolvers<void>();
+	async apply(mutation: OutboxMutation): Promise<void> {
+		if (mutation.kind === "session.create") {
+			this.createStarted.resolve();
+			await this.releaseCreate.promise;
+			this.resources.add(mutation.targetId);
+			return;
+		}
+		if (mutation.kind === "workspace.create") this.resources.add(mutation.targetId);
+		if (mutation.kind === "session.cancel" || mutation.kind === "session.delete") this.resources.delete(mutation.targetId);
+	}
+}
+
 
 function ledgerOptions(overrides: Partial<DurableLedgerOptions> = {}): DurableLedgerOptions {
 	if (!DATABASE_URL) throw new Error("T4_TEST_POSTGRES_URL is required for durable gateway tests");
@@ -100,9 +127,9 @@ async function newLedger(overrides: Partial<DurableLedgerOptions> = {}): Promise
 	return ledger;
 }
 
-function newApi(ledger: PostgresLedgerLike): T4PublicApiV1Like {
+function newApi(ledger: PostgresLedgerLike, allowedOrigins?: readonly string[]): T4PublicApiV1Like {
 	if (!T4PublicApiV1) throw new Error("public T4 API v1 implementation is unavailable");
-	return new T4PublicApiV1({ ledger, authenticator: new TestAuthenticator() });
+	return new T4PublicApiV1({ ledger, authenticator: new TestAuthenticator(), ...(allowedOrigins ? { allowedOrigins } : {}) });
 }
 
 function newWorker(ledger: PostgresLedgerLike, ownerId: string, applier: KubernetesOutboxApplier): DurableOutboxWorkerLike {
@@ -132,6 +159,14 @@ async function call(
 	else if (options.body !== undefined) body = JSON.stringify(options.body);
 	if (body !== undefined) requestHeaders.set("content-type", "application/json");
 	return await api.handle(new Request(`https://t4.example.test${path}`, { method, headers: requestHeaders, body }));
+}
+
+async function waitForDatabase(predicate: () => Promise<boolean>): Promise<void> {
+	for (let attempt = 0; attempt < 200; attempt++) {
+		if (await predicate()) return;
+		await Bun.sleep(10);
+	}
+	throw new Error("timed out waiting for PostgreSQL concurrency fixture");
 }
 
 interface JsonDocument extends Record<string, unknown> {
@@ -293,13 +328,13 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 			});
 			expect(response.status).toBe(202);
 		}
-		const first = await call(api, "GET", `/v1/sessions/${session.id}/events?cursor=${encodeURIComponent(snapshot.cursor)}&maxEvents=1&heartbeatSeconds=5`);
+		const first = await call(api, "GET", `/v1/sessions/${session.id}/events?cursor=${encodeURIComponent(snapshot.cursor)}&maxEvents=1&heartbeatSeconds=5`, { headers: { accept: "text/event-stream" } });
 		expect(first.status).toBe(200);
 		const firstEvents = eventData(await first.text());
 		expect(firstEvents).toHaveLength(1);
 		const deliveredCursor = firstEvents[0].cursor as string;
 		const second = await call(api, "GET", `/v1/sessions/${session.id}/events?maxEvents=100&heartbeatSeconds=5`, {
-			headers: { "last-event-id": deliveredCursor },
+			headers: { "last-event-id": deliveredCursor, accept: "text/event-stream" },
 		});
 		expect(second.status).toBe(200);
 		const secondEvents = eventData(await second.text());
@@ -312,7 +347,7 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 				body: { command: `echo ${index}` },
 			});
 		}
-		const expired = await call(api, "GET", `/v1/sessions/${session.id}/events?cursor=${encodeURIComponent(deliveredCursor)}&maxEvents=1&heartbeatSeconds=5`);
+		const expired = await call(api, "GET", `/v1/sessions/${session.id}/events?cursor=${encodeURIComponent(deliveredCursor)}&maxEvents=1&heartbeatSeconds=5`, { headers: { accept: "text/event-stream" } });
 		expect(expired.status).toBe(410);
 		const expiredBody = await json(expired);
 		expect(expiredBody.error).toMatchObject({
@@ -389,6 +424,388 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 		`);
 		expect(rows[0]).toMatchObject({ commands: 0n, intents: 0n, outbox: 0n });
 		await admin.unsafe("DROP TRIGGER t4_test_reject_outbox_trigger ON t4_outbox; DROP FUNCTION t4_test_reject_outbox()");
+		await ledger.close();
+	});
+
+	it("retries the whole serializable mutation after a real PostgreSQL 40001 exactly once", async () => {
+		const ledger = await newLedger();
+		const api = newApi(ledger);
+		await admin.unsafe(`
+			DROP SEQUENCE IF EXISTS t4_test_serialization_attempt;
+			CREATE SEQUENCE t4_test_serialization_attempt;
+			CREATE OR REPLACE FUNCTION t4_test_serialize_once() RETURNS trigger LANGUAGE plpgsql AS $$
+			BEGIN
+				IF NEW.idempotency_key = 'serialization-retry-key-01' AND nextval('t4_test_serialization_attempt') = 1 THEN
+					RAISE SQLSTATE '40001' USING MESSAGE = 'forced serialization rollback';
+				END IF;
+				RETURN NEW;
+			END $$;
+			DROP TRIGGER IF EXISTS t4_test_serialize_once_trigger ON t4_outbox;
+			CREATE TRIGGER t4_test_serialize_once_trigger BEFORE INSERT ON t4_outbox
+			FOR EACH ROW EXECUTE FUNCTION t4_test_serialize_once();
+		`);
+		const response = await call(api, "POST", "/v1/workspaces", {
+			key: "serialization-retry-key-01",
+			body: { name: "retry exactly once" },
+		});
+		expect(response.status).toBe(202);
+
+		const accepted = await json(response);
+		const rows = await admin.unsafe(`
+			SELECT
+				(SELECT last_value FROM t4_test_serialization_attempt) AS attempts,
+				(SELECT count(*) FROM t4_commands WHERE idempotency_key = 'serialization-retry-key-01') AS commands,
+				(SELECT count(*) FROM t4_workspace_intents WHERE workspace_id = '${accepted.id}') AS intents,
+				(SELECT count(*) FROM t4_outbox WHERE idempotency_key = 'serialization-retry-key-01') AS outbox
+		`);
+		expect(rows[0]).toMatchObject({ attempts: 2n, commands: 1n, intents: 1n, outbox: 1n });
+		await admin.unsafe("DROP TRIGGER t4_test_serialize_once_trigger ON t4_outbox; DROP FUNCTION t4_test_serialize_once(); DROP SEQUENCE t4_test_serialization_attempt");
+		await ledger.close();
+	});
+
+	it("retries the whole serializable mutation after a real PostgreSQL 40P01 exactly once", async () => {
+		const ledger = await newLedger();
+		const api = newApi(ledger);
+		await admin.unsafe(`
+			DROP SEQUENCE IF EXISTS t4_test_deadlock_attempt;
+			CREATE SEQUENCE t4_test_deadlock_attempt;
+			CREATE OR REPLACE FUNCTION t4_test_deadlock_once() RETURNS trigger LANGUAGE plpgsql AS $$
+			BEGIN
+				IF NEW.idempotency_key = 'deadlock-retry-key-00001' AND nextval('t4_test_deadlock_attempt') = 1 THEN
+					RAISE SQLSTATE '40P01' USING MESSAGE = 'forced deadlock rollback';
+				END IF;
+				RETURN NEW;
+			END $$;
+			CREATE TRIGGER t4_test_deadlock_once_trigger BEFORE INSERT ON t4_outbox
+			FOR EACH ROW EXECUTE FUNCTION t4_test_deadlock_once();
+		`);
+		const response = await call(api, "POST", "/v1/workspaces", { key: "deadlock-retry-key-00001", body: { name: "retry deadlock once" } });
+		expect(response.status).toBe(202);
+		const rows = await admin`SELECT
+			(SELECT last_value FROM t4_test_deadlock_attempt) AS attempts,
+			(SELECT count(*) FROM t4_commands WHERE idempotency_key = 'deadlock-retry-key-00001') AS commands,
+			(SELECT count(*) FROM t4_outbox WHERE idempotency_key = 'deadlock-retry-key-00001') AS outbox` as Array<{ attempts: bigint; commands: bigint; outbox: bigint }>;
+		expect(rows[0]).toEqual({ attempts: 2n, commands: 1n, outbox: 1n });
+		await admin.unsafe("DROP TRIGGER t4_test_deadlock_once_trigger ON t4_outbox; DROP FUNCTION t4_test_deadlock_once(); DROP SEQUENCE t4_test_deadlock_attempt");
+		await ledger.close();
+	});
+
+	it("serializes two first-use requests for the same absent idempotency row", async () => {
+		const ledger = await newLedger();
+		const api = newApi(ledger);
+		await admin.unsafe(`
+			DROP SEQUENCE IF EXISTS t4_test_absent_key_attempt;
+			CREATE SEQUENCE t4_test_absent_key_attempt;
+			CREATE OR REPLACE FUNCTION t4_test_pause_first_absent_key() RETURNS trigger LANGUAGE plpgsql AS $$
+			BEGIN
+				IF NEW.idempotency_key = 'absent-idempotency-key-01' THEN
+					PERFORM nextval('t4_test_absent_key_attempt');
+					IF currval('t4_test_absent_key_attempt') = 1 THEN PERFORM pg_advisory_xact_lock(741406); END IF;
+				END IF;
+				RETURN NEW;
+			END $$;
+			DROP TRIGGER IF EXISTS t4_test_pause_absent_key_trigger ON t4_outbox;
+			CREATE TRIGGER t4_test_pause_absent_key_trigger BEFORE INSERT ON t4_outbox
+			FOR EACH ROW EXECUTE FUNCTION t4_test_pause_first_absent_key();
+		`);
+		await admin`SELECT pg_advisory_lock(741406)`;
+		const first = call(api, "POST", "/v1/workspaces", { key: "absent-idempotency-key-01", body: { name: "one durable winner" } });
+		await waitForDatabase(async () => (await admin`SELECT last_value FROM t4_test_absent_key_attempt` as Array<{ last_value: bigint }>)[0]?.last_value === 1n);
+		const second = call(api, "POST", "/v1/workspaces", { key: "absent-idempotency-key-01", body: { name: "one durable winner" } });
+		await waitForDatabase(async () => {
+			const [sequence, active] = await Promise.all([
+				admin`SELECT last_value FROM t4_test_absent_key_attempt` as Promise<Array<{ last_value: bigint }>>,
+				admin`SELECT count(*) AS count FROM pg_stat_activity WHERE datname = current_database() AND state = 'active' AND pid <> pg_backend_pid()` as Promise<Array<{ count: bigint }>>,
+			]);
+			return sequence[0]?.last_value === 2n || (active[0]?.count ?? 0n) >= 2n;
+		});
+		await admin`SELECT pg_advisory_unlock(741406)`;
+		const responses = await Promise.all([first, second]);
+		expect(responses.map(value => value.status).sort()).toEqual([200, 202]);
+		expect(await json(responses[0]!)).toEqual(await json(responses[1]!));
+		const rows = await admin`SELECT
+			(SELECT count(*) FROM t4_commands WHERE idempotency_key = 'absent-idempotency-key-01') AS commands,
+			(SELECT count(*) FROM t4_outbox WHERE idempotency_key = 'absent-idempotency-key-01') AS outbox` as Array<{ commands: bigint; outbox: bigint }>;
+		expect(rows[0]).toEqual({ commands: 1n, outbox: 1n });
+		await admin.unsafe("DROP TRIGGER t4_test_pause_absent_key_trigger ON t4_outbox; DROP FUNCTION t4_test_pause_first_absent_key(); DROP SEQUENCE t4_test_absent_key_attempt");
+		await ledger.close();
+	});
+
+	it("replays stored patch, create, and command responses before mutable state checks", async () => {
+		const ledger = await newLedger();
+		const api = newApi(ledger);
+		const workspace = await json(await call(api, "POST", "/v1/workspaces", { key: "replay-state-workspace-01", body: { name: "original" } }));
+		const firstWorkspacePatch = await json(await call(api, "PATCH", `/v1/workspaces/${workspace.id}`, {
+			key: "replay-workspace-patch-01", ifMatch: "1", body: { name: "first patch" },
+		}));
+		expect((await call(api, "PATCH", `/v1/workspaces/${workspace.id}`, {
+			key: "replay-workspace-patch-02", ifMatch: "2", body: { name: "second patch" },
+		})).status).toBe(200);
+		const workspaceReplay = await call(api, "PATCH", `/v1/workspaces/${workspace.id}`, {
+			key: "replay-workspace-patch-01", ifMatch: "1", body: { name: "first patch" },
+		});
+		expect(workspaceReplay.status).toBe(200);
+		expect(workspaceReplay.headers.get("idempotency-replayed")).toBe("true");
+		expect(await json(workspaceReplay)).toEqual(firstWorkspacePatch);
+		const workspaceMismatch = await call(api, "PATCH", `/v1/workspaces/${workspace.id}`, {
+			key: "replay-workspace-patch-01", ifMatch: "1", body: { name: "different" },
+		});
+		expect((await json(workspaceMismatch)).error.code).toBe("idempotency_conflict");
+
+		const sessionKey = "replay-session-create-001";
+		const session = await json(await call(api, "POST", `/v1/workspaces/${workspace.id}/sessions`, { key: sessionKey, body: { title: "original" } }));
+		const firstSessionPatch = await json(await call(api, "PATCH", `/v1/sessions/${session.id}`, {
+			key: "replay-session-patch-001", ifMatch: "1", body: { title: "first patch" },
+		}));
+		expect((await call(api, "PATCH", `/v1/sessions/${session.id}`, {
+			key: "replay-session-patch-002", ifMatch: "2", body: { title: "second patch" },
+		})).status).toBe(200);
+		const commandKey = "replay-command-state-001";
+		const command = await json(await call(api, "POST", `/v1/sessions/${session.id}/commands`, { key: commandKey, body: { command: "printf original" } }));
+		expect((await call(api, "POST", `/v1/sessions/${session.id}/cancel`, { key: "replay-cancel-state-001" })).status).toBe(202);
+		const sessionReplay = await call(api, "PATCH", `/v1/sessions/${session.id}`, {
+			key: "replay-session-patch-001", ifMatch: "1", body: { title: "first patch" },
+		});
+		expect(sessionReplay.status).toBe(200);
+		expect(await json(sessionReplay)).toEqual(firstSessionPatch);
+		const commandReplay = await call(api, "POST", `/v1/sessions/${session.id}/commands`, { key: commandKey, body: { command: "printf original" } });
+		expect(commandReplay.status).toBe(200);
+		expect(await json(commandReplay)).toEqual(command);
+		const commandMismatch = await call(api, "POST", `/v1/sessions/${session.id}/commands`, { key: commandKey, body: { command: "printf different" } });
+		expect((await json(commandMismatch)).error.code).toBe("idempotency_conflict");
+		expect((await call(api, "DELETE", `/v1/workspaces/${workspace.id}`, { key: "replay-delete-parent-001" })).status).toBe(204);
+		const createReplay = await call(api, "POST", `/v1/workspaces/${workspace.id}/sessions`, { key: sessionKey, body: { title: "original" } });
+		expect(createReplay.status).toBe(200);
+		expect(await json(createReplay)).toEqual(session);
+		const createMismatch = await call(api, "POST", `/v1/workspaces/${workspace.id}/sessions`, { key: sessionKey, body: { title: "different" } });
+		expect((await json(createMismatch)).error.code).toBe("idempotency_conflict");
+		await ledger.close();
+	});
+
+	it("keeps cancelling and terminal sessions monotonic across distinct requests", async () => {
+		const ledger = await newLedger();
+		const api = newApi(ledger);
+		const workspace = await json(await call(api, "POST", "/v1/workspaces", { key: "monotonic-workspace-key-1", body: { name: "monotonic" } }));
+		const session = await json(await call(api, "POST", `/v1/workspaces/${workspace.id}/sessions`, { key: "monotonic-session-key-01", body: { title: "monotonic" } }));
+		const firstCancel = await json(await call(api, "POST", `/v1/sessions/${session.id}/cancel`, { key: "monotonic-cancel-key-001" }));
+		const before = await admin`SELECT
+			(SELECT count(*) FROM t4_commands WHERE target_scope = ${`session:${session.id}`}) AS commands,
+			(SELECT count(*) FROM t4_outbox WHERE target_id = ${session.id}) AS outbox,
+			(SELECT count(*) FROM t4_events WHERE session_id = ${session.id}) AS events` as Array<{ commands: bigint; outbox: bigint; events: bigint }>;
+		const repeated = await call(api, "POST", `/v1/sessions/${session.id}/cancel`, { key: "monotonic-cancel-key-002" });
+		expect(repeated.status).toBe(202);
+		expect(await json(repeated)).toEqual(firstCancel);
+		expect((await call(api, "PATCH", `/v1/sessions/${session.id}`, { key: "monotonic-patch-key-0001", ifMatch: String(firstCancel.revision), body: { title: "forbidden" } })).status).toBe(404);
+		expect((await call(api, "POST", `/v1/sessions/${session.id}/commands`, { key: "monotonic-command-key-01", body: { command: "forbidden" } })).status).toBe(404);
+		await admin`UPDATE t4_session_intents SET state = 'cancelled' WHERE session_id = ${session.id}`;
+		expect((await call(api, "POST", `/v1/sessions/${session.id}/cancel`, { key: "monotonic-cancel-key-003" })).status).toBe(202);
+		expect((await call(api, "DELETE", `/v1/sessions/${session.id}`, { key: "monotonic-delete-key-001" })).status).toBe(204);
+		const after = await admin`SELECT
+			(SELECT count(*) FROM t4_commands WHERE target_scope = ${`session:${session.id}`}) AS commands,
+			(SELECT count(*) FROM t4_outbox WHERE target_id = ${session.id}) AS outbox,
+			(SELECT count(*) FROM t4_events WHERE session_id = ${session.id}) AS events,
+			(SELECT revision FROM t4_session_intents WHERE session_id = ${session.id}) AS revision` as Array<{ commands: bigint; outbox: bigint; events: bigint; revision: bigint }>;
+		expect(after[0]).toMatchObject({ ...before[0], revision: BigInt(firstCancel.revision) });
+		await ledger.close();
+	});
+
+	it("renews, excludes, expires, and fences PostgreSQL leases", async () => {
+		const ledger = await newLedger();
+		const api = newApi(ledger);
+		const first = await ledger.acquireLease("lease-owner-a", 30);
+		const renewed = await ledger.acquireLease("lease-owner-a", 30);
+		expect(renewed).toEqual(first);
+		await expect(ledger.acquireLease("lease-owner-b", 30)).rejects.toThrow("lease");
+		await call(api, "POST", "/v1/workspaces", { key: "lease-fencing-workspace-1", body: { name: "lease" } });
+		const claim = await ledger.claimNext(first);
+		expect(claim).toBeDefined();
+		await admin`UPDATE t4_owner_leases SET expires_at = clock_timestamp() - interval '1 second' WHERE lease_name = 'gateway-outbox'`;
+		expect(await ledger.claimIsCurrent(claim!)).toBe(false);
+		expect(await ledger.acknowledge(claim!)).toBe(false);
+		expect(await ledger.recordFailure(claim!, "expired")).toBe(false);
+		const takeover = await ledger.acquireLease("lease-owner-b", 30);
+		expect(takeover.epoch).toBe(first.epoch + 1n);
+		await ledger.close();
+	});
+
+	it("allows exact Unicode code-point bounds and denies browser Origin by default", async () => {
+		const ledger = await newLedger();
+		const api = newApi(ledger);
+		const astral = "😀".repeat(128);
+		const exact = await call(api, "POST", "/v1/workspaces", {
+			key: "unicode-codepoint-bound-01", body: { name: astral, labels: { emoji: astral } },
+		});
+		expect(exact.status).toBe(202);
+		expect((await call(api, "POST", "/v1/workspaces", {
+			key: "unicode-codepoint-bound-02", body: { name: `${astral}😀` },
+		})).status).toBe(422);
+		const browser = await call(api, "GET", "/v1", { headers: { origin: "https://browser.example.test" } });
+		expect(browser.status).toBe(400);
+		expect((await json(browser)).error.code).toBe("invalid_origin");
+		expect((await call(api, "GET", "/v1")).status).toBe(200);
+		const allowlisted = newApi(ledger, ["https://browser.example.test"]);
+		expect((await call(allowlisted, "GET", "/v1", { headers: { origin: "https://browser.example.test" } })).status).toBe(200);
+		expect((await call(allowlisted, "GET", "/v1", { headers: { origin: "https://other.example.test" } })).status).toBe(400);
+		await ledger.close();
+	});
+
+	it("converges a paused stale session create followed by cancel and expired-lease takeover", async () => {
+		const ledger = await newLedger();
+		const api = newApi(ledger);
+		const kubernetes = new PausedCreateKubernetes();
+		const stale = newWorker(ledger, "paused-owner", kubernetes);
+		await stale.acquireLease();
+		const workspace = await json(await call(api, "POST", "/v1/workspaces", { key: "paused-race-workspace-01", body: { name: "paused" } }));
+		expect(await stale.drain()).toBe(1);
+		const session = await json(await call(api, "POST", `/v1/workspaces/${workspace.id}/sessions`, { key: "paused-race-session-001", body: { title: "paused" } }));
+		const createClaim = await stale.claimNext();
+		expect(createClaim).toBeDefined();
+		const staleApply = stale.applyClaim(createClaim!);
+		await kubernetes.createStarted.promise;
+		expect((await call(api, "POST", `/v1/sessions/${session.id}/cancel`, { key: "paused-race-cancel-0001" })).status).toBe(202);
+		await admin`UPDATE t4_owner_leases SET expires_at = clock_timestamp() - interval '1 second' WHERE lease_name = 'gateway-outbox'`;
+		const current = newWorker(ledger, "takeover-owner", kubernetes);
+		const currentLease = await current.acquireLease();
+		expect(currentLease.epoch).toBeGreaterThan(createClaim!.ownerEpoch);
+		kubernetes.releaseCreate.resolve();
+		expect(await staleApply).toBe("fenced");
+		expect(kubernetes.resources.has(session.id)).toBe(true);
+		expect(await current.drain()).toBeGreaterThan(0);
+		expect(kubernetes.resources.has(session.id)).toBe(false);
+		await ledger.close();
+	});
+
+	it("reads snapshot entries and cursor from one database snapshot", async () => {
+		const ledger = await newLedger();
+		const api = newApi(ledger);
+		const workspace = await json(await call(api, "POST", "/v1/workspaces", { key: "atomic-snapshot-workspace", body: { name: "atomic snapshot" } }));
+		const session = await json(await call(api, "POST", `/v1/workspaces/${workspace.id}/sessions`, { key: "atomic-snapshot-session-1", body: { title: "atomic snapshot" } }));
+		await call(api, "POST", `/v1/sessions/${session.id}/commands`, { key: "atomic-snapshot-command-1", body: { command: "before snapshot" } });
+		await admin`SELECT pg_advisory_lock(741407)`;
+		await admin.unsafe(`
+			ALTER TABLE t4_event_retention RENAME TO t4_event_retention_base;
+			CREATE FUNCTION t4_test_pause_snapshot(value bigint) RETURNS bigint LANGUAGE plpgsql VOLATILE AS $$
+			BEGIN PERFORM pg_advisory_xact_lock(741407); RETURN value; END $$;
+			CREATE VIEW t4_event_retention AS
+			SELECT principal_id, session_id, first_retained_sequence, t4_test_pause_snapshot(latest_sequence) AS latest_sequence, updated_at
+			FROM t4_event_retention_base;
+		`);
+		const pendingSnapshot = call(api, "GET", `/v1/sessions/${session.id}/snapshot`);
+		await waitForDatabase(async () => {
+			const rows = await admin`SELECT count(*) AS count FROM pg_stat_activity WHERE wait_event_type = 'Advisory' AND query LIKE '%t4_event_retention%'` as Array<{ count: bigint }>;
+			return (rows[0]?.count ?? 0n) >= 1n;
+		});
+		const concurrent = new SQL(DATABASE_URL!, { max: 1, bigint: true });
+		const concurrentCommandId = "cmd_concurrent_snapshot_boundary";
+		await concurrent.begin(async transaction => {
+			const entries = await transaction<{ next: bigint }[]>`SELECT COALESCE(MAX(entry_sequence), -1) + 1 AS next FROM t4_snapshot_entries WHERE principal_id = 'owner@example.com' AND session_id = ${session.id}`;
+			await transaction`INSERT INTO t4_snapshot_entries (principal_id, session_id, entry_sequence, kind, text_value) VALUES ('owner@example.com', ${session.id}, ${entries[0]?.next ?? 0n}, 'input', 'concurrent snapshot command')`;
+			const events = await transaction<{ sequence: bigint }[]>`INSERT INTO t4_events (principal_id, session_id, event_type, payload, owner_epoch) VALUES ('owner@example.com', ${session.id}, 'command', ${{ commandId: concurrentCommandId, state: "accepted" }}, 0) RETURNING sequence`;
+			await transaction`UPDATE t4_event_retention_base SET latest_sequence = ${events[0]!.sequence}, updated_at = clock_timestamp() WHERE principal_id = 'owner@example.com' AND session_id = ${session.id}`;
+		});
+		await concurrent.close();
+		await admin`SELECT pg_advisory_unlock(741407)`;
+		const snapshotResponse = await pendingSnapshot;
+		expect(snapshotResponse.status).toBe(200);
+		const snapshot = await json(snapshotResponse);
+		await admin.unsafe("DROP VIEW t4_event_retention; ALTER TABLE t4_event_retention_base RENAME TO t4_event_retention; DROP FUNCTION t4_test_pause_snapshot(bigint)");
+		const afterBoundary = await call(api, "GET", `/v1/sessions/${session.id}/events?cursor=${encodeURIComponent(snapshot.cursor)}`, { headers: { accept: "text/event-stream" } });
+		expect(afterBoundary.status).toBe(200);
+		expect(eventData(await afterBoundary.text()).map(value => value.commandId)).toContain(concurrentCommandId);
+		await ledger.close();
+	});
+
+	it("reads retention floor, events, and delivered cursor atomically across pruning", async () => {
+		const ledger = await newLedger({ eventRetention: 100 });
+		const api = newApi(ledger);
+		const workspace = await json(await call(api, "POST", "/v1/workspaces", { key: "atomic-window-workspace-1", body: { name: "atomic window" } }));
+		const session = await json(await call(api, "POST", `/v1/workspaces/${workspace.id}/sessions`, { key: "atomic-window-session-001", body: { title: "atomic window" } }));
+		const snapshot = await json(await call(api, "GET", `/v1/sessions/${session.id}/snapshot`));
+		const command = await json(await call(api, "POST", `/v1/sessions/${session.id}/commands`, { key: "atomic-window-command-001", body: { command: "must survive concurrent prune" } }));
+		const target = await admin`SELECT sequence FROM t4_events WHERE principal_id = 'owner@example.com' AND session_id = ${session.id} AND payload->>'commandId' = ${command.commandId}` as Array<{ sequence: bigint }>;
+		expect(target[0]).toBeDefined();
+		await admin`SELECT pg_advisory_lock(741408)`;
+		await admin.unsafe(`
+			ALTER TABLE t4_events RENAME TO t4_events_base;
+			CREATE FUNCTION t4_test_pause_event(value bigint) RETURNS bigint LANGUAGE plpgsql VOLATILE AS $$
+			BEGIN PERFORM pg_advisory_xact_lock(741408); RETURN value; END $$;
+			CREATE VIEW t4_events AS
+			SELECT t4_test_pause_event(sequence) AS sequence, principal_id, session_id, event_type, payload, owner_epoch, created_at
+			FROM t4_events_base;
+		`);
+		const pendingWindow = call(api, "GET", `/v1/sessions/${session.id}/events?cursor=${encodeURIComponent(snapshot.cursor)}&maxEvents=1`, { headers: { accept: "text/event-stream" } });
+		await waitForDatabase(async () => {
+			const rows = await admin`SELECT count(*) AS count FROM pg_stat_activity WHERE wait_event_type = 'Advisory' AND query LIKE '%t4_events%'` as Array<{ count: bigint }>;
+			return (rows[0]?.count ?? 0n) >= 1n;
+		});
+		const concurrent = new SQL(DATABASE_URL!, { max: 1, bigint: true });
+		await concurrent.begin(async transaction => {
+			await transaction`DELETE FROM t4_events_base WHERE sequence = ${target[0]!.sequence}`;
+			await transaction`UPDATE t4_event_retention SET first_retained_sequence = ${target[0]!.sequence + 1n} WHERE principal_id = 'owner@example.com' AND session_id = ${session.id}`;
+		});
+		await concurrent.close();
+		await admin`SELECT pg_advisory_unlock(741408)`;
+		const response = await pendingWindow;
+		expect(response.status).toBe(200);
+		await admin.unsafe("DROP VIEW t4_events; ALTER TABLE t4_events_base RENAME TO t4_events; DROP FUNCTION t4_test_pause_event(bigint)");
+		expect(eventData(await response.text()).map(value => value.commandId)).toContain(command.commandId);
+		await ledger.close();
+	});
+
+	it("stops a chunked request body as soon as the byte limit is crossed", async () => {
+		const ledger = await newLedger();
+		const api = newApi(ledger);
+		let pulls = 0;
+		const body = new ReadableStream<Uint8Array>({
+			pull(controller) {
+				pulls++;
+				if (pulls <= 2) controller.enqueue(new Uint8Array(600_000));
+				else controller.error(new Error("body reader requested data after the limit"));
+			},
+		});
+		const response = await api.handle(new Request("https://t4.example.test/v1/workspaces", {
+			method: "POST",
+			headers: headers(OWNER_TOKEN, { "content-type": "application/json", "idempotency-key": "streaming-body-limit-key" }),
+			body,
+			duplex: "half",
+		} as RequestInit & { duplex: "half" }));
+		expect(response.status).toBe(400);
+		expect((await json(response)).error.message).toContain("maximum size");
+		expect(pulls).toBe(2);
+		await ledger.close();
+	});
+
+	it("requires an acceptable SSE media range and maps watch database failures to 503", async () => {
+		const ledger = await newLedger();
+		const api = newApi(ledger);
+		const workspace = await json(await call(api, "POST", "/v1/workspaces", { key: "sse-accept-workspace-01", body: { name: "sse accept" } }));
+		const session = await json(await call(api, "POST", `/v1/workspaces/${workspace.id}/sessions`, { key: "sse-accept-session-001", body: { title: "sse accept" } }));
+		for (const accept of [undefined, "application/json", "text/plain;q=1, text/event-stream;q=0"]) {
+			const response = await call(api, "GET", `/v1/sessions/${session.id}/events`, { ...(accept ? { headers: { accept } } : {}) });
+			expect(response.status).toBe(406);
+		}
+		expect((await call(api, "GET", `/v1/sessions/${session.id}/events`, { headers: { accept: "text/event-stream, application/json;q=0.5" } })).status).toBe(200);
+		expect((await call(api, "GET", `/v1/sessions/${session.id}/events?cursor=invalid`, { headers: { accept: "text/event-stream" } })).status).toBe(422);
+		await admin`ALTER TABLE t4_event_retention RENAME TO t4_event_retention_unavailable`;
+		const unavailable = await call(api, "GET", `/v1/sessions/${session.id}/events`, { headers: { accept: "text/event-stream" } });
+		expect(unavailable.status).toBe(503);
+		expect((await json(unavailable)).error).toMatchObject({ code: "unavailable", retryable: true });
+		await admin`ALTER TABLE t4_event_retention_unavailable RENAME TO t4_event_retention`;
+		await ledger.close();
+	});
+
+	it("rejects authenticated principals that cannot be projected into CRD spec.owner", async () => {
+		const ledger = await newLedger();
+		const api = newApi(ledger);
+		const before = await admin`SELECT count(*) AS count FROM t4_commands` as Array<{ count: bigint }>;
+		const response = await call(api, "POST", "/v1/workspaces", {
+			token: INVALID_PRINCIPAL_TOKEN,
+			key: "invalid-principal-owner-01",
+			body: { name: "must not commit" },
+		});
+		expect(response.status).toBe(401);
+		const after = await admin`SELECT count(*) AS count FROM t4_commands` as Array<{ count: bigint }>;
+		expect(after).toEqual(before);
 		await ledger.close();
 	});
 

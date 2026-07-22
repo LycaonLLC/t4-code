@@ -333,9 +333,68 @@ func TestRBACSeparatesControllerMutationFromServerProjection(t *testing.T) {
 	if strings.Contains(controllerRole, "resources: [secrets]") {
 		t.Fatal("controller role can read provider credential Secrets")
 	}
-	assertContains(t, serverRole, "t4clusterhosts", "t4workspaces", "t4sessions", "create", "list", "watch")
+	assertContains(t, serverRole,
+		"resources: [t4clusterhosts]",
+		"verbs: [get, list, watch]",
+		"resources: [t4workspaces, t4sessions]",
+		"verbs: [get, list, watch, create, patch, delete]",
+	)
 	if strings.Contains(serverRole, "secrets") || strings.Contains(serverRole, "persistentvolumeclaims") || strings.Contains(serverRole, "t4sessions/status") {
 		t.Fatal("server role can read secrets or mutate controller-owned infrastructure/status")
+	}
+}
+
+func TestPublicAPIRequiresDurableSecretAndExplicitPostgresEgress(t *testing.T) {
+	withoutSecret := append(enabledValues(),
+		"--set", "publicApi.enabled=true",
+		"--set", "networkPolicy.postgresCIDRs[0]=198.51.100.20/32",
+		"--set", "networkPolicy.postgresPorts[0]=5432",
+	)
+	helmTemplateMustFail(t, withoutSecret...)
+
+	withoutDatabaseRoute := append(enabledValues(),
+		"--set", "publicApi.enabled=true",
+		"--set-string", "publicApi.existingSecret=t4-public-api",
+	)
+	helmTemplateMustFail(t, withoutDatabaseRoute...)
+
+	values := append(enabledValues(),
+		"--set", "publicApi.enabled=true",
+		"--set-string", "publicApi.existingSecret=t4-public-api",
+		"--set-string", "publicApi.postgresURLKey=postgres-url",
+		"--set-string", "publicApi.credentialsKey=credentials.json",
+		"--set-string", "clusterHost.runtimeProfiles[0]=review-admitted",
+		"--set", "networkPolicy.postgresCIDRs[0]=198.51.100.20/32",
+		"--set", "networkPolicy.postgresPorts[0]=5432",
+	)
+	output := helmTemplate(t, values...)
+	server := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-server\"")
+	assertContains(t, server,
+		"name: T4_POSTGRES_URL_FILE",
+		"name: T4_PUBLIC_API_CREDENTIALS_FILE",
+		"name: T4_PUBLIC_API_RUNTIME_PROFILE",
+		"value: \"review-admitted\"",
+		"secretName: \"t4-public-api\"",
+		"key: postgres-url",
+		"key: credentials.json",
+	)
+	host := documentContainingKind(t, output, "T4ClusterHost", "name: \"t4-cluster\"")
+	assertContains(t, host, "- review-admitted")
+	serverEgress := documentContainingKind(t, output, "NetworkPolicy", "name: \"release-name-t4-cluster-server-egress\"")
+	assertContains(t, serverEgress, "198.51.100.20/32", "port: 5432")
+	if strings.Contains(serverEgress, "0.0.0.0/0") || strings.Contains(serverEgress, "::/0") {
+		t.Fatalf("public API PostgreSQL egress is broader than its configured destination:\n%s", serverEgress)
+	}
+}
+
+func TestPublicAPIRejectsIncompleteSecretKeysAndPostgresRoutes(t *testing.T) {
+	for name, values := range map[string][]string{
+		"empty PostgreSQL key": {"--set", "publicApi.enabled=true", "--set-string", "publicApi.existingSecret=t4-public-api", "--set-string", "publicApi.postgresURLKey=", "--set", "networkPolicy.postgresCIDRs[0]=198.51.100.20/32", "--set", "networkPolicy.postgresPorts[0]=5432"},
+		"empty credentials key": {"--set", "publicApi.enabled=true", "--set-string", "publicApi.existingSecret=t4-public-api", "--set-string", "publicApi.credentialsKey=", "--set", "networkPolicy.postgresCIDRs[0]=198.51.100.20/32", "--set", "networkPolicy.postgresPorts[0]=5432"},
+		"destination without port": {"--set", "publicApi.enabled=true", "--set-string", "publicApi.existingSecret=t4-public-api", "--set", "networkPolicy.postgresCIDRs[0]=198.51.100.20/32", "--set-string", "networkPolicy.postgresPorts="},
+		"port without destination": {"--set", "publicApi.enabled=true", "--set-string", "publicApi.existingSecret=t4-public-api", "--set", "networkPolicy.postgresPorts[0]=5432"},
+	} {
+		t.Run(name, func(t *testing.T) { helmTemplateMustFail(t, append(enabledValues(), values...)...) })
 	}
 }
 func TestUnauthenticatedOMPControllerCannotReadSecrets(t *testing.T) {
