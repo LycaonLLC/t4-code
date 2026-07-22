@@ -254,13 +254,19 @@ async function verifyLiveImageDigests(images) {
     controller: { component: "controller", container: "controller" },
     "cluster-server": { component: "server", container: "server" },
     "session-runtime": { name: "t4-session-runtime", container: "session-runtime" },
+    "model-gateway": { component: "model-gateway", container: "model-gateway", optional: true },
   };
   for (const image of images) {
     const identity = identities[image.component];
-    const matches = snapshot.images.filter((observed) =>
+    const candidates = snapshot.images.filter((observed) =>
       observed?.labels?.partOf === "t4-cluster" &&
       (identity.component ? observed.labels.component === identity.component : observed.labels.name === identity.name) &&
-      observed.container === identity.container &&
+      observed.container === identity.container,
+    );
+    // An optional image still has publication evidence when disabled. Once its
+    // workload exists, the live proof requires the same exact digest as core.
+    if (identity.optional && candidates.length === 0) continue;
+    const matches = candidates.filter((observed) =>
       observed.phase === "Running" &&
       observed.ready === true &&
       observed.image === image.reference &&

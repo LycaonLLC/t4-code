@@ -23,6 +23,10 @@ images:
     repository: ghcr.io/lycaonllc/t4-session-runtime
     digest: ""
     pullPolicy: IfNotPresent
+  modelGateway:
+    repository: ghcr.io/lycaonllc/t4-model-gateway
+    digest: ""
+    pullPolicy: IfNotPresent
 
 imagePullSecrets: []
 
@@ -70,13 +74,30 @@ session:
     configMap: ""
     modelsKey: ""
     settingsKey: ""
-    # Deprecated migration sentinels. Nonempty values are rejected because a
-    # session's arbitrary-code tools share the workload boundary with OMP.
-    credentialSecret: ""
-    credentialKey: ""
-    # Required: use a private, identity- and NetworkPolicy-isolated models.yml
-    # provider with auth: none. A reusable credential must stay outside the Pod.
-    allowUnauthenticated: true
+    # Every provider must use auth: none. Reusable credentials stay outside the
+    # session and controller workloads in an administrator or chart gateway.
+
+modelGateway:
+  # Optional provider-neutral credential boundary. When enabled, this separate
+  # workload alone mounts the existing provider credential Secret.
+  enabled: false
+  replicas: 2
+  upstreamOrigin: ""
+  # Exact provider inference paths. Administrative provider APIs stay blocked.
+  allowedPaths: []
+  existingSecret: ""
+  credentialKey: credential
+  # Secret value is the complete header value, such as "Bearer ...".
+  credentialHeader: authorization
+  timeoutMs: 600000
+  maxRequestBodyBytes: 16777216
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
 
 storage:
   # Required when enabled. The administrator creates this backend-neutral RWX StorageClass.
@@ -113,6 +134,10 @@ networkPolicy:
     # Optional in-cluster model endpoint identity. Set both selectors or neither.
     namespaceSelector: {}
     podSelector: {}
+  # Exact provider destinations available only to the optional model gateway.
+  modelGatewayUpstreamCIDRs: []
+  modelGatewayUpstreamPorts:
+    - 443
   ciProviderCIDRs: []
   # This port is inert until a CI destination CIDR or complete selector pair is supplied.
   ciProviderPorts:

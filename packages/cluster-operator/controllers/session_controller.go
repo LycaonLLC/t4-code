@@ -42,12 +42,9 @@ var (
 )
 
 type SessionOMPConfig struct {
-	ConfigMapName        string
-	ModelsKey            string
-	SettingsKey          string
-	CredentialSecretName string
-	CredentialKey        string
-	AllowUnauthenticated bool
+	ConfigMapName string
+	ModelsKey     string
+	SettingsKey   string
 }
 type ompResourceVersions struct {
 	ConfigMap string `json:"configMap"`
@@ -232,15 +229,6 @@ func validateAuthNoneModelsYAML(content string) error {
 }
 
 func (config SessionOMPConfig) validationFailure() (string, string) {
-	// A session runtime intentionally exposes arbitrary-code tools. A reusable
-	// provider credential therefore cannot be projected into the Pod in any
-	// form: the authority process, its tool children, and the user's shell share
-	// the same workload security boundary. Keep the legacy fields only so an old
-	// deployment fails with an explicit migration condition instead of silently
-	// accepting unsafe configuration.
-	if config.CredentialSecretName != "" || config.CredentialKey != "" || !config.AllowUnauthenticated {
-		return "OMPCredentialProjectionUnsupported", "reusable provider credentials cannot be projected into arbitrary-code session Pods; configure an identity- and NetworkPolicy-isolated auth-none model route"
-	}
 	if config.ConfigMapName == "" || config.ModelsKey == "" || config.SettingsKey == "" {
 		return "OMPReferencesMissing", "administrator-owned OMP ConfigMap and configuration keys are not configured"
 	}
@@ -545,7 +533,6 @@ func (r *SessionReconciler) desiredPod(session *clusterv1alpha1.T4Session, pvcNa
 			{Name: "T4_GUI_ENABLED", Value: fmt.Sprintf("%t", session.Spec.GUIEnabled)},
 			{Name: "DISPLAY", Value: ":99"},
 			{Name: "T4_OMP_CONFIG_SOURCE_DIR", Value: "/run/t4-omp-config-source"},
-			{Name: "T4_OMP_ALLOW_UNAUTHENTICATED", Value: fmt.Sprintf("%t", r.OMPConfig.AllowUnauthenticated)},
 		},
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "workspace", MountPath: "/workspace"},

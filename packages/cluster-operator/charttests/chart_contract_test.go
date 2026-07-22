@@ -156,8 +156,9 @@ func TestValuesSchemaRejectsUnsafeNamesProfilesCIDRsAndHalfSelectors(t *testing.
 		"observability half selector":      {"--set-string", "networkPolicy.observability.podSelector.matchLabels.scope=metrics"},
 		"OMP ConfigMap name":               {"--set-string", "session.omp.configMap=Bad_Name"},
 		"OMP models key":                   {"--set-string", "session.omp.modelsKey=bad/key"},
-		"legacy OMP credential Secret":     {"--set-string", "session.omp.credentialSecret=omp-runtime-credential"},
-		"legacy OMP credential key":        {"--set-string", "session.omp.credentialKey=MODEL_API_KEY"},
+		"removed OMP credential Secret":    {"--set-string", "session.omp.credentialSecret=omp-runtime-credential"},
+		"removed OMP credential key":       {"--set-string", "session.omp.credentialKey=MODEL_API_KEY"},
+		"removed OMP auth mode":            {"--set", "session.omp.allowUnauthenticated=true"},
 		"identical OMP projection keys":    {"--set-string", "session.omp.settingsKey=provider-models"},
 		"model route port zero":            {"--set", "networkPolicy.modelRoutePorts[0]=0"},
 		"model route port above TCP range": {"--set", "networkPolicy.modelRoutePorts[0]=65536"},
@@ -169,7 +170,6 @@ func TestValuesSchemaRejectsUnsafeNamesProfilesCIDRsAndHalfSelectors(t *testing.
 		"duplicate CI provider port":       {"--set", "networkPolicy.ciProviderPorts[0]=8080", "--set", "networkPolicy.ciProviderPorts[1]=8080"},
 		"noninteger CI provider port":      {"--set-string", "networkPolicy.ciProviderPorts[0]=http"},
 		"CI provider half selector":        {"--set-string", "networkPolicy.ciProvider.namespaceSelector.matchLabels.scope=linkedin-bot"},
-		"legacy OMP credential mode":       {"--set", "session.omp.allowUnauthenticated=false"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			helmTemplateMustFail(t, append(enabledValues(), values...)...)
@@ -197,16 +197,75 @@ func TestEnabledChartRequiresCommonOMPReferences(t *testing.T) {
 	}
 }
 
-func TestEnabledChartRequiresIsolatedAuthNoneOMPMode(t *testing.T) {
+func TestEnabledChartHasNoSessionCredentialMode(t *testing.T) {
 	output := helmTemplate(t, enabledValues()...)
 	controller := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-controller\"")
-	assertContains(t, controller,
-		"name: T4_SESSION_OMP_ALLOW_UNAUTHENTICATED\n              value: \"true\"",
-	)
-	if strings.Contains(controller, "T4_SESSION_OMP_CREDENTIAL_") {
+	if strings.Contains(controller, "T4_SESSION_OMP_CREDENTIAL_") || strings.Contains(controller, "T4_SESSION_OMP_ALLOW_UNAUTHENTICATED") {
 		t.Fatal("controller Deployment retained a session credential projection reference")
 	}
 	assertCount(t, output, "kind: Secret", 0)
+}
+
+func TestBuiltInModelGatewayAloneReceivesProviderCredential(t *testing.T) {
+	values := append(enabledValues(),
+		"--set", "modelGateway.enabled=true",
+		"--set", "images.modelGateway.digest="+fakeDigest,
+		"--set-string", "modelGateway.upstreamOrigin=https://api.example.test",
+		"--set-string", "modelGateway.allowedPaths[0]=/v1/responses",
+		"--set-string", "modelGateway.existingSecret=model-provider",
+		"--set", "networkPolicy.modelGatewayUpstreamCIDRs[0]=203.0.113.8/32",
+	)
+	output := helmTemplate(t, values...)
+	assertCount(t, output, "kind: Deployment", 3)
+	gateway := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-model-gateway\"")
+	assertContains(t, gateway,
+		"image: \"ghcr.io/lycaonllc/t4-model-gateway@"+fakeDigest+"\"",
+		"name: T4_MODEL_GATEWAY_UPSTREAM_ORIGIN",
+		"value: \"https://api.example.test\"",
+		"name: T4_MODEL_GATEWAY_ALLOWED_PATHS",
+		`value: "[\"/v1/responses\"]"`,
+		"name: provider-credential",
+		"secretName: \"model-provider\"",
+		"key: \"credential\"",
+		"automountServiceAccountToken: false",
+		"readOnlyRootFilesystem: true",
+	)
+	controller := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-controller\"")
+	server := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-server\"")
+	if strings.Contains(controller, "model-provider") || strings.Contains(server, "model-provider") {
+		t.Fatal("provider credential Secret escaped the model gateway workload")
+	}
+	policy := documentContainingKind(t, output, "NetworkPolicy", "name: \"release-name-t4-cluster-model-gateway\"")
+	assertContains(t, policy,
+		"app.kubernetes.io/name: t4-session-runtime",
+		"cidr: \"203.0.113.8/32\"",
+		"port: 443",
+	)
+	assertContains(t, output,
+		"kind: ServiceAccount\nmetadata:\n  name: \"release-name-t4-cluster-model-gateway\"",
+		"kind: Service\nmetadata:\n  name: \"release-name-t4-cluster-model-gateway\"",
+		"kind: PodDisruptionBudget\nmetadata:\n  name: \"release-name-t4-cluster-model-gateway\"",
+	)
+}
+
+func TestBuiltInModelGatewayRequiresPinnedPrivateRoute(t *testing.T) {
+	base := append(enabledValues(),
+		"--set", "modelGateway.enabled=true",
+		"--set", "images.modelGateway.digest="+fakeDigest,
+		"--set-string", "modelGateway.upstreamOrigin=https://api.example.test",
+		"--set-string", "modelGateway.allowedPaths[0]=/v1/responses",
+		"--set-string", "modelGateway.existingSecret=model-provider",
+		"--set", "networkPolicy.modelGatewayUpstreamCIDRs[0]=203.0.113.8/32",
+	)
+	for name, values := range map[string][]string{
+		"insecure upstream":      append(append([]string{}, base...), "--set-string", "modelGateway.upstreamOrigin=http://api.example.test"),
+		"missing allowed paths":  append(append([]string{}, base...), "--set-string", "modelGateway.allowedPaths={}"),
+		"missing provider route": append(append([]string{}, base...), "--set-string", "networkPolicy.modelGatewayUpstreamCIDRs={}"),
+		"disabled NetworkPolicy": append(append([]string{}, base...), "--set", "networkPolicy.enabled=false"),
+		"session bypass CIDR":    append(append([]string{}, base...), "--set", "networkPolicy.modelRouteCIDRs[0]=198.51.100.4/32"),
+	} {
+		t.Run(name, func(t *testing.T) { helmTemplateMustFail(t, values...) })
+	}
 }
 
 func TestSessionOMPReferencesArePassedWithoutCreatingConfigurationObjects(t *testing.T) {
@@ -216,7 +275,6 @@ func TestSessionOMPReferencesArePassedWithoutCreatingConfigurationObjects(t *tes
 		"name: T4_SESSION_OMP_CONFIG_MAP\n              value: \"omp-runtime-config\"",
 		"name: T4_SESSION_OMP_MODELS_KEY\n              value: \"provider-models\"",
 		"name: T4_SESSION_OMP_SETTINGS_KEY\n              value: \"agent-settings\"",
-		"name: T4_SESSION_OMP_ALLOW_UNAUTHENTICATED\n              value: \"true\"",
 	)
 	assertCount(t, output, "kind: ConfigMap", 0)
 	assertCount(t, output, "kind: Secret", 0)
@@ -546,8 +604,9 @@ func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 	controller := mustRead(t, filepath.Join(root, "cluster", "images", "controller", "Dockerfile"))
 	server := mustRead(t, filepath.Join(root, "cluster", "images", "cluster-server", "Dockerfile"))
 	session := mustRead(t, filepath.Join(root, "cluster", "images", "session-runtime", "Dockerfile"))
+	modelGateway := mustRead(t, filepath.Join(root, "cluster", "images", "model-gateway", "Dockerfile"))
 	entrypoint := mustRead(t, filepath.Join(root, "cluster", "images", "session-runtime", "session-entrypoint.sh"))
-	for name, content := range map[string]string{"controller": controller, "server": server, "session": session} {
+	for name, content := range map[string]string{"controller": controller, "server": server, "session": session, "model gateway": modelGateway} {
 		if !strings.Contains(content, "@sha256:") {
 			t.Fatalf("%s image uses an unpinned base", name)
 		}
@@ -561,7 +620,7 @@ func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 		"Xvfb",
 	)
 	assertContains(t, entrypoint, "packages/cluster-server/src/session-host-main.ts")
-	for name, content := range map[string]string{"server": server, "session": session} {
+	for name, content := range map[string]string{"server": server, "session": session, "model gateway": modelGateway} {
 		assertContains(t, content, "pnpm install --frozen-lockfile")
 		if strings.Contains(content, "bun install --ignore-scripts --lockfile-only") {
 			t.Fatalf("%s image synthesizes an uncommitted dependency lock", name)
@@ -581,15 +640,15 @@ func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 		t.Fatal("controller image hardcodes or claims a single/unbuilt architecture")
 	}
 	assertContains(t, server, "packages/cluster-server/src/main.ts")
+	assertContains(t, modelGateway, "packages/model-gateway/src/main.ts")
 	assertContains(t, entrypoint,
 		"T4_CLUSTER_SERVER_SERVICE_ACCOUNT",
 		"/var/run/secrets/kubernetes.io/serviceaccount/token",
 		"/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
 		"/var/run/secrets/kubernetes.io/serviceaccount/namespace",
 		"T4_OMP_CONFIG_SOURCE_DIR",
-		"T4_OMP_ALLOW_UNAUTHENTICATED",
-		"omp_credential_projection_unsupported",
-		`[[ "${T4_OMP_ALLOW_UNAUTHENTICATED}" == "true" && "$#" -eq 0 ]]`,
+		"unexpected_arguments",
+		`[[ "$#" -eq 0 ]]`,
 		`export HOME="${T4_SESSION_STATE_ROOT}/home"`,
 		`export PI_CODING_AGENT_DIR="${HOME}/.omp/profiles/${T4_SESSION_NAME}/agent"`,
 		`install -m 0600 "${models_source}"`,
@@ -609,12 +668,12 @@ func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing
 		models        string
 		writeSettings bool
 		settings      string
-		unsafeMode    bool
+		unexpectedArg bool
 		condition     string
 	}{
 		{name: "missing models file", writeSettings: true, settings: "settings", condition: "omp_models"},
 		{name: "empty settings file", writeModels: true, models: "models", writeSettings: true, condition: "omp_settings"},
-		{name: "credential projection", writeModels: true, models: "models", writeSettings: true, settings: "settings", unsafeMode: true, condition: "omp_credential_projection_unsupported"},
+		{name: "unexpected argument", writeModels: true, models: "models", writeSettings: true, settings: "settings", unexpectedArg: true, condition: "unexpected_arguments"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -647,10 +706,8 @@ func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing
 				t.Fatal(err)
 			}
 			arguments := []string{entrypoint}
-			allowUnauthenticated := "true"
-			if test.unsafeMode {
+			if test.unexpectedArg {
 				arguments = append(arguments, "MODEL_API_KEY")
-				allowUnauthenticated = "false"
 			}
 			command := exec.Command("bash", arguments...)
 			command.Env = append(os.Environ(),
@@ -664,7 +721,6 @@ func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing
 				"T4_KUBERNETES_CA_PATH="+filepath.Join(projection, "ca.crt"),
 				"T4_KUBERNETES_NAMESPACE_PATH="+filepath.Join(projection, "namespace"),
 				"T4_OMP_CONFIG_SOURCE_DIR="+source,
-				"T4_OMP_ALLOW_UNAUTHENTICATED="+allowUnauthenticated,
 				"T4_TEST_XVFB_MARKER="+marker,
 			)
 			output, err := command.CombinedOutput()
@@ -719,9 +775,6 @@ func enabledValues() []string {
 		"--set", "session.omp.configMap=omp-runtime-config",
 		"--set", "session.omp.modelsKey=provider-models",
 		"--set", "session.omp.settingsKey=agent-settings",
-		"--set-string", "session.omp.credentialSecret=",
-		"--set-string", "session.omp.credentialKey=",
-		"--set", "session.omp.allowUnauthenticated=true",
 	}
 }
 

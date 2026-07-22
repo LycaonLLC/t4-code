@@ -94,6 +94,16 @@ metadata:
   labels:
     {{- include "t4-cluster.labels" . | nindent 4 }}
 automountServiceAccountToken: false
+{{- if .Values.modelGateway.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "model-gateway") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

@@ -52,6 +52,7 @@ function validProof() {
     controller: "t4-cluster-operator",
     "cluster-server": "t4-cluster-server",
     "session-runtime": "t4-session-runtime",
+    "model-gateway": "t4-model-gateway",
   };
   return {
     schemaVersion: "t4-cluster-proof/1",
@@ -334,6 +335,9 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
     steps["cluster-server-tests"].commands.includes("(cd packages/cluster-server && bun --bun run test)"),
   );
   assert.ok(
+    steps["cluster-server-tests"].commands.includes("(cd packages/model-gateway && bun --bun run test)"),
+  );
+  assert.ok(
     steps["cluster-server-tests"].commands.includes(
       "bun test cluster/images/session-runtime/assert-omp-credentials-absent.test.ts",
     ),
@@ -380,6 +384,7 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   assert.match(steps["build-controller"].commands[0], /t4-cluster-operator/u);
   assert.match(steps["build-cluster-server"].commands[0], /t4-cluster-server/u);
   assert.match(steps["build-session-runtime"].commands[0], /t4-session-runtime/u);
+  assert.match(steps["build-session-runtime"].commands[1], /t4-model-gateway/u);
 
   const busyboxEntrypoint = [
     "/busybox/sh",
@@ -401,6 +406,9 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
       /^sh scripts\/cluster-ci\/capture-image-evidence\.sh provenance /u,
     );
   }
+  assert.match(steps["sbom-session-runtime"].commands[1], /sbom model-gateway t4-model-gateway/u);
+  assert.match(steps["vulnerability-session-runtime"].commands[1], /vulnerability model-gateway t4-model-gateway/u);
+  assert.match(steps["provenance-session-runtime"].commands[1], /provenance model-gateway t4-model-gateway/u);
 
   for (const [name, step] of Object.entries(steps)) {
     assert.match(step.image, /@sha256:[0-9a-f]{64}$/u, `${name} image must be immutable`);

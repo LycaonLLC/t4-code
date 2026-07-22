@@ -2,9 +2,6 @@
 {{- if eq .Values.session.omp.modelsKey .Values.session.omp.settingsKey }}
 {{- fail "session.omp.modelsKey and session.omp.settingsKey must be different" }}
 {{- end }}
-{{- if or (not .Values.session.omp.allowUnauthenticated) .Values.session.omp.credentialSecret .Values.session.omp.credentialKey }}
-{{- fail "reusable provider credentials cannot be projected into session Pods; set session.omp.allowUnauthenticated=true, clear credentialSecret/credentialKey, and use an isolated auth-none model route" }}
-{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -85,8 +82,6 @@ spec:
               value: {{ .Values.session.omp.modelsKey | quote }}
             - name: T4_SESSION_OMP_SETTINGS_KEY
               value: {{ .Values.session.omp.settingsKey | quote }}
-            - name: T4_SESSION_OMP_ALLOW_UNAUTHENTICATED
-              value: {{ .Values.session.omp.allowUnauthenticated | quote }}
             - name: T4_SESSION_SERVICE_ACCOUNT
               value: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "session") | quote }}
             - name: T4_CLUSTER_SERVER_SERVICE_ACCOUNT
@@ -364,4 +359,132 @@ spec:
         - name: temporary
           emptyDir:
             sizeLimit: 256Mi
+{{- if .Values.modelGateway.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "model-gateway") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+    app.kubernetes.io/component: model-gateway
+spec:
+  replicas: {{ .Values.modelGateway.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  minReadySeconds: 10
+  selector:
+    matchLabels:
+      {{- include "t4-cluster.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: model-gateway
+  template:
+    metadata:
+      labels:
+        {{- include "t4-cluster.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: model-gateway
+        app.kubernetes.io/part-of: t4-cluster
+    spec:
+      serviceAccountName: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "model-gateway") | quote }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values: ["k3s-worker-02"]
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "t4-cluster.selectorLabels" . | nindent 20 }}
+                    app.kubernetes.io/component: model-gateway
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              {{- include "t4-cluster.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: model-gateway
+      containers:
+        - name: model-gateway
+          image: {{ include "t4-cluster.image" .Values.images.modelGateway | quote }}
+          imagePullPolicy: {{ .Values.images.modelGateway.pullPolicy | quote }}
+          env:
+            - name: T4_MODEL_GATEWAY_UPSTREAM_ORIGIN
+              value: {{ .Values.modelGateway.upstreamOrigin | quote }}
+            - name: T4_MODEL_GATEWAY_ALLOWED_PATHS
+              value: {{ toJson .Values.modelGateway.allowedPaths | quote }}
+            - name: T4_MODEL_GATEWAY_CREDENTIAL_HEADER
+              value: {{ .Values.modelGateway.credentialHeader | quote }}
+            - name: T4_MODEL_GATEWAY_CREDENTIAL_FILE
+              value: /var/run/secrets/t4-model-gateway/credential
+            - name: T4_MODEL_GATEWAY_TIMEOUT_MS
+              value: {{ .Values.modelGateway.timeoutMs | quote }}
+            - name: T4_MODEL_GATEWAY_MAX_REQUEST_BODY_BYTES
+              value: {{ .Values.modelGateway.maxRequestBodyBytes | quote }}
+          ports:
+            - name: model
+              containerPort: 8080
+            - name: admin
+              containerPort: 9090
+          startupProbe:
+            httpGet: {path: /healthz, port: admin}
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet: {path: /readyz, port: admin}
+            failureThreshold: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: admin}
+            failureThreshold: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.modelGateway.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: temporary
+              mountPath: /tmp
+            - name: provider-credential
+              mountPath: /var/run/secrets/t4-model-gateway
+              readOnly: true
+      volumes:
+        - name: temporary
+          emptyDir:
+            sizeLimit: 128Mi
+        - name: provider-credential
+          secret:
+            secretName: {{ .Values.modelGateway.existingSecret | quote }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.modelGateway.credentialKey | quote }}
+                path: credential
+{{- end }}
 {{- end }}

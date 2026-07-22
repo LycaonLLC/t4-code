@@ -23,7 +23,8 @@ artifact_dir=artifacts/cluster-proof/images
 for entry in \
   controller:t4-cluster-operator \
   cluster-server:t4-cluster-server \
-  session-runtime:t4-session-runtime
+  session-runtime:t4-session-runtime \
+  model-gateway:t4-model-gateway
 do
   component=${entry%%:*}
   repository_suffix=${entry#*:}
