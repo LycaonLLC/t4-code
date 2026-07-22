@@ -175,6 +175,23 @@ export interface components {
         BadRequestErrorEnvelope: {
             error: components["schemas"]["BadRequestApiError"];
         };
+        Capabilities: {
+            [key: string]: components["schemas"]["CapabilityStatus"];
+        };
+        CapabilityDeprecation: {
+            message: string;
+            replacement?: string;
+            sinceVersion?: string;
+            /** Format: date-time */
+            sunsetAt?: string;
+        };
+        CapabilityStatus: {
+            authorized: boolean;
+            available: boolean;
+            deprecation?: components["schemas"]["CapabilityDeprecation"];
+            enabled: boolean;
+            supported: boolean;
+        };
         CommandCreate: {
             command: string;
             /** @default {} */
@@ -184,12 +201,14 @@ export interface components {
         };
         CommandResult: {
             commandId: components["schemas"]["ResourceId"];
-            state: components["schemas"]["OperationState"];
+            state: components["schemas"]["CommandState"];
         };
+        /** @enum {string} */
+        CommandState: "accepted" | "projected" | "dispatching" | "running" | "succeeded" | "failed" | "cancelling" | "cancelled" | "rejected" | "unavailable" | "indeterminate";
         CommandWatchEvent: {
             commandId: components["schemas"]["ResourceId"];
             cursor: components["schemas"]["Cursor"];
-            state: components["schemas"]["OperationState"];
+            state: components["schemas"]["CommandState"];
             /** @constant */
             type: "command";
         };
@@ -212,7 +231,7 @@ export interface components {
         };
         Discovery: {
             apiVersion: string;
-            capabilities: string[];
+            capabilities: components["schemas"]["Capabilities"];
             limits: {
                 commandBytesMax: number;
                 commandMetadataValueBytesMax: number;
@@ -222,6 +241,7 @@ export interface components {
                 pageSizeMax: number;
                 watchEventsMax: number;
             };
+            serverBuild: components["schemas"]["ServerBuild"];
             supportedMajors: number[];
         };
         ErrorEnvelope: {
@@ -272,14 +292,16 @@ export interface components {
         NotFoundErrorEnvelope: {
             error: components["schemas"]["NotFoundApiError"];
         };
-        /** @enum {string} */
-        OperationState: "accepted" | "rejected" | "conflict" | "unavailable" | "indeterminate";
         ResourceId: string;
         Resync: {
             cursor: components["schemas"]["Cursor"];
             snapshotUrl: string;
         };
         Revision: number;
+        ServerBuild: {
+            revision: string;
+            version: string;
+        };
         Session: {
             id: components["schemas"]["ResourceId"];
             labels?: components["schemas"]["Labels"];
@@ -364,6 +386,7 @@ export interface components {
             headers: {
                 "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                 "T4-API-Version": components["headers"]["SelectedVersion"];
+                "T4-Event-Cursor": components["headers"]["EventCursor"];
                 [name: string]: unknown;
             };
             content: {
@@ -375,6 +398,7 @@ export interface components {
             headers: {
                 "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                 "T4-API-Version": components["headers"]["SelectedVersion"];
+                "T4-Event-Cursor": components["headers"]["EventCursor"];
                 [name: string]: unknown;
             };
             content: {
@@ -386,6 +410,7 @@ export interface components {
             headers: {
                 "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                 "T4-API-Version": components["headers"]["SelectedVersion"];
+                "T4-Event-Cursor": components["headers"]["EventCursor"];
                 [name: string]: unknown;
             };
             content?: never;
@@ -506,6 +531,7 @@ export interface components {
             headers: {
                 "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                 "T4-API-Version": components["headers"]["SelectedVersion"];
+                "T4-Event-Cursor": components["headers"]["EventCursor"];
                 [name: string]: unknown;
             };
             content: {
@@ -527,6 +553,7 @@ export interface components {
             headers: {
                 "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                 "T4-API-Version": components["headers"]["SelectedVersion"];
+                "T4-Event-Cursor": components["headers"]["EventCursor"];
                 [name: string]: unknown;
             };
             content: {
@@ -558,6 +585,7 @@ export interface components {
             headers: {
                 "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                 "T4-API-Version": components["headers"]["SelectedVersion"];
+                "T4-Event-Cursor": components["headers"]["EventCursor"];
                 [name: string]: unknown;
             };
             content: {
@@ -579,6 +607,7 @@ export interface components {
             headers: {
                 "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                 "T4-API-Version": components["headers"]["SelectedVersion"];
+                "T4-Event-Cursor": components["headers"]["EventCursor"];
                 [name: string]: unknown;
             };
             content: {
@@ -607,6 +636,8 @@ export interface components {
     };
     requestBodies: never;
     headers: {
+        /** @description Durable event cursor committed with the accepted mutation and preserved by replay. */
+        EventCursor: components["schemas"]["Cursor"];
         /** @description True when this response replays a prior identical request. */
         IdempotencyReplayed: "true" | "false";
         /** @description Selected compatible T4 API minor version. */
