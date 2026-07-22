@@ -277,6 +277,23 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.cluster == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
+        env:
+          POSTGRES_DB: t4_test
+          POSTGRES_USER: t4_test
+          POSTGRES_PASSWORD: t4_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U t4_test -d t4_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      T4_TEST_POSTGRES_URL: postgres://t4_test:t4_test_password@127.0.0.1:5432/t4_test
+
     steps:
       - name: Check out source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
