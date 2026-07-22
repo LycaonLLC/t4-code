@@ -279,6 +279,11 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
     steps["legacy-authority-build"].environment.RUSTFLAGS,
     "-C link-arg=-fuse-ld=lld",
   );
+  assert.equal(
+    steps["legacy-authority-build"].environment.CARGO_TARGET_DIR,
+    "/tmp/t4-legacy-authority-target",
+  );
+  assert.equal(steps["legacy-authority-build"].environment.CARGO_INCREMENTAL, "0");
   assert.match(legacyInstaller, /apt-get install[^\n]*\blld\b/u);
   assert.match(legacyInstaller, /command -v ld\.lld >\/dev\/null/u);
   assert.equal(
@@ -296,6 +301,7 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
     "(cd .continuity/omp && bun install --frozen-lockfile)",
     "(cd .continuity/omp && bun run build:native)",
   ]);
+  assert.deepEqual(steps["legacy-bridge-continuity"].depends_on, ["legacy-authority-build"]);
   assert.ok(steps["legacy-bridge-continuity"].commands.includes("pnpm test:legacy-bridge-continuity"));
   assert.equal(steps["legacy-bridge-continuity"].environment.T4_OMP_SOURCE_DIR, ".continuity/omp");
   assert.ok(
