@@ -97,9 +97,15 @@ const ROLLBACK_URL = new URL("../migrations/001_durable_gateway.down.sql", impor
 const OUTBOX_LEASE = "gateway-outbox";
 const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
 
-function safeNumber(value: bigint): number {
-	if (value < 0n || value > MAX_SAFE_BIGINT) throw new Error("persisted ledger integer is outside the public API range");
-	return Number(value);
+function persistedBigint(value: unknown, allowZero = false): bigint {
+	if (typeof value !== "bigint") throw new Error("persisted ledger bigint is invalid");
+	if (allowZero ? value < 0n : value <= 0n) throw new Error("persisted ledger bigint is invalid");
+	return value;
+}
+function safeNumber(value: unknown, allowZero = false): number {
+	const decoded = persistedBigint(value, allowZero);
+	if (decoded > MAX_SAFE_BIGINT) throw new Error("persisted ledger integer is outside the public API range");
+	return Number(decoded);
 }
 function labels(value: Record<string, string>): Record<string, string> | undefined {
 	return Object.keys(value).length > 0 ? value : undefined;
@@ -314,26 +320,26 @@ export class PostgresLedger {
 		if (!current) return undefined;
 		const rows = await this.#sql<{ entry_sequence: bigint; kind: "input" | "output" | "status"; text_value: string }[]>`SELECT entry_sequence, kind, text_value FROM t4_snapshot_entries WHERE principal_id = ${principalId} AND session_id = ${sessionId} ORDER BY entry_sequence DESC LIMIT 1000`;
 		const retention = await this.#sql<RetentionRow[]>`SELECT first_retained_sequence, latest_sequence FROM t4_event_retention WHERE principal_id = ${principalId} AND session_id = ${sessionId}`;
-		const latest = retention[0]?.latest_sequence ?? 0n;
-		return { session: current, cursor: this.watchCursor(principalId, sessionId, latest), entries: rows.reverse().map(row => ({ sequence: safeNumber(row.entry_sequence), kind: row.kind, text: row.text_value })) };
+		const latest = retention[0] ? persistedBigint(retention[0].latest_sequence, true) : 0n;
+		return { session: current, cursor: this.watchCursor(principalId, sessionId, latest), entries: rows.reverse().map(row => ({ sequence: safeNumber(row.entry_sequence, true), kind: row.kind, text: row.text_value })) };
 	}
 
 	async eventWindow(principalId: string, sessionId: string, cursor: string | undefined, limit: number): Promise<EventWindow | undefined> {
 		if (!await this.getSession(principalId, sessionId)) return undefined;
 		const retentionRows = await this.#sql<RetentionRow[]>`SELECT first_retained_sequence, latest_sequence FROM t4_event_retention WHERE principal_id = ${principalId} AND session_id = ${sessionId}`;
-		const first = retentionRows[0]?.first_retained_sequence ?? 0n;
-		const latest = retentionRows[0]?.latest_sequence ?? 0n;
+		const first = retentionRows[0] ? persistedBigint(retentionRows[0].first_retained_sequence, true) : 0n;
+		const latest = retentionRows[0] ? persistedBigint(retentionRows[0].latest_sequence, true) : 0n;
 		let after = 0n;
 		if (cursor) {
 			const decoded = this.#decodeCursor(cursor, "watch", principalId, sessionId);
-			if (decoded === undefined) throw new Error("invalid_cursor");
+			if (typeof decoded !== "bigint") throw new Error("invalid_cursor");
 			after = decoded;
 		}
 		const resyncCursor = this.watchCursor(principalId, sessionId, latest);
 		if (first > 0n && after < first - 1n) return { events: [], cursor: resyncCursor, expired: true, resyncCursor };
 		const rows = await this.#sql<EventRow[]>`SELECT sequence, event_type, payload FROM t4_events WHERE principal_id = ${principalId} AND session_id = ${sessionId} AND sequence > ${after} ORDER BY sequence LIMIT ${limit}`;
-		const delivered = rows.at(-1)?.sequence ?? after;
-		return { events: rows.map(row => ({ sequence: row.sequence, type: row.event_type, payload: row.payload })), cursor: this.watchCursor(principalId, sessionId, delivered), expired: false, resyncCursor };
+		const delivered = rows.at(-1) ? persistedBigint(rows.at(-1)!.sequence) : after;
+		return { events: rows.map(row => ({ sequence: persistedBigint(row.sequence), type: row.event_type, payload: row.payload })), cursor: this.watchCursor(principalId, sessionId, delivered), expired: false, resyncCursor };
 	}
 
 	watchCursor(principalId: string, sessionId: string, sequence: bigint): string { return this.#cursor("watch", principalId, sessionId, sequence); }
@@ -348,7 +354,7 @@ export class PostgresLedger {
 			await transaction`INSERT INTO t4_owner_leases (lease_name, owner_id, epoch, expires_at) VALUES (${OUTBOX_LEASE}, ${ownerId}, 1, clock_timestamp() + (${leaseSeconds} * interval '1 second')) ON CONFLICT (lease_name) DO UPDATE SET owner_id = EXCLUDED.owner_id, epoch = t4_owner_leases.epoch + 1, expires_at = EXCLUDED.expires_at, updated_at = clock_timestamp()`;
 			return await transaction<LeaseRow[]>`SELECT owner_id, epoch FROM t4_owner_leases WHERE lease_name = ${OUTBOX_LEASE}`;
 		});
-		return { ownerId: rows[0]!.owner_id, epoch: rows[0]!.epoch };
+		return { ownerId: rows[0]!.owner_id, epoch: persistedBigint(rows[0]!.epoch) };
 	}
 
 	async claimNext(lease: OwnerLease): Promise<OutboxClaim | undefined> {
@@ -424,10 +430,12 @@ export class PostgresLedger {
 
 	async #appendEvent(transaction: SQL, principalId: string, sessionId: string, type: "session" | "command", payload: Record<string, unknown>, ownerEpoch: bigint): Promise<bigint> {
 		const inserted = await transaction<{ sequence: bigint }[]>`INSERT INTO t4_events (principal_id, session_id, event_type, payload, owner_epoch) VALUES (${principalId}, ${sessionId}, ${type}, ${payload}, ${ownerEpoch}) RETURNING sequence`;
-		const sequence = inserted[0]!.sequence;
+		const sequence = persistedBigint(inserted[0]?.sequence);
 		await transaction`DELETE FROM t4_events WHERE principal_id = ${principalId} AND session_id = ${sessionId} AND sequence < COALESCE((SELECT sequence FROM t4_events WHERE principal_id = ${principalId} AND session_id = ${sessionId} ORDER BY sequence DESC OFFSET ${this.#eventRetention - 1} LIMIT 1), 0)`;
 		const retained = await transaction<{ first: bigint; latest: bigint }[]>`SELECT COALESCE(MIN(sequence), 0) AS first, COALESCE(MAX(sequence), 0) AS latest FROM t4_events WHERE principal_id = ${principalId} AND session_id = ${sessionId}`;
-		await transaction`INSERT INTO t4_event_retention (principal_id, session_id, first_retained_sequence, latest_sequence) VALUES (${principalId}, ${sessionId}, ${retained[0]!.first}, ${retained[0]!.latest}) ON CONFLICT (principal_id, session_id) DO UPDATE SET first_retained_sequence = EXCLUDED.first_retained_sequence, latest_sequence = EXCLUDED.latest_sequence, updated_at = clock_timestamp()`;
+		const first = persistedBigint(retained[0]?.first, true);
+		const latest = persistedBigint(retained[0]?.latest, true);
+		await transaction`INSERT INTO t4_event_retention (principal_id, session_id, first_retained_sequence, latest_sequence) VALUES (${principalId}, ${sessionId}, ${first}, ${latest}) ON CONFLICT (principal_id, session_id) DO UPDATE SET first_retained_sequence = EXCLUDED.first_retained_sequence, latest_sequence = EXCLUDED.latest_sequence, updated_at = clock_timestamp()`;
 		return sequence;
 	}
 }

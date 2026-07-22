@@ -156,7 +156,7 @@ let admin: SQL;
 
 beforeAll(async () => {
 	if (!DATABASE_URL) throw new Error("T4_TEST_POSTGRES_URL is required for durable gateway tests");
-	admin = new SQL(DATABASE_URL, { max: 1 });
+	admin = new SQL(DATABASE_URL, { max: 1, bigint: true });
 	await admin.unsafe("DROP SCHEMA public CASCADE; CREATE SCHEMA public");
 	const modules = await Promise.all([
 		import(/* @vite-ignore */ LEDGER_MODULE_PATH).catch(() => undefined),
