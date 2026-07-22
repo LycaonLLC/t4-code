@@ -82,6 +82,13 @@ storage:
   # Required when enabled. The administrator creates this backend-neutral RWX StorageClass.
   adminRWXStorageClass: ""
 
+publicApi:
+  enabled: false
+  # Administrator-owned Secret; the chart only projects these two narrowly named files.
+  existingSecret: ""
+  postgresURLKey: postgres-url
+  credentialsKey: credentials.json
+
 woodpecker:
   existingSecret: ""
   tokenKey: token
@@ -119,6 +126,12 @@ networkPolicy:
     - 443
   ciProvider:
     # Optional in-cluster CI endpoint identity. Set both selectors or neither.
+    namespaceSelector: {}
+    podSelector: {}
+  postgresCIDRs: []
+  postgresPorts: []
+  postgres:
+    # PostgreSQL may be selected by CIDR and/or in-cluster identity. Set both selectors or neither.
     namespaceSelector: {}
     podSelector: {}
   dns:

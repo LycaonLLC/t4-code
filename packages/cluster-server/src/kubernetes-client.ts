@@ -122,6 +122,15 @@ export class KubernetesApiClient {
 		}) as KubernetesResource;
 	}
 
+	async patch(resource: string, name: string, body: unknown, signal?: AbortSignal): Promise<KubernetesResource> {
+		return await this.request(`${this.#collection(resource)}/${encodeURIComponent(name)}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/merge-patch+json" },
+			body: JSON.stringify(body),
+			signal,
+		}) as KubernetesResource;
+	}
+
 	async get(resource: string, name: string, signal?: AbortSignal): Promise<KubernetesResource> {
 		return await this.request(`${this.#collection(resource)}/${encodeURIComponent(name)}`, { signal }) as KubernetesResource;
 	}

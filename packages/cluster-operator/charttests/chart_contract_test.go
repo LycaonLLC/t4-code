@@ -143,33 +143,43 @@ func TestEachDeploymentUsesZeroUnavailableAndConfiguredAPIAudience(t *testing.T)
 
 func TestValuesSchemaRejectsUnsafeNamesProfilesCIDRsAndHalfSelectors(t *testing.T) {
 	for name, values := range map[string][]string{
-		"cluster host name":                {"--set-string", "clusterHost.name=Bad_Name"},
-		"storage class name":               {"--set-string", "storage.adminRWXStorageClass=Bad_Name"},
-		"runtime profile":                  {"--set-string", "clusterHost.runtimeProfiles[0]=-bad"},
-		"Woodpecker Secret name":           {"--set-string", "woodpecker.existingSecret=Bad_Name", "--set-string", "woodpecker.configMap=woodpecker-config"},
-		"Woodpecker ConfigMap name":        {"--set-string", "woodpecker.existingSecret=woodpecker-token", "--set-string", "woodpecker.configMap=Bad_Name"},
-		"Woodpecker key":                   {"--set-string", "woodpecker.existingSecret=woodpecker-token", "--set-string", "woodpecker.configMap=woodpecker-config", "--set-string", "woodpecker.tokenKey=bad/key"},
-		"Woodpecker audience":              {"--set-string", "woodpecker.serviceAccountAudience=/bad", "--set-string", "woodpecker.configMap=woodpecker-config"},
-		"IPv4 default route":               {"--set-string", "server.trustedProxyCIDRs[0]=0.0.0.0/0"},
-		"IPv6 default route":               {"--set-string", "server.trustedProxyCIDRs[0]=::/0"},
-		"gateway half selector":            {"--set-string", "networkPolicy.gatewayIngress.namespaceSelector.matchLabels.scope=gateway"},
-		"observability half selector":      {"--set-string", "networkPolicy.observability.podSelector.matchLabels.scope=metrics"},
-		"OMP ConfigMap name":               {"--set-string", "session.omp.configMap=Bad_Name"},
-		"OMP models key":                   {"--set-string", "session.omp.modelsKey=bad/key"},
-		"legacy OMP credential Secret":     {"--set-string", "session.omp.credentialSecret=omp-runtime-credential"},
-		"legacy OMP credential key":        {"--set-string", "session.omp.credentialKey=MODEL_API_KEY"},
-		"identical OMP projection keys":    {"--set-string", "session.omp.settingsKey=provider-models"},
-		"model route port zero":            {"--set", "networkPolicy.modelRoutePorts[0]=0"},
-		"model route port above TCP range": {"--set", "networkPolicy.modelRoutePorts[0]=65536"},
-		"duplicate model route port":       {"--set", "networkPolicy.modelRoutePorts[0]=19481", "--set", "networkPolicy.modelRoutePorts[1]=19481"},
-		"noninteger model route port":      {"--set-string", "networkPolicy.modelRoutePorts[0]=https"},
-		"model route half selector":        {"--set-string", "networkPolicy.modelRoute.namespaceSelector.matchLabels.scope=linkedin-bot"},
-		"CI provider port zero":            {"--set", "networkPolicy.ciProviderPorts[0]=0"},
-		"CI provider port above TCP range": {"--set", "networkPolicy.ciProviderPorts[0]=65536"},
-		"duplicate CI provider port":       {"--set", "networkPolicy.ciProviderPorts[0]=8080", "--set", "networkPolicy.ciProviderPorts[1]=8080"},
-		"noninteger CI provider port":      {"--set-string", "networkPolicy.ciProviderPorts[0]=http"},
-		"CI provider half selector":        {"--set-string", "networkPolicy.ciProvider.namespaceSelector.matchLabels.scope=linkedin-bot"},
-		"legacy OMP credential mode":       {"--set", "session.omp.allowUnauthenticated=false"},
+		"cluster host name":                               {"--set-string", "clusterHost.name=Bad_Name"},
+		"storage class name":                              {"--set-string", "storage.adminRWXStorageClass=Bad_Name"},
+		"runtime profile":                                 {"--set-string", "clusterHost.runtimeProfiles[0]=-bad"},
+		"public API Secret name":                          {"--set-string", "publicApi.existingSecret=Bad_Name"},
+		"public API PostgreSQL key":                       {"--set-string", "publicApi.postgresURLKey=bad/key"},
+		"public API credentials key":                      {"--set-string", "publicApi.credentialsKey=bad/key"},
+		"Woodpecker Secret name":                          {"--set-string", "woodpecker.existingSecret=Bad_Name", "--set-string", "woodpecker.configMap=woodpecker-config"},
+		"Woodpecker ConfigMap name":                       {"--set-string", "woodpecker.existingSecret=woodpecker-token", "--set-string", "woodpecker.configMap=Bad_Name"},
+		"Woodpecker key":                                  {"--set-string", "woodpecker.existingSecret=woodpecker-token", "--set-string", "woodpecker.configMap=woodpecker-config", "--set-string", "woodpecker.tokenKey=bad/key"},
+		"Woodpecker audience":                             {"--set-string", "woodpecker.serviceAccountAudience=/bad", "--set-string", "woodpecker.configMap=woodpecker-config"},
+		"IPv4 default route":                              {"--set-string", "server.trustedProxyCIDRs[0]=0.0.0.0/0"},
+		"IPv6 default route":                              {"--set-string", "server.trustedProxyCIDRs[0]=::/0"},
+		"PostgreSQL IPv4 default route":                   {"--set-string", "networkPolicy.postgresCIDRs[0]=0.0.0.0/0"},
+		"PostgreSQL IPv6 default route":                   {"--set-string", "networkPolicy.postgresCIDRs[0]=::/0"},
+		"gateway half selector":                           {"--set-string", "networkPolicy.gatewayIngress.namespaceSelector.matchLabels.scope=gateway"},
+		"observability half selector":                     {"--set-string", "networkPolicy.observability.podSelector.matchLabels.scope=metrics"},
+		"OMP ConfigMap name":                              {"--set-string", "session.omp.configMap=Bad_Name"},
+		"OMP models key":                                  {"--set-string", "session.omp.modelsKey=bad/key"},
+		"legacy OMP credential Secret":                    {"--set-string", "session.omp.credentialSecret=omp-runtime-credential"},
+		"legacy OMP credential key":                       {"--set-string", "session.omp.credentialKey=MODEL_API_KEY"},
+		"identical OMP projection keys":                   {"--set-string", "session.omp.settingsKey=provider-models"},
+		"model route port zero":                           {"--set", "networkPolicy.modelRoutePorts[0]=0"},
+		"model route port above TCP range":                {"--set", "networkPolicy.modelRoutePorts[0]=65536"},
+		"duplicate model route port":                      {"--set", "networkPolicy.modelRoutePorts[0]=19481", "--set", "networkPolicy.modelRoutePorts[1]=19481"},
+		"noninteger model route port":                     {"--set-string", "networkPolicy.modelRoutePorts[0]=https"},
+		"model route half selector":                       {"--set-string", "networkPolicy.modelRoute.namespaceSelector.matchLabels.scope=linkedin-bot"},
+		"CI provider port zero":                           {"--set", "networkPolicy.ciProviderPorts[0]=0"},
+		"CI provider port above TCP range":                {"--set", "networkPolicy.ciProviderPorts[0]=65536"},
+		"duplicate CI provider port":                      {"--set", "networkPolicy.ciProviderPorts[0]=8080", "--set", "networkPolicy.ciProviderPorts[1]=8080"},
+		"noninteger CI provider port":                     {"--set-string", "networkPolicy.ciProviderPorts[0]=http"},
+		"CI provider half selector":                       {"--set-string", "networkPolicy.ciProvider.namespaceSelector.matchLabels.scope=linkedin-bot"},
+		"PostgreSQL port zero":                            {"--set", "networkPolicy.postgresPorts[0]=0"},
+		"PostgreSQL port above TCP range":                 {"--set", "networkPolicy.postgresPorts[0]=65536"},
+		"duplicate PostgreSQL port":                       {"--set", "networkPolicy.postgresPorts[0]=5432", "--set", "networkPolicy.postgresPorts[1]=5432"},
+		"noninteger PostgreSQL port":                      {"--set-string", "networkPolicy.postgresPorts[0]=postgres"},
+		"PostgreSQL half selector":                        {"--set-string", "networkPolicy.postgres.namespaceSelector.matchLabels.scope=database"},
+		"legacy OMP credential mode":                      {"--set", "session.omp.allowUnauthenticated=false"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			helmTemplateMustFail(t, append(enabledValues(), values...)...)
@@ -178,7 +188,7 @@ func TestValuesSchemaRejectsUnsafeNamesProfilesCIDRsAndHalfSelectors(t *testing.
 }
 
 func TestValuesSchemaBoundsRoutePortLists(t *testing.T) {
-	for _, field := range []string{"modelRoutePorts", "ciProviderPorts"} {
+	for _, field := range []string{"modelRoutePorts", "ciProviderPorts", "postgresPorts"} {
 		t.Run(field, func(t *testing.T) {
 			values := enabledValues()
 			for index := 0; index < 17; index++ {
@@ -333,11 +343,177 @@ func TestRBACSeparatesControllerMutationFromServerProjection(t *testing.T) {
 	if strings.Contains(controllerRole, "resources: [secrets]") {
 		t.Fatal("controller role can read provider credential Secrets")
 	}
-	assertContains(t, serverRole, "t4clusterhosts", "t4workspaces", "t4sessions", "create", "list", "watch")
-	if strings.Contains(serverRole, "secrets") || strings.Contains(serverRole, "persistentvolumeclaims") || strings.Contains(serverRole, "t4sessions/status") {
-		t.Fatal("server role can read secrets or mutate controller-owned infrastructure/status")
+	assertContains(t, serverRole,
+		"resources: [t4clusterhosts]",
+		"verbs: [get, list, watch]",
+		"resources: [t4workspaces, t4sessions]",
+		"verbs: [get, list, watch, create, patch, delete]",
+	)
+	assertCount(t, serverRole, "patch", 1)
+	if strings.Contains(serverRole, "secrets") ||
+		strings.Contains(serverRole, "persistentvolumeclaims") ||
+		strings.Contains(serverRole, "t4sessions/status") ||
+		strings.Contains(serverRole, "update") {
+		t.Fatal("server role can read secrets or mutate controller-owned infrastructure/status beyond exact CR patch operations")
 	}
 }
+
+func TestPublicAPIRequiresDurableSecretAndExplicitPostgresEgress(t *testing.T) {
+	disabled := helmTemplate(t, append(enabledValues(),
+		"--set-string", "publicApi.existingSecret=t4-public-api",
+		"--set", "networkPolicy.postgresCIDRs[0]=198.51.100.20/32",
+		"--set", "networkPolicy.postgresPorts[0]=5432",
+	)...)
+	disabledServer := documentContainingKind(t, disabled, "Deployment", "name: \"release-name-t4-cluster-server\"")
+	disabledEgress := documentContainingKind(t, disabled, "NetworkPolicy", "name: \"release-name-t4-cluster-server-egress\"")
+	if strings.Contains(disabledServer, "T4_POSTGRES_URL_FILE") ||
+		strings.Contains(disabledServer, "T4_PUBLIC_API_CREDENTIALS_FILE") ||
+		strings.Contains(disabledServer, "T4_PUBLIC_API_RUNTIME_PROFILE") ||
+		strings.Contains(disabledEgress, "198.51.100.20/32") ||
+		strings.Contains(disabledEgress, "port: 5432") {
+		t.Fatal("disabled public API rendered credentials or PostgreSQL egress")
+	}
+
+	withoutSecret := append(enabledValues(),
+		"--set", "publicApi.enabled=true",
+		"--set", "networkPolicy.postgresCIDRs[0]=198.51.100.20/32",
+		"--set", "networkPolicy.postgresPorts[0]=5432",
+	)
+	helmTemplateMustFail(t, withoutSecret...)
+
+	withoutDatabaseRoute := append(enabledValues(),
+		"--set", "publicApi.enabled=true",
+		"--set-string", "publicApi.existingSecret=t4-public-api",
+	)
+	helmTemplateMustFail(t, withoutDatabaseRoute...)
+
+	values := append(enabledValues(),
+		"--set", "publicApi.enabled=true",
+		"--set-string", "publicApi.existingSecret=t4-public-api",
+		"--set-string", "publicApi.postgresURLKey=postgres-url",
+		"--set-string", "publicApi.credentialsKey=credentials.json",
+		"--set-string", "clusterHost.runtimeProfiles[0]=review-admitted",
+		"--set-string", "clusterHost.runtimeProfiles[1]=fallback-admitted",
+		"--set", "networkPolicy.postgresCIDRs[0]=198.51.100.20/32",
+		"--set", "networkPolicy.postgresPorts[0]=5432",
+	)
+	output := helmTemplate(t, values...)
+	server := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-server\"")
+	assertContains(t, server,
+		"name: T4_POSTGRES_URL_FILE",
+		"name: T4_PUBLIC_API_CREDENTIALS_FILE",
+		"name: T4_PUBLIC_API_RUNTIME_PROFILE",
+		"value: \"review-admitted\"",
+		"secretName: \"t4-public-api\"",
+		"key: \"postgres-url\"",
+		"key: \"credentials.json\"",
+		"/var/run/secrets/t4-public-api/postgres-url",
+		"/var/run/secrets/t4-public-api/credentials.json",
+	)
+	if strings.Contains(server, "value: \"fallback-admitted\"") {
+		t.Fatalf("public API runtime profile was not derived from the first host-admitted profile:\n%s", server)
+	}
+	host := documentContainingKind(t, output, "T4ClusterHost", "name: \"t4-cluster\"")
+	assertContains(t, host, "- review-admitted")
+	serverEgress := documentContainingKind(t, output, "NetworkPolicy", "name: \"release-name-t4-cluster-server-egress\"")
+	assertContains(t, serverEgress, "198.51.100.20/32", "port: 5432")
+	if strings.Contains(serverEgress, "0.0.0.0/0") || strings.Contains(serverEgress, "::/0") {
+		t.Fatalf("public API PostgreSQL egress is broader than its configured destination:\n%s", serverEgress)
+	}
+
+	selectorValues := append(enabledValues(),
+		"--set", "publicApi.enabled=true",
+		"--set-string", "publicApi.existingSecret=t4-public-api",
+		"--set", "networkPolicy.postgresPorts[0]=5433",
+		"--set-string", "networkPolicy.postgres.namespaceSelector.matchLabels.scope=database-namespace",
+		"--set-string", "networkPolicy.postgres.podSelector.matchLabels.app=postgres",
+	)
+	selectorOutput := helmTemplate(t, selectorValues...)
+	selectorEgress := documentContainingKind(t, selectorOutput, "NetworkPolicy", "name: \"release-name-t4-cluster-server-egress\"")
+	assertContains(t, selectorEgress, "scope: database-namespace", "app: postgres", "port: 5433")
+}
+
+func TestPublicAPIRejectsIncompleteSecretKeysAndPostgresRoutes(t *testing.T) {
+	for name, values := range map[string][]string{
+		"empty PostgreSQL key": {"--set", "publicApi.enabled=true", "--set-string", "publicApi.existingSecret=t4-public-api", "--set-string", "publicApi.postgresURLKey=", "--set", "networkPolicy.postgresCIDRs[0]=198.51.100.20/32", "--set", "networkPolicy.postgresPorts[0]=5432"},
+		"empty credentials key": {"--set", "publicApi.enabled=true", "--set-string", "publicApi.existingSecret=t4-public-api", "--set-string", "publicApi.credentialsKey=", "--set", "networkPolicy.postgresCIDRs[0]=198.51.100.20/32", "--set", "networkPolicy.postgresPorts[0]=5432"},
+		"destination without port": {"--set", "publicApi.enabled=true", "--set-string", "publicApi.existingSecret=t4-public-api", "--set", "networkPolicy.postgresCIDRs[0]=198.51.100.20/32", "--set-string", "networkPolicy.postgresPorts="},
+		"port without destination": {"--set", "publicApi.enabled=true", "--set-string", "publicApi.existingSecret=t4-public-api", "--set", "networkPolicy.postgresPorts[0]=5432"},
+		"disabled network policy": {"--set", "publicApi.enabled=true", "--set-string", "publicApi.existingSecret=t4-public-api", "--set", "networkPolicy.enabled=false", "--set", "networkPolicy.postgresCIDRs[0]=198.51.100.20/32", "--set", "networkPolicy.postgresPorts[0]=5432"},
+		"half selector": {"--set", "publicApi.enabled=true", "--set-string", "publicApi.existingSecret=t4-public-api", "--set", "networkPolicy.postgresPorts[0]=5432", "--set-string", "networkPolicy.postgres.namespaceSelector.matchLabels.scope=database"},
+		"selector without port": {"--set", "publicApi.enabled=true", "--set-string", "publicApi.existingSecret=t4-public-api", "--set-string", "networkPolicy.postgres.namespaceSelector.matchLabels.scope=database", "--set-string", "networkPolicy.postgres.podSelector.matchLabels.app=postgres"},
+	} {
+		t.Run(name, func(t *testing.T) { helmTemplateMustFail(t, append(enabledValues(), values...)...) })
+	}
+}
+
+func TestPublicAPIRenderGuardsSurviveSchemaBypass(t *testing.T) {
+	complete := []string{
+		"--skip-schema-validation",
+		"--set", "publicApi.enabled=true",
+		"--set-string", "publicApi.existingSecret=t4-public-api",
+		"--set-string", "publicApi.postgresURLKey=postgres-url",
+		"--set-string", "publicApi.credentialsKey=credentials.json",
+		"--set", "networkPolicy.postgresCIDRs[0]=198.51.100.20/32",
+		"--set", "networkPolicy.postgresPorts[0]=5432",
+	}
+	for name, test := range map[string]struct {
+		flag     string
+		override string
+		message  string
+	}{
+		"missing Secret": {
+			flag:     "--set-string",
+			override: "publicApi.existingSecret=",
+			message:  "publicApi.existingSecret is required when publicApi.enabled is true",
+		},
+		"missing PostgreSQL key": {
+			flag:     "--set-string",
+			override: "publicApi.postgresURLKey=",
+			message:  "publicApi.postgresURLKey is required when publicApi.enabled is true",
+		},
+		"missing credentials key": {
+			flag:     "--set-string",
+			override: "publicApi.credentialsKey=",
+			message:  "publicApi.credentialsKey is required when publicApi.enabled is true",
+		},
+		"disabled network policy": {
+			flag:     "--set",
+			override: "networkPolicy.enabled=false",
+			message:  "networkPolicy.enabled must be true when publicApi.enabled is true",
+		},
+		"missing PostgreSQL ports": {
+			flag:     "--set-string",
+			override: "networkPolicy.postgresPorts=",
+			message:  "networkPolicy.postgresPorts must contain at least one port when publicApi.enabled is true",
+		},
+		"missing PostgreSQL destination": {
+			flag:     "--set-string",
+			override: "networkPolicy.postgresCIDRs=",
+			message:  "publicApi.enabled requires a PostgreSQL CIDR or complete selector destination",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			values := append(enabledValues(), complete...)
+			values = append(values, test.flag, test.override)
+			helmTemplateMustFailBeforeWorkloads(t, test.message, values...)
+		})
+	}
+}
+
+func TestPublicAPIRejectsCollidingSecretProjectionKeysUnderSchemaBypass(t *testing.T) {
+	values := append(enabledValues(),
+		"--skip-schema-validation",
+		"--set", "publicApi.enabled=true",
+		"--set-string", "publicApi.existingSecret=t4-public-api",
+		"--set-string", "publicApi.postgresURLKey=credentials.json",
+		"--set-string", "publicApi.credentialsKey=credentials.json",
+		"--set", "networkPolicy.postgresCIDRs[0]=198.51.100.20/32",
+		"--set", "networkPolicy.postgresPorts[0]=5432",
+	)
+	helmTemplateMustFailBeforeWorkloads(t, "publicApi.postgresURLKey and publicApi.credentialsKey must be different", values...)
+}
+
 func TestUnauthenticatedOMPControllerCannotReadSecrets(t *testing.T) {
 	output := helmTemplate(t, enabledValues()...)
 	controllerRole := documentContaining(t, output, "name: \"release-name-t4-cluster-controller\"")
@@ -487,7 +663,21 @@ func TestCRDsRemainExplicitAcrossUpgradeAndUninstall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"helm upgrade", "helm rollback", "helm uninstall", "kubectl apply --server-side -f deploy/charts/t4-cluster/crds/", "condition=Established", "Do not rely on `helm upgrade` to change CRDs", "Retain", "Delete", "CRDs are not removed"} {
+	for _, required := range []string{
+		"scripts/cluster-ci/crd-lifecycle.sh upgrade",
+		"helm upgrade",
+		"--skip-crds",
+		"helm rollback",
+		"helm uninstall",
+		"kubectl apply --server-side --dry-run=server",
+		"condition=Established",
+		"status.storedVersions",
+		"Do not rely on `helm upgrade` to change CRDs",
+		"Future `v1beta1` conversion and storage procedure",
+		"Retain",
+		"Delete",
+		"CRDs are not removed",
+	} {
 		if !strings.Contains(string(docs), required) {
 			t.Fatalf("operator guide lacks upgrade/uninstall contract %q", required)
 		}
@@ -705,6 +895,23 @@ func helmTemplateMustFail(t *testing.T, extra ...string) {
 	command := exec.Command("helm", args...)
 	if output, err := command.CombinedOutput(); err == nil {
 		t.Fatalf("helm unexpectedly accepted invalid values: %s", output)
+	}
+}
+
+func helmTemplateMustFailBeforeWorkloads(t *testing.T, message string, extra ...string) {
+	t.Helper()
+	args := []string{"template", "release-name", filepath.Join(repoRoot(t), "deploy", "charts", "t4-cluster"), "--namespace", "t4-system"}
+	args = append(args, extra...)
+	command := exec.Command("helm", args...)
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("helm unexpectedly accepted invalid values: %s", output)
+	}
+	if !strings.Contains(string(output), message) {
+		t.Fatalf("helm failure lacks deterministic guard %q: %s", message, output)
+	}
+	if strings.Contains(string(output), "kind: Deployment") || strings.Contains(string(output), "kind: NetworkPolicy") {
+		t.Fatalf("helm rendered workloads or network policies before public API validation failed: %s", output)
 	}
 }
 

@@ -110,6 +110,17 @@ describe("cluster server configuration", () => {
 		})).toThrow("exactly one");
 	});
 
+	it("requires a chart-admitted runtime profile with durable public API configuration", () => {
+		const durable = {
+			...BASE_ENV,
+			T4_POSTGRES_URL: "postgres://t4:secret@postgres.t4-system.svc:5432/t4",
+			T4_PUBLIC_API_CREDENTIALS_FILE: "/var/run/secrets/t4-public-api/credentials.json",
+			T4_PUBLIC_API_RUNTIME_PROFILE: "review-admitted",
+		};
+		expect(clusterServerConfigFromEnv(durable)).toMatchObject({ publicApiRuntimeProfile: "review-admitted" });
+		expect(() => clusterServerConfigFromEnv({ ...durable, T4_PUBLIC_API_RUNTIME_PROFILE: undefined })).toThrow("runtime profile");
+		expect(() => clusterServerConfigFromEnv({ ...durable, T4_PUBLIC_API_RUNTIME_PROFILE: "-not-admitted" })).toThrow("runtime profile");
+	});
 });
 
 describe("trusted cluster gateway proxy sources", () => {

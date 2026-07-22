@@ -5,6 +5,7 @@ import { isIP } from "node:net";
 const DNS_LABEL = /^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/u;
 const DNS_SUBDOMAIN = /^(?:[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)(?:\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$/u;
 const AUDIENCE = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/u;
+const RUNTIME_PROFILE = /^[a-z0-9](?:[-._a-z0-9]{0,62}[a-z0-9])?$/u;
 export interface ClusterServerConfig {
 	readonly namespace: string;
 	readonly podName: string;
@@ -21,6 +22,9 @@ export interface ClusterServerConfig {
 	readonly identityProvider: "tailscale";
 	readonly trustedProxyAddresses: readonly string[];
 	readonly trustedProxyCidrs: readonly string[];
+	readonly postgres?: { readonly url?: string; readonly urlFile?: string };
+	readonly publicApiCredentialsFile?: string;
+	readonly publicApiRuntimeProfile?: string;
 	readonly woodpecker?: {
 		readonly baseUrl: string;
 		readonly webBaseUrl?: string;
@@ -132,6 +136,16 @@ export function clusterServerConfigFromEnv(env: Readonly<Record<string, string |
 	const woodpeckerRepositories = env.T4_WOODPECKER_REPOSITORIES;
 	const woodpeckerToken = env.T4_WOODPECKER_TOKEN;
 	const woodpeckerTokenFile = env.T4_WOODPECKER_TOKEN_FILE;
+	const postgresUrl = env.T4_POSTGRES_URL;
+	const postgresUrlFile = env.T4_POSTGRES_URL_FILE;
+	const publicApiCredentialsFile = env.T4_PUBLIC_API_CREDENTIALS_FILE;
+	const publicApiRuntimeProfile = env.T4_PUBLIC_API_RUNTIME_PROFILE;
+	if (postgresUrl && postgresUrlFile) throw new Error("PostgreSQL configuration requires exactly one credential source");
+	const publicApiConfigured = Boolean(postgresUrl || postgresUrlFile || publicApiCredentialsFile || publicApiRuntimeProfile);
+	if (publicApiConfigured && (!(postgresUrl || postgresUrlFile) || !publicApiCredentialsFile))
+		throw new Error("public API PostgreSQL and credentials configuration must be complete");
+	if (publicApiConfigured && (!publicApiRuntimeProfile || !RUNTIME_PROFILE.test(publicApiRuntimeProfile)))
+		throw new Error("public API runtime profile is invalid");
 	if (woodpeckerToken && woodpeckerTokenFile) throw new Error("Woodpecker configuration requires exactly one credential source");
 	const woodpeckerConfigured = Boolean(woodpeckerBaseUrl || woodpeckerRepositories || woodpeckerToken || woodpeckerTokenFile);
 	if (woodpeckerConfigured && (!woodpeckerBaseUrl || !woodpeckerRepositories || !(woodpeckerToken || woodpeckerTokenFile)))
@@ -152,6 +166,11 @@ export function clusterServerConfigFromEnv(env: Readonly<Record<string, string |
 		kubernetesApiAudience: audience(env.T4_KUBERNETES_API_AUDIENCE ?? "https://kubernetes.default.svc", "T4_KUBERNETES_API_AUDIENCE"),
 		identityTokenPath,
 		serverServiceAccountName,
+		...(publicApiConfigured ? {
+			postgres: postgresUrl ? { url: postgresUrl } : { urlFile: absolutePath(postgresUrlFile!, "T4_POSTGRES_URL_FILE") },
+			publicApiCredentialsFile: absolutePath(publicApiCredentialsFile!, "T4_PUBLIC_API_CREDENTIALS_FILE"),
+			publicApiRuntimeProfile: publicApiRuntimeProfile!,
+		} : {}),
 		...(woodpeckerConfigured ? {
 			woodpecker: {
 				baseUrl: woodpeckerBaseUrl!,
@@ -198,6 +217,20 @@ export async function readKubernetesToken(path: string): Promise<string> {
 	const token = (await readBoundedRegularFile(path, 16_384, "Kubernetes token")).trim();
 	if (!token || /\s/u.test(token)) throw new Error("Kubernetes token file is invalid");
 	return token;
+}
+function postgresUrl(value: string): string {
+	const trimmed = value.trim();
+	if (trimmed !== value || new TextEncoder().encode(value).byteLength > 8192) throw new Error("PostgreSQL URL is invalid");
+	let parsed: URL;
+	try { parsed = new URL(value); } catch { throw new Error("PostgreSQL URL is invalid"); }
+	if (!["postgres:", "postgresql:"].includes(parsed.protocol) || !parsed.hostname || !parsed.username || !parsed.password || parsed.pathname.length < 2 || parsed.hash)
+		throw new Error("PostgreSQL URL is invalid");
+	return value;
+}
+export async function loadPostgresUrl(config: ClusterServerConfig): Promise<string> {
+	if (!config.postgres) throw new Error("PostgreSQL configuration is required");
+	if (Boolean(config.postgres.url) === Boolean(config.postgres.urlFile)) throw new Error("PostgreSQL configuration requires exactly one credential source");
+	return postgresUrl(config.postgres.url ?? (await readBoundedRegularFile(config.postgres.urlFile!, 8192, "PostgreSQL URL")).trim());
 }
 export async function loadKubernetesCa(config: ClusterServerConfig): Promise<string> {
 	const ca = await readBoundedRegularFile(config.kubernetesCaPath, 1024 * 1024, "Kubernetes CA");
