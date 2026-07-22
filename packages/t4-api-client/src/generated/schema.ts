@@ -295,6 +295,7 @@ export interface components {
         ResourceId: string;
         Resync: {
             cursor: components["schemas"]["Cursor"];
+            /** @description API-base-relative snapshot path for this watched session. */
             snapshotUrl: string;
         };
         Revision: number;

@@ -355,7 +355,7 @@
         "in": "header",
         "required": true,
         "description": "Requested API major. v1 clients send 1. Unsupported majors fail with 406 instead of silently downgrading.",
-        "schema": { "type": "string", "pattern": "^[1-9][0-9]{0,3}(?:\\.[0-9]+)?$", "maxLength": 16 }
+        "schema": { "type": "string", "pattern": "^[1-9][0-9]{0,3}$", "maxLength": 4 }
       },
       "IdempotencyKey": {
         "name": "Idempotency-Key",
@@ -697,7 +697,7 @@
         "additionalProperties": false,
         "required": ["snapshotUrl", "cursor"],
         "properties": {
-          "snapshotUrl": { "type": "string", "pattern": "^/v1/sessions/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}/snapshot$", "maxLength": 150 },
+          "snapshotUrl": { "type": "string", "description": "API-base-relative snapshot path for this watched session.", "pattern": "^v1/sessions/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}/snapshot$", "maxLength": 149 },
           "cursor": { "$ref": "#/components/schemas/Cursor" }
         }
       },

@@ -17,6 +17,10 @@ if (document.security?.[0]?.BearerAuth === undefined) throw new Error("T4 API co
 const sseSchema = document.paths?.["/v1/sessions/{sessionId}/events"]?.get?.responses?.["200"]?.content?.["text/event-stream"]?.schema;
 if (sseSchema?.["x-t4-sse-data-schema"] !== "#/components/schemas/WatchEvent") throw new Error("watch SSE data must remain linked to WatchEvent");
 const schemas = document.components?.schemas ?? {};
+const apiVersionSchema = document.components?.parameters?.ApiVersion?.schema;
+if (apiVersionSchema?.pattern !== "^[1-9][0-9]{0,3}$" || apiVersionSchema?.maxLength !== 4) throw new Error("ApiVersion must remain a bounded major-only header");
+const resyncSnapshot = schemas.Resync?.properties?.snapshotUrl;
+if (resyncSnapshot?.pattern !== "^v1/sessions/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}/snapshot$" || resyncSnapshot?.maxLength !== 149) throw new Error("Resync.snapshotUrl must remain API-base-relative and ResourceId-bounded");
 const commandCreate = schemas.CommandCreate;
 if (commandCreate?.["x-t4-maxUtf8Bytes"] !== 1048576) throw new Error("CommandCreate must retain its UTF-8 request-byte bound");
 if (commandCreate?.properties?.command?.["x-t4-maxUtf8Bytes"] !== 262144) throw new Error("command must retain its UTF-8 byte bound");

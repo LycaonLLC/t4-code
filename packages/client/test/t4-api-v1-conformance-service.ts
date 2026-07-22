@@ -41,7 +41,8 @@ function validMutation(body: Record<string, unknown>, textField: "name" | "title
 }
 
 function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
-  return Response.json(body, { status, headers: { "T4-API-Version": "1.0", ...headers } });
+  const selectedVersion = status === 401 ? {} : { "T4-API-Version": "1.0" };
+  return Response.json(body, { status, headers: { ...selectedVersion, ...headers } });
 }
 
 function problem(status: number, code: string, message: string, extra: Record<string, unknown> = {}): Response {
@@ -72,8 +73,25 @@ function compareUtf16(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+function assertWellFormed(value: string): void {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!Number.isInteger(next) || next < 0xdc00 || next > 0xdfff) throw new TypeError("JCS rejects lone UTF-16 surrogates");
+      index += 1;
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      throw new TypeError("JCS rejects lone UTF-16 surrogates");
+    }
+  }
+}
+
 export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value === "boolean" || typeof value === "string") return JSON.stringify(value);
+  if (value === null || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "string") {
+    assertWellFormed(value);
+    return JSON.stringify(value);
+  }
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new TypeError("JCS only permits finite JSON numbers");
     return JSON.stringify(value);
@@ -83,7 +101,10 @@ export function canonicalJson(value: unknown): string {
     return `{${Object.entries(value as Record<string, unknown>)
       .filter(([, item]) => item !== undefined)
       .sort(([left], [right]) => compareUtf16(left, right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
+      .map(([key, item]) => {
+        assertWellFormed(key);
+        return `${JSON.stringify(key)}:${canonicalJson(item)}`;
+      })
       .join(",")}}`;
   }
   throw new TypeError("JCS identity requires a JSON value");
@@ -379,7 +400,7 @@ export class T4ApiV1ConformanceService {
       this.watchCursors.push({ query: queryCursor, header: headerCursor });
       if (queryCursor !== null && headerCursor !== null && queryCursor !== headerCursor) return problem(400, "invalid_request", "Reconnect cursors disagree");
       const cursor = queryCursor ?? headerCursor;
-      if (cursor === "expired") return problem(410, "cursor_expired", "Watch cursor is no longer retained", { resync: { snapshotUrl: `/v1/sessions/${id}/snapshot`, cursor: "cursor-2" } });
+      if (cursor === "expired") return problem(410, "cursor_expired", "Watch cursor is no longer retained", { resync: { snapshotUrl: `v1/sessions/${id}/snapshot`, cursor: "cursor-2" } });
       const allFrames = cursor === "cursor-4"
         ? [`id: cursor-4\r\nevent: heartbeat\r\ndata: {"type":"heartbeat","cursor":"cursor-4","observedAt":"2026-07-21T00:00:15Z"}\r\n\r\n`]
         : cursor === "cursor-5"
@@ -477,7 +498,13 @@ export class T4ApiV1ConformanceService {
     if (key === null) return problem(400, "idempotency_key_required", "Idempotency-Key is required");
     if (!/^[A-Za-z0-9._~-]{16,128}$/u.test(key)) return problem(400, "invalid_request", "Idempotency-Key is invalid");
     const preconditions = request.headers.has("If-Match") ? { "if-match": request.headers.get("If-Match") } : {};
-    const identity = canonicalJson({ operationId, targets, preconditions, body });
+    let identity: string;
+    try {
+      identity = canonicalJson({ operationId, targets, preconditions, body });
+    } catch (error) {
+      if (error instanceof TypeError) return this.#invalid("body", "wellFormedUnicode", "request identity must not contain lone UTF-16 surrogates");
+      throw error;
+    }
     const scope = canonicalJson({ principal, operationId, targets, key });
     const prior = this.#replays.get(scope);
     if (prior !== undefined) {

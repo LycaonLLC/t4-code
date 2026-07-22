@@ -4,6 +4,24 @@ import type { components, paths } from "./generated/schema.ts";
 
 export type { components, operations, paths } from "./generated/schema.ts";
 
+type HttpMethod = "get" | "put" | "post" | "delete" | "options" | "head" | "patch" | "trace";
+type EmptyHeaders = Readonly<Record<string, never>>;
+type WithoutInjectedVersion<Headers> = Omit<Headers, "T4-API-Version">;
+type ClientParameters<Parameters> = Parameters extends { header: infer Headers }
+  ? Omit<Parameters, "header"> & (keyof WithoutInjectedVersion<Headers> extends never
+    ? { readonly header?: EmptyHeaders }
+    : { readonly header: WithoutInjectedVersion<Headers> })
+  : Parameters;
+type ClientOperation<Operation> = Operation extends { parameters: infer Parameters }
+  ? Omit<Operation, "parameters"> & { readonly parameters: ClientParameters<Parameters> }
+  : Operation;
+type ClientPath<Path> = {
+  readonly [Key in keyof Path]: Key extends HttpMethod ? ClientOperation<Path[Key]> : Path[Key];
+};
+
+/** Generated API paths with the SDK-owned version header removed from caller input. */
+export type T4ClientPaths = { readonly [Path in keyof paths]: ClientPath<paths[Path]> };
+
 const MAX_CREDENTIAL_LENGTH = 4096;
 const MAX_ERROR_BYTES = 1024 * 1024;
 const MAX_EVENT_BYTES = 1024 * 1024;
@@ -80,7 +98,7 @@ export interface T4ApiClient {
    * Low-level generated client. Event-stream calls must pass `parseAs: "stream"`;
    * use `watchSession` for bounded, validated event decoding and reconnects.
    */
-  readonly http: Client<paths>;
+  readonly http: Client<T4ClientPaths>;
   watchSession(sessionId: string, options?: WatchSessionOptions): AsyncGenerator<WatchEvent, void, undefined>;
 }
 
@@ -176,15 +194,16 @@ function validViolation(value: unknown): boolean {
     typeof violation.message === "string" && violation.message !== "" && hasAtMostCodePoints(violation.message, 512);
 }
 
-function validResync(value: unknown): value is Resync {
+function validResync(value: unknown, expectedSessionId?: string): value is Resync {
   const resync = record(value);
   if (resync === undefined || Object.keys(resync).some((key) => key !== "snapshotUrl" && key !== "cursor") || typeof resync.snapshotUrl !== "string") return false;
-  const snapshot = /^\/v1\/sessions\/([^/]+)\/snapshot$/u.exec(resync.snapshotUrl);
-  return hasAtMostCodePoints(resync.snapshotUrl, 150) && snapshot !== null && validResourceId(snapshot[1]) &&
+  const snapshot = /^v1\/sessions\/([^/]+)\/snapshot$/u.exec(resync.snapshotUrl);
+  return hasAtMostCodePoints(resync.snapshotUrl, 149) && snapshot !== null && validResourceId(snapshot[1]) &&
+    (expectedSessionId === undefined || snapshot[1] === expectedSessionId) &&
     typeof resync.cursor === "string" && hasAtMostCodePoints(resync.cursor, 512) && CURSOR_PATTERN.test(resync.cursor);
 }
 
-function apiError(value: unknown, status: number): ApiError | undefined {
+function apiError(value: unknown, status: number, expectedSessionId?: string): ApiError | undefined {
   const envelope = record(value);
   const error = record(envelope?.error);
   if (
@@ -199,7 +218,7 @@ function apiError(value: unknown, status: number): ApiError | undefined {
     (error.supportedMajors !== undefined && (!Array.isArray(error.supportedMajors) || error.supportedMajors.length > 8 || !hasUniqueItems(error.supportedMajors) || !error.supportedMajors.every((major) => Number.isSafeInteger(major) && Number(major) >= 1))) ||
     (error.resync !== undefined && !validResync(error.resync)) ||
     (status === 406 && (error.code !== "incompatible_version" || !Array.isArray(error.supportedMajors) || error.supportedMajors.length < 1)) ||
-    (status === 410 && (error.code !== "cursor_expired" || !validResync(error.resync))) ||
+    (status === 410 && (error.code !== "cursor_expired" || !validResync(error.resync, expectedSessionId))) ||
     (status === 422 && (error.code !== "invalid_request" || !Array.isArray(error.violations) || error.violations.length < 1))
   ) return undefined;
   return error as ApiError;
@@ -301,7 +320,7 @@ function protocolError(status: number, message: string): T4ApiError {
   });
 }
 
-async function parsedError(response: Response): Promise<T4ApiError | undefined> {
+async function parsedError(response: Response, expectedSessionId?: string): Promise<T4ApiError | undefined> {
   if (response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
     void response.body?.cancel().catch(() => {});
     return undefined;
@@ -309,7 +328,7 @@ async function parsedError(response: Response): Promise<T4ApiError | undefined> 
   const text = await boundedResponseText(response);
   if (text === undefined) return undefined;
   try {
-    const decoded = apiError(JSON.parse(text), response.status);
+    const decoded = apiError(JSON.parse(text), response.status, expectedSessionId);
     if (decoded === undefined) return undefined;
     const retryAfterMs = retryAfterMilliseconds(response);
     if (retryAfterMs === INVALID_RETRY_AFTER) return undefined;
@@ -532,11 +551,13 @@ async function validateResponse(request: Request, response: Response, baseUrl: s
       void response.body?.cancel().catch(() => {});
       throw protocolError(502, "T4 API returned an undeclared error status");
     }
-    if (response.status !== 401 && !validSelectedVersion(response)) {
+    if ((response.status === 401 && response.headers.has("T4-API-Version")) ||
+      (response.status !== 401 && !validSelectedVersion(response))) {
       void response.body?.cancel().catch(() => {});
-      throw protocolError(502, "T4 API returned a missing or invalid selected version");
+      throw protocolError(502, "T4 API returned an invalid selected-version header");
     }
-    if (await parsedError(response.clone()) === undefined) {
+    const watchedSession = path === undefined ? undefined : /^\/v1\/sessions\/([^/]+)\/events$/u.exec(path)?.[1];
+    if (await parsedError(response.clone(), watchedSession) === undefined) {
       void response.body?.cancel().catch(() => {});
       throw protocolError(502, "T4 API returned an invalid or oversized error envelope");
     }
@@ -834,11 +855,12 @@ async function* watch(
             void response.body?.cancel().catch(() => {});
             throw protocolError(502, "T4 API returned an undeclared watch error status");
           }
-          if (response.status !== 401 && !validSelectedVersion(response)) {
+          if ((response.status === 401 && response.headers.has("T4-API-Version")) ||
+            (response.status !== 401 && !validSelectedVersion(response))) {
             void response.body?.cancel().catch(() => {});
-            throw protocolError(502, "T4 API returned a missing or invalid selected version");
+            throw protocolError(502, "T4 API returned an invalid selected-version header");
           }
-          const error = await parsedError(response);
+          const error = await parsedError(response, sessionId);
           throw error ?? protocolError(502, "T4 API returned an invalid or oversized error envelope");
         }
         if (response.status !== 200) {
@@ -929,7 +951,7 @@ export function createT4ApiClient(options: T4ApiClientOptions): T4ApiClient {
     await validateResponse(request, response, baseUrl);
     return response;
   };
-  const http = createClient<paths>({ baseUrl, fetch: authenticatedFetch });
+  const http = createClient<T4ClientPaths>({ baseUrl, fetch: authenticatedFetch });
   return Object.freeze({
     http,
     watchSession: (sessionId: string, watchOptions: WatchSessionOptions = {}) =>
