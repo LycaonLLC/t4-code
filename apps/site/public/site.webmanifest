@@ -1,7 +1,7 @@
 {
   "name": "T4 Code",
   "short_name": "T4 Code",
-  "description": "The open-source desktop app for Oh My Pi.",
+  "description": "The open-source client for Oh My Pi.",
   "start_url": "/",
   "display": "browser",
   "background_color": "#161616",

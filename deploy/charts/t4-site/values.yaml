@@ -1,0 +1,39 @@
+replicaCount: 2
+
+image:
+  repository: harbor.tailb18de3.ts.net/linkedin-bot/t4-site
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}
+  host: t4code.com
+  path: /
+  pathType: Prefix
+  tls:
+    enabled: true
+    secretName: t4code-com-tls
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    cpu: 100m
+    memory: 64Mi
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

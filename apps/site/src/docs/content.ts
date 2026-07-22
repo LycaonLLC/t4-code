@@ -579,7 +579,7 @@ const security: DocTopic = {
   title: "Security",
   lede: "Plain answers about what T4 Code stores, sends, and never does.",
   blocks: [
-    { kind: "h2", id: "security-unsigned", text: "Signed macOS releases" },
+    { kind: "h2", id: "security-signing", text: "Signed macOS releases" },
     {
       kind: "p",
       text: `The v${RELEASE_VERSION} macOS build is signed with the project's pinned Developer ID identity and notarized by Apple. Publication stops if the certificate, Team ID, hardened runtime, secure timestamp, stapled ticket, or Gatekeeper result drifts. You can also [build from source](#build-from-source). The repository is public at [LycaonLLC/t4-code](${REPO_URL}).`,
@@ -597,7 +597,7 @@ const security: DocTopic = {
     { kind: "h2", id: "security-site", text: "This website" },
     {
       kind: "p",
-      text: "t4code.net is a static site. It loads no third-party scripts, no analytics, and no trackers; fonts are bundled with the site.",
+      text: "t4code.com is a static site. It loads no third-party scripts, no analytics, and no trackers; fonts are bundled with the site.",
     },
   ],
 };

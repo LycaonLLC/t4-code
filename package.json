@@ -21,6 +21,7 @@
     "build:flutter:ios": "vp run --filter @t4-code/flutter build:ios",
     "build:demo": "node scripts/build-demo.mjs",
     "deploy:site": "node scripts/deploy-site.mjs",
+    "test:deploy:site": "node --test scripts/deploy-site.test.mjs",
     "deploy:demo": "node scripts/deploy-demo.mjs",
     "prepackage": "pnpm check && pnpm build:web && pnpm build:desktop && pnpm build:host && node scripts/package-preflight.mjs",
     "package:linux": "pnpm prepackage && node scripts/run-electron-builder.mjs --linux --x64",

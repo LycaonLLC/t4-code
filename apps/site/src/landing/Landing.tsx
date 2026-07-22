@@ -246,10 +246,11 @@ export function Landing() {
               </div>
             </div>
             <div className="notice notice-spaced" role="note">
-              <strong>Heads up:</strong> the v{RELEASE_VERSION} macOS build is unsigned and not
-              notarized, so macOS warns before first launch. If you would rather not run an unsigned
-              binary, {renderInline(`[build it from source](/docs/#build-from-source)`)}. The whole
-              app is public.
+              <strong>Verified for macOS:</strong> the v{RELEASE_VERSION} release is signed with the
+              project&apos;s Developer ID identity and notarized by Apple. If Gatekeeper blocks it,
+              delete that copy and verify a fresh download against the release checksum instead of
+              bypassing the warning. {renderInline(`[First-launch help](/docs/#install-gatekeeper)`)}
+              .
             </div>
           </div>
         </section>

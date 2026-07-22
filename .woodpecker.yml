@@ -335,6 +335,107 @@ steps:
             memory: 1Gi
             ephemeral-storage: 1Gi
 
+
+  prepare-site-image:
+    depends_on: [harbor-auth]
+    image: mirror.gcr.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7
+    commands:
+      - version=$(node -p "require('./package.json').version") && node scripts/generate-release-manifest.mjs --version "$version" --output apps/site/public/releases/latest.json
+    when:
+      - event: push
+        branch: main
+      - event: manual
+        branch: main
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 128Mi
+            ephemeral-storage: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 512Mi
+
+  build-site:
+    depends_on: [build-controller, prepare-site-image]
+    image: mirror.gcr.io/moby/buildkit:v0.30.0-rootless@sha256:d76eb1caecac5733ef7553c1e90a1b21f1bb218cd1142d3553de0747b4a14ba9
+    environment:
+      BUILDKIT_ADDR: tcp://woodpecker-buildkitd.linkedin-ci.svc.cluster.local:1234
+      HARBOR_REGISTRY: harbor.tailb18de3.ts.net
+      HARBOR_PROJECT: linkedin-bot
+    commands:
+      - scripts/build-site-image.sh
+    when:
+      - event: push
+        branch: main
+      - event: manual
+        branch: main
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 256Mi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: "1"
+            memory: 1Gi
+            ephemeral-storage: 1Gi
+
+  promote-site:
+    depends_on: [build-site]
+    image: ghcr.io/oras-project/oras:v1.3.0@sha256:6ce045ce069a89934d6666b8b49f9c4c0145201bd6de6dbe2aee267814c55468
+    environment:
+      HARBOR_REGISTRY: harbor.tailb18de3.ts.net
+      HARBOR_PROJECT: linkedin-bot
+    commands:
+      - scripts/promote-site-image.sh
+    when:
+      - event: push
+        branch: main
+      - event: manual
+        branch: main
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 128Mi
+            ephemeral-storage: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 512Mi
+
+  deploy-site:
+    depends_on: [promote-site]
+    image: harbor.tailb18de3.ts.net/linkedin-bot/woodpecker-buildkit-deploy-tools@sha256:7936be1edac8ce3c225b148cff0e89b1446fc88185d72379398617f7279ad8cc
+    environment:
+      T4_SITE_IMAGE_REPOSITORY: harbor.tailb18de3.ts.net/linkedin-bot/t4-site
+    commands:
+      - node scripts/deploy-site.mjs
+    when:
+      - event: push
+        branch: main
+      - event: manual
+        branch: main
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-dev-verifier
+        resources:
+          requests:
+            cpu: "0"
+            memory: 128Mi
+            ephemeral-storage: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 512Mi
   sbom-controller:
     depends_on: [build-session-runtime]
     image: anchore/syft:v1.33.0-debug@sha256:421a1367ee81b35b094defc7c1c42774e9f0c2f818e278848175015987c4a034
