@@ -473,7 +473,7 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   );
   const promotionGuard = promotionSource.slice(preflightResolveOffset, recursiveCopyOffset);
   assert.match(promotionGuard, /if \[ "\$resolved" != "\$digest" \]; then[\s\S]*?exit 65\n    fi\n  else/u);
-  assert.match(promotionGuard, /"failed to resolve digest: \$CI_COMMIT_SHA: not found"/u);
+  assert.match(promotionGuard, /"failed to resolve digest: "\*"\$CI_COMMIT_SHA: not found"/u);
   assert.doesNotMatch(promotionSource.slice(0, preflightResolveOffset), /oras copy/u);
   const authSource = await readFile(resolve(repoRoot, "scripts/cluster-ci/load-registry-auth.sh"), "utf8");
   assert.match(authSource, /chmod 0711 "\$auth_parent" "\$auth_dir"/u);

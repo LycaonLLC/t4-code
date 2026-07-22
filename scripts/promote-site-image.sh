@@ -33,7 +33,7 @@ if destination_digest=$(oras resolve --plain-http "$destination" 2>&1); then
   fi
 else
   case "$destination_digest" in
-    *"failed to resolve digest: $CI_COMMIT_SHA: not found") ;;
+    *"failed to resolve digest: "*"$CI_COMMIT_SHA: not found") ;;
     *) printf '%s\n' "$destination_digest" >&2; exit 65 ;;
   esac
   oras copy --plain-http --recursive "$source" "$destination"
