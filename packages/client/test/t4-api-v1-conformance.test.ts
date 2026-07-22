@@ -1389,6 +1389,42 @@ describe("generated T4 API v1 client conformance", () => {
     await expect(missingWatchErrorVersion.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0, retryBackoffMs: 0 }).next()).rejects.toMatchObject({ status: 502, retryable: false });
   });
 
+  it("aligns the snapshot aggregate schema bound with high-level response validation", async () => {
+    const contract = JSON.parse(readFileSync(new URL("../../t4-api-contract/openapi.json", import.meta.url), "utf8")) as {
+      components: { schemas: { SessionSnapshot: { "x-t4-maxUtf8Bytes"?: number } } };
+    };
+    expect(contract.components.schemas.SessionSnapshot["x-t4-maxUtf8Bytes"]).toBe(16 * 1024 * 1024);
+
+    const oversizedSnapshot = createT4ApiClient({
+      baseUrl: "https://aggregate-snapshot.test", credential: "token-a", majorVersion: 1,
+      fetch: async () => jsonResponse({
+        sessionId: "ses-1", cursor: "cursor-1", state: "ready",
+        entries: Array.from({ length: 17 }, (_, sequence) => ({ sequence, kind: "output", text: "x".repeat(1024 * 1024) })),
+      }),
+    });
+    await expect(oversizedSnapshot.http.GET("/v1/sessions/{sessionId}/snapshot", {
+      params: { header: VERSION_HEADERS, path: { sessionId: "ses-1" } },
+    })).rejects.toMatchObject({ code: "indeterminate", status: 502, retryable: false });
+  });
+
+  it("rejects duplicate durable cursors within one SSE stream and after reconnect", async () => {
+    const event = 'data: {"type":"heartbeat","cursor":"duplicate-1","observedAt":"2026-07-21T00:00:00Z"}\n\n';
+    for (const delivery of ["same-stream", "reconnect"] as const) {
+      let attempts = 0;
+      const client = createT4ApiClient({
+        baseUrl: `https://duplicate-${delivery}.test`, credential: "token-a", majorVersion: 1,
+        fetch: async () => {
+          attempts += 1;
+          return apiResponse(delivery === "same-stream" ? `${event}${event}` : event, { headers: { "Content-Type": "text/event-stream" } });
+        },
+      });
+      const stream = client.watchSession("ses-1", { maxEvents: 2, maxReconnectAttempts: 1, retryBackoffMs: 0 });
+      await expect(stream.next()).resolves.toMatchObject({ value: { cursor: "duplicate-1" }, done: false });
+      await expect(stream.next()).rejects.toMatchObject({ code: "indeterminate", status: 502, retryable: false });
+      expect(attempts).toBe(delivery === "same-stream" ? 1 : 2);
+    }
+  });
+
   it("rejects duplicate version entries and malformed capability maps", async () => {
     const status = { supported: true, enabled: true, authorized: true, available: true };
     for (const discovery of [
