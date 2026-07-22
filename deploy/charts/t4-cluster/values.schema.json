@@ -10,6 +10,7 @@
     "server",
     "session",
     "storage",
+    "durableGateway",
     "woodpecker",
     "ingress",
     "networkPolicy",
@@ -128,6 +129,16 @@
           "allOf": [{ "$ref": "#/definitions/optionalDNSSubdomain" }]
         }
       }
+    },
+    "durableGateway": {
+      "type": "object",
+      "required": ["existingSecret", "postgresURLKey", "publicAPICredentialsKey"],
+      "properties": {
+        "existingSecret": { "$ref": "#/definitions/optionalDNSSubdomain" },
+        "postgresURLKey": { "$ref": "#/definitions/configKey" },
+        "publicAPICredentialsKey": { "$ref": "#/definitions/configKey" }
+      },
+      "additionalProperties": false
     },
     "woodpecker": {
       "type": "object",

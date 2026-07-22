@@ -258,6 +258,12 @@ spec:
               valueFrom: {fieldRef: {fieldPath: metadata.name}}
             - name: POD_UID
               valueFrom: {fieldRef: {fieldPath: metadata.uid}}
+            {{- if .Values.durableGateway.existingSecret }}
+            - name: T4_POSTGRES_URL_FILE
+              value: /var/run/secrets/t4-durable-gateway/postgres-url
+            - name: T4_PUBLIC_API_CREDENTIALS_FILE
+              value: /var/run/secrets/t4-durable-gateway/public-api-credentials.json
+            {{- end }}
             {{- if .Values.woodpecker.existingSecret }}
             - name: T4_WOODPECKER_TOKEN
               valueFrom:
@@ -324,6 +330,11 @@ spec:
             - name: kubernetes-api-access
               mountPath: /var/run/secrets/kubernetes.io/serviceaccount
               readOnly: true
+            {{- if .Values.durableGateway.existingSecret }}
+            - name: durable-gateway
+              mountPath: /var/run/secrets/t4-durable-gateway
+              readOnly: true
+            {{- end }}
             {{- if .Values.woodpecker.serviceAccountAudience }}
             - name: ci-identity
               mountPath: /var/run/secrets/t4-ci
@@ -351,6 +362,17 @@ spec:
                   items:
                     - key: ca.crt
                       path: ca.crt
+        {{- if .Values.durableGateway.existingSecret }}
+        - name: durable-gateway
+          secret:
+            secretName: {{ .Values.durableGateway.existingSecret | quote }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.durableGateway.postgresURLKey | quote }}
+                path: postgres-url
+              - key: {{ .Values.durableGateway.publicAPICredentialsKey | quote }}
+                path: public-api-credentials.json
+        {{- end }}
         {{- if .Values.woodpecker.serviceAccountAudience }}
         - name: ci-identity
           projected:

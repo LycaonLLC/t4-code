@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { CiProjectionRunner } from "./ci-projection-runner.ts";
-import { clusterServerConfigFromEnv, loadKubernetesCa } from "./config.ts";
+import { clusterServerConfigFromEnv, loadKubernetesCa, loadPostgresUrl } from "./config.ts";
 import { ClusterGateway } from "./gateway.ts";
 import { KubernetesApiClient, KubernetesGatewayMutationBackend } from "./kubernetes-client.ts";
 import { ClusterInfrastructureProjection } from "./kubernetes-projection.ts";
@@ -10,6 +10,11 @@ import { WebSocketPodHostConnector } from "./pod-host-router.ts";
 import { startClusterHttpServers, type ClusterHttpServers } from "./server.ts";
 import { SessionAuthorityRunner } from "./session-authority-runner.ts";
 import { WoodpeckerProvider } from "./woodpecker.ts";
+import { PostgresLedger } from "./ledger.ts";
+import { DurableOutboxWorker } from "./outbox-worker.ts";
+import { loadPublicApiSecrets } from "./public-api-auth.ts";
+import { T4PublicApiV1 } from "./public-api-v1.ts";
+import { PublicKubernetesOutboxApplier } from "./public-kubernetes-applier.ts";
 
 export async function runClusterServer(env: Readonly<Record<string, string | undefined>> = process.env): Promise<void> {
 	const config = clusterServerConfigFromEnv(env);
@@ -40,8 +45,36 @@ export async function runClusterServer(env: Readonly<Record<string, string | und
 	let authority: SessionAuthorityRunner | undefined;
 	let ciProjection: CiProjectionRunner | undefined;
 	let servers: ClusterHttpServers | undefined;
+	let ledger: PostgresLedger | undefined;
+	let outboxAbort: AbortController | undefined;
+	let outboxTask: Promise<void> | undefined;
 	let signalsInstalled = false;
 	try {
+		if (!config.postgres || !config.publicApiCredentialsFile) throw new Error("public API durable storage configuration is required");
+		const [databaseUrl, publicApiSecrets] = await Promise.all([
+			loadPostgresUrl(config),
+			loadPublicApiSecrets(config.publicApiCredentialsFile),
+		]);
+		ledger = new PostgresLedger({ url: databaseUrl, cursorSecret: publicApiSecrets.cursorSecret });
+		await ledger.migrate();
+		const publicApi = new T4PublicApiV1({ ledger, authenticator: publicApiSecrets.authenticator });
+		const outbox = new DurableOutboxWorker({
+			ledger,
+			ownerId: config.epoch,
+			applier: new PublicKubernetesOutboxApplier({ client: kubernetes, hostRef: config.hostName }),
+		});
+		outboxAbort = new AbortController();
+		outboxTask = (async () => {
+			while (!outboxAbort!.signal.aborted) {
+				try {
+					await outbox.acquireLease();
+					await outbox.drain();
+				} catch (error) {
+					logger.warn("durable outbox recovery retrying", { condition: error instanceof Error ? error.name : "unknown", result: "failure" });
+				}
+				if (!outboxAbort!.signal.aborted) await Bun.sleep(1_000);
+			}
+		})();
 		await runner.start();
 		const connector = new WebSocketPodHostConnector({ identityTokenFile: config.identityTokenPath });
 		authority = new SessionAuthorityRunner({
@@ -67,6 +100,7 @@ export async function runClusterServer(env: Readonly<Record<string, string | und
 		});
 		servers = startClusterHttpServers({
 			gateway,
+			publicApi,
 			projection,
 			gatewayPort: config.gatewayPort,
 			adminPort: config.adminPort,
@@ -98,7 +132,13 @@ export async function runClusterServer(env: Readonly<Record<string, string | und
 					try {
 						await runner.stop();
 					} finally {
-						await servers?.stop();
+						try {
+							outboxAbort?.abort();
+							await outboxTask;
+						} finally {
+							try { await servers?.stop(); }
+							finally { await ledger?.close(); }
+						}
 					}
 				}
 			}

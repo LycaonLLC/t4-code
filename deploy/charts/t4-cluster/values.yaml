@@ -82,6 +82,12 @@ storage:
   # Required when enabled. The administrator creates this backend-neutral RWX StorageClass.
   adminRWXStorageClass: ""
 
+durableGateway:
+  # Administrator-owned Secret; the chart only projects narrowly named files.
+  existingSecret: ""
+  postgresURLKey: postgres-url
+  publicAPICredentialsKey: public-api-credentials.json
+
 woodpecker:
   existingSecret: ""
   tokenKey: token

@@ -274,8 +274,8 @@ describe.sequential("PostgreSQL-backed public T4 API v1", () => {
 		expect(await stale.applyClaim(claim as OutboxClaim)).toBe("fenced");
 		expect(kubernetes.attempts).toHaveLength(0);
 		expect(await current.drain()).toBeGreaterThan(0);
-		const events = await admin`SELECT owner_epoch FROM t4_events WHERE session_id = ${session.id} ORDER BY sequence`;
-		expect(events.every(row => BigInt(row.owner_epoch) === currentLease.epoch || BigInt(row.owner_epoch) === 0n)).toBe(true);
+		const events = await admin`SELECT owner_epoch FROM t4_events WHERE session_id = ${session.id} ORDER BY sequence` as { owner_epoch: bigint }[];
+		expect(events.every(row => row.owner_epoch === currentLease.epoch || row.owner_epoch === 0n)).toBe(true);
 		await ledger.close();
 	});
 

@@ -3,10 +3,12 @@ import { normalizeIpAddress } from "@t4-code/host-service";
 import type { GatewayConnection, ClusterGateway } from "./gateway.ts";
 import { ClusterInfrastructureProjection } from "./kubernetes-projection.ts";
 import { ClusterMetrics, ClusterServerHealth, JsonLogger, createAdminHandler } from "./observability.ts";
+import type { T4PublicApiV1 } from "./public-api-v1.ts";
 
 interface SocketData { connection?: GatewayConnection; principal: string; }
 export interface ClusterHttpServersOptions {
 	readonly gateway: ClusterGateway;
+	readonly publicApi?: T4PublicApiV1;
 	readonly projection: ClusterInfrastructureProjection;
 	readonly gatewayPort: number;
 	readonly adminPort: number;
@@ -66,8 +68,21 @@ export function startClusterHttpServers(options: ClusterHttpServersOptions): Clu
 	const gatewayServer = Bun.serve<SocketData>({
 		hostname: "0.0.0.0",
 		port: options.gatewayPort,
-		fetch(request, server) {
+		async fetch(request, server) {
 			const url = new URL(request.url);
+			if (url.pathname !== "/v1/ws" && (url.pathname === "/v1" || url.pathname.startsWith("/v1/"))) {
+				if (!options.publicApi) return new Response("not found", { status: 404 });
+				if (draining) return new Response("draining", { status: 503 });
+				const remoteAddress = server.requestIP(request)?.address;
+				if (!remoteAddress || !trustedSource(remoteAddress) || request.headers.get("x-forwarded-proto") !== "https") {
+					const insecure = new URL(request.url);
+					insecure.protocol = "http:";
+					return await options.publicApi.handle(new Request(insecure, request));
+				}
+				const secure = new URL(request.url);
+				secure.protocol = "https:";
+				return await options.publicApi.handle(new Request(secure, request));
+			}
 			if (url.pathname !== "/v1/ws") return new Response("not found", { status: 404 });
 			if (request.method !== "GET") return new Response("method not allowed", { status: 405 });
 			if (draining) return new Response("draining", { status: 503 });
