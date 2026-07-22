@@ -114,6 +114,14 @@ describe("generated T4 API v1 client conformance", () => {
     expect(rejected.response.status).toBe(406);
     expect(rejected.error).toMatchObject({ error: { code: "incompatible_version", retryable: false, supportedMajors: [1] } });
 
+    const silentDowngrade = createT4ApiClient({
+      baseUrl: "https://silent-downgrade.test", credential: "token-a", majorVersion: 2,
+      fetch: async () => jsonResponse(DISCOVERY),
+    });
+    await expect(silentDowngrade.http.GET("/v1", { params: { header: VERSION_HEADERS } })).rejects.toMatchObject({
+      code: "indeterminate", status: 502, retryable: false,
+    });
+
     const unauthenticated = await service.fetch(`${service.origin}/v1`, { headers: { "T4-API-Version": "1" } });
     expect(unauthenticated.status).toBe(401);
     expect(await unauthenticated.json()).toMatchObject({ error: { code: "unauthenticated", retryable: false } });
