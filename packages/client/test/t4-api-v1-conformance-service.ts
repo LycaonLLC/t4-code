@@ -1,6 +1,8 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { expect } from "vite-plus/test";
 
 const encoder = new TextEncoder();
+const PAGE_CURSOR_SECRET = "t4-api-v1-conformance-page-cursor-secret-2026";
 const COMMAND_BYTES_MAX = 32;
 const COMMAND_REQUEST_BYTES_MAX = 256;
 const METADATA_VALUE_BYTES_MAX = 32;
@@ -67,6 +69,35 @@ export function canonicalJson(value: unknown): string {
   throw new TypeError("JCS identity requires a JSON value");
 }
 
+type PageCursorResult = { readonly offset: number } | { readonly error: "format" | "issued" };
+
+function issuePageCursor(principal: string, collection: string, offset: number): string {
+  const payload = Buffer.from(canonicalJson({ principal, collection, offset })).toString("base64url");
+  const signature = createHmac("sha256", PAGE_CURSOR_SECRET).update(payload).digest("base64url");
+  return `page.${payload}.${signature}`;
+}
+
+function decodePageCursor(value: string, principal: string, collection: string): PageCursorResult {
+  if (value.length > 512) return { error: "format" };
+  const legacy = /^page-(?:0|[1-9][0-9]*)$/u.exec(value);
+  if (legacy !== null) return Number.isSafeInteger(Number(value.slice(5))) ? { error: "issued" } : { error: "format" };
+  const match = /^page\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]{43})$/u.exec(value);
+  if (match === null) return { error: "format" };
+  const expected = createHmac("sha256", PAGE_CURSOR_SECRET).update(match[1]!).digest();
+  const signature = Buffer.from(match[2]!, "base64url");
+  if (signature.byteLength !== expected.byteLength || !timingSafeEqual(signature, expected)) return { error: "issued" };
+  let decoded: unknown;
+  try { decoded = JSON.parse(Buffer.from(match[1]!, "base64url").toString("utf8")); } catch { return { error: "format" }; }
+  if (decoded === null || typeof decoded !== "object" || Array.isArray(decoded)) return { error: "format" };
+  const payload = decoded as Record<string, unknown>;
+  if (Object.keys(payload).length !== 3 || !Object.hasOwn(payload, "principal") || !Object.hasOwn(payload, "collection") || !Object.hasOwn(payload, "offset") ||
+    Buffer.from(canonicalJson(payload)).toString("base64url") !== match[1] ||
+    typeof payload.principal !== "string" || typeof payload.collection !== "string" ||
+    !Number.isSafeInteger(payload.offset) || Number(payload.offset) < 1) return { error: "format" };
+  if (payload.principal !== principal || payload.collection !== collection) return { error: "issued" };
+  return { offset: Number(payload.offset) };
+}
+
 interface ReplayRecord {
   readonly identity: string;
   readonly body: unknown;
@@ -74,11 +105,6 @@ interface ReplayRecord {
   readonly cursor: string;
 }
 
-interface PageCursorRecord {
-  readonly principal: string;
-  readonly collection: string;
-  readonly offset: number;
-}
 
 export interface T4ApiV1ConformanceOptions {
   readonly invalidPayload?: "discovery" | "workspace" | "session" | "command";
@@ -96,12 +122,9 @@ export class T4ApiV1ConformanceService {
   #sessionSequence = 0;
   #commandSequence = 0;
   #eventSequence = 0;
-  #pageCursorSequence = 0;
   readonly #workspaces = new Map<string, Record<string, unknown>>();
   readonly #sessions = new Map<string, Record<string, unknown>>();
   readonly #replays = new Map<string, ReplayRecord>();
-  readonly #pageCursors = new Map<string, PageCursorRecord>();
-  readonly #pageCursorByPosition = new Map<string, string>();
 
   constructor(readonly options: T4ApiV1ConformanceOptions = {}) {}
 
@@ -169,18 +192,14 @@ export class T4ApiV1ConformanceService {
       const cursor = url.searchParams.get("cursor");
       let start = 0;
       if (cursor !== null) {
-        if (cursor.length > 512 || !/^page-(?:0|[1-9][0-9]*)$/u.test(cursor) || !Number.isSafeInteger(Number(cursor.slice(5)))) {
-          return this.#invalid("cursor", "format", "cursor must be a canonical bounded opaque token");
-        }
-        const issued = this.#pageCursors.get(cursor);
-        if (issued === undefined || issued.principal !== tenant || issued.collection !== collection) {
-          return this.#invalid("cursor", "issued", "cursor was not issued for this principal and collection");
-        }
-        start = issued.offset;
+        const decoded = decodePageCursor(cursor, tenant, collection);
+        if ("error" in decoded) return this.#invalid("cursor", decoded.error, decoded.error === "format" ? "cursor must be a canonical bounded opaque token" : "cursor was not issued for this principal and collection");
+        start = decoded.offset;
       }
       const visible = [...this.#workspaces.values()].filter((item) => item.tenant === tenant);
+      if (cursor !== null && start >= visible.length) return this.#invalid("cursor", "issued", "cursor is outside the current collection");
       const items = visible.slice(start, start + pageSize).map(({ tenant: _tenant, ...item }) => item);
-      const next = start + items.length < visible.length ? this.#issuePageCursor(tenant, collection, start + items.length) : undefined;
+      const next = start + items.length < visible.length ? issuePageCursor(tenant, collection, start + items.length) : undefined;
       return json(200, { items, ...(next === undefined ? {} : { nextCursor: next }) });
     }
 
@@ -238,18 +257,14 @@ export class T4ApiV1ConformanceService {
         const cursor = url.searchParams.get("cursor");
         let start = 0;
         if (cursor !== null) {
-          if (cursor.length > 512 || !/^page-(?:0|[1-9][0-9]*)$/u.test(cursor) || !Number.isSafeInteger(Number(cursor.slice(5)))) {
-            return this.#invalid("cursor", "format", "cursor must be a canonical bounded opaque token");
-          }
-          const issued = this.#pageCursors.get(cursor);
-          if (issued === undefined || issued.principal !== tenant || issued.collection !== collection) {
-            return this.#invalid("cursor", "issued", "cursor was not issued for this principal and collection");
-          }
-          start = issued.offset;
+          const decoded = decodePageCursor(cursor, tenant, collection);
+          if ("error" in decoded) return this.#invalid("cursor", decoded.error, decoded.error === "format" ? "cursor must be a canonical bounded opaque token" : "cursor was not issued for this principal and collection");
+          start = decoded.offset;
         }
         const visible = [...this.#sessions.values()].filter((item) => item.workspaceId === workspaceId && item.tenant === tenant);
+        if (cursor !== null && start >= visible.length) return this.#invalid("cursor", "issued", "cursor is outside the current collection");
         const items = visible.slice(start, start + pageSize).map((item) => this.#visible(item));
-        const next = start + items.length < visible.length ? this.#issuePageCursor(tenant, collection, start + items.length) : undefined;
+        const next = start + items.length < visible.length ? issuePageCursor(tenant, collection, start + items.length) : undefined;
         return json(200, { items, ...(next === undefined ? {} : { nextCursor: next }) });
       }
     }
@@ -421,15 +436,6 @@ export class T4ApiV1ConformanceService {
         (typeof item === "string" && encoder.encode(item).byteLength <= METADATA_VALUE_BYTES_MAX)));
   }
 
-  #issuePageCursor(principal: string, collection: string, offset: number): string {
-    const position = canonicalJson({ principal, collection, offset });
-    const prior = this.#pageCursorByPosition.get(position);
-    if (prior !== undefined) return prior;
-    const cursor = `page-${++this.#pageCursorSequence}`;
-    this.#pageCursors.set(cursor, { principal, collection, offset });
-    this.#pageCursorByPosition.set(position, cursor);
-    return cursor;
-  }
 
   #idempotent(
     request: Request,
