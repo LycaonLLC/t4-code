@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -300,6 +301,59 @@ func TestValidateCompatibilityRejectsNonAdditiveSchemaChanges(t *testing.T) {
 				t.Fatal("non-additive schema change was accepted")
 			}
 		})
+	}
+}
+
+func TestValidateCompatibilityRejectsVersionAndConversionChanges(t *testing.T) {
+	addedVersion := strings.Replace(candidateCRD, "  versions:\n", `  versions:
+    - name: v1beta1
+      served: false
+      storage: false
+`, 1)
+	changedConversion := strings.Replace(candidateCRD, "  versions:\n", "  conversion:\n    strategy: None\n  versions:\n", 1)
+	for _, test := range []struct {
+		name     string
+		proposed string
+		expect   string
+	}{
+		{name: "additional version", proposed: addedVersion, expect: "changes its version, served, or storage contract"},
+		{name: "conversion configuration", proposed: changedConversion, expect: "changes conversion configuration"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			proposed, installed := writeCompatibilityCRDs(t, test.proposed, candidateCRD)
+			err := validateCompatibility(proposed, installed)
+			if err == nil || !strings.Contains(err.Error(), test.expect) {
+				t.Fatalf("compatibility error %q does not contain %q", err, test.expect)
+			}
+		})
+	}
+}
+
+func TestWriteMergePatchGuardsTheValidatedInstalledCRD(t *testing.T) {
+	root := t.TempDir()
+	candidatePath := filepath.Join(root, "candidate.yaml")
+	installedPath := filepath.Join(root, "installed.yaml")
+	installed := strings.Replace(candidateCRD, "  name: widgets.cluster.t4.dev\n", "  name: widgets.cluster.t4.dev\n  uid: 11111111-2222-3333-4444-555555555555\n  resourceVersion: \"42\"\n", 1)
+	if err := os.WriteFile(candidatePath, []byte(candidateCRD), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(installedPath, []byte(installed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var output strings.Builder
+	if err := writeMergePatch(candidatePath, installedPath, &output); err != nil {
+		t.Fatal(err)
+	}
+	var patch map[string]interface{}
+	if err := json.Unmarshal([]byte(output.String()), &patch); err != nil {
+		t.Fatal(err)
+	}
+	metadata, ok := patch["metadata"].(map[string]interface{})
+	if !ok || metadata["resourceVersion"] != "42" || metadata["uid"] != "11111111-2222-3333-4444-555555555555" {
+		t.Fatalf("merge patch lacks the installed-object preconditions: %#v", patch["metadata"])
+	}
+	if _, ok := patch["spec"].(map[string]interface{}); !ok {
+		t.Fatalf("merge patch lacks the candidate spec: %#v", patch)
 	}
 }
 

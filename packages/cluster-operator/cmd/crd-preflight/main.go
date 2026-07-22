@@ -63,6 +63,11 @@ func main() {
 			usage()
 		}
 		err = validateCompatibility(os.Args[2], os.Args[3])
+	case "patch":
+		if len(os.Args) != 4 {
+			usage()
+		}
+		err = writeMergePatch(os.Args[2], os.Args[3], os.Stdout)
 	case "served":
 		if len(os.Args) != 3 {
 			usage()
@@ -78,7 +83,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: crd-preflight fixtures CRD_DIRECTORY FIXTURE_DIRECTORY | objects CRD_DIRECTORY | compatible CANDIDATE_CRD_DIRECTORY INSTALLED_CRD_DIRECTORY | served CRD_DIRECTORY")
+	fmt.Fprintln(os.Stderr, "usage: crd-preflight fixtures CRD_DIRECTORY FIXTURE_DIRECTORY | objects CRD_DIRECTORY | compatible CANDIDATE_CRD_DIRECTORY INSTALLED_CRD_DIRECTORY | patch CANDIDATE_CRD INSTALLED_CRD | served CRD_DIRECTORY")
 	os.Exit(64)
 }
 
@@ -157,6 +162,34 @@ func validateCompatibility(candidateDirectory, installedDirectory string) error 
 	if len(installedPaths) == 0 {
 		return nil
 	}
+	candidateCRDs, err := loadCRDs(candidateDirectory)
+	if err != nil {
+		return err
+	}
+	installedCRDs, err := loadCRDs(installedDirectory)
+	if err != nil {
+		return err
+	}
+	var compatibilityErrors []error
+	for name, current := range installedCRDs {
+		proposed, found := candidateCRDs[name]
+		if !found {
+			compatibilityErrors = append(compatibilityErrors, fmt.Errorf("installed CRD %s is removed", name))
+			continue
+		}
+		if current.Spec.Scope != proposed.Spec.Scope {
+			compatibilityErrors = append(compatibilityErrors, fmt.Errorf("CRD %s changes scope from %s to %s", name, current.Spec.Scope, proposed.Spec.Scope))
+		}
+		if !reflect.DeepEqual(current.Spec.Names, proposed.Spec.Names) {
+			compatibilityErrors = append(compatibilityErrors, fmt.Errorf("CRD %s changes resource names", name))
+		}
+		if !reflect.DeepEqual(versionContract(current), versionContract(proposed)) {
+			compatibilityErrors = append(compatibilityErrors, fmt.Errorf("CRD %s changes its version, served, or storage contract", name))
+		}
+		if !reflect.DeepEqual(current.Spec.Conversion, proposed.Spec.Conversion) {
+			compatibilityErrors = append(compatibilityErrors, fmt.Errorf("CRD %s changes conversion configuration", name))
+		}
+	}
 	candidates, err := loadCandidates(candidateDirectory)
 	if err != nil {
 		return err
@@ -165,7 +198,6 @@ func validateCompatibility(candidateDirectory, installedDirectory string) error 
 	if err != nil {
 		return err
 	}
-	var compatibilityErrors []error
 	for gvk, current := range installed {
 		proposed, found := candidates[gvk]
 		if !found {
@@ -200,6 +232,51 @@ func validateCompatibility(candidateDirectory, installedDirectory string) error 
 		compatibilityErrors = append(compatibilityErrors, compareAdditiveSchema(path, currentSchema, proposedSchema)...)
 	}
 	return errors.Join(compatibilityErrors...)
+}
+
+type versionContractEntry struct {
+	Served  bool
+	Storage bool
+}
+
+func versionContract(crd *apiextensionsv1.CustomResourceDefinition) map[string]versionContractEntry {
+	result := make(map[string]versionContractEntry, len(crd.Spec.Versions))
+	for _, version := range crd.Spec.Versions {
+		result[version.Name] = versionContractEntry{Served: version.Served, Storage: version.Storage}
+	}
+	return result
+}
+
+// writeMergePatch emits the narrow, resource-version-guarded update used by
+// the lifecycle runner. The API server rejects the patch if the installed CRD
+// changed or was deleted and recreated after compatibility validation.
+func writeMergePatch(candidatePath, installedPath string, output io.Writer) error {
+	candidate, err := loadCRD(candidatePath)
+	if err != nil {
+		return err
+	}
+	installed, err := loadCRD(installedPath)
+	if err != nil {
+		return err
+	}
+	if candidate.Name != installed.Name {
+		return fmt.Errorf("candidate CRD %s does not match installed CRD %s", candidate.Name, installed.Name)
+	}
+	if installed.ResourceVersion == "" || installed.UID == "" {
+		return fmt.Errorf("installed CRD %s lacks metadata.resourceVersion or metadata.uid", installed.Name)
+	}
+	patch := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"resourceVersion": installed.ResourceVersion,
+			"uid":             installed.UID,
+		},
+		"spec": candidate.Spec,
+	}
+	encoder := json.NewEncoder(output)
+	if err := encoder.Encode(patch); err != nil {
+		return fmt.Errorf("encode merge patch for %s: %w", candidate.Name, err)
+	}
+	return nil
 }
 
 func schemaMap(schema *apiextensionsv1.JSONSchemaProps) (map[string]interface{}, error) {
@@ -457,47 +534,73 @@ func stripDescriptions(value interface{}) {
 }
 
 func loadCandidates(directory string) (map[groupVersionKind]*candidateSchema, error) {
-	paths, err := yamlPaths(directory)
+	crds, err := loadCRDs(directory)
 	if err != nil {
 		return nil, err
 	}
 	result := make(map[groupVersionKind]*candidateSchema)
-	for _, path := range paths {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return nil, err
-		}
-		var crd apiextensionsv1.CustomResourceDefinition
-		if err := yaml.Unmarshal(raw, &crd); err != nil {
-			return nil, fmt.Errorf("%s: decode CRD: %w", path, err)
-		}
+	for name, crd := range crds {
 		for index := range crd.Spec.Versions {
 			version := &crd.Spec.Versions[index]
 			if !version.Served {
 				continue
 			}
 			if version.Schema == nil || version.Schema.OpenAPIV3Schema == nil {
-				return nil, fmt.Errorf("%s: served version %s has no OpenAPI schema", path, version.Name)
+				return nil, fmt.Errorf("%s: served version %s has no OpenAPI schema", name, version.Name)
 			}
 			internal := &apiextensions.JSONSchemaProps{}
 			if err := apiextensionsv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(version.Schema.OpenAPIV3Schema, internal, nil); err != nil {
-				return nil, fmt.Errorf("%s: convert schema for %s: %w", path, version.Name, err)
+				return nil, fmt.Errorf("%s: convert schema for %s: %w", name, version.Name, err)
 			}
 			structural, err := structuralschema.NewStructural(internal)
 			if err != nil {
-				return nil, fmt.Errorf("%s: schema for %s is not structural: %w", path, version.Name, err)
+				return nil, fmt.Errorf("%s: schema for %s is not structural: %w", name, version.Name, err)
 			}
 			gvk := groupVersionKind{Group: crd.Spec.Group, Version: version.Name, Kind: crd.Spec.Names.Kind}
 			if _, duplicate := result[gvk]; duplicate {
-				return nil, fmt.Errorf("%s: duplicate proposed schema for %s/%s %s", path, gvk.Group, gvk.Version, gvk.Kind)
+				return nil, fmt.Errorf("%s: duplicate proposed schema for %s/%s %s", name, gvk.Group, gvk.Version, gvk.Kind)
 			}
-			result[gvk] = &candidateSchema{crd: &crd, version: version, internal: internal, structural: structural}
+			result[gvk] = &candidateSchema{crd: crd, version: version, internal: internal, structural: structural}
 		}
 	}
 	if len(result) == 0 {
 		return nil, fmt.Errorf("%s: no served CRD schemas found", directory)
 	}
 	return result, nil
+}
+
+func loadCRDs(directory string) (map[string]*apiextensionsv1.CustomResourceDefinition, error) {
+	paths, err := yamlPaths(directory)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]*apiextensionsv1.CustomResourceDefinition, len(paths))
+	for _, path := range paths {
+		crd, err := loadCRD(path)
+		if err != nil {
+			return nil, err
+		}
+		if crd.Name == "" {
+			return nil, fmt.Errorf("%s: CRD has no metadata.name", path)
+		}
+		if _, duplicate := result[crd.Name]; duplicate {
+			return nil, fmt.Errorf("%s: duplicate CRD %s", path, crd.Name)
+		}
+		result[crd.Name] = crd
+	}
+	return result, nil
+}
+
+func loadCRD(path string) (*apiextensionsv1.CustomResourceDefinition, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var crd apiextensionsv1.CustomResourceDefinition
+	if err := yaml.Unmarshal(raw, &crd); err != nil {
+		return nil, fmt.Errorf("%s: decode CRD: %w", path, err)
+	}
+	return &crd, nil
 }
 
 func decodeYAMLObject(path string) (map[string]interface{}, error) {
