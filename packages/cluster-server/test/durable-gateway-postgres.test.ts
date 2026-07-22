@@ -1,20 +1,44 @@
 import { SQL } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import {
-	PostgresLedger,
-	type DurableLedgerOptions,
-} from "../src/ledger.ts";
-import {
-	T4PublicApiV1,
-	type ApiPrincipal,
-	type PrincipalAuthenticator,
-} from "../src/public-api-v1.ts";
-import {
-	DurableOutboxWorker,
-	type KubernetesOutboxApplier,
-	type OutboxClaim,
-	type OutboxMutation,
-} from "../src/outbox-worker.ts";
+interface DurableLedgerOptions {
+	readonly url: string;
+	readonly cursorSecret: string;
+	readonly eventRetention: number;
+}
+interface PostgresLedgerLike {
+	migrate(): Promise<void>;
+	close(): Promise<void>;
+}
+interface ApiPrincipal {
+	readonly id: string;
+	readonly scopes: ReadonlySet<string>;
+}
+interface PrincipalAuthenticator {
+	authenticate(token: string): Promise<ApiPrincipal | undefined>;
+}
+interface T4PublicApiV1Like {
+	handle(request: Request): Promise<Response>;
+}
+interface OutboxMutation {
+	readonly idempotencyToken: string;
+	readonly targetId: string;
+	readonly kind: string;
+}
+interface KubernetesOutboxApplier {
+	apply(mutation: OutboxMutation, fence: { ownerId: string; epoch: bigint }): Promise<void>;
+}
+interface OutboxClaim {
+	readonly outboxId: bigint;
+}
+interface DurableOutboxWorkerLike {
+	acquireLease(): Promise<{ ownerId: string; epoch: bigint }>;
+	drain(): Promise<number>;
+	claimNext(): Promise<OutboxClaim | undefined>;
+	applyClaim(claim: OutboxClaim): Promise<string>;
+}
+type LedgerConstructor = new (options: DurableLedgerOptions) => PostgresLedgerLike;
+type ApiConstructor = new (options: { ledger: PostgresLedgerLike; authenticator: PrincipalAuthenticator }) => T4PublicApiV1Like;
+type WorkerConstructor = new (options: { ledger: PostgresLedgerLike; ownerId: string; applier: KubernetesOutboxApplier }) => DurableOutboxWorkerLike;
 
 const DATABASE_URL = process.env.T4_TEST_POSTGRES_URL;
 const VERSION = "1";
@@ -30,14 +54,21 @@ const ALL_SCOPES = new Set([
 	"events.read",
 ]);
 const CURSOR_SECRET = "test-cursor-secret-that-is-at-least-thirty-two-bytes";
+const LEDGER_MODULE_PATH = "../src/ledger.ts";
+const API_MODULE_PATH = "../src/public-api-v1.ts";
+const WORKER_MODULE_PATH = "../src/outbox-worker.ts";
+
+let PostgresLedger: LedgerConstructor | undefined;
+let T4PublicApiV1: ApiConstructor | undefined;
+let DurableOutboxWorker: WorkerConstructor | undefined;
 
 class TestAuthenticator implements PrincipalAuthenticator {
-	readonly #principals = new Map<string, ApiPrincipal>([
-		[OWNER_TOKEN, { id: "owner@example.com", scopes: ALL_SCOPES }],
-		[OTHER_TOKEN, { id: "other@example.com", scopes: ALL_SCOPES }],
-	]);
+	readonly #principals: Record<string, ApiPrincipal> = {
+		[OWNER_TOKEN]: { id: "owner@example.com", scopes: ALL_SCOPES },
+		[OTHER_TOKEN]: { id: "other@example.com", scopes: ALL_SCOPES },
+	};
 	async authenticate(token: string): Promise<ApiPrincipal | undefined> {
-		return this.#principals.get(token);
+		return this.#principals[token];
 	}
 }
 
@@ -62,14 +93,21 @@ function ledgerOptions(overrides: Partial<DurableLedgerOptions> = {}): DurableLe
 	};
 }
 
-async function newLedger(overrides: Partial<DurableLedgerOptions> = {}): Promise<PostgresLedger> {
+async function newLedger(overrides: Partial<DurableLedgerOptions> = {}): Promise<PostgresLedgerLike> {
+	if (!PostgresLedger) throw new Error("PostgreSQL ledger implementation is unavailable");
 	const ledger = new PostgresLedger(ledgerOptions(overrides));
 	await ledger.migrate();
 	return ledger;
 }
 
-function newApi(ledger: PostgresLedger): T4PublicApiV1 {
+function newApi(ledger: PostgresLedgerLike): T4PublicApiV1Like {
+	if (!T4PublicApiV1) throw new Error("public T4 API v1 implementation is unavailable");
 	return new T4PublicApiV1({ ledger, authenticator: new TestAuthenticator() });
+}
+
+function newWorker(ledger: PostgresLedgerLike, ownerId: string, applier: KubernetesOutboxApplier): DurableOutboxWorkerLike {
+	if (!DurableOutboxWorker) throw new Error("durable outbox worker implementation is unavailable");
+	return new DurableOutboxWorker({ ledger, ownerId, applier });
 }
 
 function headers(token = OWNER_TOKEN, additions: Record<string, string> = {}): Headers {
@@ -81,7 +119,7 @@ function headers(token = OWNER_TOKEN, additions: Record<string, string> = {}): H
 }
 
 async function call(
-	api: T4PublicApiV1,
+	api: T4PublicApiV1Like,
 	method: string,
 	path: string,
 	options: { token?: string; key?: string; ifMatch?: string; body?: unknown; rawBody?: string; headers?: Record<string, string> } = {},
@@ -96,14 +134,22 @@ async function call(
 	return await api.handle(new Request(`https://t4.example.test${path}`, { method, headers: requestHeaders, body }));
 }
 
-async function json(response: Response): Promise<Record<string, any>> {
-	return await response.json() as Record<string, any>;
+interface JsonDocument extends Record<string, unknown> {
+	id: string;
+	cursor: string;
+	state: string;
+	revision: number;
+	error: { code: string; message: string; [key: string]: unknown };
 }
 
-function eventData(responseBody: string): Array<Record<string, any>> {
+async function json(response: Response): Promise<JsonDocument> {
+	return await response.json() as JsonDocument;
+}
+
+function eventData(responseBody: string): JsonDocument[] {
 	return responseBody
 		.split("\n\n")
-		.flatMap(frame => frame.split("\n").filter(line => line.startsWith("data: ")).map(line => JSON.parse(line.slice(6)) as Record<string, any>));
+		.flatMap(frame => frame.split("\n").filter(line => line.startsWith("data: ")).map(line => JSON.parse(line.slice(6)) as JsonDocument));
 }
 
 let admin: SQL;
@@ -112,6 +158,14 @@ beforeAll(async () => {
 	if (!DATABASE_URL) throw new Error("T4_TEST_POSTGRES_URL is required for durable gateway tests");
 	admin = new SQL(DATABASE_URL, { max: 1 });
 	await admin.unsafe("DROP SCHEMA public CASCADE; CREATE SCHEMA public");
+	const modules = await Promise.all([
+		import(/* @vite-ignore */ LEDGER_MODULE_PATH).catch(() => undefined),
+		import(/* @vite-ignore */ API_MODULE_PATH).catch(() => undefined),
+		import(/* @vite-ignore */ WORKER_MODULE_PATH).catch(() => undefined),
+	]);
+	PostgresLedger = (modules[0] as { PostgresLedger?: LedgerConstructor } | undefined)?.PostgresLedger;
+	T4PublicApiV1 = (modules[1] as { T4PublicApiV1?: ApiConstructor } | undefined)?.T4PublicApiV1;
+	DurableOutboxWorker = (modules[2] as { DurableOutboxWorker?: WorkerConstructor } | undefined)?.DurableOutboxWorker;
 });
 
 afterAll(async () => {
@@ -120,6 +174,9 @@ afterAll(async () => {
 
 describe.sequential("PostgreSQL-backed public T4 API v1", () => {
 	it("replays an identical create after process restart without a second Kubernetes mutation", async () => {
+		expect(PostgresLedger, "PostgreSQL ledger implementation is required").toBeDefined();
+		expect(T4PublicApiV1, "public T4 API v1 implementation is required").toBeDefined();
+		expect(DurableOutboxWorker, "durable outbox worker implementation is required").toBeDefined();
 		let ledger = await newLedger();
 		let api = newApi(ledger);
 		const key = "restart-workspace-key-0001";
@@ -129,7 +186,7 @@ describe.sequential("PostgreSQL-backed public T4 API v1", () => {
 		const acceptedBody = await json(accepted);
 
 		const kubernetes = new ObservableKubernetes();
-		const firstWorker = new DurableOutboxWorker({ ledger, ownerId: "worker-a", applier: kubernetes });
+		const firstWorker = newWorker(ledger, "worker-a", kubernetes);
 		const firstLease = await firstWorker.acquireLease();
 		kubernetes.currentEpoch = firstLease.epoch;
 		expect(await firstWorker.drain()).toBeGreaterThan(0);
@@ -142,7 +199,7 @@ describe.sequential("PostgreSQL-backed public T4 API v1", () => {
 		expect(replay.status).toBe(200);
 		expect(replay.headers.get("idempotency-replayed")).toBe("true");
 		expect(await json(replay)).toEqual(acceptedBody);
-		const secondWorker = new DurableOutboxWorker({ ledger, ownerId: "worker-b", applier: kubernetes });
+		const secondWorker = newWorker(ledger, "worker-b", kubernetes);
 		const secondLease = await secondWorker.acquireLease();
 		kubernetes.currentEpoch = secondLease.epoch;
 		expect(await secondWorker.drain()).toBe(0);
@@ -185,7 +242,7 @@ describe.sequential("PostgreSQL-backed public T4 API v1", () => {
 		ledger = await newLedger();
 		api = newApi(ledger);
 		const kubernetes = new ObservableKubernetes();
-		const worker = new DurableOutboxWorker({ ledger, ownerId: "recovery-worker", applier: kubernetes });
+		const worker = newWorker(ledger, "recovery-worker", kubernetes);
 		const lease = await worker.acquireLease();
 		kubernetes.currentEpoch = lease.epoch;
 		expect(await worker.drain()).toBeGreaterThan(0);
@@ -205,13 +262,13 @@ describe.sequential("PostgreSQL-backed public T4 API v1", () => {
 		const workspace = await json(await call(api, "POST", "/v1/workspaces", { key: "fence-workspace-key-001", body: { name: "fence" } }));
 		const session = await json(await call(api, "POST", `/v1/workspaces/${workspace.id}/sessions`, { key: "fence-session-key-0001", body: { title: "fenced" } }));
 		const kubernetes = new ObservableKubernetes();
-		const stale = new DurableOutboxWorker({ ledger, ownerId: "stale", applier: kubernetes });
+		const stale = newWorker(ledger, "stale", kubernetes);
 		const staleLease = await stale.acquireLease();
 		kubernetes.currentEpoch = staleLease.epoch;
 		const claim = await stale.claimNext();
 		expect(claim).toBeDefined();
 
-		const current = new DurableOutboxWorker({ ledger, ownerId: "current", applier: kubernetes });
+		const current = newWorker(ledger, "current", kubernetes);
 		const currentLease = await current.acquireLease();
 		kubernetes.currentEpoch = currentLease.epoch;
 		expect(await stale.applyClaim(claim as OutboxClaim)).toBe("fenced");
@@ -279,7 +336,7 @@ describe.sequential("PostgreSQL-backed public T4 API v1", () => {
 		const persisted = await call(api, "GET", `/v1/sessions/${session.id}`);
 		expect(await json(persisted)).toMatchObject({ id: session.id, state: "cancelling", revision: 2 });
 		const kubernetes = new ObservableKubernetes();
-		const worker = new DurableOutboxWorker({ ledger, ownerId: "cancel-worker", applier: kubernetes });
+		const worker = newWorker(ledger, "cancel-worker", kubernetes);
 		const lease = await worker.acquireLease();
 		kubernetes.currentEpoch = lease.epoch;
 		await worker.drain();
