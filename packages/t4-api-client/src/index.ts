@@ -505,9 +505,10 @@ function responseContract(method: string, path: string): ResponseContract | unde
   return undefined;
 }
 
-function validSelectedVersion(response: Response): boolean {
+function validSelectedVersion(response: Response, expectedMajor?: string): boolean {
   const selected = response.headers.get("T4-API-Version");
-  return selected !== null && selected.length <= SELECTED_VERSION_MAX_LENGTH && SELECTED_VERSION_PATTERN.test(selected);
+  return selected !== null && selected.length <= SELECTED_VERSION_MAX_LENGTH && SELECTED_VERSION_PATTERN.test(selected) &&
+    (expectedMajor === undefined || selected.startsWith(`${expectedMajor}.`));
 }
 
 function validReplayHeader(response: Response): boolean {
@@ -543,7 +544,7 @@ async function validateResponse(request: Request, response: Response, baseUrl: s
     void response.body?.cancel().catch(() => {});
     throw protocolError(502, "T4 API returned an undeclared success status");
   }
-  if (!validSelectedVersion(response)) {
+  if (!validSelectedVersion(response, request.headers.get("T4-API-Version") ?? "")) {
     void response.body?.cancel().catch(() => {});
     throw protocolError(502, "T4 API returned a missing or invalid selected version");
   }
@@ -839,7 +840,7 @@ async function* watch(
           void response.body?.cancel().catch(() => {});
           throw protocolError(502, "T4 API returned an undeclared watch success status");
         }
-        if (!validSelectedVersion(response)) {
+        if (!validSelectedVersion(response, majorVersion)) {
           void response.body?.cancel().catch(() => {});
           throw protocolError(502, "T4 API returned a missing or invalid selected version");
         }

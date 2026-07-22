@@ -14,6 +14,13 @@ function hasAtMostCodePoints(value: string, maximum: number): boolean {
   return true;
 }
 
+function pageOffset(value: string | null): number | undefined {
+  if (value === null) return 0;
+  if (value.length > 512 || !/^page-(?:0|[1-9][0-9]*)$/u.test(value)) return undefined;
+  const offset = Number(value.slice(5));
+  return Number.isSafeInteger(offset) ? offset : undefined;
+}
+
 function validLabels(value: unknown): boolean {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const entries = Object.entries(value as Record<string, unknown>);
@@ -155,7 +162,8 @@ export class T4ApiV1ConformanceService {
     if (request.method === "GET" && url.pathname === "/v1/workspaces") {
       const pageSize = Number(url.searchParams.get("pageSize") ?? "2");
       if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 3) return this.#invalid("pageSize", "range", "pageSize must be between 1 and 3");
-      const start = Number(url.searchParams.get("cursor")?.replace("page-", "") ?? "0");
+      const start = pageOffset(url.searchParams.get("cursor"));
+      if (start === undefined) return this.#invalid("cursor", "format", "cursor must be a canonical bounded page offset");
       const visible = [...this.#workspaces.values()].filter((item) => item.tenant === tenant);
       const items = visible.slice(start, start + pageSize).map(({ tenant: _tenant, ...item }) => item);
       const next = start + items.length < visible.length ? `page-${start + items.length}` : undefined;
@@ -212,7 +220,8 @@ export class T4ApiV1ConformanceService {
       if (request.method === "GET") {
         const pageSize = Number(url.searchParams.get("pageSize") ?? "2");
         if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 3) return this.#invalid("pageSize", "range", "pageSize must be between 1 and 3");
-        const start = Number(url.searchParams.get("cursor")?.replace("page-", "") ?? "0");
+        const start = pageOffset(url.searchParams.get("cursor"));
+        if (start === undefined) return this.#invalid("cursor", "format", "cursor must be a canonical bounded page offset");
         const visible = [...this.#sessions.values()].filter((item) => item.workspaceId === workspaceId && item.tenant === tenant);
         const items = visible.slice(start, start + pageSize).map((item) => this.#visible(item));
         const next = start + items.length < visible.length ? `page-${start + items.length}` : undefined;
