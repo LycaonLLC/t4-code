@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { waitForSiteRevision } from "./verify-site-revision.mjs";
 
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
 const FIXED_CONFIG = Object.freeze({
@@ -8,11 +9,16 @@ const FIXED_CONFIG = Object.freeze({
   release: "t4-site",
   chart: "deploy/charts/t4-site",
   imageRepository: "harbor.tailb18de3.ts.net/linkedin-bot/t4-site",
-  hostname: "t4code.com",
+  revisionTarget: "origin",
 });
 
 export function resolveDeployConfig(environment = process.env) {
-  const imageTag = (environment.T4_SITE_IMAGE_TAG ?? environment.CI_COMMIT_SHA ?? "").trim();
+  const configuredTag = environment.T4_SITE_IMAGE_TAG?.trim();
+  const ciCommit = environment.CI_COMMIT_SHA?.trim();
+  if (configuredTag && ciCommit && configuredTag !== ciCommit) {
+    throw new Error("T4_SITE_IMAGE_TAG must match CI_COMMIT_SHA when both are set");
+  }
+  const imageTag = configuredTag ?? ciCommit ?? "";
   if (!COMMIT_PATTERN.test(imageTag)) {
     throw new Error("T4_SITE_IMAGE_TAG or CI_COMMIT_SHA must be an exact lowercase 40-character commit SHA");
   }
@@ -22,7 +28,7 @@ export function resolveDeployConfig(environment = process.env) {
     ["T4_SITE_RELEASE", FIXED_CONFIG.release],
     ["T4_SITE_CHART", FIXED_CONFIG.chart],
     ["T4_SITE_IMAGE_REPOSITORY", FIXED_CONFIG.imageRepository],
-    ["T4_SITE_HOSTNAME", FIXED_CONFIG.hostname],
+    ["T4_SITE_REVISION_TARGET", FIXED_CONFIG.revisionTarget],
   ]) {
     const configured = environment[name]?.trim();
     if (configured && configured !== expected) {
@@ -41,7 +47,12 @@ function run(command, args, cwd) {
   }
 }
 
-export function deploySite(config, repoRoot = resolve(import.meta.dirname, ".."), runCommand = run) {
+export async function deploySite(
+  config,
+  repoRoot = resolve(import.meta.dirname, ".."),
+  runCommand = run,
+  verifyRevision = waitForSiteRevision,
+) {
   const timeout = "10m";
   runCommand(
     "helm",
@@ -77,32 +88,17 @@ export function deploySite(config, repoRoot = resolve(import.meta.dirname, "..")
     ],
     repoRoot,
   );
-  runCommand(
-    "curl",
-    [
-      "--fail",
-      "--silent",
-      "--show-error",
-      "--location",
-      "--retry",
-      "12",
-      "--retry-all-errors",
-      "--retry-delay",
-      "5",
-      "--proto",
-      "=https",
-      "--tlsv1.2",
-      `https://${config.hostname}/`,
-    ],
-    repoRoot,
-  );
+  await verifyRevision({
+    expectedRevision: config.imageTag,
+    target: config.revisionTarget,
+  });
 }
 
 const isMain =
   process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (isMain) {
   try {
-    deploySite(resolveDeployConfig());
+    await deploySite(resolveDeployConfig());
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

@@ -4,21 +4,10 @@ run-name: Deploy project site ${{ inputs.release_tag || github.ref_name }} ${{ i
 on:
   push:
     branches: [main, master]
-    paths:
-      - "apps/site/**"
-      - "packages/**"
-      - "cluster/images/site/**"
-      - "deploy/charts/t4-site/**"
-      - "scripts/deploy-site.mjs"
-      - "scripts/generate-release-manifest.mjs"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - ".github/workflows/deploy-site.yml"
-      - ".woodpecker.yml"
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Published release tag whose immutable source must be deployed.
+        description: Published release tag whose immutable source must be verified.
         required: true
         type: string
       dispatch_nonce:
@@ -34,8 +23,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    if: ${{ github.event_name != 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
+  verify-production:
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment:
@@ -49,8 +38,28 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Install Node.js for immutable-source checks
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.13.1
+
+      - name: Classify the stable release referenced by an ordinary main push
+        if: ${{ github.event_name == 'push' }}
+        id: release_state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RELEASE_VERSION=$(node -p "require('./package.json').version")
+          node scripts/check-release-publication.mjs --version "$RELEASE_VERSION" --github-output "$GITHUB_OUTPUT"
+
+      - name: Record that the ordinary main source is not yet a published release
+        if: ${{ github.event_name == 'push' && steps.release_state.outputs.state == 'not-published' }}
+        run: echo "The mirrored main push is still expected to deploy this exact source revision."
+
       - name: Resolve immutable deployment source
-        id: source
+        id: immutable_source
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -59,15 +68,21 @@ jobs:
           TRUSTED_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          TRUSTED_VERSION=$(node -p "require('./package.json').version")
+          expected_tag="v${TRUSTED_VERSION}"
+          release_tag="$expected_tag"
           source_sha="$TRUSTED_SHA"
+
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            version=$(node -p "require('./package.json').version")
-            expected_tag="v${version}"
-            if [[ "$REQUESTED_RELEASE_TAG" != "$expected_tag" || "$GITHUB_REF" != "refs/tags/${expected_tag}" ]]; then
+            if [[ "$REQUESTED_RELEASE_TAG" != "$expected_tag" ]]; then
+              echo "release deployment requested an unexpected tag" >&2
+              exit 1
+            fi
+            if [[ "$GITHUB_REF" != "refs/tags/${expected_tag}" ]]; then
               echo "release deployment must run from the current immutable tag ${expected_tag}" >&2
               exit 1
             fi
-            release_flags=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${expected_tag}" --jq '[.draft, .prerelease] | @tsv')
+            release_flags=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}" --jq '[.draft, .prerelease] | @tsv')
             if [[ "$release_flags" != $'false\tfalse' ]]; then
               echo "release_tag must name a published, non-prerelease GitHub release" >&2
               exit 1
@@ -79,12 +94,20 @@ jobs:
               exit 1
             fi
           fi
-          printf 'source_sha=%s\n' "$source_sha" >> "$GITHUB_OUTPUT"
+
+          if [[ ! "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "deployment source must be an exact lowercase commit SHA" >&2
+            exit 1
+          fi
+          git merge-base --is-ancestor "$source_sha" "$TRUSTED_SHA"
+          git fetch --force origin "refs/heads/main:refs/remotes/origin/main"
+          git merge-base --is-ancestor "$source_sha" refs/remotes/origin/main
+          printf 'source_sha=%s\nrelease_tag=%s\nversion=%s\n' "$source_sha" "$release_tag" "$TRUSTED_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Check out immutable deployment source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ steps.source.outputs.source_sha }}
+          ref: ${{ steps.immutable_source.outputs.source_sha }}
           persist-credentials: false
 
       - name: Install pnpm
@@ -92,14 +115,22 @@ jobs:
         with:
           version: 11.10.0
 
-      - name: Install Node.js
+      - name: Install immutable-source Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24.13.1
-          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Test deployment verification contracts
+        run: pnpm test:deploy:site
+
+      - name: Wait for the immutable release bundle
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          RELEASE_VERSION: ${{ steps.immutable_source.outputs.version }}
+        run: node scripts/wait-for-release-assets.mjs --version "$RELEASE_VERSION" --timeout-ms 2400000 --interval-ms 15000
 
       - name: Validate the site build
         shell: bash
@@ -111,28 +142,13 @@ jobs:
             --output apps/site/public/releases/latest.json
           pnpm build:site
 
-      - name: Install pinned Helm
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl -fsSLo /tmp/helm.tar.gz https://get.helm.sh/helm-v3.19.0-linux-amd64.tar.gz
-          echo "a7f81ce08007091b86d8bd696eb4d86b8d0f2e1b9f6c714be62f82f96a594496  /tmp/helm.tar.gz" | sha256sum -c -
-          tar -xzf /tmp/helm.tar.gz -C /tmp
-          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
-
-      - name: Configure production cluster access
-        shell: bash
+      - name: Wait for the mirrored deployment at the public edge
         env:
-          T4_KUBECONFIG_BASE64: ${{ secrets.T4_KUBECONFIG_BASE64 }}
-        run: |
-          set -euo pipefail
-          test -n "$T4_KUBECONFIG_BASE64"
-          install -d -m 0700 "$RUNNER_TEMP/kube"
-          printf '%s' "$T4_KUBECONFIG_BASE64" | base64 --decode > "$RUNNER_TEMP/kube/config"
-          chmod 0600 "$RUNNER_TEMP/kube/config"
-
-      - name: Deploy exact commit image and verify production
-        env:
-          KUBECONFIG: ${{ runner.temp }}/kube/config
-          T4_SITE_IMAGE_TAG: ${{ steps.source.outputs.source_sha }}
-        run: pnpm deploy:site
+          SOURCE_SHA: ${{ steps.immutable_source.outputs.source_sha }}
+        run: >-
+          node scripts/verify-site-revision.mjs
+          --target public
+          --expected "$SOURCE_SHA"
+          --timeout-ms 900000
+          --interval-ms 10000
+          --request-timeout-ms 5000

@@ -10,24 +10,13 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  {{- with .Values.ingress.className }}
-  ingressClassName: {{ . | quote }}
-  {{- end }}
-  {{- if .Values.ingress.tls.enabled }}
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  defaultBackend:
+    service:
+      name: {{ include "t4-site.fullname" . | quote }}
+      port:
+        name: http
   tls:
     - hosts:
-        - {{ .Values.ingress.host | quote }}
-      secretName: {{ .Values.ingress.tls.secretName | quote }}
-  {{- end }}
-  rules:
-    - host: {{ .Values.ingress.host | quote }}
-      http:
-        paths:
-          - path: {{ .Values.ingress.path | quote }}
-            pathType: {{ .Values.ingress.pathType }}
-            backend:
-              service:
-                name: {{ include "t4-site.fullname" . | quote }}
-                port:
-                  name: http
+        - {{ .Values.ingress.hostname | quote }}
 {{- end }}

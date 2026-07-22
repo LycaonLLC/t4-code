@@ -321,6 +321,28 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
         ),
     ],
     [
+      "scripts/verify-site-revision.mjs",
+      (text) =>
+        replaceRequired(
+          text,
+          'public: "https://t4code.com/revision.json"',
+          'public: "http://t4code.com/revision.json"',
+        ),
+    ],
+    [
+      "scripts/deploy-site.mjs",
+      (text) => replaceRequired(text, 'revisionTarget: "origin"', 'revisionTarget: "public"'),
+    ],
+    [
+      ".github/workflows/deploy-site.yml",
+      (text) =>
+        replaceRequired(
+          text,
+          'git merge-base --is-ancestor "$source_sha" refs/remotes/origin/main',
+          'git merge-base --is-ancestor "$source_sha" refs/remotes/origin/release',
+        ),
+    ],
+    [
       ".github/workflows/deploy-site.yml",
       (text) =>
         text.replace("startsWith(github.ref, 'refs/tags/')", "github.ref == 'refs/heads/main'"),

@@ -9,7 +9,7 @@ const expectedConfig = {
   release: "t4-site",
   chart: "deploy/charts/t4-site",
   imageRepository: "harbor.tailb18de3.ts.net/linkedin-bot/t4-site",
-  hostname: "t4code.com",
+  revisionTarget: "origin",
   imageTag: commit,
 };
 
@@ -26,22 +26,32 @@ test("site deploy config rejects mutable image tags and production target overri
     /40-character commit SHA/u,
   );
   assert.throws(
+    () => resolveDeployConfig({ T4_SITE_IMAGE_TAG: commit, CI_COMMIT_SHA: "b".repeat(40) }),
+    /must match CI_COMMIT_SHA/u,
+  );
+  assert.throws(
     () => resolveDeployConfig({ T4_SITE_IMAGE_TAG: commit, T4_SITE_NAMESPACE: "default" }),
     /T4_SITE_NAMESPACE must be t4-site/u,
   );
   assert.throws(
-    () => resolveDeployConfig({ T4_SITE_IMAGE_TAG: commit, T4_SITE_HOSTNAME: "t4code.net" }),
-    /T4_SITE_HOSTNAME must be t4code.com/u,
+    () => resolveDeployConfig({ T4_SITE_IMAGE_TAG: commit, T4_SITE_REVISION_TARGET: "public" }),
+    /T4_SITE_REVISION_TARGET must be origin/u,
   );
 });
 
-test("site deploy atomically applies Helm, confirms rollout, and verifies HTTPS", () => {
+test("site deploy atomically applies Helm, confirms rollout, and verifies the exact origin revision", async () => {
   const calls = [];
-  deploySite(expectedConfig, "/repo", (command, args, cwd) => calls.push({ command, args, cwd }));
+  const revisions = [];
+  await deploySite(
+    expectedConfig,
+    "/repo",
+    (command, args, cwd) => calls.push({ command, args, cwd }),
+    async (options) => revisions.push(options),
+  );
 
   assert.deepEqual(
     calls.map(({ command }) => command),
-    ["helm", "kubectl", "curl"],
+    ["helm", "kubectl"],
   );
   assert.deepEqual(calls[0].args, [
     "upgrade",
@@ -69,23 +79,9 @@ test("site deploy atomically applies Helm, confirms rollout, and verifies HTTPS"
     "--timeout",
     "10m",
   ]);
-  assert.deepEqual(calls[2].args, [
-    "--fail",
-    "--silent",
-    "--show-error",
-    "--location",
-    "--retry",
-    "12",
-    "--retry-all-errors",
-    "--retry-delay",
-    "5",
-    "--proto",
-    "=https",
-    "--tlsv1.2",
-    "https://t4code.com/",
-  ]);
   assert.deepEqual(
     calls.map(({ cwd }) => cwd),
-    ["/repo", "/repo", "/repo"],
+    ["/repo", "/repo"],
   );
+  assert.deepEqual(revisions, [{ expectedRevision: commit, target: "origin" }]);
 });

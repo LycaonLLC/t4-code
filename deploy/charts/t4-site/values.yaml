@@ -5,7 +5,8 @@ image:
   tag: ""
   pullPolicy: IfNotPresent
 
-imagePullSecrets: []
+imagePullSecrets:
+  - name: harbor-registry-credentials
 nameOverride: ""
 fullnameOverride: ""
 
@@ -15,14 +16,10 @@ service:
 
 ingress:
   enabled: true
-  className: nginx
-  annotations: {}
-  host: t4code.com
-  path: /
-  pathType: Prefix
-  tls:
-    enabled: true
-    secretName: t4code-com-tls
+  className: tailscale
+  annotations:
+    tailscale.com/funnel: "true"
+  hostname: t4-site
 
 resources:
   requests:
