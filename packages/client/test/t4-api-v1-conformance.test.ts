@@ -6,7 +6,6 @@ import {
   T4ApiError,
   createT4ApiClient,
   type components,
-  type operations,
 } from "@t4-code/t4-api-client";
 import { T4ApiV1ConformanceService, canonicalJson } from "./t4-api-v1-conformance-service.ts";
 
@@ -15,24 +14,6 @@ type SessionCreate = components["schemas"]["SessionCreate"];
 type CommandCreate = components["schemas"]["CommandCreate"];
 
 type WatchEvent = components["schemas"]["WatchEvent"];
-type JsonBody<Response> = Response extends { content: { "application/json": infer Body } } ? Body : never;
-type SpawnBadRequest = JsonBody<operations["spawnSession"]["responses"][400]>;
-type CommandBadRequest = JsonBody<operations["submitCommand"]["responses"][400]>;
-type Unauthorized = JsonBody<operations["discoverV1"]["responses"][401]>;
-type Forbidden = JsonBody<operations["discoverV1"]["responses"][403]>;
-type Missing = JsonBody<operations["getWorkspace"]["responses"][404]>;
-type Conflict = JsonBody<operations["createWorkspace"]["responses"][409]>;
-type Unavailable = JsonBody<operations["discoverV1"]["responses"][503]>;
-
-const typedErrors = {
-  badSpawn: { error: { code: "idempotency_key_required", message: "required", requestId: "r", retryable: false } } satisfies SpawnBadRequest,
-  badCommand: { error: { code: "invalid_request", message: "invalid", requestId: "r", retryable: false } } satisfies CommandBadRequest,
-  unauthorized: { error: { code: "unauthenticated", message: "no", requestId: "r", retryable: false } } satisfies Unauthorized,
-  forbidden: { error: { code: "forbidden", message: "no", requestId: "r", retryable: false } } satisfies Forbidden,
-  missing: { error: { code: "not_found", message: "no", requestId: "r", retryable: false } } satisfies Missing,
-  conflict: { error: { code: "idempotency_conflict", message: "no", requestId: "r", retryable: false } } satisfies Conflict,
-  unavailable: { error: { code: "unavailable", message: "later", requestId: "r", retryable: true } } satisfies Unavailable,
-};
 
 function exhaustWatchEvent(event: WatchEvent): string {
   switch (event.type) {
