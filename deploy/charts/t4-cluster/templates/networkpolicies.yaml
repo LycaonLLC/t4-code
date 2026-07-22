@@ -1,4 +1,6 @@
-{{- if and .Values.enabled .Values.networkPolicy.enabled }}
+{{- if .Values.enabled }}
+{{- include "t4-cluster.validatePublicApi" . -}}
+{{- if .Values.networkPolicy.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -97,6 +99,27 @@ spec:
             {{- toYaml .Values.networkPolicy.ciProvider.podSelector | nindent 12 }}
       ports:
         {{- range .Values.networkPolicy.ciProviderPorts }}
+        - {protocol: TCP, port: {{ . }}}
+        {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- if and .Values.publicApi.enabled .Values.networkPolicy.postgresPorts }}
+    {{- range .Values.networkPolicy.postgresCIDRs }}
+    - to:
+        - ipBlock: {cidr: {{ . | quote }}}
+      ports:
+        {{- range $.Values.networkPolicy.postgresPorts }}
+        - {protocol: TCP, port: {{ . }}}
+        {{- end }}
+    {{- end }}
+    {{- if and (not (empty .Values.networkPolicy.postgres.namespaceSelector)) (not (empty .Values.networkPolicy.postgres.podSelector)) }}
+    - to:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.postgres.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.networkPolicy.postgres.podSelector | nindent 12 }}
+      ports:
+        {{- range .Values.networkPolicy.postgresPorts }}
         - {protocol: TCP, port: {{ . }}}
         {{- end }}
     {{- end }}
@@ -204,4 +227,5 @@ spec:
   {{- else }}
   ingress: []
   {{- end }}
+{{- end }}
 {{- end }}

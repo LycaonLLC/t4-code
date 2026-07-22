@@ -296,20 +296,28 @@ describe("durable public Kubernetes applier", () => {
 		const requiredAnnotations = {
 			"cluster.t4.dev/ledger-command-id": createMutation.commandId,
 			"cluster.t4.dev/ledger-outbox-token": createMutation.idempotencyToken,
-			"cluster.t4.dev/ledger-owner": fence.ownerId,
-			"cluster.t4.dev/ledger-owner-epoch": fence.epoch.toString(),
+			"cluster.t4.dev/ledger-owner": "expired-worker",
+			"cluster.t4.dev/ledger-owner-epoch": (fence.epoch - 1n).toString(),
 			"cluster.t4.dev/ledger-semantic-hash": semanticResourceHash(createMutation.payload),
 		};
 		const exactExisting = {
 			apiVersion: "cluster.t4.dev/v1alpha1", kind: "T4Workspace",
 			metadata: { name: "workspace-one", resourceVersion: "9", annotations: requiredAnnotations },
-			spec: { hostRef: "primary", owner: PRINCIPAL, displayName: "created" },
+			spec: { hostRef: "primary", owner: PRINCIPAL, displayName: "created", retentionPolicy: "Retain", size: "20Gi" },
 		};
 		const exact = conflictFetch(exactExisting);
 		await new PublicKubernetesOutboxApplier({
 			client: new KubernetesApiClient({ baseUrl: "https://kubernetes.default.svc", namespace: "development", token: "token", fetch: exact.fetch }),
 			hostRef: "primary",
 		}).apply(createMutation, fence);
+		const adoption = JSON.parse(String(exact.requests[2]?.init?.body));
+		expect(adoption.metadata).toMatchObject({
+			resourceVersion: "9",
+			annotations: {
+				"cluster.t4.dev/ledger-owner": fence.ownerId,
+				"cluster.t4.dev/ledger-owner-epoch": fence.epoch.toString(),
+			},
+		});
 
 		for (const conflicting of [
 			{ ...exactExisting, kind: "T4Session" },
@@ -341,7 +349,11 @@ describe("durable public Kubernetes applier", () => {
 		}
 	});
 	it("uses the configured host-admitted runtime profile for durable session creation", async () => {
-		const values = recordingFetch([{}]);
+		const values = recordingFetch([{
+			apiVersion: "cluster.t4.dev/v1alpha1", kind: "T4Workspace",
+			metadata: { name: "workspace-one", resourceVersion: "55", annotations: priorAnnotations },
+			spec: { hostRef: "primary", owner: PRINCIPAL },
+		}, {}]);
 		const options = {
 			client: new KubernetesApiClient({ baseUrl: "https://kubernetes.default.svc", namespace: "development", token: "token", fetch: values.fetch }),
 			hostRef: "primary",
@@ -354,7 +366,7 @@ describe("durable public Kubernetes applier", () => {
 			targetId: "session-one",
 			payload: { id: "session-one", workspaceId: "workspace-one", title: "session", revision: 1 },
 		}, fence);
-		const created = JSON.parse(String(values.requests[0]?.init?.body));
+		const created = JSON.parse(String(values.requests[1]?.init?.body));
 		expect(created.spec.runtimeProfile).toBe("review-admitted");
 	});
 
@@ -362,11 +374,11 @@ describe("durable public Kubernetes applier", () => {
 		const secretCommand = `printf ${"secret-payload".repeat(8_192)}`;
 		const values = recordingFetch([{
 			apiVersion: "cluster.t4.dev/v1alpha1", kind: "T4Session",
-			metadata: { name: "session-one", resourceVersion: "61", annotations: { "cluster.t4.dev/ledger-owner-epoch": "6" } },
+			metadata: { name: "session-one", resourceVersion: "61", annotations: priorAnnotations },
 			spec: { hostRef: "primary", workspaceRef: "workspace-one" },
 		}, {
 			apiVersion: "cluster.t4.dev/v1alpha1", kind: "T4Workspace",
-			metadata: { name: "workspace-one", resourceVersion: "60" },
+			metadata: { name: "workspace-one", resourceVersion: "60", annotations: priorAnnotations },
 			spec: { hostRef: "primary", owner: PRINCIPAL },
 		}, {}]);
 		const applier = new PublicKubernetesOutboxApplier({
@@ -402,7 +414,7 @@ describe("durable public Kubernetes applier", () => {
 			spec: { hostRef: "primary", workspaceRef: "workspace-one" },
 		}, {
 			apiVersion: "cluster.t4.dev/v1alpha1", kind: "T4Workspace",
-			metadata: { name: "workspace-one", resourceVersion: "70" },
+			metadata: { name: "workspace-one", resourceVersion: "70", annotations: priorAnnotations },
 			spec: { hostRef: "primary", owner: PRINCIPAL },
 		}, {}]);
 		const applier = new PublicKubernetesOutboxApplier({

@@ -124,6 +124,7 @@ async function newLedger(overrides: Partial<DurableLedgerOptions> = {}): Promise
 	if (!PostgresLedger) throw new Error("PostgreSQL ledger implementation is unavailable");
 	const ledger = new PostgresLedger(ledgerOptions(overrides));
 	await ledger.migrate();
+	await admin`UPDATE t4_owner_leases SET expires_at = clock_timestamp() - interval '1 second' WHERE lease_name = 'gateway-outbox'`;
 	return ledger;
 }
 
@@ -304,6 +305,7 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 		const claim = await stale.claimNext();
 		expect(claim).toBeDefined();
 
+		await admin`UPDATE t4_owner_leases SET expires_at = clock_timestamp() - interval '1 second' WHERE lease_name = 'gateway-outbox'`;
 		const current = newWorker(ledger, "current", kubernetes);
 		const currentLease = await current.acquireLease();
 		kubernetes.currentEpoch = currentLease.epoch;
@@ -510,24 +512,30 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 		`);
 		await admin`SELECT pg_advisory_lock(741406)`;
 		const first = call(api, "POST", "/v1/workspaces", { key: "absent-idempotency-key-01", body: { name: "one durable winner" } });
-		await waitForDatabase(async () => (await admin`SELECT last_value FROM t4_test_absent_key_attempt` as Array<{ last_value: bigint }>)[0]?.last_value === 1n);
-		const second = call(api, "POST", "/v1/workspaces", { key: "absent-idempotency-key-01", body: { name: "one durable winner" } });
-		await waitForDatabase(async () => {
-			const [sequence, active] = await Promise.all([
-				admin`SELECT last_value FROM t4_test_absent_key_attempt` as Promise<Array<{ last_value: bigint }>>,
-				admin`SELECT count(*) AS count FROM pg_stat_activity WHERE datname = current_database() AND state = 'active' AND pid <> pg_backend_pid()` as Promise<Array<{ count: bigint }>>,
-			]);
-			return sequence[0]?.last_value === 2n || (active[0]?.count ?? 0n) >= 2n;
-		});
-		await admin`SELECT pg_advisory_unlock(741406)`;
-		const responses = await Promise.all([first, second]);
-		expect(responses.map(value => value.status).sort()).toEqual([200, 202]);
-		expect(await json(responses[0]!)).toEqual(await json(responses[1]!));
+		let second: Promise<Response> | undefined;
+		let responses: Response[] | undefined;
+		try {
+			await waitForDatabase(async () => (await admin`SELECT is_called FROM t4_test_absent_key_attempt` as Array<{ is_called: boolean }>)[0]?.is_called === true);
+			const secondRequest = call(api, "POST", "/v1/workspaces", { key: "absent-idempotency-key-01", body: { name: "one durable winner" } });
+			second = secondRequest;
+			await waitForDatabase(async () => {
+				const blocked = await admin`SELECT count(*) AS count FROM pg_stat_activity WHERE datname = current_database() AND wait_event = 'advisory' AND query LIKE 'SELECT pg_advisory_xact_lock(hashtextextended%'` as Array<{ count: bigint }>;
+				return blocked[0]?.count === 1n;
+			});
+			await admin`SELECT pg_advisory_unlock(741406)`;
+			responses = await Promise.all([first, secondRequest]);
+		} finally {
+			await admin`SELECT pg_advisory_unlock(741406)`;
+			await Promise.allSettled([first, ...(second ? [second] : [])]);
+			await admin.unsafe("DROP TRIGGER IF EXISTS t4_test_pause_absent_key_trigger ON t4_outbox; DROP FUNCTION IF EXISTS t4_test_pause_first_absent_key(); DROP SEQUENCE IF EXISTS t4_test_absent_key_attempt");
+		}
+		expect(responses).toBeDefined();
+		expect(responses!.map(value => value.status).sort()).toEqual([200, 202]);
+		expect(await json(responses![0]!)).toEqual(await json(responses![1]!));
 		const rows = await admin`SELECT
 			(SELECT count(*) FROM t4_commands WHERE idempotency_key = 'absent-idempotency-key-01') AS commands,
 			(SELECT count(*) FROM t4_outbox WHERE idempotency_key = 'absent-idempotency-key-01') AS outbox` as Array<{ commands: bigint; outbox: bigint }>;
 		expect(rows[0]).toEqual({ commands: 1n, outbox: 1n });
-		await admin.unsafe("DROP TRIGGER t4_test_pause_absent_key_trigger ON t4_outbox; DROP FUNCTION t4_test_pause_first_absent_key(); DROP SEQUENCE t4_test_absent_key_attempt");
 		await ledger.close();
 	});
 
@@ -683,32 +691,37 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 		await call(api, "POST", `/v1/sessions/${session.id}/commands`, { key: "atomic-snapshot-command-1", body: { command: "before snapshot" } });
 		await admin`SELECT pg_advisory_lock(741407)`;
 		await admin.unsafe(`
+			CREATE SEQUENCE t4_test_snapshot_pause_reached;
 			ALTER TABLE t4_event_retention RENAME TO t4_event_retention_base;
 			CREATE FUNCTION t4_test_pause_snapshot(value bigint) RETURNS bigint LANGUAGE plpgsql VOLATILE AS $$
-			BEGIN PERFORM pg_advisory_xact_lock(741407); RETURN value; END $$;
+			BEGIN PERFORM nextval('t4_test_snapshot_pause_reached'); PERFORM pg_advisory_xact_lock(741407); RETURN value; END $$;
 			CREATE VIEW t4_event_retention AS
 			SELECT principal_id, session_id, first_retained_sequence, t4_test_pause_snapshot(latest_sequence) AS latest_sequence, updated_at
 			FROM t4_event_retention_base;
 		`);
 		const pendingSnapshot = call(api, "GET", `/v1/sessions/${session.id}/snapshot`);
-		await waitForDatabase(async () => {
-			const rows = await admin`SELECT count(*) AS count FROM pg_stat_activity WHERE wait_event_type = 'Advisory' AND query LIKE '%t4_event_retention%'` as Array<{ count: bigint }>;
-			return (rows[0]?.count ?? 0n) >= 1n;
-		});
 		const concurrent = new SQL(DATABASE_URL!, { max: 1, bigint: true });
 		const concurrentCommandId = "cmd_concurrent_snapshot_boundary";
-		await concurrent.begin(async transaction => {
-			const entries = await transaction<{ next: bigint }[]>`SELECT COALESCE(MAX(entry_sequence), -1) + 1 AS next FROM t4_snapshot_entries WHERE principal_id = 'owner@example.com' AND session_id = ${session.id}`;
-			await transaction`INSERT INTO t4_snapshot_entries (principal_id, session_id, entry_sequence, kind, text_value) VALUES ('owner@example.com', ${session.id}, ${entries[0]?.next ?? 0n}, 'input', 'concurrent snapshot command')`;
-			const events = await transaction<{ sequence: bigint }[]>`INSERT INTO t4_events (principal_id, session_id, event_type, payload, owner_epoch) VALUES ('owner@example.com', ${session.id}, 'command', ${{ commandId: concurrentCommandId, state: "accepted" }}, 0) RETURNING sequence`;
-			await transaction`UPDATE t4_event_retention_base SET latest_sequence = ${events[0]!.sequence}, updated_at = clock_timestamp() WHERE principal_id = 'owner@example.com' AND session_id = ${session.id}`;
-		});
-		await concurrent.close();
-		await admin`SELECT pg_advisory_unlock(741407)`;
-		const snapshotResponse = await pendingSnapshot;
-		expect(snapshotResponse.status).toBe(200);
-		const snapshot = await json(snapshotResponse);
-		await admin.unsafe("DROP VIEW t4_event_retention; ALTER TABLE t4_event_retention_base RENAME TO t4_event_retention; DROP FUNCTION t4_test_pause_snapshot(bigint)");
+		let snapshotResponse: Response | undefined;
+		try {
+			await waitForDatabase(async () => (await admin`SELECT is_called FROM t4_test_snapshot_pause_reached` as Array<{ is_called: boolean }>)[0]?.is_called === true);
+			await concurrent.begin(async transaction => {
+				const entries = await transaction<{ next: bigint }[]>`SELECT COALESCE(MAX(entry_sequence), -1) + 1 AS next FROM t4_snapshot_entries WHERE principal_id = 'owner@example.com' AND session_id = ${session.id}`;
+				await transaction`INSERT INTO t4_snapshot_entries (principal_id, session_id, entry_sequence, kind, text_value) VALUES ('owner@example.com', ${session.id}, ${entries[0]?.next ?? 0n}, 'input', 'concurrent snapshot command')`;
+				const events = await transaction<{ sequence: bigint }[]>`INSERT INTO t4_events (principal_id, session_id, event_type, payload, owner_epoch) VALUES ('owner@example.com', ${session.id}, 'command', ${{ commandId: concurrentCommandId, state: "accepted" }}, 0) RETURNING sequence`;
+				await transaction`UPDATE t4_event_retention_base SET latest_sequence = ${events[0]!.sequence}, updated_at = clock_timestamp() WHERE principal_id = 'owner@example.com' AND session_id = ${session.id}`;
+			});
+			await admin`SELECT pg_advisory_unlock(741407)`;
+			snapshotResponse = await pendingSnapshot;
+		} finally {
+			await admin`SELECT pg_advisory_unlock(741407)`;
+			await Promise.allSettled([pendingSnapshot]);
+			await concurrent.close();
+			await admin.unsafe("DROP VIEW IF EXISTS t4_event_retention; ALTER TABLE t4_event_retention_base RENAME TO t4_event_retention; DROP FUNCTION IF EXISTS t4_test_pause_snapshot(bigint); DROP SEQUENCE IF EXISTS t4_test_snapshot_pause_reached");
+		}
+		expect(snapshotResponse).toBeDefined();
+		expect(snapshotResponse!.status).toBe(200);
+		const snapshot = await json(snapshotResponse!);
 		const afterBoundary = await call(api, "GET", `/v1/sessions/${session.id}/events?cursor=${encodeURIComponent(snapshot.cursor)}`, { headers: { accept: "text/event-stream" } });
 		expect(afterBoundary.status).toBe(200);
 		expect(eventData(await afterBoundary.text()).map(value => value.commandId)).toContain(concurrentCommandId);
@@ -726,29 +739,34 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 		expect(target[0]).toBeDefined();
 		await admin`SELECT pg_advisory_lock(741408)`;
 		await admin.unsafe(`
+			CREATE SEQUENCE t4_test_event_pause_reached;
 			ALTER TABLE t4_events RENAME TO t4_events_base;
 			CREATE FUNCTION t4_test_pause_event(value bigint) RETURNS bigint LANGUAGE plpgsql VOLATILE AS $$
-			BEGIN PERFORM pg_advisory_xact_lock(741408); RETURN value; END $$;
+			BEGIN PERFORM nextval('t4_test_event_pause_reached'); PERFORM pg_advisory_xact_lock(741408); RETURN value; END $$;
 			CREATE VIEW t4_events AS
 			SELECT t4_test_pause_event(sequence) AS sequence, principal_id, session_id, event_type, payload, owner_epoch, created_at
 			FROM t4_events_base;
 		`);
 		const pendingWindow = call(api, "GET", `/v1/sessions/${session.id}/events?cursor=${encodeURIComponent(snapshot.cursor)}&maxEvents=1`, { headers: { accept: "text/event-stream" } });
-		await waitForDatabase(async () => {
-			const rows = await admin`SELECT count(*) AS count FROM pg_stat_activity WHERE wait_event_type = 'Advisory' AND query LIKE '%t4_events%'` as Array<{ count: bigint }>;
-			return (rows[0]?.count ?? 0n) >= 1n;
-		});
 		const concurrent = new SQL(DATABASE_URL!, { max: 1, bigint: true });
-		await concurrent.begin(async transaction => {
-			await transaction`DELETE FROM t4_events_base WHERE sequence = ${target[0]!.sequence}`;
-			await transaction`UPDATE t4_event_retention SET first_retained_sequence = ${target[0]!.sequence + 1n} WHERE principal_id = 'owner@example.com' AND session_id = ${session.id}`;
-		});
-		await concurrent.close();
-		await admin`SELECT pg_advisory_unlock(741408)`;
-		const response = await pendingWindow;
-		expect(response.status).toBe(200);
-		await admin.unsafe("DROP VIEW t4_events; ALTER TABLE t4_events_base RENAME TO t4_events; DROP FUNCTION t4_test_pause_event(bigint)");
-		expect(eventData(await response.text()).map(value => value.commandId)).toContain(command.commandId);
+		let response: Response | undefined;
+		try {
+			await waitForDatabase(async () => (await admin`SELECT is_called FROM t4_test_event_pause_reached` as Array<{ is_called: boolean }>)[0]?.is_called === true);
+			await concurrent.begin(async transaction => {
+				await transaction`DELETE FROM t4_events_base WHERE sequence = ${target[0]!.sequence}`;
+				await transaction`UPDATE t4_event_retention SET first_retained_sequence = ${target[0]!.sequence + 1n} WHERE principal_id = 'owner@example.com' AND session_id = ${session.id}`;
+			});
+			await admin`SELECT pg_advisory_unlock(741408)`;
+			response = await pendingWindow;
+		} finally {
+			await admin`SELECT pg_advisory_unlock(741408)`;
+			await Promise.allSettled([pendingWindow]);
+			await concurrent.close();
+			await admin.unsafe("DROP VIEW IF EXISTS t4_events; ALTER TABLE t4_events_base RENAME TO t4_events; DROP FUNCTION IF EXISTS t4_test_pause_event(bigint); DROP SEQUENCE IF EXISTS t4_test_event_pause_reached");
+		}
+		expect(response).toBeDefined();
+		expect(response!.status).toBe(200);
+		expect(eventData(await response!.text()).map(value => value.commandId)).toContain(command.commandId);
 		await ledger.close();
 	});
 
@@ -781,7 +799,7 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 		const workspace = await json(await call(api, "POST", "/v1/workspaces", { key: "sse-accept-workspace-01", body: { name: "sse accept" } }));
 		const session = await json(await call(api, "POST", `/v1/workspaces/${workspace.id}/sessions`, { key: "sse-accept-session-001", body: { title: "sse accept" } }));
 		for (const accept of [undefined, "application/json", "text/plain;q=1, text/event-stream;q=0"]) {
-			const response = await call(api, "GET", `/v1/sessions/${session.id}/events`, { ...(accept ? { headers: { accept } } : {}) });
+			const response = await call(api, "GET", `/v1/sessions/${session.id}/events`, accept ? { headers: { accept } } : {});
 			expect(response.status).toBe(406);
 		}
 		expect((await call(api, "GET", `/v1/sessions/${session.id}/events`, { headers: { accept: "text/event-stream, application/json;q=0.5" } })).status).toBe(200);

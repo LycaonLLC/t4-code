@@ -10,8 +10,12 @@ export interface OutboxMutation {
 	readonly targetRevision: bigint;
 	readonly payload: Readonly<Record<string, unknown>>;
 }
+export interface OutboxApplyContext {
+	readonly claimIsCurrent?: () => Promise<boolean>;
+	readonly signal?: AbortSignal;
+}
 export interface KubernetesOutboxApplier {
-	apply(mutation: OutboxMutation, fence: OwnerLease): Promise<void>;
+	apply(mutation: OutboxMutation, fence: OwnerLease, context?: OutboxApplyContext): Promise<void>;
 }
 export interface DurableOutboxWorkerOptions {
 	readonly ledger: PostgresLedger;
@@ -53,8 +57,13 @@ export class DurableOutboxWorker {
 			targetRevision: claim.targetRevision,
 			payload: claim.mutation,
 		};
+		const timeout = Math.max(0, claim.expiresAt - Date.now());
+		const signal = timeout === 0 ? AbortSignal.abort(new Error("outbox lease has expired")) : AbortSignal.timeout(timeout);
 		try {
-			await this.#applier.apply(mutation, { ownerId: claim.ownerId, epoch: claim.ownerEpoch });
+			await this.#applier.apply(mutation, { ownerId: claim.ownerId, epoch: claim.ownerEpoch }, {
+				claimIsCurrent: () => this.#ledger.claimIsCurrent(claim),
+				signal,
+			});
 		} catch (error) {
 			if (!await this.#ledger.claimIsCurrent(claim)) return "fenced";
 			await this.#ledger.recordFailure(claim, error instanceof Error ? error.message : "outbox application failed");

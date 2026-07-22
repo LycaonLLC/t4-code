@@ -41,7 +41,7 @@ rules:
     verbs: [get, list, watch]
   - apiGroups: [cluster.t4.dev]
     resources: [t4workspaces, t4sessions]
-    verbs: [get, list, watch, create, delete]
+    verbs: [get, list, watch, create, patch, delete]
   - apiGroups: ['']
     resources: [pods, services, endpoints]
     verbs: [get, list, watch]

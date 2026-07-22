@@ -10,7 +10,7 @@
     "server",
     "session",
     "storage",
-    "durableGateway",
+    "publicApi",
     "woodpecker",
     "ingress",
     "networkPolicy",
@@ -130,13 +130,14 @@
         }
       }
     },
-    "durableGateway": {
+    "publicApi": {
       "type": "object",
-      "required": ["existingSecret", "postgresURLKey", "publicAPICredentialsKey"],
+      "required": ["enabled", "existingSecret", "postgresURLKey", "credentialsKey"],
       "properties": {
+        "enabled": { "type": "boolean" },
         "existingSecret": { "$ref": "#/definitions/optionalDNSSubdomain" },
         "postgresURLKey": { "$ref": "#/definitions/configKey" },
-        "publicAPICredentialsKey": { "$ref": "#/definitions/configKey" }
+        "credentialsKey": { "$ref": "#/definitions/configKey" }
       },
       "additionalProperties": false
     },
@@ -183,7 +184,7 @@
     },
     "networkPolicy": {
       "type": "object",
-      "required": ["enabled", "kubernetesApiCIDRs", "modelRouteCIDRs", "modelRoutePorts", "modelRoute", "ciProviderCIDRs", "ciProviderPorts", "ciProvider", "dns", "gatewayIngress", "observability"],
+      "required": ["enabled", "kubernetesApiCIDRs", "modelRouteCIDRs", "modelRoutePorts", "modelRoute", "ciProviderCIDRs", "ciProviderPorts", "ciProvider", "postgresCIDRs", "postgresPorts", "postgres", "dns", "gatewayIngress", "observability"],
       "properties": {
         "enabled": { "type": "boolean" },
         "kubernetesApiCIDRs": { "$ref": "#/definitions/cidrList" },
@@ -193,6 +194,9 @@
         "ciProviderCIDRs": { "$ref": "#/definitions/cidrList" },
         "ciProviderPorts": { "$ref": "#/definitions/tcpPortList" },
         "ciProvider": { "$ref": "#/definitions/pairedSelectors" },
+        "postgresCIDRs": { "$ref": "#/definitions/cidrList" },
+        "postgresPorts": { "$ref": "#/definitions/tcpPortList" },
+        "postgres": { "$ref": "#/definitions/pairedSelectors" },
         "dns": {
           "type": "object",
           "required": ["namespaceSelector", "podSelector"],
@@ -404,6 +408,41 @@
               "server": { "properties": { "digest": { "pattern": "^sha256:[0-9a-f]{64}$" } } },
               "sessionRuntime": { "properties": { "digest": { "pattern": "^sha256:[0-9a-f]{64}$" } } }
             }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "publicApi": { "properties": { "enabled": { "const": true } } }
+        }
+      },
+      "then": {
+        "properties": {
+          "publicApi": {
+            "properties": {
+              "existingSecret": { "minLength": 1 }
+            }
+          },
+          "networkPolicy": {
+            "properties": {
+              "enabled": { "const": true },
+              "postgresPorts": { "minItems": 1 }
+            },
+            "anyOf": [
+              { "properties": { "postgresCIDRs": { "minItems": 1 } } },
+              {
+                "properties": {
+                  "postgres": {
+                    "properties": {
+                      "namespaceSelector": { "minProperties": 1 },
+                      "podSelector": { "minProperties": 1 }
+                    }
+                  }
+                }
+              }
+            ]
           }
         }
       }

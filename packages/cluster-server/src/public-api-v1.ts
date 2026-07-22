@@ -24,7 +24,7 @@ export interface PrincipalAuthenticator {
 export interface T4PublicApiV1Options {
 	readonly ledger: PostgresLedger;
 	readonly authenticator: PrincipalAuthenticator;
-	readonly allowedOrigins?: readonly string[];
+	readonly allowedOrigins?: readonly string[] | (() => readonly string[]);
 }
 
 const DISCOVERY: Discovery = {
@@ -45,6 +45,7 @@ const RESOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u;
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9._~-]{16,128}$/u;
 const VERSION = /^[1-9][0-9]{0,3}(?:\.[0-9]+)?$/u;
 const LABEL_KEY = /^[a-z][a-z0-9.-]{0,62}$/u;
+const CRD_OWNER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/u;
 const encoder = new TextEncoder();
 
 interface ApiContext { readonly requestId: string; readonly principal: ApiPrincipal; }
@@ -74,6 +75,17 @@ function deletedResponse(result: LedgerMutationResult<unknown>, requestId: strin
 	if (result.kind === "not_found") return notFound(requestId);
 	return new Response(null, { status: 204, headers: responseHeaders({ "idempotency-replayed": result.kind === "replay" ? "true" : "false" }) });
 }
+function withinCodePointLimit(value: string, maximum: number): boolean {
+	let length = 0;
+	let offset = 0;
+	while (offset < value.length) {
+		const codePoint = value.codePointAt(offset);
+		if (codePoint === undefined) break;
+		offset += codePoint > 0xffff ? 2 : 1;
+		if (++length > maximum) return false;
+	}
+	return true;
+}
 function labels(value: unknown): Record<string, string> | undefined {
 	if (value === undefined) return undefined;
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("labels must be an object");
@@ -81,13 +93,13 @@ function labels(value: unknown): Record<string, string> | undefined {
 	if (entries.length > 32) throw new Error("labels exceeds 32 properties");
 	const output: Record<string, string> = {};
 	for (const [key, item] of entries) {
-		if (!LABEL_KEY.test(key) || typeof item !== "string" || item.length > 128) throw new Error("labels is invalid");
+		if (!LABEL_KEY.test(key) || typeof item !== "string" || !withinCodePointLimit(item, 128)) throw new Error("labels is invalid");
 		output[key] = item;
 	}
 	return output;
 }
 function boundedString(value: unknown, name: string, maximum: number): string {
-	if (typeof value !== "string" || value.length < 1 || value.length > maximum) throw new Error(`${name} is invalid`);
+	if (typeof value !== "string" || value.length < 1 || !withinCodePointLimit(value, maximum)) throw new Error(`${name} is invalid`);
 	return value;
 }
 function exactKeys(value: Record<string, unknown>, allowed: readonly string[], required: readonly string[], minimum = 0): void {
@@ -100,16 +112,54 @@ function integerQuery(value: string | null, fallback: number, minimum: number, m
 	const parsed = Number(value);
 	return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : undefined;
 }
+function acceptsEventStream(value: string | null): boolean {
+	if (!value) return false;
+	let selectedSpecificity = -1;
+	let selectedQuality = 0;
+	for (const range of value.split(",")) {
+		const [rawMediaType = "", ...parameters] = range.split(";");
+		const mediaType = rawMediaType.trim().toLowerCase();
+		const specificity = mediaType === "text/event-stream" ? 2 : mediaType === "text/*" ? 1 : mediaType === "*/*" ? 0 : -1;
+		if (specificity < 0) continue;
+		let quality = 1;
+		let valid = true;
+		let qualitySeen = false;
+		for (const rawParameter of parameters) {
+			const parameter = rawParameter.trim();
+			const separator = parameter.indexOf("=");
+			if (separator < 1) { valid = false; break; }
+			const name = parameter.slice(0, separator).trim().toLowerCase();
+			const parameterValue = parameter.slice(separator + 1).trim();
+			if (name === "q") {
+				if (qualitySeen || !/^(?:0(?:\.[0-9]{0,3})?|1(?:\.0{0,3})?)$/u.test(parameterValue)) { valid = false; break; }
+				qualitySeen = true;
+				quality = Number(parameterValue);
+			} else if (!qualitySeen) {
+				valid = false;
+				break;
+			}
+		}
+		if (!valid) continue;
+		if (specificity > selectedSpecificity) {
+			selectedSpecificity = specificity;
+			selectedQuality = quality;
+		} else if (specificity === selectedSpecificity) {
+			selectedQuality = Math.max(selectedQuality, quality);
+		}
+	}
+	return selectedQuality > 0;
+}
 
 export class T4PublicApiV1 {
 	readonly #ledger: PostgresLedger;
 	readonly #authenticator: PrincipalAuthenticator;
-	readonly #allowedOrigins?: ReadonlySet<string>;
+	readonly #allowedOrigins: () => readonly string[];
 
 	constructor(options: T4PublicApiV1Options) {
 		this.#ledger = options.ledger;
 		this.#authenticator = options.authenticator;
-		this.#allowedOrigins = options.allowedOrigins ? new Set(options.allowedOrigins) : undefined;
+		const allowedOrigins = options.allowedOrigins;
+		this.#allowedOrigins = typeof allowedOrigins === "function" ? allowedOrigins : () => allowedOrigins ?? [];
 	}
 
 	async handle(request: Request): Promise<Response> {
@@ -117,13 +167,13 @@ export class T4PublicApiV1 {
 		try {
 			if (new URL(request.url).protocol !== "https:") return apiError(requestId, 400, "https_required", "HTTPS is required");
 			const origin = request.headers.get("origin");
-			if (origin && this.#allowedOrigins && !this.#allowedOrigins.has(origin)) return apiError(requestId, 400, "invalid_origin", "request origin is not allowed");
+			if (origin && !this.#allowedOrigins().includes(origin)) return apiError(requestId, 400, "invalid_origin", "request origin is not allowed");
 			const authorization = request.headers.get("authorization");
 			if (!authorization?.startsWith("Bearer ") || authorization.length > 16_391) return apiError(requestId, 401, "unauthenticated", "valid bearer authentication is required");
 			const token = authorization.slice(7);
 			if (!token || /\s/u.test(token)) return apiError(requestId, 401, "unauthenticated", "valid bearer authentication is required");
 			const principal = await this.#authenticator.authenticate(token);
-			if (!principal || !principal.id || principal.id.length > 256) return apiError(requestId, 401, "unauthenticated", "valid bearer authentication is required");
+			if (!principal || typeof principal.id !== "string" || !CRD_OWNER.test(principal.id) || !withinCodePointLimit(principal.id, 256)) return apiError(requestId, 401, "unauthenticated", "valid bearer authentication is required");
 			const selectedVersion = request.headers.get("t4-api-version");
 			if (!selectedVersion || selectedVersion.length > 16 || !VERSION.test(selectedVersion)) return apiError(requestId, 400, "invalid_request", "T4-API-Version is required and must be valid");
 			if (selectedVersion.split(".", 1)[0] !== "1") return apiError(requestId, 406, "incompatible_version", "requested API major is unsupported", { supportedMajors: [1] });
@@ -187,9 +237,31 @@ export class T4PublicApiV1 {
 		const contentType = request.headers.get("content-type")?.toLowerCase();
 		if (!contentType || !/^application\/json(?:\s*;\s*charset=utf-8)?$/u.test(contentType)) return { response: apiError(context.requestId, 400, "invalid_request", "request content type must be application/json") };
 		const announced = request.headers.get("content-length");
-		if (announced && (!/^[0-9]+$/u.test(announced) || Number(announced) > DISCOVERY.limits.commandRequestBytesMax)) return { response: apiError(context.requestId, 400, "invalid_request", "request body exceeds the maximum size") };
-		const text = await request.text();
-		if (encoder.encode(text).byteLength > DISCOVERY.limits.commandRequestBytesMax) return { response: apiError(context.requestId, 400, "invalid_request", "request body exceeds the maximum size") };
+		if (announced && (!/^[0-9]+$/u.test(announced) || Number(announced) > DISCOVERY.limits.commandRequestBytesMax)) {
+			await request.body?.cancel().catch(() => undefined);
+			return { response: apiError(context.requestId, 400, "invalid_request", "request body exceeds the maximum size") };
+		}
+		const reader = request.body?.getReader();
+		const decoder = new TextDecoder();
+		let bytesRead = 0;
+		let text = "";
+		if (reader) {
+			try {
+				while (true) {
+					const chunk = await reader.read();
+					if (chunk.done) break;
+					bytesRead += chunk.value.byteLength;
+					if (bytesRead > DISCOVERY.limits.commandRequestBytesMax) {
+						await reader.cancel().catch(() => undefined);
+						return { response: apiError(context.requestId, 400, "invalid_request", "request body exceeds the maximum size") };
+					}
+					text += decoder.decode(chunk.value, { stream: true });
+				}
+				text += decoder.decode();
+			} finally {
+				reader.releaseLock();
+			}
+		}
 		let value: unknown;
 		try { value = JSON.parse(text); } catch { return { response: apiError(context.requestId, 400, "invalid_request", "request body is malformed JSON") }; }
 		return value && typeof value === "object" && !Array.isArray(value)
@@ -317,15 +389,21 @@ export class T4PublicApiV1 {
 	}
 	async #events(request: Request, url: URL, sessionId: string, context: ApiContext): Promise<Response> {
 		const forbidden = this.#requireScope(context, "events.read"); if (forbidden) return forbidden;
+		if (!acceptsEventStream(request.headers.get("accept"))) return apiError(context.requestId, 406, "invalid_request", "Accept must allow text/event-stream");
 		const maxEvents = integerQuery(url.searchParams.get("maxEvents"), 100, 1, DISCOVERY.limits.watchEventsMax);
 		const heartbeat = integerQuery(url.searchParams.get("heartbeatSeconds"), DISCOVERY.limits.heartbeatSeconds, 5, 60);
 		if (!maxEvents || !heartbeat) return this.#validation(context, "watch bounds are invalid");
+		const hasQueryCursor = url.searchParams.has("cursor");
 		const queryCursor = url.searchParams.get("cursor");
 		const headerCursor = request.headers.get("last-event-id");
-		if (queryCursor && headerCursor && queryCursor !== headerCursor) return apiError(context.requestId, 400, "invalid_request", "cursor and Last-Event-ID must agree");
+		if ((hasQueryCursor && !queryCursor) || (headerCursor !== null && !headerCursor)) return this.#validation(context, "watch cursor is invalid for this identity and session");
+		if (hasQueryCursor && headerCursor !== null && queryCursor !== headerCursor) return apiError(context.requestId, 400, "invalid_request", "cursor and Last-Event-ID must agree");
 		let window;
 		try { window = await this.#ledger.eventWindow(context.principal.id, sessionId, queryCursor ?? headerCursor ?? undefined, maxEvents); }
-		catch { return this.#validation(context, "watch cursor is invalid for this identity and session"); }
+		catch (error) {
+			if (error instanceof Error && error.message === "invalid_cursor") return this.#validation(context, "watch cursor is invalid for this identity and session");
+			throw error;
+		}
 		if (!window) return notFound(context.requestId);
 		if (window.expired) return apiError(context.requestId, 410, "cursor_expired", "watch cursor is outside retained history", { resync: { snapshotUrl: `/v1/sessions/${sessionId}/snapshot`, cursor: window.resyncCursor } });
 		const frames: string[] = [];

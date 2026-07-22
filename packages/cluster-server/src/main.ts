@@ -46,35 +46,38 @@ export async function runClusterServer(env: Readonly<Record<string, string | und
 	let ciProjection: CiProjectionRunner | undefined;
 	let servers: ClusterHttpServers | undefined;
 	let ledger: PostgresLedger | undefined;
+	let publicApi: T4PublicApiV1 | undefined;
 	let outboxAbort: AbortController | undefined;
 	let outboxTask: Promise<void> | undefined;
 	let signalsInstalled = false;
 	try {
-		if (!config.postgres || !config.publicApiCredentialsFile) throw new Error("public API durable storage configuration is required");
-		const [databaseUrl, publicApiSecrets] = await Promise.all([
-			loadPostgresUrl(config),
-			loadPublicApiSecrets(config.publicApiCredentialsFile),
-		]);
-		ledger = new PostgresLedger({ url: databaseUrl, cursorSecret: publicApiSecrets.cursorSecret });
-		await ledger.migrate();
-		const publicApi = new T4PublicApiV1({ ledger, authenticator: publicApiSecrets.authenticator });
-		const outbox = new DurableOutboxWorker({
-			ledger,
-			ownerId: config.epoch,
-			applier: new PublicKubernetesOutboxApplier({ client: kubernetes, hostRef: config.hostName }),
-		});
-		outboxAbort = new AbortController();
-		outboxTask = (async () => {
-			while (!outboxAbort!.signal.aborted) {
-				try {
-					await outbox.acquireLease();
-					await outbox.drain();
-				} catch (error) {
-					logger.warn("durable outbox recovery retrying", { condition: error instanceof Error ? error.name : "unknown", result: "failure" });
+		if (config.postgres) {
+			if (!config.publicApiCredentialsFile || !config.publicApiRuntimeProfile) throw new Error("public API durable storage configuration is incomplete");
+			const [databaseUrl, publicApiSecrets] = await Promise.all([
+				loadPostgresUrl(config),
+				loadPublicApiSecrets(config.publicApiCredentialsFile),
+			]);
+			ledger = new PostgresLedger({ url: databaseUrl, cursorSecret: publicApiSecrets.cursorSecret });
+			await ledger.migrate();
+			publicApi = new T4PublicApiV1({ ledger, authenticator: publicApiSecrets.authenticator, allowedOrigins: () => projection.allowedOrigins() });
+			const outbox = new DurableOutboxWorker({
+				ledger,
+				ownerId: config.epoch,
+				applier: new PublicKubernetesOutboxApplier({ client: kubernetes, hostRef: config.hostName, runtimeProfile: config.publicApiRuntimeProfile }),
+			});
+			outboxAbort = new AbortController();
+			outboxTask = (async () => {
+				while (!outboxAbort!.signal.aborted) {
+					try {
+						await outbox.acquireLease();
+						await outbox.drain();
+					} catch (error) {
+						logger.warn("durable outbox recovery retrying", { condition: error instanceof Error ? error.name : "unknown", result: "failure" });
+					}
+					if (!outboxAbort!.signal.aborted) await Bun.sleep(1_000);
 				}
-				if (!outboxAbort!.signal.aborted) await Bun.sleep(1_000);
-			}
-		})();
+			})();
+		}
 		await runner.start();
 		const connector = new WebSocketPodHostConnector({ identityTokenFile: config.identityTokenPath });
 		authority = new SessionAuthorityRunner({
@@ -100,7 +103,7 @@ export async function runClusterServer(env: Readonly<Record<string, string | und
 		});
 		servers = startClusterHttpServers({
 			gateway,
-			publicApi,
+			...(publicApi ? { publicApi } : {}),
 			projection,
 			gatewayPort: config.gatewayPort,
 			adminPort: config.adminPort,

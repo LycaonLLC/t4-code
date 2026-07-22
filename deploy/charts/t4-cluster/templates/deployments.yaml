@@ -1,4 +1,5 @@
 {{- if .Values.enabled }}
+{{- include "t4-cluster.validatePublicApi" . -}}
 {{- if eq .Values.session.omp.modelsKey .Values.session.omp.settingsKey }}
 {{- fail "session.omp.modelsKey and session.omp.settingsKey must be different" }}
 {{- end }}
@@ -258,11 +259,13 @@ spec:
               valueFrom: {fieldRef: {fieldPath: metadata.name}}
             - name: POD_UID
               valueFrom: {fieldRef: {fieldPath: metadata.uid}}
-            {{- if .Values.durableGateway.existingSecret }}
+            {{- if .Values.publicApi.enabled }}
             - name: T4_POSTGRES_URL_FILE
-              value: /var/run/secrets/t4-durable-gateway/postgres-url
+              value: /var/run/secrets/t4-public-api/postgres-url
             - name: T4_PUBLIC_API_CREDENTIALS_FILE
-              value: /var/run/secrets/t4-durable-gateway/public-api-credentials.json
+              value: /var/run/secrets/t4-public-api/credentials.json
+            - name: T4_PUBLIC_API_RUNTIME_PROFILE
+              value: {{ first .Values.clusterHost.runtimeProfiles | quote }}
             {{- end }}
             {{- if .Values.woodpecker.existingSecret }}
             - name: T4_WOODPECKER_TOKEN
@@ -330,9 +333,9 @@ spec:
             - name: kubernetes-api-access
               mountPath: /var/run/secrets/kubernetes.io/serviceaccount
               readOnly: true
-            {{- if .Values.durableGateway.existingSecret }}
-            - name: durable-gateway
-              mountPath: /var/run/secrets/t4-durable-gateway
+            {{- if .Values.publicApi.enabled }}
+            - name: public-api
+              mountPath: /var/run/secrets/t4-public-api
               readOnly: true
             {{- end }}
             {{- if .Values.woodpecker.serviceAccountAudience }}
@@ -362,16 +365,16 @@ spec:
                   items:
                     - key: ca.crt
                       path: ca.crt
-        {{- if .Values.durableGateway.existingSecret }}
-        - name: durable-gateway
+        {{- if .Values.publicApi.enabled }}
+        - name: public-api
           secret:
-            secretName: {{ .Values.durableGateway.existingSecret | quote }}
+            secretName: {{ .Values.publicApi.existingSecret | quote }}
             defaultMode: 0440
             items:
-              - key: {{ .Values.durableGateway.postgresURLKey | quote }}
+              - key: {{ .Values.publicApi.postgresURLKey | quote }}
                 path: postgres-url
-              - key: {{ .Values.durableGateway.publicAPICredentialsKey | quote }}
-                path: public-api-credentials.json
+              - key: {{ .Values.publicApi.credentialsKey | quote }}
+                path: credentials.json
         {{- end }}
         {{- if .Values.woodpecker.serviceAccountAudience }}
         - name: ci-identity

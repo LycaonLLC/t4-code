@@ -48,6 +48,7 @@ export interface OutboxClaim {
 	readonly mutation: Readonly<Record<string, unknown>>;
 	readonly ownerId: string;
 	readonly ownerEpoch: bigint;
+	readonly expiresAt: number;
 }
 export interface OwnerLease {
 	readonly ownerId: string;
@@ -73,6 +74,7 @@ interface SessionRow {
 	readonly revision: bigint;
 	readonly labels: Record<string, string>;
 	readonly cancellation_requested: boolean;
+	readonly deletion_requested: boolean;
 }
 interface EventRow {
 	readonly sequence: bigint;
@@ -80,7 +82,8 @@ interface EventRow {
 	readonly payload: Record<string, unknown>;
 }
 interface RetentionRow { readonly first_retained_sequence: bigint; readonly latest_sequence: bigint; }
-interface LeaseRow { readonly owner_id: string; readonly epoch: bigint; }
+interface LeaseRow { readonly owner_id: string; readonly epoch: bigint; readonly expired: boolean; }
+interface LeaseClaimRow extends LeaseRow { readonly expires_at_ms: bigint; }
 interface OutboxRow {
 	readonly outbox_id: bigint;
 	readonly command_id: string;
@@ -96,6 +99,7 @@ const MIGRATION_URL = new URL("../migrations/001_durable_gateway.sql", import.me
 const ROLLBACK_URL = new URL("../migrations/001_durable_gateway.down.sql", import.meta.url);
 const OUTBOX_LEASE = "gateway-outbox";
 const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+const SERIALIZABLE_ATTEMPTS = 3;
 
 function persistedBigint(value: unknown, allowZero = false): bigint {
 	if (typeof value !== "bigint") throw new Error("persisted ledger bigint is invalid");
@@ -148,7 +152,7 @@ export class PostgresLedger {
 
 	async migrate(): Promise<void> {
 		const migration = await Bun.file(MIGRATION_URL).text();
-		await this.#sql.begin("ISOLATION LEVEL SERIALIZABLE", async transaction => {
+		await this.#serializable(async transaction => {
 			await transaction`SELECT pg_advisory_xact_lock(741405)`;
 			await transaction.unsafe(migration);
 		});
@@ -157,7 +161,7 @@ export class PostgresLedger {
 	}
 	async rollback(): Promise<void> {
 		const rollback = await Bun.file(ROLLBACK_URL).text();
-		await this.#sql.begin("ISOLATION LEVEL SERIALIZABLE", async transaction => {
+		await this.#serializable(async transaction => {
 			await transaction`SELECT pg_advisory_xact_lock(741405)`;
 			await transaction.unsafe(rollback);
 		});
@@ -165,7 +169,8 @@ export class PostgresLedger {
 	async close(): Promise<void> { await this.#sql.close(); }
 
 	async createWorkspace(principalId: string, idempotencyKey: string, fingerprint: string, input: { name: string; labels?: Record<string, string> }): Promise<LedgerMutationResult<WorkspaceRecord>> {
-		return await this.#sql.begin("ISOLATION LEVEL SERIALIZABLE", async transaction => {
+		return await this.#serializable(async transaction => {
+			await this.#lockIdempotency(transaction, principalId, "createWorkspace", "workspaces", idempotencyKey);
 			const prior = await transaction<CommandRow[]>`SELECT fingerprint, response_body FROM t4_commands WHERE principal_id = ${principalId} AND operation = 'createWorkspace' AND target_scope = 'workspaces' AND idempotency_key = ${idempotencyKey} FOR UPDATE`;
 			if (prior[0]) return prior[0].fingerprint === fingerprint
 				? { kind: "replay", value: prior[0].response_body as WorkspaceRecord }
@@ -192,14 +197,15 @@ export class PostgresLedger {
 	}
 
 	async patchWorkspace(principalId: string, workspaceId: string, expectedRevision: number, idempotencyKey: string, fingerprint: string, input: { name?: string; labels?: Record<string, string> }): Promise<LedgerMutationResult<WorkspaceRecord>> {
-		return await this.#sql.begin("ISOLATION LEVEL SERIALIZABLE", async transaction => {
+		return await this.#serializable(async transaction => {
+			const scope = `workspace:${workspaceId}`;
+			await this.#lockIdempotency(transaction, principalId, "mutateWorkspace", scope, idempotencyKey);
+			const prior = await transaction<CommandRow[]>`SELECT fingerprint, response_body FROM t4_commands WHERE principal_id = ${principalId} AND operation = 'mutateWorkspace' AND target_scope = ${scope} AND idempotency_key = ${idempotencyKey} FOR UPDATE`;
+			if (prior[0]) return prior[0].fingerprint === fingerprint ? { kind: "replay", value: prior[0].response_body as WorkspaceRecord } : { kind: "idempotency_conflict" };
 			const rows = await transaction<WorkspaceRow[]>`SELECT workspace_id, name, state, revision, labels FROM t4_workspace_intents WHERE principal_id = ${principalId} AND workspace_id = ${workspaceId} AND state <> 'deleted' FOR UPDATE`;
 			const current = rows[0];
 			if (!current) return { kind: "not_found" };
 			if (current.revision !== BigInt(expectedRevision)) return { kind: "revision_conflict" };
-			const scope = `workspace:${workspaceId}`;
-			const prior = await transaction<CommandRow[]>`SELECT fingerprint, response_body FROM t4_commands WHERE principal_id = ${principalId} AND operation = 'mutateWorkspace' AND target_scope = ${scope} AND idempotency_key = ${idempotencyKey} FOR UPDATE`;
-			if (prior[0]) return prior[0].fingerprint === fingerprint ? { kind: "replay", value: prior[0].response_body as WorkspaceRecord } : { kind: "idempotency_conflict" };
 			const revision = current.revision + 1n;
 			const value: WorkspaceRecord = { id: workspaceId, name: input.name ?? current.name, state: current.state, revision: safeNumber(revision), ...(input.labels ?? labels(current.labels) ? { labels: input.labels ?? current.labels } : {}) };
 			const commandId = `cmd_${randomUUID()}`;
@@ -211,8 +217,9 @@ export class PostgresLedger {
 	}
 
 	async deleteWorkspace(principalId: string, workspaceId: string, idempotencyKey: string, fingerprint: string): Promise<LedgerMutationResult<undefined>> {
-		return await this.#sql.begin("ISOLATION LEVEL SERIALIZABLE", async transaction => {
+		return await this.#serializable(async transaction => {
 			const scope = `workspace:${workspaceId}`;
+			await this.#lockIdempotency(transaction, principalId, "deleteWorkspace", scope, idempotencyKey);
 			const prior = await transaction<CommandRow[]>`SELECT fingerprint, response_body FROM t4_commands WHERE principal_id = ${principalId} AND operation = 'deleteWorkspace' AND target_scope = ${scope} AND idempotency_key = ${idempotencyKey} FOR UPDATE`;
 			if (prior[0]) return prior[0].fingerprint === fingerprint ? { kind: "replay" } : { kind: "idempotency_conflict" };
 			const rows = await transaction<WorkspaceRow[]>`SELECT workspace_id, name, state, revision, labels FROM t4_workspace_intents WHERE principal_id = ${principalId} AND workspace_id = ${workspaceId} AND state <> 'deleted' FOR UPDATE`;
@@ -227,19 +234,20 @@ export class PostgresLedger {
 	}
 
 	async createSession(principalId: string, workspaceId: string, idempotencyKey: string, fingerprint: string, input: { title: string; labels?: Record<string, string> }): Promise<LedgerMutationResult<SessionRecord>> {
-		return await this.#sql.begin("ISOLATION LEVEL SERIALIZABLE", async transaction => {
-			const workspaceRows = await transaction<{ workspace_id: string }[]>`SELECT workspace_id FROM t4_workspace_intents WHERE principal_id = ${principalId} AND workspace_id = ${workspaceId} AND state NOT IN ('deleting','deleted') FOR UPDATE`;
-			if (!workspaceRows[0]) return { kind: "not_found" };
+		return await this.#serializable(async transaction => {
 			const scope = `workspace:${workspaceId}:sessions`;
+			await this.#lockIdempotency(transaction, principalId, "spawnSession", scope, idempotencyKey);
 			const prior = await transaction<CommandRow[]>`SELECT fingerprint, response_body FROM t4_commands WHERE principal_id = ${principalId} AND operation = 'spawnSession' AND target_scope = ${scope} AND idempotency_key = ${idempotencyKey} FOR UPDATE`;
 			if (prior[0]) return prior[0].fingerprint === fingerprint ? { kind: "replay", value: prior[0].response_body as SessionRecord } : { kind: "idempotency_conflict" };
+			const workspaceRows = await transaction<{ workspace_id: string }[]>`SELECT workspace_id FROM t4_workspace_intents WHERE principal_id = ${principalId} AND workspace_id = ${workspaceId} AND state NOT IN ('deleting','deleted') FOR UPDATE`;
+			if (!workspaceRows[0]) return { kind: "not_found" };
 			const commandId = `cmd_${randomUUID()}`;
 			const sessionId = `ss-${randomUUID()}`;
 			const value: SessionRecord = { id: sessionId, workspaceId, title: input.title, state: "accepted", revision: 1, ...(input.labels ? { labels: input.labels } : {}) };
 			await transaction`INSERT INTO t4_commands (command_id, principal_id, operation, target_scope, idempotency_key, fingerprint, lifecycle_state, response_status, response_body) VALUES (${commandId}, ${principalId}, 'spawnSession', ${scope}, ${idempotencyKey}, ${fingerprint}, 'accepted', 202, ${value})`;
 			await transaction`INSERT INTO t4_session_intents (session_id, workspace_id, principal_id, title, labels, state, revision, generation) VALUES (${sessionId}, ${workspaceId}, ${principalId}, ${input.title}, ${input.labels ?? {}}, 'accepted', 1, 1)`;
 			await transaction`INSERT INTO t4_outbox (command_id, principal_id, idempotency_key, mutation_kind, target_id, target_revision, mutation) VALUES (${commandId}, ${principalId}, ${idempotencyKey}, 'session.create', ${sessionId}, 1, ${value})`;
-			await this.#appendEvent(transaction as unknown as SQL, principalId, sessionId, "session", { state: "accepted", revision: 1 }, 0n);
+			await this.#appendEvent(transaction, principalId, sessionId, "session", { state: "accepted", revision: 1 }, 0n);
 			return { kind: "accepted", commandId, value };
 		});
 	}
@@ -257,34 +265,48 @@ export class PostgresLedger {
 	}
 
 	async patchSession(principalId: string, sessionId: string, expectedRevision: number, idempotencyKey: string, fingerprint: string, input: { title?: string; labels?: Record<string, string> }): Promise<LedgerMutationResult<SessionRecord>> {
-		return await this.#sql.begin("ISOLATION LEVEL SERIALIZABLE", async transaction => {
-			const rows = await transaction<SessionRow[]>`SELECT session_id, workspace_id, title, state, revision, labels, cancellation_requested FROM t4_session_intents WHERE principal_id = ${principalId} AND session_id = ${sessionId} FOR UPDATE`;
+		return await this.#serializable(async transaction => {
+			const scope = `session:${sessionId}`;
+			await this.#lockIdempotency(transaction, principalId, "mutateSession", scope, idempotencyKey);
+			const prior = await transaction<CommandRow[]>`SELECT fingerprint, response_body FROM t4_commands WHERE principal_id = ${principalId} AND operation = 'mutateSession' AND target_scope = ${scope} AND idempotency_key = ${idempotencyKey} FOR UPDATE`;
+			if (prior[0]) return prior[0].fingerprint === fingerprint ? { kind: "replay", value: prior[0].response_body as SessionRecord } : { kind: "idempotency_conflict" };
+			const rows = await transaction<SessionRow[]>`SELECT session_id, workspace_id, title, state, revision, labels, cancellation_requested FROM t4_session_intents WHERE principal_id = ${principalId} AND session_id = ${sessionId} AND state NOT IN ('cancelling','cancelled','failed','unavailable','indeterminate') FOR UPDATE`;
 			const current = rows[0];
 			if (!current) return { kind: "not_found" };
 			if (current.revision !== BigInt(expectedRevision)) return { kind: "revision_conflict" };
-			const scope = `session:${sessionId}`;
-			const prior = await transaction<CommandRow[]>`SELECT fingerprint, response_body FROM t4_commands WHERE principal_id = ${principalId} AND operation = 'mutateSession' AND target_scope = ${scope} AND idempotency_key = ${idempotencyKey} FOR UPDATE`;
-			if (prior[0]) return prior[0].fingerprint === fingerprint ? { kind: "replay", value: prior[0].response_body as SessionRecord } : { kind: "idempotency_conflict" };
 			const revision = current.revision + 1n;
 			const value: SessionRecord = { id: sessionId, workspaceId: current.workspace_id, title: input.title ?? current.title, state: current.state, revision: safeNumber(revision), ...(input.labels ?? labels(current.labels) ? { labels: input.labels ?? current.labels } : {}) };
 			const commandId = `cmd_${randomUUID()}`;
 			await transaction`INSERT INTO t4_commands (command_id, principal_id, operation, target_scope, idempotency_key, fingerprint, lifecycle_state, response_status, response_body) VALUES (${commandId}, ${principalId}, 'mutateSession', ${scope}, ${idempotencyKey}, ${fingerprint}, 'accepted', 200, ${value})`;
 			await transaction`UPDATE t4_session_intents SET title = ${value.title}, labels = ${value.labels ?? {}}, revision = ${revision}, generation = generation + 1, updated_at = clock_timestamp() WHERE session_id = ${sessionId}`;
 			await transaction`INSERT INTO t4_outbox (command_id, principal_id, idempotency_key, mutation_kind, target_id, target_revision, mutation) VALUES (${commandId}, ${principalId}, ${idempotencyKey}, 'session.patch', ${sessionId}, ${revision}, ${value})`;
-			await this.#appendEvent(transaction as unknown as SQL, principalId, sessionId, "session", { state: value.state, revision: value.revision }, 0n);
+			await this.#appendEvent(transaction, principalId, sessionId, "session", { state: value.state, revision: value.revision }, 0n);
 			return { kind: "accepted", commandId, value };
 		});
 	}
 
 	async cancelSession(principalId: string, sessionId: string, idempotencyKey: string, fingerprint: string, deletion = false): Promise<LedgerMutationResult<SessionRecord>> {
-		return await this.#sql.begin("ISOLATION LEVEL SERIALIZABLE", async transaction => {
+		return await this.#serializable(async transaction => {
 			const operation = deletion ? "deleteSession" : "cancelSession";
 			const scope = `session:${sessionId}`;
+			await this.#lockIdempotency(transaction, principalId, operation, scope, idempotencyKey);
 			const prior = await transaction<CommandRow[]>`SELECT fingerprint, response_body FROM t4_commands WHERE principal_id = ${principalId} AND operation = ${operation} AND target_scope = ${scope} AND idempotency_key = ${idempotencyKey} FOR UPDATE`;
 			if (prior[0]) return prior[0].fingerprint === fingerprint ? { kind: "replay", value: prior[0].response_body as SessionRecord } : { kind: "idempotency_conflict" };
-			const rows = await transaction<SessionRow[]>`SELECT session_id, workspace_id, title, state, revision, labels, cancellation_requested FROM t4_session_intents WHERE principal_id = ${principalId} AND session_id = ${sessionId} FOR UPDATE`;
+			const rows = await transaction<SessionRow[]>`SELECT session_id, workspace_id, title, state, revision, labels, cancellation_requested, deletion_requested FROM t4_session_intents WHERE principal_id = ${principalId} AND session_id = ${sessionId} FOR UPDATE`;
 			const current = rows[0];
 			if (!current) return { kind: "not_found" };
+			if (current.cancellation_requested || current.state === "cancelling" || current.state === "cancelled" || current.state === "failed" || current.state === "unavailable" || current.state === "indeterminate") {
+				const value = session(current);
+				const commandId = `cmd_${randomUUID()}`;
+				const dispatchDeletion = deletion && !current.deletion_requested;
+				await transaction`INSERT INTO t4_commands (command_id, principal_id, operation, target_scope, idempotency_key, fingerprint, lifecycle_state, response_status, response_body) VALUES (${commandId}, ${principalId}, ${operation}, ${scope}, ${idempotencyKey}, ${fingerprint}, ${dispatchDeletion ? "accepted" : "completed"}, ${deletion ? 204 : 202}, ${value})`;
+				if (dispatchDeletion) {
+					await transaction`UPDATE t4_session_intents SET deletion_requested = true, generation = generation + 1, updated_at = clock_timestamp() WHERE session_id = ${sessionId}`;
+					await transaction`INSERT INTO t4_outbox (command_id, principal_id, idempotency_key, mutation_kind, target_id, target_revision, mutation) VALUES (${commandId}, ${principalId}, ${idempotencyKey}, 'session.delete', ${sessionId}, ${current.revision}, ${{ sessionId, revision: safeNumber(current.revision) }})`;
+				}
+				await this.#appendEvent(transaction, principalId, sessionId, "session", { state: current.state, revision: safeNumber(current.revision) }, 0n);
+				return { kind: "accepted", commandId, value };
+			}
 			const revision = current.revision + 1n;
 			const value: SessionRecord = { id: sessionId, workspaceId: current.workspace_id, title: current.title, state: "cancelling", revision: safeNumber(revision), ...(labels(current.labels) ? { labels: current.labels } : {}) };
 			const commandId = `cmd_${randomUUID()}`;
@@ -292,54 +314,62 @@ export class PostgresLedger {
 			await transaction`UPDATE t4_session_intents SET state = 'cancelling', cancellation_requested = true, deletion_requested = deletion_requested OR ${deletion}, revision = ${revision}, generation = generation + 1, updated_at = clock_timestamp() WHERE session_id = ${sessionId}`;
 			await transaction`UPDATE t4_outbox SET state = 'skipped', terminal_result = ${{ reason: "superseded by cancellation" }}, updated_at = clock_timestamp() WHERE target_id = ${sessionId} AND mutation_kind = 'session.create' AND state IN ('pending','claimed')`;
 			await transaction`INSERT INTO t4_outbox (command_id, principal_id, idempotency_key, mutation_kind, target_id, target_revision, mutation) VALUES (${commandId}, ${principalId}, ${idempotencyKey}, ${deletion ? "session.delete" : "session.cancel"}, ${sessionId}, ${revision}, ${{ sessionId, revision: safeNumber(revision) }})`;
-			await this.#appendEvent(transaction as unknown as SQL, principalId, sessionId, "session", { state: "cancelling", revision: safeNumber(revision) }, 0n);
+			await this.#appendEvent(transaction, principalId, sessionId, "session", { state: "cancelling", revision: safeNumber(revision) }, 0n);
 			return { kind: "accepted", commandId, value };
 		});
 	}
 
 	async submitCommand(principalId: string, sessionId: string, idempotencyKey: string, fingerprint: string, input: { command: string; metadata: Record<string, string | number | boolean | null> }): Promise<LedgerMutationResult<{ commandId: string; state: "accepted" }>> {
-		return await this.#sql.begin("ISOLATION LEVEL SERIALIZABLE", async transaction => {
-			const sessionRows = await transaction<{ session_id: string }[]>`SELECT session_id FROM t4_session_intents WHERE principal_id = ${principalId} AND session_id = ${sessionId} AND state NOT IN ('cancelling','cancelled') FOR UPDATE`;
-			if (!sessionRows[0]) return { kind: "not_found" };
+		return await this.#serializable(async transaction => {
 			const scope = `session:${sessionId}:commands`;
+			await this.#lockIdempotency(transaction, principalId, "submitCommand", scope, idempotencyKey);
 			const prior = await transaction<CommandRow[]>`SELECT fingerprint, response_body FROM t4_commands WHERE principal_id = ${principalId} AND operation = 'submitCommand' AND target_scope = ${scope} AND idempotency_key = ${idempotencyKey} FOR UPDATE`;
 			if (prior[0]) return prior[0].fingerprint === fingerprint ? { kind: "replay", value: prior[0].response_body as { commandId: string; state: "accepted" } } : { kind: "idempotency_conflict" };
+			const sessionRows = await transaction<{ session_id: string }[]>`SELECT session_id FROM t4_session_intents WHERE principal_id = ${principalId} AND session_id = ${sessionId} AND state NOT IN ('cancelling','cancelled','failed','unavailable','indeterminate') FOR UPDATE`;
+			if (!sessionRows[0]) return { kind: "not_found" };
 			const commandId = `cmd_${randomUUID()}`;
 			const value = { commandId, state: "accepted" as const };
 			await transaction`INSERT INTO t4_commands (command_id, principal_id, operation, target_scope, idempotency_key, fingerprint, lifecycle_state, response_status, response_body) VALUES (${commandId}, ${principalId}, 'submitCommand', ${scope}, ${idempotencyKey}, ${fingerprint}, 'accepted', 202, ${value})`;
 			await transaction`INSERT INTO t4_outbox (command_id, principal_id, idempotency_key, mutation_kind, target_id, target_revision, mutation) SELECT ${commandId}, ${principalId}, ${idempotencyKey}, 'command.submit', ${sessionId}, revision, ${{ sessionId, ...input }} FROM t4_session_intents WHERE session_id = ${sessionId}`;
 			const entryRows = await transaction<{ next: bigint }[]>`SELECT COALESCE(MAX(entry_sequence), -1) + 1 AS next FROM t4_snapshot_entries WHERE principal_id = ${principalId} AND session_id = ${sessionId}`;
 			await transaction`INSERT INTO t4_snapshot_entries (principal_id, session_id, entry_sequence, kind, text_value) VALUES (${principalId}, ${sessionId}, ${entryRows[0]?.next ?? 0n}, 'input', ${input.command})`;
-			await this.#appendEvent(transaction as unknown as SQL, principalId, sessionId, "command", { commandId, state: "accepted" }, 0n);
+			await this.#appendEvent(transaction, principalId, sessionId, "command", { commandId, state: "accepted" }, 0n);
 			return { kind: "accepted", commandId, value };
 		});
 	}
 
 	async snapshot(principalId: string, sessionId: string): Promise<{ session: SessionRecord; cursor: string; entries: readonly { sequence: number; kind: "input" | "output" | "status"; text: string }[] } | undefined> {
-		const current = await this.getSession(principalId, sessionId);
-		if (!current) return undefined;
-		const rows = await this.#sql<{ entry_sequence: bigint; kind: "input" | "output" | "status"; text_value: string }[]>`SELECT entry_sequence, kind, text_value FROM t4_snapshot_entries WHERE principal_id = ${principalId} AND session_id = ${sessionId} ORDER BY entry_sequence DESC LIMIT 1000`;
-		const retention = await this.#sql<RetentionRow[]>`SELECT first_retained_sequence, latest_sequence FROM t4_event_retention WHERE principal_id = ${principalId} AND session_id = ${sessionId}`;
-		const latest = retention[0] ? persistedBigint(retention[0].latest_sequence, true) : 0n;
-		return { session: current, cursor: this.watchCursor(principalId, sessionId, latest), entries: rows.reverse().map(row => ({ sequence: safeNumber(row.entry_sequence, true), kind: row.kind, text: row.text_value })) };
+		return await this.#sql.begin("ISOLATION LEVEL REPEATABLE READ", async rawTransaction => {
+			const transaction = rawTransaction as unknown as SQL;
+			const sessionRows = await transaction<SessionRow[]>`SELECT session_id, workspace_id, title, state, revision, labels, cancellation_requested FROM t4_session_intents WHERE principal_id = ${principalId} AND session_id = ${sessionId}`;
+			if (!sessionRows[0]) return undefined;
+			const rows = await transaction<{ entry_sequence: bigint; kind: "input" | "output" | "status"; text_value: string }[]>`SELECT entry_sequence, kind, text_value FROM t4_snapshot_entries WHERE principal_id = ${principalId} AND session_id = ${sessionId} ORDER BY entry_sequence DESC LIMIT 1000`;
+			const retention = await transaction<RetentionRow[]>`SELECT first_retained_sequence, latest_sequence FROM t4_event_retention WHERE principal_id = ${principalId} AND session_id = ${sessionId}`;
+			const latest = retention[0] ? persistedBigint(retention[0].latest_sequence, true) : 0n;
+			return { session: session(sessionRows[0]), cursor: this.watchCursor(principalId, sessionId, latest), entries: rows.reverse().map(row => ({ sequence: safeNumber(row.entry_sequence, true), kind: row.kind, text: row.text_value })) };
+		});
 	}
 
 	async eventWindow(principalId: string, sessionId: string, cursor: string | undefined, limit: number): Promise<EventWindow | undefined> {
-		if (!await this.getSession(principalId, sessionId)) return undefined;
-		const retentionRows = await this.#sql<RetentionRow[]>`SELECT first_retained_sequence, latest_sequence FROM t4_event_retention WHERE principal_id = ${principalId} AND session_id = ${sessionId}`;
-		const first = retentionRows[0] ? persistedBigint(retentionRows[0].first_retained_sequence, true) : 0n;
-		const latest = retentionRows[0] ? persistedBigint(retentionRows[0].latest_sequence, true) : 0n;
 		let after = 0n;
 		if (cursor) {
 			const decoded = this.#decodeCursor(cursor, "watch", principalId, sessionId);
 			if (typeof decoded !== "bigint") throw new Error("invalid_cursor");
 			after = decoded;
 		}
-		const resyncCursor = this.watchCursor(principalId, sessionId, latest);
-		if (first > 0n && after < first - 1n) return { events: [], cursor: resyncCursor, expired: true, resyncCursor };
-		const rows = await this.#sql<EventRow[]>`SELECT sequence, event_type, payload FROM t4_events WHERE principal_id = ${principalId} AND session_id = ${sessionId} AND sequence > ${after} ORDER BY sequence LIMIT ${limit}`;
-		const delivered = rows.at(-1) ? persistedBigint(rows.at(-1)!.sequence) : after;
-		return { events: rows.map(row => ({ sequence: persistedBigint(row.sequence), type: row.event_type, payload: row.payload })), cursor: this.watchCursor(principalId, sessionId, delivered), expired: false, resyncCursor };
+		return await this.#sql.begin("ISOLATION LEVEL REPEATABLE READ", async rawTransaction => {
+			const transaction = rawTransaction as unknown as SQL;
+			const sessionRows = await transaction<{ session_id: string }[]>`SELECT session_id FROM t4_session_intents WHERE principal_id = ${principalId} AND session_id = ${sessionId}`;
+			if (!sessionRows[0]) return undefined;
+			const retentionRows = await transaction<RetentionRow[]>`SELECT first_retained_sequence, latest_sequence FROM t4_event_retention WHERE principal_id = ${principalId} AND session_id = ${sessionId}`;
+			const first = retentionRows[0] ? persistedBigint(retentionRows[0].first_retained_sequence, true) : 0n;
+			const latest = retentionRows[0] ? persistedBigint(retentionRows[0].latest_sequence, true) : 0n;
+			const resyncCursor = this.watchCursor(principalId, sessionId, latest);
+			if (first > 0n && after < first - 1n) return { events: [], cursor: resyncCursor, expired: true, resyncCursor };
+			const rows = await transaction<EventRow[]>`SELECT sequence, event_type, payload FROM t4_events WHERE principal_id = ${principalId} AND session_id = ${sessionId} AND sequence > ${after} ORDER BY sequence LIMIT ${limit}`;
+			const delivered = rows.at(-1) ? persistedBigint(rows.at(-1)!.sequence) : after;
+			return { events: rows.map(row => ({ sequence: persistedBigint(row.sequence), type: row.event_type, payload: row.payload })), cursor: this.watchCursor(principalId, sessionId, delivered), expired: false, resyncCursor };
+		});
 	}
 
 	watchCursor(principalId: string, sessionId: string, sequence: bigint): string { return this.#cursor("watch", principalId, sessionId, sequence); }
@@ -350,17 +380,24 @@ export class PostgresLedger {
 	}
 
 	async acquireLease(ownerId: string, leaseSeconds = 30): Promise<OwnerLease> {
-		const rows = await this.#sql.begin("ISOLATION LEVEL SERIALIZABLE", async transaction => {
-			await transaction`INSERT INTO t4_owner_leases (lease_name, owner_id, epoch, expires_at) VALUES (${OUTBOX_LEASE}, ${ownerId}, 1, clock_timestamp() + (${leaseSeconds} * interval '1 second')) ON CONFLICT (lease_name) DO UPDATE SET owner_id = EXCLUDED.owner_id, epoch = t4_owner_leases.epoch + 1, expires_at = EXCLUDED.expires_at, updated_at = clock_timestamp()`;
-			return await transaction<LeaseRow[]>`SELECT owner_id, epoch FROM t4_owner_leases WHERE lease_name = ${OUTBOX_LEASE}`;
+		const rows = await this.#serializable(async transaction => {
+			const current = await transaction<LeaseRow[]>`SELECT owner_id, epoch, expires_at <= clock_timestamp() AS expired FROM t4_owner_leases WHERE lease_name = ${OUTBOX_LEASE} FOR UPDATE`;
+			if (!current[0]) {
+				return await transaction<LeaseRow[]>`INSERT INTO t4_owner_leases (lease_name, owner_id, epoch, expires_at) VALUES (${OUTBOX_LEASE}, ${ownerId}, 1, clock_timestamp() + (${leaseSeconds} * interval '1 second')) RETURNING owner_id, epoch, false AS expired`;
+			}
+			if (current[0].owner_id === ownerId && !current[0].expired) {
+				return await transaction<LeaseRow[]>`UPDATE t4_owner_leases SET expires_at = clock_timestamp() + (${leaseSeconds} * interval '1 second'), updated_at = clock_timestamp() WHERE lease_name = ${OUTBOX_LEASE} RETURNING owner_id, epoch, false AS expired`;
+			}
+			if (!current[0].expired) throw new Error("outbox lease is held by another owner");
+			return await transaction<LeaseRow[]>`UPDATE t4_owner_leases SET owner_id = ${ownerId}, epoch = epoch + 1, expires_at = clock_timestamp() + (${leaseSeconds} * interval '1 second'), updated_at = clock_timestamp() WHERE lease_name = ${OUTBOX_LEASE} RETURNING owner_id, epoch, false AS expired`;
 		});
 		return { ownerId: rows[0]!.owner_id, epoch: persistedBigint(rows[0]!.epoch) };
 	}
 
 	async claimNext(lease: OwnerLease): Promise<OutboxClaim | undefined> {
-		return await this.#sql.begin("ISOLATION LEVEL SERIALIZABLE", async transaction => {
-			const current = await transaction<LeaseRow[]>`SELECT owner_id, epoch FROM t4_owner_leases WHERE lease_name = ${OUTBOX_LEASE} FOR UPDATE`;
-			if (current[0]?.owner_id !== lease.ownerId || current[0].epoch !== lease.epoch) return undefined;
+		return await this.#serializable(async transaction => {
+			const current = await transaction<LeaseClaimRow[]>`SELECT owner_id, epoch, expires_at <= clock_timestamp() AS expired, floor(extract(epoch FROM expires_at) * 1000)::bigint AS expires_at_ms FROM t4_owner_leases WHERE lease_name = ${OUTBOX_LEASE} FOR UPDATE`;
+			if (current[0]?.owner_id !== lease.ownerId || current[0].epoch !== lease.epoch || current[0].expired) return undefined;
 			const rows = await transaction<OutboxRow[]>`SELECT outbox_id, command_id, principal_id, idempotency_key, mutation_kind, target_id, target_revision, mutation FROM t4_outbox WHERE (state = 'pending' OR (state = 'claimed' AND owner_epoch < ${lease.epoch})) AND next_attempt_at <= clock_timestamp() ORDER BY outbox_id FOR UPDATE SKIP LOCKED LIMIT 1`;
 			const row = rows[0];
 			if (!row) return undefined;
@@ -377,7 +414,7 @@ export class PostgresLedger {
 				return undefined;
 			}
 			await transaction`UPDATE t4_outbox SET state = 'claimed', owner_id = ${lease.ownerId}, owner_epoch = ${lease.epoch}, attempts = attempts + 1, claimed_at = clock_timestamp(), updated_at = clock_timestamp() WHERE outbox_id = ${row.outbox_id}`;
-			return { outboxId: row.outbox_id, commandId: row.command_id, principalId: row.principal_id, idempotencyKey: row.idempotency_key, kind: row.mutation_kind, targetId: row.target_id, targetRevision: row.target_revision, mutation: row.mutation, ownerId: lease.ownerId, ownerEpoch: lease.epoch };
+			return { outboxId: row.outbox_id, commandId: row.command_id, principalId: row.principal_id, idempotencyKey: row.idempotency_key, kind: row.mutation_kind, targetId: row.target_id, targetRevision: row.target_revision, mutation: row.mutation, ownerId: lease.ownerId, ownerEpoch: lease.epoch, expiresAt: safeNumber(current[0].expires_at_ms) };
 		});
 	}
 
@@ -387,24 +424,40 @@ export class PostgresLedger {
 	}
 
 	async acknowledge(claim: OutboxClaim): Promise<boolean> {
-		return await this.#sql.begin("ISOLATION LEVEL SERIALIZABLE", async transaction => {
-			const lease = await transaction<LeaseRow[]>`SELECT owner_id, epoch FROM t4_owner_leases WHERE lease_name = ${OUTBOX_LEASE} FOR UPDATE`;
-			if (lease[0]?.owner_id !== claim.ownerId || lease[0].epoch !== claim.ownerEpoch) return false;
+		return await this.#serializable(async transaction => {
+			const lease = await transaction<LeaseRow[]>`SELECT owner_id, epoch, expires_at <= clock_timestamp() AS expired FROM t4_owner_leases WHERE lease_name = ${OUTBOX_LEASE} FOR UPDATE`;
+			if (lease[0]?.owner_id !== claim.ownerId || lease[0].epoch !== claim.ownerEpoch || lease[0].expired) return false;
 			const updated = await transaction<{ outbox_id: bigint }[]>`UPDATE t4_outbox SET state = 'applied', terminal_result = ${{ applied: true }}, updated_at = clock_timestamp() WHERE outbox_id = ${claim.outboxId} AND state = 'claimed' AND owner_id = ${claim.ownerId} AND owner_epoch = ${claim.ownerEpoch} RETURNING outbox_id`;
 			if (!updated[0]) return false;
 			await transaction`UPDATE t4_commands SET lifecycle_state = 'completed', updated_at = clock_timestamp() WHERE command_id = ${claim.commandId}`;
-			if (claim.kind === "workspace.create") await transaction`UPDATE t4_workspace_intents SET state = 'provisioning', updated_at = clock_timestamp() WHERE workspace_id = ${claim.targetId} AND revision = ${claim.targetRevision}`;
+			if (claim.kind === "workspace.create") await transaction`UPDATE t4_workspace_intents SET state = 'provisioning', updated_at = clock_timestamp() WHERE workspace_id = ${claim.targetId} AND revision = ${claim.targetRevision} AND state = 'accepted' AND deletion_requested = false`;
 			if (claim.kind === "session.create") {
-				await transaction`UPDATE t4_session_intents SET state = 'provisioning', updated_at = clock_timestamp() WHERE session_id = ${claim.targetId} AND revision = ${claim.targetRevision}`;
-				await this.#appendEvent(transaction as unknown as SQL, claim.principalId, claim.targetId, "session", { state: "provisioning", revision: safeNumber(claim.targetRevision) }, claim.ownerEpoch);
+				const transitioned = await transaction<{ session_id: string }[]>`UPDATE t4_session_intents SET state = 'provisioning', updated_at = clock_timestamp() WHERE session_id = ${claim.targetId} AND revision = ${claim.targetRevision} AND state = 'accepted' AND cancellation_requested = false RETURNING session_id`;
+				if (transitioned[0]) await this.#appendEvent(transaction, claim.principalId, claim.targetId, "session", { state: "provisioning", revision: safeNumber(claim.targetRevision) }, claim.ownerEpoch);
 			}
 			return true;
 		});
 	}
 
 	async recordFailure(claim: OutboxClaim, message: string): Promise<boolean> {
-		const result = await this.#sql<{ outbox_id: bigint }[]>`UPDATE t4_outbox item SET state = 'pending', owner_id = NULL, owner_epoch = NULL, last_error = ${message.slice(0, 1024)}, next_attempt_at = clock_timestamp() + interval '1 second', updated_at = clock_timestamp() FROM t4_owner_leases lease WHERE item.outbox_id = ${claim.outboxId} AND item.state = 'claimed' AND item.owner_id = ${claim.ownerId} AND item.owner_epoch = ${claim.ownerEpoch} AND lease.lease_name = ${OUTBOX_LEASE} AND lease.owner_id = ${claim.ownerId} AND lease.epoch = ${claim.ownerEpoch} RETURNING item.outbox_id`;
+		const result = await this.#sql<{ outbox_id: bigint }[]>`UPDATE t4_outbox item SET state = 'pending', owner_id = NULL, owner_epoch = NULL, last_error = ${message.slice(0, 1024)}, next_attempt_at = clock_timestamp() + interval '1 second', updated_at = clock_timestamp() FROM t4_owner_leases lease WHERE item.outbox_id = ${claim.outboxId} AND item.state = 'claimed' AND item.owner_id = ${claim.ownerId} AND item.owner_epoch = ${claim.ownerEpoch} AND lease.lease_name = ${OUTBOX_LEASE} AND lease.owner_id = ${claim.ownerId} AND lease.epoch = ${claim.ownerEpoch} AND lease.expires_at > clock_timestamp() RETURNING item.outbox_id`;
 		return result.length === 1;
+	}
+
+	async #serializable<T>(operation: (transaction: SQL) => Promise<T>): Promise<T> {
+		for (let attempt = 1; ; attempt++) {
+			try {
+				return await this.#sql.begin("ISOLATION LEVEL SERIALIZABLE", async transaction => await operation(transaction as unknown as SQL));
+			} catch (error) {
+				const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: unknown }).code : undefined;
+				if (attempt >= SERIALIZABLE_ATTEMPTS || code !== "40001" && code !== "40P01") throw error;
+			}
+		}
+	}
+
+	async #lockIdempotency(transaction: SQL, principalId: string, operation: string, scope: string, idempotencyKey: string): Promise<void> {
+		const identity = stableJson([principalId, operation, scope, idempotencyKey]);
+		await transaction`SELECT pg_advisory_xact_lock(hashtextextended(${identity}, 0))`;
 	}
 
 	#cursor(kind: "watch" | "page", principalId: string, scope: string, position: bigint | string): string {
