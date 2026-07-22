@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -154,6 +155,98 @@ status:
 			}
 			if !strings.Contains(err.Error(), test.expectedPath) {
 				t.Fatalf("validation error %q does not identify field %q", err, test.expectedPath)
+			}
+		})
+	}
+}
+
+func TestValidateObjectsRejectsLiveDataOmittedFromFixtures(t *testing.T) {
+	tests := []struct {
+		name          string
+		candidate     func(string) string
+		fixtureCode   string
+		fixturePhase  string
+		liveCode      string
+		livePhase     string
+		liveExtra     string
+		expectedError string
+	}{
+		{
+			name: "spec OpenAPI narrowing",
+			candidate: func(crd string) string {
+				return strings.Replace(crd, "                  maxLength: 3", "                  maxLength: 3\n                  enum: [ok1]", 1)
+			},
+			fixtureCode: "ok1", fixturePhase: "Ready", liveCode: "ok2", livePhase: "Ready",
+			expectedError: "proposed OpenAPI validation failed",
+		},
+		{
+			name: "status OpenAPI narrowing",
+			candidate: func(crd string) string { return crd },
+			fixtureCode: "ok", fixturePhase: "Ready", liveCode: "ok", livePhase: "Legacy",
+			expectedError: "proposed OpenAPI validation failed",
+		},
+		{
+			name: "spec CEL create semantics",
+			candidate: func(crd string) string { return crd },
+			fixtureCode: "ok", fixturePhase: "Ready", liveCode: "bad", livePhase: "Ready",
+			expectedError: "proposed CEL create validation failed",
+		},
+		{
+			name: "status CEL create semantics",
+			candidate: func(crd string) string {
+				return strings.Replace(crd, "                phase:\n                  type: string\n                  enum: [Ready]", "                phase:\n                  type: string\n                  enum: [Ready, Legacy]\n                  x-kubernetes-validations:\n                    - rule: self == 'Ready'", 1)
+			},
+			fixtureCode: "ok", fixturePhase: "Ready", liveCode: "ok", livePhase: "Legacy",
+			expectedError: "proposed CEL create validation failed",
+		},
+		{
+			name: "spec CEL unchanged-update semantics",
+			candidate: func(crd string) string {
+				crd = strings.Replace(crd, "rule: self.code.startsWith('ok')", `rule: "true"`, 1)
+				return strings.Replace(crd, "                  maxLength: 3", "                  maxLength: 3\n                  x-kubernetes-validations:\n                    - rule: oldSelf.startsWith('ok')", 1)
+			},
+			fixtureCode: "ok", fixturePhase: "Ready", liveCode: "bad", livePhase: "Ready",
+			expectedError: "proposed CEL unchanged-update validation failed",
+		},
+		{
+			name: "status CEL unchanged-update semantics",
+			candidate: func(crd string) string {
+				return strings.Replace(crd, "                  enum: [Ready]", "                  enum: [Ready, Legacy]\n                  x-kubernetes-validations:\n                    - rule: oldSelf == 'Ready'", 1)
+			},
+			fixtureCode: "ok", fixturePhase: "Ready", liveCode: "ok", livePhase: "Legacy",
+			expectedError: "proposed CEL unchanged-update validation failed",
+		},
+		{
+			name: "spec pruning",
+			candidate: func(crd string) string { return crd },
+			fixtureCode: "ok", fixturePhase: "Ready", liveCode: "ok", livePhase: "Ready", liveExtra: `,"removedSpec":"legacy"`,
+			expectedError: "proposed structural schema would prune declared fields",
+		},
+		{
+			name: "status pruning",
+			candidate: func(crd string) string { return crd },
+			fixtureCode: "ok", fixturePhase: "Ready", liveCode: "ok", livePhase: "Ready", liveExtra: `,"removedStatus":"legacy"`,
+			expectedError: "proposed structural schema would prune declared fields",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := fmt.Sprintf("apiVersion: cluster.t4.dev/v1alpha1\nkind: Widget\nmetadata:\n  name: curated\n  namespace: tenant-a\nspec:\n  code: %s\nstatus:\n  phase: %s\n", test.fixtureCode, test.fixturePhase)
+			crds, fixtures := writeCandidate(t, fixture)
+			if err := os.WriteFile(filepath.Join(crds, "widget.yaml"), []byte(test.candidate(candidateCRD)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := validateFixtures(crds, fixtures); err != nil {
+				t.Fatalf("curated fixture should not expose the live-only incompatibility: %v", err)
+			}
+			live := fmt.Sprintf(`{"apiVersion":"v1","kind":"WidgetList","items":[{"apiVersion":"cluster.t4.dev/v1alpha1","kind":"Widget","metadata":{"name":"live","namespace":"tenant-b"},"spec":{"code":%q%s},"status":{"phase":%q%s}}]}`,
+				test.liveCode, map[bool]string{true: test.liveExtra, false: ""}[test.name == "spec pruning"], test.livePhase, map[bool]string{true: test.liveExtra, false: ""}[test.name == "status pruning"])
+			err := validateObjects(crds, strings.NewReader(live))
+			if err == nil {
+				t.Fatal("live object incompatible with the proposed schema was accepted")
+			}
+			if !strings.Contains(err.Error(), "tenant-b/live") || !strings.Contains(err.Error(), test.expectedError) {
+				t.Fatalf("validation error %q does not identify live object and %q", err, test.expectedError)
 			}
 		})
 	}

@@ -26,6 +26,13 @@ for argument in "$@"; do
   fi
 done
 if [ "\${1:-}" = get ]; then
+  case "\${2:-}" in
+    t4clusterhosts.cluster.t4.dev|t4workspaces.cluster.t4.dev|t4sessions.cluster.t4.dev)
+      if [ "\${FAIL_LIVE_LIST:-}" = "\${2:-}" ]; then exit 44; fi
+      printf '%s' '{"apiVersion":"v1","kind":"List","items":[]}'
+      exit 0
+      ;;
+  esac
   printf '%s' "\${STORED_VERSIONS:-v1alpha1}"
 fi
 `,
@@ -38,7 +45,7 @@ printf 'validator' >>"$COMMAND_LOG"
 for argument in "$@"; do printf '\\t%s' "$argument" >>"$COMMAND_LOG"; done
 printf '\\n' >>"$COMMAND_LOG"
 case "\${1:-}:\${FAIL_PROPOSED_VALIDATION:-}" in
-  fixtures:spec|fixtures:status|served:stale) exit 43 ;;
+  fixtures:spec|fixtures:status|objects:live|served:stale) exit 43 ;;
 esac
 cat >/dev/null
 `,
@@ -102,6 +109,8 @@ test("upgrade validates proposed schemas, proves served convergence, verifies st
   assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
   const log = await commands(value.log);
   const proposedPreflight = findCommand(log, (line) => line.startsWith("validator\tfixtures\t"), "local proposed-schema fixture preflight");
+  const liveLists = log.map((line, index) => ({ line, index })).filter(({ line }) => /^kubectl\tget\tt4(?:clusterhosts|workspaces|sessions)\.cluster\.t4\.dev\t--all-namespaces\t-o\tjson$/u.test(line));
+  const liveValidations = log.map((line, index) => ({ line, index })).filter(({ line }) => line.startsWith("validator\tobjects\t"));
   const crdPreflight = findCommand(log, (line) => line.includes("apply") && line.includes("--server-side") && line.includes("--dry-run=server") && line.includes("deploy/charts/t4-cluster/crds"), "server-side CRD preflight");
   const crdApply = findCommand(log, (line) => line.includes("apply") && line.includes("--server-side") && !line.includes("--dry-run=server"), "CRD apply");
   const established = findCommand(log, (line) => line.includes("wait") && line.includes("condition=Established") && line.includes("t4clusterhosts.cluster.t4.dev") && line.includes("t4workspaces.cluster.t4.dev") && line.includes("t4sessions.cluster.t4.dev"), "Established wait");
@@ -110,8 +119,16 @@ test("upgrade validates proposed schemas, proves served convergence, verifies st
   const storageChecks = log.map((line, index) => ({ line, index })).filter(({ line }) => line.startsWith("kubectl\tget\tcrd/") && line.includes("status.storedVersions"));
   assert.deepEqual(storageChecks.length, 3);
   assert.equal(servedChecks.length, 3);
+  assert.equal(liveLists.length, 3);
+  assert.equal(liveValidations.length, 3);
   const workload = findCommand(log, (line) => line.startsWith("helm\tupgrade\t"), "Helm workload upgrade");
   assert.ok(proposedPreflight < crdPreflight);
+  assert.ok(liveLists[0].index < liveValidations[0].index);
+  assert.ok(liveValidations[0].index < liveLists[1].index);
+  assert.ok(liveLists[1].index < liveValidations[1].index);
+  assert.ok(liveValidations[1].index < liveLists[2].index);
+  assert.ok(liveLists[2].index < liveValidations[2].index);
+  assert.ok(liveValidations[2].index < crdPreflight);
   assert.ok(crdPreflight < crdApply);
   assert.ok(crdApply < established);
   assert.ok(established < servedChecks[0].index);
@@ -158,6 +175,32 @@ test("persisted status is validated against the proposed status schema before mu
   assert.deepEqual(await commands(value.log), [
     `validator\tfixtures\t${join(repoRoot, "deploy/charts/t4-cluster/crds")}\t${join(repoRoot, "packages/cluster-operator/api/v1alpha1/testdata/compat")}`,
   ]);
+});
+
+test("live object incompatibility fails before non-dry-run CRD, object, or Helm mutation", async () => {
+  const value = await fixture();
+  const result = await runLifecycle(
+    ["upgrade", "--", "helm", "upgrade", "t4-cluster", "chart", "--skip-crds"],
+    { ...value.env, FAIL_PROPOSED_VALIDATION: "live" },
+  );
+  assert.notEqual(result.code, 0);
+  const log = await commands(value.log);
+  assert.match(log.at(-1), /^validator\tobjects\t/u);
+  assert.ok(log.some((line) => /^kubectl\tget\tt4clusterhosts\.cluster\.t4\.dev\t--all-namespaces\t-o\tjson$/u.test(line)), log.join("\n"));
+  assert.ok(log.every((line) => !line.startsWith("helm\t") && !/kubectl\tapply(?!.*--dry-run=server)/u.test(line)), log.join("\n"));
+});
+
+test("live object list denial fails closed before non-dry-run mutation", async () => {
+  const value = await fixture();
+  const deniedResource = "t4workspaces.cluster.t4.dev";
+  const result = await runLifecycle(
+    ["upgrade", "--", "helm", "upgrade", "t4-cluster", "chart", "--skip-crds"],
+    { ...value.env, FAIL_LIVE_LIST: deniedResource },
+  );
+  assert.notEqual(result.code, 0);
+  const log = await commands(value.log);
+  assert.ok(log.some((line) => line.startsWith(`kubectl\tget\t${deniedResource}\t--all-namespaces\t-o\tjson`)), log.join("\n"));
+  assert.ok(log.every((line) => !line.startsWith("helm\t") && !/kubectl\tapply(?!.*--dry-run=server)/u.test(line)), log.join("\n"));
 });
 
 test("retained Established cannot pass readiness while served OpenAPI is stale", async () => {
