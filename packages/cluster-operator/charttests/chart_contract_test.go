@@ -405,8 +405,8 @@ func TestPublicAPIRequiresDurableSecretAndExplicitPostgresEgress(t *testing.T) {
 		"name: T4_PUBLIC_API_RUNTIME_PROFILE",
 		"value: \"review-admitted\"",
 		"secretName: \"t4-public-api\"",
-		"key: postgres-url",
-		"key: credentials.json",
+		"key: \"postgres-url\"",
+		"key: \"credentials.json\"",
 		"/var/run/secrets/t4-public-api/postgres-url",
 		"/var/run/secrets/t4-public-api/credentials.json",
 	)
