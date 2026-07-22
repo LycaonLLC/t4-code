@@ -1,0 +1,100 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: t4-site-upstream-mirror
+  namespace: linkedin-ci
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 120
+      backoffLimit: 2
+      ttlSecondsAfterFinished: 600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: t4-site-upstream-mirror
+            app.kubernetes.io/part-of: t4-site
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: mirror
+              image: mirror.gcr.io/alpine/git:2.49.1@sha256:c0280cf9572316299b08544065d3bf35db65043d5e3963982ec50647d2746e26
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  worktree="$(mktemp -d /tmp/t4-site-mirror.XXXXXX)"
+                  trap 'rm -rf "${worktree}" /tmp/.gitconfig /tmp/git-credentials' EXIT
+                  git config --global credential.helper 'store --file=/tmp/git-credentials'
+                  printf 'protocol=https\nhost=gitlab.com\nusername=%s\npassword=%s\n\n' \
+                    "${GITLAB_USERNAME}" "${GITLAB_TOKEN}" | git credential approve
+                  git clone --branch main --single-branch --no-tags \
+                    https://github.com/LycaonLLC/t4-code.git "${worktree}/repository"
+                  git -C "${worktree}/repository" remote add gitlab \
+                    https://gitlab.com/z-peterson/t4-code.git
+                  commit="$(git -C "${worktree}/repository" rev-parse HEAD)"
+                  current="$(git ls-remote --heads gitlab refs/heads/main | awk '{print $1}')"
+                  if [ "${current}" = "${commit}" ]; then
+                    printf 'GitLab main already matches upstream revision %s.\n' "${commit}"
+                    exit 0
+                  fi
+                  git -C "${worktree}/repository" push --force gitlab \
+                    HEAD:refs/heads/main
+                  payload="$(printf '{\"repo\":\"z-peterson/t4-code\",\"branch\":\"main\",\"commit\":\"%s\",\"event\":\"manual\",\"environment\":\"development\"}' "${commit}")"
+                  wget --quiet --timeout=90 --tries=1 --output-document=- \
+                    --header="Authorization: Bearer ${WOODPECKER_TRIGGER_TOKEN}" \
+                    --header='Content-Type: application/json' \
+                    --post-data="${payload}" \
+                    http://woodpecker-ci-trigger.linkedin-ci.svc.cluster.local/trigger
+                  printf '\n'
+              env:
+                - name: HOME
+                  value: /tmp
+                - name: GIT_TERMINAL_PROMPT
+                  value: "0"
+                - name: GITLAB_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: t4-site-mirror-gitlab
+                      key: username
+                - name: GITLAB_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: t4-site-mirror-gitlab
+                      key: token
+                - name: WOODPECKER_TRIGGER_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: gitlab-maintenance-secrets
+                      key: GITLAB_API_TOKEN
+              resources:
+                requests:
+                  cpu: 25m
+                  memory: 32Mi
+                limits:
+                  cpu: 250m
+                  memory: 256Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: temporary
+                  mountPath: /tmp
+          volumes:
+            - name: temporary
+              emptyDir:
+                sizeLimit: 1Gi

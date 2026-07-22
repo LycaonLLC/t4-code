@@ -40,7 +40,7 @@ describe("release assets", () => {
     expect(REPO_URL).toBe("https://github.com/LycaonLLC/t4-code");
     expect(RELEASE_TAG).toBe("v0.1.30");
     expect(RELEASE_VERSION).toBe("0.1.30");
-    expect(RELEASE_MANIFEST_URL).toBe("https://t4code.net/releases/latest.json");
+    expect(RELEASE_MANIFEST_URL).toBe("https://t4code.com/releases/latest.json");
   });
 
   it("splits assets by platform with correct architectures", () => {

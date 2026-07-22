@@ -1,7 +1,7 @@
 // Single source of truth for the public release: repo, tag, asset names,
 // download URLs, and the platform-detection rule the hero button uses.
 
-export const SITE_URL = "https://t4code.net";
+export const SITE_URL = "https://t4code.com";
 export const DOCS_URL = `${SITE_URL}/docs`;
 export const REPO_URL = "https://github.com/LycaonLLC/t4-code";
 export const OMP_URL = "https://github.com/can1357/oh-my-pi";

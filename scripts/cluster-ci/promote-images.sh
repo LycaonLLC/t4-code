@@ -42,7 +42,7 @@ do
     fi
   else
     case "$resolved" in
-      *"failed to resolve digest: $CI_COMMIT_SHA: not found") ;;
+      *"failed to resolve digest: "*"$CI_COMMIT_SHA: not found") ;;
       *)
         printf '%s\n' "$resolved" >&2
         echo "$component destination commit tag could not be resolved safely" >&2

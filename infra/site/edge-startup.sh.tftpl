@@ -1,0 +1,85 @@
+#!/bin/bash
+set -euo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y --no-install-recommends ca-certificates curl jq nginx
+curl -fsSL https://tailscale.com/install.sh | sh
+
+cat >/usr/local/sbin/configure-t4-site-edge <<'SCRIPT'
+#!/bin/bash
+set -euo pipefail
+
+metadata() {
+  curl -fsS -H 'Metadata-Flavor: Google' "http://metadata.google.internal/computeMetadata/v1/$1"
+}
+
+if ! tailscale status --json | jq -e '.BackendState == "Running"' >/dev/null; then
+  access_token="$(metadata instance/service-accounts/default/token | jq -er '.access_token')"
+  oauth_secret="$(
+    curl -fsS \
+      -H "Authorization: Bearer $access_token" \
+      'https://secretmanager.googleapis.com/v1/projects/${project_id}/secrets/${secret_id}/versions/latest:access' \
+      | jq -er '.payload.data' \
+      | base64 -d
+  )"
+
+  tailscale up \
+    --accept-dns=true \
+    --advertise-tags='${tailscale_tag}' \
+    --auth-key="$oauth_secret" \
+    --hostname=t4-site-edge
+  unset oauth_secret access_token
+fi
+
+tailscale status --json | jq -e '.BackendState == "Running"' >/dev/null
+getent hosts '${origin_hostname}' >/dev/null
+
+cat >/etc/nginx/sites-available/default <<'NGINX'
+server {
+    listen ${edge_port} default_server;
+    listen [::]:${edge_port} default_server;
+    server_name _;
+
+    location / {
+        proxy_pass https://${origin_hostname};
+        proxy_http_version 1.1;
+        proxy_set_header Host ${origin_hostname};
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_ssl_server_name on;
+        proxy_ssl_name ${origin_hostname};
+        proxy_ssl_verify on;
+        proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 30s;
+    }
+}
+NGINX
+
+nginx -t
+systemctl enable nginx
+systemctl restart nginx
+SCRIPT
+chmod 0750 /usr/local/sbin/configure-t4-site-edge
+
+cat >/etc/systemd/system/t4-site-edge.service <<'UNIT'
+[Unit]
+Description=t4code.com Tailscale edge gateway
+After=network-online.target tailscaled.service
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/configure-t4-site-edge
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=15s
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now t4-site-edge.service

@@ -28,3 +28,9 @@ test-results/
 /output/playwright/
 *.log
 .todos/
+
+# Local Terraform runtime artifacts
+.terraform/
+*.tfplan
+*.tfstate
+*.tfstate.*

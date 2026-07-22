@@ -1,0 +1,7 @@
+apiVersion: v2
+name: t4-site
+description: T4 Code production website
+version: 0.1.0
+appVersion: "0.1.30"
+type: application
+kubeVersion: ">=1.30.0-0"

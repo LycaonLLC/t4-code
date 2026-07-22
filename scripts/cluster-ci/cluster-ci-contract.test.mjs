@@ -410,6 +410,13 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   assert.match(steps["vulnerability-session-runtime"].commands[1], /vulnerability model-gateway t4-model-gateway/u);
   assert.match(steps["provenance-session-runtime"].commands[1], /provenance model-gateway t4-model-gateway/u);
 
+  const mainOnlySiteSteps = new Set([
+    "harbor-auth-site",
+    "build-site",
+    "promote-site",
+    "deploy-site",
+    "cleanup-site-registry-auth",
+  ]);
   for (const [name, step] of Object.entries(steps)) {
     assert.match(step.image, /@sha256:[0-9a-f]{64}$/u, `${name} image must be immutable`);
     if (step.environment?.HARBOR_REGISTRY) {
@@ -417,7 +424,8 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
     }
     for (const condition of step.when ?? []) {
       if (condition.event === "manual") {
-        assert.deepEqual(condition.branch, ["main", "agent/t4-cluster-operator"]);
+        const expectedBranches = mainOnlySiteSteps.has(name) ? "main" : ["main", "agent/t4-cluster-operator"];
+        assert.deepEqual(condition.branch, expectedBranches);
       }
     }
   }
@@ -435,6 +443,9 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
 
   const buildSource = await readFile(resolve(repoRoot, "scripts/cluster-ci/build-image.sh"), "utf8");
   assert.match(buildSource, /platform=linux\/amd64,linux\/arm64/u);
+  assert.match(buildSource, /--opt "attest:sbom="/u);
+  assert.match(buildSource, /--opt "attest:provenance=mode=max"/u);
+  assert.doesNotMatch(buildSource, /--attest/u);
   assert.match(buildSource, /source_context="https:\/\/github\.com\/\$canonical_build_source_repository\.git#\$CI_COMMIT_SHA"/u);
   assert.match(buildSource, /SOURCE_REPOSITORY=https:\/\/github\.com\/\$canonical_build_source_repository/u);
   assert.doesNotMatch(buildSource, /https:\/\/github\.com\/z-peterson\/t4-code/u);
@@ -475,7 +486,7 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   );
   const promotionGuard = promotionSource.slice(preflightResolveOffset, recursiveCopyOffset);
   assert.match(promotionGuard, /if \[ "\$resolved" != "\$digest" \]; then[\s\S]*?exit 65\n    fi\n  else/u);
-  assert.match(promotionGuard, /"failed to resolve digest: \$CI_COMMIT_SHA: not found"/u);
+  assert.match(promotionGuard, /"failed to resolve digest: "\*"\$CI_COMMIT_SHA: not found"/u);
   assert.doesNotMatch(promotionSource.slice(0, preflightResolveOffset), /oras copy/u);
   const authSource = await readFile(resolve(repoRoot, "scripts/cluster-ci/load-registry-auth.sh"), "utf8");
   assert.match(authSource, /chmod 0711 "\$auth_parent" "\$auth_dir"/u);

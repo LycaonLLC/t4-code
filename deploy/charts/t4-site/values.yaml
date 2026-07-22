@@ -1,0 +1,36 @@
+replicaCount: 2
+
+image:
+  repository: harbor.tailb18de3.ts.net/linkedin-bot/t4-site
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: harbor-registry-credentials
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: tailscale
+  annotations: {}
+  hostname: t4-site
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    cpu: 100m
+    memory: 64Mi
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

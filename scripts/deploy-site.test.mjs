@@ -3,72 +3,97 @@ import test from "node:test";
 
 import { deploySite, resolveDeployConfig } from "./deploy-site.mjs";
 
-test("site deploy config accepts exact scoped AWS targets", () => {
-  assert.deepEqual(
-    resolveDeployConfig({
-      T4_SITE_BUCKET: "t4code-net-site-595529182031",
-      T4_CLOUDFRONT_DISTRIBUTION_ID: "E1ABCDEF234567",
-    }),
-    {
-      bucket: "t4code-net-site-595529182031",
-      distributionId: "E1ABCDEF234567",
-    },
+const commit = "a".repeat(40);
+const digest = `sha256:${"b".repeat(64)}`;
+const expectedConfig = {
+  namespace: "t4-site",
+  release: "t4-site",
+  chart: "deploy/charts/t4-site",
+  imageRepository: "harbor.tailb18de3.ts.net/linkedin-bot/t4-site",
+  revisionTarget: "origin",
+  imageTag: commit,
+  imageDigest: digest,
+};
+
+test("site deploy config binds production to the exact commit image", () => {
+  assert.deepEqual(resolveDeployConfig({ CI_COMMIT_SHA: commit, T4_SITE_IMAGE_DIGEST: digest }), expectedConfig);
+  assert.deepEqual(resolveDeployConfig({ T4_SITE_IMAGE_TAG: commit, T4_SITE_IMAGE_DIGEST: digest }), expectedConfig);
+});
+
+test("site deploy config rejects mutable image tags and production target overrides", () => {
+  assert.throws(() => resolveDeployConfig({}), /40-character commit SHA/u);
+  assert.throws(
+    () => resolveDeployConfig({ CI_COMMIT_SHA: commit }),
+    /T4_SITE_IMAGE_DIGEST must be an exact lowercase sha256 digest/u,
+  );
+  assert.throws(
+    () => resolveDeployConfig({ CI_COMMIT_SHA: commit, T4_SITE_IMAGE_DIGEST: "sha256:latest" }),
+    /T4_SITE_IMAGE_DIGEST must be an exact lowercase sha256 digest/u,
+  );
+  assert.throws(() => resolveDeployConfig({ T4_SITE_IMAGE_TAG: "latest" }), /40-character commit SHA/u);
+  assert.throws(
+    () => resolveDeployConfig({ T4_SITE_IMAGE_TAG: commit.toUpperCase() }),
+    /40-character commit SHA/u,
+  );
+  assert.throws(
+    () => resolveDeployConfig({ T4_SITE_IMAGE_TAG: commit, CI_COMMIT_SHA: "b".repeat(40) }),
+    /must match CI_COMMIT_SHA/u,
+  );
+  assert.throws(
+    () => resolveDeployConfig({ T4_SITE_IMAGE_TAG: commit, T4_SITE_IMAGE_DIGEST: digest, T4_SITE_NAMESPACE: "default" }),
+    /T4_SITE_NAMESPACE must be t4-site/u,
+  );
+  assert.throws(
+    () => resolveDeployConfig({ T4_SITE_IMAGE_TAG: commit, T4_SITE_IMAGE_DIGEST: digest, T4_SITE_REVISION_TARGET: "public" }),
+    /T4_SITE_REVISION_TARGET must be origin/u,
   );
 });
 
-test("site deploy config rejects missing or malformed targets", () => {
-  assert.throws(() => resolveDeployConfig({}), /T4_SITE_BUCKET/);
-  assert.throws(
-    () =>
-      resolveDeployConfig({
-        T4_SITE_BUCKET: "https://example.com",
-        T4_CLOUDFRONT_DISTRIBUTION_ID: "E1ABCDEF234567",
-      }),
-    /T4_SITE_BUCKET/,
-  );
-  assert.throws(
-    () =>
-      resolveDeployConfig({
-        T4_SITE_BUCKET: "t4code-net-site-595529182031",
-        T4_CLOUDFRONT_DISTRIBUTION_ID: "not-a-distribution",
-      }),
-    /T4_CLOUDFRONT_DISTRIBUTION_ID/,
-  );
-});
-
-test("site deploy uploads immutable assets before switching entry documents", () => {
+test("site deploy atomically applies Helm, confirms rollout, and verifies the exact origin revision", async () => {
   const calls = [];
-  deploySite(
-    { bucket: "t4code-net-site-595529182031", distributionId: "E1ABCDEF234567" },
+  const revisions = [];
+  await deploySite(
+    expectedConfig,
     "/repo",
     (command, args, cwd) => calls.push({ command, args, cwd }),
-    "0.1.17",
+    async (options) => revisions.push(options),
   );
 
-  assert.equal(calls.length, 5);
   assert.deepEqual(
     calls.map(({ command }) => command),
-    ["pnpm", "node", "aws", "aws", "aws"],
+    ["helm", "kubectl"],
   );
-  assert.deepEqual(calls[1].args, [
-    "scripts/generate-release-manifest.mjs",
-    "--version",
-    "0.1.17",
-    "--output",
-    "apps/site/dist/releases/latest.json",
+  assert.deepEqual(calls[0].args, [
+    "upgrade",
+    "--install",
+    "t4-site",
+    "deploy/charts/t4-site",
+    "--namespace",
+    "t4-site",
+    "--create-namespace",
+    "--atomic",
+    "--wait",
+    "--timeout",
+    "10m",
+    "--set-string",
+    "image.repository=harbor.tailb18de3.ts.net/linkedin-bot/t4-site",
+    "--set-string",
+    `image.tag=${commit}`,
+    "--set-string",
+    `image.digest=${digest}`,
   ]);
-  assert.equal(calls[2].args[2], "apps/site/dist/assets");
-  assert.equal(calls[3].args[2], "apps/site/dist");
-  assert.equal(calls[2].args.includes("--delete"), false);
-  assert.equal(calls[3].args.includes("--delete"), true);
-  assert.deepEqual(
-    calls[3].args.flatMap((argument, index) =>
-      argument === "--exclude" ? [calls[3].args[index + 1]] : [],
-    ),
-    ["assets/*", "demo/*"],
-  );
+  assert.deepEqual(calls[1].args, [
+    "--namespace",
+    "t4-site",
+    "rollout",
+    "status",
+    "deployment/t4-site",
+    "--timeout",
+    "10m",
+  ]);
   assert.deepEqual(
     calls.map(({ cwd }) => cwd),
-    ["/repo", "/repo", "/repo", "/repo", "/repo"],
+    ["/repo", "/repo"],
   );
+  assert.deepEqual(revisions, [{ expectedRevision: commit, target: "origin" }]);
 });

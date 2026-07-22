@@ -28,6 +28,7 @@ export const RELEASE_CONTRACT_PATHS = [
   "packages/client/src/omp-client-frames.ts",
   "scripts/check-release-publication.mjs",
   "scripts/deploy-site.mjs",
+  "scripts/verify-site-revision.mjs",
   "scripts/dispatch-site-deployment.mjs",
   "scripts/generate-release-manifest.mjs",
   "scripts/inspect-linux-update.mjs",
@@ -1086,12 +1087,25 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   ]) {
     requireText(manifestGenerator, expected, "scripts/generate-release-manifest.mjs", errors);
   }
-  requireText(
-    files.get("scripts/deploy-site.mjs") ?? "",
-    '"apps/site/dist/releases/latest.json"',
-    "scripts/deploy-site.mjs",
-    errors,
-  );
+  const siteDeploy = files.get("scripts/deploy-site.mjs") ?? "";
+  for (const expected of [
+    'imageRepository: "harbor.tailb18de3.ts.net/linkedin-bot/t4-site"',
+    'revisionTarget: "origin"',
+    "waitForSiteRevision",
+    "expectedRevision: config.imageTag",
+  ]) {
+    requireText(siteDeploy, expected, "scripts/deploy-site.mjs", errors);
+  }
+  const siteRevisionVerifier = files.get("scripts/verify-site-revision.mjs") ?? "";
+  for (const expected of [
+    'origin: "https://t4-site.tailb18de3.ts.net/revision.json"',
+    'public: "https://t4code.com/revision.json"',
+    "readBoundedResponseBytes",
+    "document.revision",
+    'redirect: "error"',
+  ]) {
+    requireText(siteRevisionVerifier, expected, "scripts/verify-site-revision.mjs", errors);
+  }
   const releasePreparation = releaseWorkflow.indexOf("--mode prepare");
   const releaseUpload = releaseWorkflow.indexOf("softprops/action-gh-release@");
   const releaseRemoteVerification = releaseWorkflow.indexOf("--mode verify");
@@ -1194,6 +1208,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     '[[ "$GITHUB_REF" != "refs/tags/${expected_tag}" ]]',
     '[[ "$source_sha" != "$TRUSTED_SHA" ]]',
     'git merge-base --is-ancestor "$source_sha" "$TRUSTED_SHA"',
+    'git merge-base --is-ancestor "$source_sha" refs/remotes/origin/main',
   ]) {
     requireText(
       files.get(".github/workflows/deploy-site.yml") ?? "",

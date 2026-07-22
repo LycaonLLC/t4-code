@@ -1,21 +1,47 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { waitForSiteRevision } from "./verify-site-revision.mjs";
 
-const BUCKET_PATTERN = /^(?!\d+\.\d+\.\d+\.\d+$)[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
-const DISTRIBUTION_PATTERN = /^E[A-Z0-9]{8,20}$/;
+const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
+const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
+const FIXED_CONFIG = Object.freeze({
+  namespace: "t4-site",
+  release: "t4-site",
+  chart: "deploy/charts/t4-site",
+  imageRepository: "harbor.tailb18de3.ts.net/linkedin-bot/t4-site",
+  revisionTarget: "origin",
+});
 
 export function resolveDeployConfig(environment = process.env) {
-  const bucket = environment.T4_SITE_BUCKET?.trim() ?? "";
-  const distributionId = environment.T4_CLOUDFRONT_DISTRIBUTION_ID?.trim() ?? "";
-  if (!BUCKET_PATTERN.test(bucket)) {
-    throw new Error("T4_SITE_BUCKET must be a valid S3 bucket name");
+  const configuredTag = environment.T4_SITE_IMAGE_TAG?.trim();
+  const ciCommit = environment.CI_COMMIT_SHA?.trim();
+  if (configuredTag && ciCommit && configuredTag !== ciCommit) {
+    throw new Error("T4_SITE_IMAGE_TAG must match CI_COMMIT_SHA when both are set");
   }
-  if (!DISTRIBUTION_PATTERN.test(distributionId)) {
-    throw new Error("T4_CLOUDFRONT_DISTRIBUTION_ID must be a CloudFront distribution ID");
+  const imageTag = configuredTag ?? ciCommit ?? "";
+  if (!COMMIT_PATTERN.test(imageTag)) {
+    throw new Error("T4_SITE_IMAGE_TAG or CI_COMMIT_SHA must be an exact lowercase 40-character commit SHA");
   }
-  return { bucket, distributionId };
+  const imageDigest = environment.T4_SITE_IMAGE_DIGEST?.trim() ?? "";
+  if (!DIGEST_PATTERN.test(imageDigest)) {
+    throw new Error("T4_SITE_IMAGE_DIGEST must be an exact lowercase sha256 digest");
+  }
+
+  for (const [name, expected] of [
+    ["T4_SITE_NAMESPACE", FIXED_CONFIG.namespace],
+    ["T4_SITE_RELEASE", FIXED_CONFIG.release],
+    ["T4_SITE_CHART", FIXED_CONFIG.chart],
+    ["T4_SITE_IMAGE_REPOSITORY", FIXED_CONFIG.imageRepository],
+    ["T4_SITE_REVISION_TARGET", FIXED_CONFIG.revisionTarget],
+  ]) {
+    const configured = environment[name]?.trim();
+    if (configured && configured !== expected) {
+      throw new Error(`${name} must be ${expected}`);
+    }
+  }
+
+  return { ...FIXED_CONFIG, imageTag, imageDigest };
 }
 
 function run(command, args, cwd) {
@@ -26,76 +52,60 @@ function run(command, args, cwd) {
   }
 }
 
-export function deploySite(
+export async function deploySite(
   config,
   repoRoot = resolve(import.meta.dirname, ".."),
   runCommand = run,
-  releaseVersion = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8")).version,
+  verifyRevision = waitForSiteRevision,
 ) {
-  const destination = `s3://${config.bucket}`;
-  runCommand("pnpm", ["--filter", "@t4-code/site", "build"], repoRoot);
+  const timeout = "10m";
   runCommand(
-    "node",
+    "helm",
     [
-      "scripts/generate-release-manifest.mjs",
-      "--version",
-      releaseVersion,
-      "--output",
-      "apps/site/dist/releases/latest.json",
-    ],
-    repoRoot,
-  );
-  // Publish new content hashes first and retain old hashes for already-cached entry documents.
-  runCommand(
-    "aws",
-    [
-      "s3",
-      "sync",
-      "apps/site/dist/assets",
-      `${destination}/assets`,
-      "--cache-control",
-      "public,max-age=31536000,immutable",
-      "--only-show-errors",
-    ],
-    repoRoot,
-  );
-  runCommand(
-    "aws",
-    [
-      "s3",
-      "sync",
-      "apps/site/dist",
-      destination,
-      "--delete",
-      "--exclude",
-      "assets/*",
-      "--exclude",
-      "demo/*",
-      "--cache-control",
-      "public,max-age=0,must-revalidate",
-      "--only-show-errors",
+      "upgrade",
+      "--install",
+      config.release,
+      config.chart,
+      "--namespace",
+      config.namespace,
+      "--create-namespace",
+      "--atomic",
+      "--wait",
+      "--timeout",
+      timeout,
+      "--set-string",
+      `image.repository=${config.imageRepository}`,
+      "--set-string",
+      `image.tag=${config.imageTag}`,
+      "--set-string",
+      `image.digest=${config.imageDigest}`,
     ],
     repoRoot,
   );
   runCommand(
-    "aws",
+    "kubectl",
     [
-      "cloudfront",
-      "create-invalidation",
-      "--distribution-id",
-      config.distributionId,
-      "--paths",
-      "/*",
+      "--namespace",
+      config.namespace,
+      "rollout",
+      "status",
+      `deployment/${config.release}`,
+      "--timeout",
+      timeout,
     ],
     repoRoot,
   );
+  await verifyRevision({
+    expectedRevision: config.imageTag,
+    target: config.revisionTarget,
+  });
 }
 
 const isMain =
   process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (isMain) {
   try {
-    deploySite(resolveDeployConfig());
+    await deploySite(resolveDeployConfig());
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
