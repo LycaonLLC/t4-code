@@ -70,6 +70,7 @@ export async function runClusterServer(env: Readonly<Record<string, string | und
 			projection,
 			gatewayPort: config.gatewayPort,
 			adminPort: config.adminPort,
+			identityProvider: config.identityProvider,
 			trustedProxyAddresses: config.trustedProxyAddresses,
 			trustedProxyCidrs: config.trustedProxyCidrs,
 			health,

@@ -24,31 +24,15 @@ fi
 [[ "${T4_AUTHORITY_STATE_DIR}" == "${T4_SESSION_STATE_ROOT}/authority" ]] || { echo '{"component":"session-runtime","result":"invalid_config","condition":"authority_state_path"}' >&2; exit 64; }
 [[ "${T4_BROWSER_STATE_DIR}" == "${T4_SESSION_STATE_ROOT}/browser" ]] || { echo '{"component":"session-runtime","result":"invalid_config","condition":"browser_state_path"}' >&2; exit 64; }
 
-case "${T4_OMP_ALLOW_UNAUTHENTICATED}" in
-  true|false) ;;
-  *) echo '{"component":"session-runtime","result":"invalid_config","condition":"omp_authentication_mode"}' >&2; exit 64 ;;
-esac
+[[ "${T4_OMP_ALLOW_UNAUTHENTICATED}" == "true" && "$#" -eq 0 ]] || {
+  echo '{"component":"session-runtime","result":"invalid_config","condition":"omp_credential_projection_unsupported"}' >&2
+  exit 64
+}
 
 models_source="${T4_OMP_CONFIG_SOURCE_DIR}/models.yml"
 settings_source="${T4_OMP_CONFIG_SOURCE_DIR}/config.yml"
 [[ -f "${models_source}" && -r "${models_source}" && -s "${models_source}" ]] || { echo '{"component":"session-runtime","result":"invalid_config","condition":"omp_models"}' >&2; exit 64; }
 [[ -f "${settings_source}" && -r "${settings_source}" && -s "${settings_source}" ]] || { echo '{"component":"session-runtime","result":"invalid_config","condition":"omp_settings"}' >&2; exit 64; }
-
-if [[ "${T4_OMP_ALLOW_UNAUTHENTICATED}" == "false" ]]; then
-  T4_OMP_CREDENTIAL_KEY="${1:-}"
-  [[ -n "${T4_OMP_CREDENTIAL_KEY}" ]] || { echo '{"component":"session-runtime","result":"invalid_config","condition":"omp_credential_key"}' >&2; exit 64; }
-  [[ "${T4_OMP_CREDENTIAL_KEY}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo '{"component":"session-runtime","result":"invalid_config","condition":"omp_credential_key"}' >&2; exit 64; }
-  case "${T4_OMP_CREDENTIAL_KEY}" in
-    T4_*|OMP_*|PI_*|XDG_*|LD_*|HOME|DISPLAY|PATH|BASH_ENV|ENV|SHELLOPTS|NODE_OPTIONS|BUN_OPTIONS)
-      echo '{"component":"session-runtime","result":"invalid_config","condition":"omp_credential_key"}' >&2
-      exit 64
-      ;;
-  esac
-  [[ -v "${T4_OMP_CREDENTIAL_KEY}" ]] || { echo '{"component":"session-runtime","result":"invalid_config","condition":"omp_credential"}' >&2; exit 64; }
-  credential_value="${!T4_OMP_CREDENTIAL_KEY}"
-  [[ -n "${credential_value}" ]] || { echo '{"component":"session-runtime","result":"invalid_config","condition":"omp_credential"}' >&2; exit 64; }
-  unset credential_value
-fi
 
 export HOME="${T4_SESSION_STATE_ROOT}/home"
 export PI_CODING_AGENT_DIR="${HOME}/.omp/profiles/${T4_SESSION_NAME}/agent"
@@ -62,6 +46,10 @@ install -m 0600 "${settings_source}" "${settings_private}"
 mv -f "${models_private}" "${PI_CODING_AGENT_DIR}/models.yml"
 mv -f "${settings_private}" "${PI_CODING_AGENT_DIR}/config.yml"
 trap - EXIT
+/usr/local/bin/bun /opt/t4/cluster/images/session-runtime/scrub-omp-credentials.ts "${PI_CODING_AGENT_DIR}" "${HOME}" || {
+  echo '{"component":"session-runtime","result":"invalid_state","condition":"omp_credential_state_scrub"}' >&2
+  exit 64
+}
 export DISPLAY="${DISPLAY:-:99}"
 [[ "${DISPLAY}" =~ ^:([0-9]{1,3})$ ]] || { echo '{"component":"session-runtime","result":"invalid_config","condition":"display"}' >&2; exit 64; }
 display_socket="/tmp/.X11-unix/X${BASH_REMATCH[1]}"

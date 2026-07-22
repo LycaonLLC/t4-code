@@ -39,6 +39,8 @@ controller:
 server:
   replicas: 3
   terminationGracePeriodSeconds: 60
+  # The gateway accepts identity only from Tailscale Serve or the Tailscale Kubernetes operator.
+  identityProvider: tailscale
   # At least one trusted Tailscale proxy address or canonical CIDR is required for client access.
   trustedProxyAddresses: []
   trustedProxyCIDRs: []
@@ -68,10 +70,13 @@ session:
     configMap: ""
     modelsKey: ""
     settingsKey: ""
+    # Deprecated migration sentinels. Nonempty values are rejected because a
+    # session's arbitrary-code tools share the workload boundary with OMP.
     credentialSecret: ""
     credentialKey: ""
-    # Explicit opt-in for a private, policy-isolated models.yml provider using auth: none.
-    allowUnauthenticated: false
+    # Required: use a private, identity- and NetworkPolicy-isolated models.yml
+    # provider with auth: none. A reusable credential must stay outside the Pod.
+    allowUnauthenticated: true
 
 storage:
   # Required when enabled. The administrator creates this backend-neutral RWX StorageClass.

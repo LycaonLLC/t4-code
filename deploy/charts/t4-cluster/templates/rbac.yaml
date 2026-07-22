@@ -22,12 +22,6 @@ rules:
     resources: [configmaps]
     resourceNames: [{{ .Values.session.omp.configMap | quote }}]
     verbs: [get]
-  {{- if not .Values.session.omp.allowUnauthenticated }}
-  - apiGroups: ['']
-    resources: [secrets]
-    resourceNames: [{{ .Values.session.omp.credentialSecret | quote }}]
-    verbs: [get]
-  {{- end }}
   - apiGroups: ['']
     resources: [events]
     verbs: [create, patch]

@@ -2,6 +2,9 @@
 {{- if eq .Values.session.omp.modelsKey .Values.session.omp.settingsKey }}
 {{- fail "session.omp.modelsKey and session.omp.settingsKey must be different" }}
 {{- end }}
+{{- if or (not .Values.session.omp.allowUnauthenticated) .Values.session.omp.credentialSecret .Values.session.omp.credentialKey }}
+{{- fail "reusable provider credentials cannot be projected into session Pods; set session.omp.allowUnauthenticated=true, clear credentialSecret/credentialKey, and use an isolated auth-none model route" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -82,10 +85,6 @@ spec:
               value: {{ .Values.session.omp.modelsKey | quote }}
             - name: T4_SESSION_OMP_SETTINGS_KEY
               value: {{ .Values.session.omp.settingsKey | quote }}
-            - name: T4_SESSION_OMP_CREDENTIAL_SECRET
-              value: {{ .Values.session.omp.credentialSecret | quote }}
-            - name: T4_SESSION_OMP_CREDENTIAL_KEY
-              value: {{ .Values.session.omp.credentialKey | quote }}
             - name: T4_SESSION_OMP_ALLOW_UNAUTHENTICATED
               value: {{ .Values.session.omp.allowUnauthenticated | quote }}
             - name: T4_SESSION_SERVICE_ACCOUNT
@@ -235,6 +234,8 @@ spec:
               value: "8080"
             - name: T4_CLUSTER_ADMIN_PORT
               value: "9090"
+            - name: T4_CLUSTER_IDENTITY_PROVIDER
+              value: {{ .Values.server.identityProvider | quote }}
             - name: T4_CLUSTER_TRUSTED_PROXY_ADDRESSES
               value: {{ join "," .Values.server.trustedProxyAddresses | quote }}
             - name: T4_CLUSTER_TRUSTED_PROXY_CIDRS

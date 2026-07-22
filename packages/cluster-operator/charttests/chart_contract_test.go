@@ -57,6 +57,8 @@ func TestEnabledChartRendersHARestrictedWorkloads(t *testing.T) {
 	server := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-server\"")
 	assertContains(t, server,
 		"automountServiceAccountToken: false",
+		"name: T4_CLUSTER_IDENTITY_PROVIDER",
+		"value: \"tailscale\"",
 		"name: T4_CLUSTER_TRUSTED_PROXY_CIDRS",
 		"value: \"192.0.2.0/24\"",
 		"name: kubernetes-api-access",
@@ -141,37 +143,33 @@ func TestEachDeploymentUsesZeroUnavailableAndConfiguredAPIAudience(t *testing.T)
 
 func TestValuesSchemaRejectsUnsafeNamesProfilesCIDRsAndHalfSelectors(t *testing.T) {
 	for name, values := range map[string][]string{
-		"cluster host name":                               {"--set-string", "clusterHost.name=Bad_Name"},
-		"storage class name":                              {"--set-string", "storage.adminRWXStorageClass=Bad_Name"},
-		"runtime profile":                                 {"--set-string", "clusterHost.runtimeProfiles[0]=-bad"},
-		"Woodpecker Secret name":                          {"--set-string", "woodpecker.existingSecret=Bad_Name", "--set-string", "woodpecker.configMap=woodpecker-config"},
-		"Woodpecker ConfigMap name":                       {"--set-string", "woodpecker.existingSecret=woodpecker-token", "--set-string", "woodpecker.configMap=Bad_Name"},
-		"Woodpecker key":                                  {"--set-string", "woodpecker.existingSecret=woodpecker-token", "--set-string", "woodpecker.configMap=woodpecker-config", "--set-string", "woodpecker.tokenKey=bad/key"},
-		"Woodpecker audience":                             {"--set-string", "woodpecker.serviceAccountAudience=/bad", "--set-string", "woodpecker.configMap=woodpecker-config"},
-		"IPv4 default route":                              {"--set-string", "server.trustedProxyCIDRs[0]=0.0.0.0/0"},
-		"IPv6 default route":                              {"--set-string", "server.trustedProxyCIDRs[0]=::/0"},
-		"gateway half selector":                           {"--set-string", "networkPolicy.gatewayIngress.namespaceSelector.matchLabels.scope=gateway"},
-		"observability half selector":                     {"--set-string", "networkPolicy.observability.podSelector.matchLabels.scope=metrics"},
-		"OMP ConfigMap name":                              {"--set-string", "session.omp.configMap=Bad_Name"},
-		"OMP models key":                                  {"--set-string", "session.omp.modelsKey=bad/key"},
-		"OMP credential Secret name":                      {"--set-string", "session.omp.credentialSecret=Bad_Name"},
-		"OMP credential environment name":                 {"--set-string", "session.omp.credentialKey=bad-key"},
-		"OMP runtime-owned credential environment":        {"--set-string", "session.omp.credentialKey=OMP_PROFILE"},
-		"OMP PI runtime-owned credential environment":     {"--set-string", "session.omp.credentialKey=PI_PROFILE"},
-		"identical OMP projection keys":                   {"--set-string", "session.omp.settingsKey=provider-models"},
-		"model route port zero":                           {"--set", "networkPolicy.modelRoutePorts[0]=0"},
-		"model route port above TCP range":                {"--set", "networkPolicy.modelRoutePorts[0]=65536"},
-		"duplicate model route port":                      {"--set", "networkPolicy.modelRoutePorts[0]=19481", "--set", "networkPolicy.modelRoutePorts[1]=19481"},
-		"noninteger model route port":                     {"--set-string", "networkPolicy.modelRoutePorts[0]=https"},
-		"model route half selector":                       {"--set-string", "networkPolicy.modelRoute.namespaceSelector.matchLabels.scope=linkedin-bot"},
-		"CI provider port zero":                           {"--set", "networkPolicy.ciProviderPorts[0]=0"},
-		"CI provider port above TCP range":                {"--set", "networkPolicy.ciProviderPorts[0]=65536"},
-		"duplicate CI provider port":                      {"--set", "networkPolicy.ciProviderPorts[0]=8080", "--set", "networkPolicy.ciProviderPorts[1]=8080"},
-		"noninteger CI provider port":                     {"--set-string", "networkPolicy.ciProviderPorts[0]=http"},
-		"CI provider half selector":                       {"--set-string", "networkPolicy.ciProvider.namespaceSelector.matchLabels.scope=linkedin-bot"},
-		"unauthenticated mode with credential references": {"--set", "session.omp.allowUnauthenticated=true"},
-		"credential mode with only Secret":                {"--set-string", "session.omp.credentialKey="},
-		"credential mode with only key":                   {"--set-string", "session.omp.credentialSecret="},
+		"cluster host name":                {"--set-string", "clusterHost.name=Bad_Name"},
+		"storage class name":               {"--set-string", "storage.adminRWXStorageClass=Bad_Name"},
+		"runtime profile":                  {"--set-string", "clusterHost.runtimeProfiles[0]=-bad"},
+		"Woodpecker Secret name":           {"--set-string", "woodpecker.existingSecret=Bad_Name", "--set-string", "woodpecker.configMap=woodpecker-config"},
+		"Woodpecker ConfigMap name":        {"--set-string", "woodpecker.existingSecret=woodpecker-token", "--set-string", "woodpecker.configMap=Bad_Name"},
+		"Woodpecker key":                   {"--set-string", "woodpecker.existingSecret=woodpecker-token", "--set-string", "woodpecker.configMap=woodpecker-config", "--set-string", "woodpecker.tokenKey=bad/key"},
+		"Woodpecker audience":              {"--set-string", "woodpecker.serviceAccountAudience=/bad", "--set-string", "woodpecker.configMap=woodpecker-config"},
+		"IPv4 default route":               {"--set-string", "server.trustedProxyCIDRs[0]=0.0.0.0/0"},
+		"IPv6 default route":               {"--set-string", "server.trustedProxyCIDRs[0]=::/0"},
+		"gateway half selector":            {"--set-string", "networkPolicy.gatewayIngress.namespaceSelector.matchLabels.scope=gateway"},
+		"observability half selector":      {"--set-string", "networkPolicy.observability.podSelector.matchLabels.scope=metrics"},
+		"OMP ConfigMap name":               {"--set-string", "session.omp.configMap=Bad_Name"},
+		"OMP models key":                   {"--set-string", "session.omp.modelsKey=bad/key"},
+		"legacy OMP credential Secret":     {"--set-string", "session.omp.credentialSecret=omp-runtime-credential"},
+		"legacy OMP credential key":        {"--set-string", "session.omp.credentialKey=MODEL_API_KEY"},
+		"identical OMP projection keys":    {"--set-string", "session.omp.settingsKey=provider-models"},
+		"model route port zero":            {"--set", "networkPolicy.modelRoutePorts[0]=0"},
+		"model route port above TCP range": {"--set", "networkPolicy.modelRoutePorts[0]=65536"},
+		"duplicate model route port":       {"--set", "networkPolicy.modelRoutePorts[0]=19481", "--set", "networkPolicy.modelRoutePorts[1]=19481"},
+		"noninteger model route port":      {"--set-string", "networkPolicy.modelRoutePorts[0]=https"},
+		"model route half selector":        {"--set-string", "networkPolicy.modelRoute.namespaceSelector.matchLabels.scope=linkedin-bot"},
+		"CI provider port zero":            {"--set", "networkPolicy.ciProviderPorts[0]=0"},
+		"CI provider port above TCP range": {"--set", "networkPolicy.ciProviderPorts[0]=65536"},
+		"duplicate CI provider port":       {"--set", "networkPolicy.ciProviderPorts[0]=8080", "--set", "networkPolicy.ciProviderPorts[1]=8080"},
+		"noninteger CI provider port":      {"--set-string", "networkPolicy.ciProviderPorts[0]=http"},
+		"CI provider half selector":        {"--set-string", "networkPolicy.ciProvider.namespaceSelector.matchLabels.scope=linkedin-bot"},
+		"legacy OMP credential mode":       {"--set", "session.omp.allowUnauthenticated=false"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			helmTemplateMustFail(t, append(enabledValues(), values...)...)
@@ -191,26 +189,23 @@ func TestValuesSchemaBoundsRoutePortLists(t *testing.T) {
 	}
 }
 
-func TestEnabledChartRequiresCommonOMPReferencesAndStrictCredentials(t *testing.T) {
-	for _, key := range []string{"configMap", "modelsKey", "settingsKey", "credentialSecret", "credentialKey"} {
+func TestEnabledChartRequiresCommonOMPReferences(t *testing.T) {
+	for _, key := range []string{"configMap", "modelsKey", "settingsKey"} {
 		t.Run(key, func(t *testing.T) {
 			helmTemplateMustFail(t, append(enabledValues(), "--set-string", "session.omp."+key+"=")...)
 		})
 	}
 }
 
-func TestEnabledChartSupportsExplicitUnauthenticatedOMPMode(t *testing.T) {
-	output := helmTemplate(t, append(enabledValues(),
-		"--set", "session.omp.allowUnauthenticated=true",
-		"--set-string", "session.omp.credentialSecret=",
-		"--set-string", "session.omp.credentialKey=",
-	)...)
+func TestEnabledChartRequiresIsolatedAuthNoneOMPMode(t *testing.T) {
+	output := helmTemplate(t, enabledValues()...)
 	controller := documentContainingKind(t, output, "Deployment", "name: \"release-name-t4-cluster-controller\"")
 	assertContains(t, controller,
 		"name: T4_SESSION_OMP_ALLOW_UNAUTHENTICATED\n              value: \"true\"",
-		"name: T4_SESSION_OMP_CREDENTIAL_SECRET\n              value: \"\"",
-		"name: T4_SESSION_OMP_CREDENTIAL_KEY\n              value: \"\"",
 	)
+	if strings.Contains(controller, "T4_SESSION_OMP_CREDENTIAL_") {
+		t.Fatal("controller Deployment retained a session credential projection reference")
+	}
 	assertCount(t, output, "kind: Secret", 0)
 }
 
@@ -221,9 +216,7 @@ func TestSessionOMPReferencesArePassedWithoutCreatingConfigurationObjects(t *tes
 		"name: T4_SESSION_OMP_CONFIG_MAP\n              value: \"omp-runtime-config\"",
 		"name: T4_SESSION_OMP_MODELS_KEY\n              value: \"provider-models\"",
 		"name: T4_SESSION_OMP_SETTINGS_KEY\n              value: \"agent-settings\"",
-		"name: T4_SESSION_OMP_CREDENTIAL_SECRET\n              value: \"omp-runtime-credential\"",
-		"name: T4_SESSION_OMP_CREDENTIAL_KEY\n              value: \"MODEL_API_KEY\"",
-		"name: T4_SESSION_OMP_ALLOW_UNAUTHENTICATED\n              value: \"false\"",
+		"name: T4_SESSION_OMP_ALLOW_UNAUTHENTICATED\n              value: \"true\"",
 	)
 	assertCount(t, output, "kind: ConfigMap", 0)
 	assertCount(t, output, "kind: Secret", 0)
@@ -298,7 +291,7 @@ func TestDNSAndSourceSelectorsAreConfigurableAndReleaseScoped(t *testing.T) {
 	)
 }
 
-func TestIngressRequiresTLSAndSupportsTailscaleManagedCertificates(t *testing.T) {
+func TestIngressRequiresTailscaleIdentityAndManagedCertificates(t *testing.T) {
 	output := helmTemplate(t, append(enabledValues(),
 		"--set", "ingress.enabled=true",
 		"--set-string", "ingress.className=tailscale",
@@ -317,6 +310,7 @@ func TestIngressRequiresTLSAndSupportsTailscaleManagedCertificates(t *testing.T)
 		"--set", "ingress.enabled=true",
 		"--set-string", "ingress.className=nginx",
 		"--set-string", "ingress.host=operator.example.test",
+		"--set-string", "ingress.tls.secretName=operator-tls",
 	)...)
 	helmTemplateMustFail(t, append(enabledValues(),
 		"--set", "ingress.enabled=true",
@@ -334,21 +328,18 @@ func TestRBACSeparatesControllerMutationFromServerProjection(t *testing.T) {
 	assertContains(t, controllerRole,
 		"resources: [configmaps]",
 		"resourceNames: [\"omp-runtime-config\"]",
-		"resources: [secrets]",
-		"resourceNames: [\"omp-runtime-credential\"]",
 		"verbs: [get]",
 	)
+	if strings.Contains(controllerRole, "resources: [secrets]") {
+		t.Fatal("controller role can read provider credential Secrets")
+	}
 	assertContains(t, serverRole, "t4clusterhosts", "t4workspaces", "t4sessions", "create", "list", "watch")
 	if strings.Contains(serverRole, "secrets") || strings.Contains(serverRole, "persistentvolumeclaims") || strings.Contains(serverRole, "t4sessions/status") {
 		t.Fatal("server role can read secrets or mutate controller-owned infrastructure/status")
 	}
 }
 func TestUnauthenticatedOMPControllerCannotReadSecrets(t *testing.T) {
-	output := helmTemplate(t, append(enabledValues(),
-		"--set", "session.omp.allowUnauthenticated=true",
-		"--set-string", "session.omp.credentialSecret=",
-		"--set-string", "session.omp.credentialKey=",
-	)...)
+	output := helmTemplate(t, enabledValues()...)
 	controllerRole := documentContaining(t, output, "name: \"release-name-t4-cluster-controller\"")
 	if strings.Contains(controllerRole, "resources: [secrets]") {
 		t.Fatal("unauthenticated OMP controller can read Secrets")
@@ -597,33 +588,33 @@ func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 		"/var/run/secrets/kubernetes.io/serviceaccount/namespace",
 		"T4_OMP_CONFIG_SOURCE_DIR",
 		"T4_OMP_ALLOW_UNAUTHENTICATED",
-		"T4_OMP_CREDENTIAL_KEY",
-		`if [[ "${T4_OMP_ALLOW_UNAUTHENTICATED}" == "false" ]]`,
+		"omp_credential_projection_unsupported",
+		`[[ "${T4_OMP_ALLOW_UNAUTHENTICATED}" == "true" && "$#" -eq 0 ]]`,
 		`export HOME="${T4_SESSION_STATE_ROOT}/home"`,
 		`export PI_CODING_AGENT_DIR="${HOME}/.omp/profiles/${T4_SESSION_NAME}/agent"`,
-		`T4_*|OMP_*|PI_*|XDG_*|LD_*`,
 		`install -m 0600 "${models_source}"`,
 		`install -m 0600 "${settings_source}"`,
 		`"${PI_CODING_AGENT_DIR}/models.yml"`,
 		`"${PI_CODING_AGENT_DIR}/config.yml"`,
+		`/usr/local/bin/bun /opt/t4/cluster/images/session-runtime/scrub-omp-credentials.ts`,
+		"omp_credential_state_scrub",
 	)
 }
 
 func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing.T) {
 	entrypoint := filepath.Join(repoRoot(t), "cluster", "images", "session-runtime", "session-entrypoint.sh")
-	const secretSentinel = "must-not-appear-in-logs"
 	for _, test := range []struct {
 		name          string
 		writeModels   bool
 		models        string
 		writeSettings bool
 		settings      string
-		credential    string
+		unsafeMode    bool
 		condition     string
 	}{
-		{name: "missing models file", writeSettings: true, settings: "settings", credential: secretSentinel, condition: "omp_models"},
-		{name: "empty settings file", writeModels: true, models: "models", writeSettings: true, credential: secretSentinel, condition: "omp_settings"},
-		{name: "empty credential", writeModels: true, models: "models", writeSettings: true, settings: "settings", condition: "omp_credential"},
+		{name: "missing models file", writeSettings: true, settings: "settings", condition: "omp_models"},
+		{name: "empty settings file", writeModels: true, models: "models", writeSettings: true, condition: "omp_settings"},
+		{name: "credential projection", writeModels: true, models: "models", writeSettings: true, settings: "settings", unsafeMode: true, condition: "omp_credential_projection_unsupported"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -655,7 +646,13 @@ func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing
 			if err := os.WriteFile(filepath.Join(bin, "Xvfb"), []byte(fakeXvfb), 0o700); err != nil {
 				t.Fatal(err)
 			}
-			command := exec.Command("bash", entrypoint, "MODEL_API_KEY")
+			arguments := []string{entrypoint}
+			allowUnauthenticated := "true"
+			if test.unsafeMode {
+				arguments = append(arguments, "MODEL_API_KEY")
+				allowUnauthenticated = "false"
+			}
+			command := exec.Command("bash", arguments...)
 			command.Env = append(os.Environ(),
 				"PATH="+bin+":"+os.Getenv("PATH"),
 				"T4_SESSION_STATE_ROOT=/workspace/.t4/sessions/session-a",
@@ -667,9 +664,8 @@ func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing
 				"T4_KUBERNETES_CA_PATH="+filepath.Join(projection, "ca.crt"),
 				"T4_KUBERNETES_NAMESPACE_PATH="+filepath.Join(projection, "namespace"),
 				"T4_OMP_CONFIG_SOURCE_DIR="+source,
-				"T4_OMP_CREDENTIAL_KEY=MODEL_API_KEY",
+				"T4_OMP_ALLOW_UNAUTHENTICATED="+allowUnauthenticated,
 				"T4_TEST_XVFB_MARKER="+marker,
-				"MODEL_API_KEY="+test.credential,
 			)
 			output, err := command.CombinedOutput()
 			exitError, ok := err.(*exec.ExitError)
@@ -678,9 +674,6 @@ func TestSessionEntrypointFailsClosedBeforeGUIWithoutPrivateOMPInputs(t *testing
 			}
 			if !strings.Contains(string(output), `"condition":"`+test.condition+`"`) {
 				t.Fatalf("entrypoint output lacks bounded failure condition %q: %s", test.condition, output)
-			}
-			if strings.Contains(string(output), secretSentinel) {
-				t.Fatalf("entrypoint logged credential value: %s", output)
 			}
 			if _, err := os.Stat(marker); !os.IsNotExist(err) {
 				t.Fatalf("Xvfb started before OMP configuration passed validation: %v", err)
@@ -726,9 +719,9 @@ func enabledValues() []string {
 		"--set", "session.omp.configMap=omp-runtime-config",
 		"--set", "session.omp.modelsKey=provider-models",
 		"--set", "session.omp.settingsKey=agent-settings",
-		"--set", "session.omp.credentialSecret=omp-runtime-credential",
-		"--set", "session.omp.credentialKey=MODEL_API_KEY",
-		"--set", "session.omp.allowUnauthenticated=false",
+		"--set-string", "session.omp.credentialSecret=",
+		"--set-string", "session.omp.credentialKey=",
+		"--set", "session.omp.allowUnauthenticated=true",
 	}
 }
 

@@ -10,6 +10,7 @@ export interface ClusterHttpServersOptions {
 	readonly projection: ClusterInfrastructureProjection;
 	readonly gatewayPort: number;
 	readonly adminPort: number;
+	readonly identityProvider: "tailscale";
 	readonly trustedProxyAddresses?: readonly string[];
 	readonly trustedProxyCidrs?: readonly string[];
 	readonly health: ClusterServerHealth;
@@ -45,10 +46,16 @@ export function isLoopbackAddress(address: string): boolean {
 	return firstOctet === 127;
 }
 
-function gatewayPrincipal(request: Request, remoteAddress: string, trustedSource: (address: string) => boolean): string | undefined {
+export function gatewayPrincipal(
+	request: Request,
+	remoteAddress: string,
+	trustedSource: (address: string) => boolean,
+	identityProvider: "tailscale",
+): string | undefined {
+	if (identityProvider !== "tailscale") return undefined;
 	if (!trustedSource(remoteAddress)) return undefined;
 	if (request.headers.get("x-forwarded-proto") !== "https") return undefined;
-	const principal = request.headers.get("tailscale-user-login") ?? request.headers.get("tailscale-user-name");
+	const principal = request.headers.get("tailscale-user-login");
 	if (!principal || principal !== principal.trim() || new TextEncoder().encode(principal).byteLength > 256 || /\p{Cc}/u.test(principal)) return undefined;
 	return principal;
 }
@@ -66,7 +73,7 @@ export function startClusterHttpServers(options: ClusterHttpServersOptions): Clu
 			if (draining) return new Response("draining", { status: 503 });
 			const remoteAddress = server.requestIP(request)?.address;
 			if (!remoteAddress) return new Response("authenticated proxy required", { status: 401 });
-			const principal = gatewayPrincipal(request, remoteAddress, trustedSource);
+			const principal = gatewayPrincipal(request, remoteAddress, trustedSource, options.identityProvider);
 			if (!principal) return new Response("authenticated Tailscale proxy identity required", { status: 401 });
 			const origin = request.headers.get("origin");
 			if (origin && !options.projection.allowedOrigins().includes(origin)) return new Response("forbidden", { status: 403 });

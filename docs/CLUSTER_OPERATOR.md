@@ -7,7 +7,7 @@ The portable `t4-cluster` chart runs the infrastructure control plane for T4 wor
 - Kubernetes 1.30 or newer.
 - An administrator-managed StorageClass that actually provisions `ReadWriteMany` volumes.
 - Three immutable image digests: `t4-cluster-operator`, `t4-cluster-server`, and `t4-session-runtime`.
-- An administrator-owned same-namespace ConfigMap containing the OMP `models.yml` and `config.yml` inputs, plus either a same-namespace credential Secret or an explicit private unauthenticated-provider opt-in.
+- An administrator-owned same-namespace ConfigMap containing the OMP `models.yml` and `config.yml` inputs. Every provider in `models.yml` must use `auth: none` and resolve to a private, identity- and NetworkPolicy-isolated model route.
 - Narrow Kubernetes API, model-route, CI-provider, ingress-controller, and metrics-scraper network identities and ports for the enabled integrations.
 - A local T4 client explicitly configured to request the default-false `cluster.operator` feature. Installing this chart does not enable the client feature.
 
@@ -54,14 +54,13 @@ kubernetes:
 session:
   nodeExclude: [k3s-worker-02]
   omp:
-    # Existing same-namespace objects; the chart creates neither one.
+    # Existing same-namespace ConfigMap; the chart does not create it.
     configMap: omp-runtime-config
     modelsKey: models.yml
     settingsKey: config.yml
-    credentialSecret: omp-runtime-credential
-    # This existing Secret key is also the environment variable name seen by OMP.
-    credentialKey: PI_MODEL_API_KEY
-    allowUnauthenticated: false
+    credentialSecret: ""
+    credentialKey: ""
+    allowUnauthenticated: true
 networkPolicy:
   kubernetesApiCIDRs: [192.0.2.10/32]
   modelRouteCIDRs: [198.51.100.20/32]
@@ -107,11 +106,11 @@ networkPolicy:
 
 The sample destination CIDRs, TCP ports, model/CI endpoint selectors, and gateway/observability labels are documentation values, not usable defaults. Keep the chart backend-neutral and set destinations and integration sources to the actual cluster endpoints. Model and CI route CIDRs and their optional paired namespace/pod selectors are allowed only on the corresponding exact port lists. An empty model port list renders no model route; the default CI port remains inert until a CI CIDR or complete selector pair is supplied. Empty paired selectors render no selector rule, and other empty destination lists likewise deny those flows.
 
-The chart never creates the referenced OMP ConfigMap or Secret and never accepts their contents. The administrator must create them in the chart namespace. `modelsKey` is projected as read-only `models.yml`, `settingsKey` as read-only `config.yml`, and the configured `credentialKey` selects the same Secret key and OMP environment-variable name. The entrypoint validates both projected files and the nonempty credential without logging values, then atomically installs private copies under the OMP authority child's actual named-profile directory `${T4_SESSION_STATE_ROOT}/home/.omp/profiles/${T4_SESSION_NAME}/agent` before starting Xvfb or OMP. This must match the `OMP_PROFILE=${T4_SESSION_NAME}` passed by the session host to the pinned authority bridge child.
+The chart never creates the referenced OMP ConfigMap. The administrator must create it in the chart namespace. `modelsKey` is projected as read-only `models.yml` and `settingsKey` as read-only `config.yml`. Before creating a session Pod, the controller parses both files as YAML, rejects aliases and duplicate keys, requires a nonempty `providers` mapping with `auth: none` on every provider, and rejects credential-bearing fields such as `apiKey`, `authHeader`, `Authorization`, custom header maps, tokens, passwords, credentials, secrets, and URL userinfo/query data. The same credential-field rules apply to `config.yml`, including dotted or nested settings such as `auth.broker.token`. The entrypoint then atomically installs private copies under the OMP authority child's actual named-profile directory `${T4_SESSION_STATE_ROOT}/home/.omp/profiles/${T4_SESSION_NAME}/agent` before starting Xvfb or OMP. This must match the `OMP_PROFILE=${T4_SESSION_NAME}` passed by the session host to the pinned authority bridge child.
 
-The controller uses uncached, exact-name `get` permissions for only those two administrator-owned objects; it cannot list or watch namespace configuration. It validates the selected keys without logging or hashing their contents, incorporates each object's Kubernetes `resourceVersion` into the session Pod hash, and rechecks ready sessions every 30 seconds. Updating either object therefore recreates the session Pod and reloads OMP configuration from the durable workspace state. Deleting a required object or emptying a selected key deletes the owned authority Pod and clears the advertised Pod and Service route before reporting the exact fail-closed condition. In unauthenticated mode the controller has no Secret permission.
+The controller uses uncached, exact-name `get` permission for only that administrator-owned ConfigMap; it has no Secret permission and cannot list or watch namespace configuration. It validates the selected keys without logging or hashing their contents, incorporates the ConfigMap's Kubernetes `resourceVersion` into the session Pod hash, and rechecks ready sessions every 30 seconds. Updating the ConfigMap therefore recreates the session Pod and reloads OMP configuration from the durable workspace state. Deleting it, emptying a selected key, or making `models.yml` unsafe deletes the owned authority Pod and clears the advertised Pod and Service route before reporting the exact fail-closed condition.
 
-Credential mode is the default and requires both `credentialSecret` and `credentialKey`. The projected models and settings keys must be distinct. Credential keys cannot overlap the session runtime's `T4_*`, `OMP_*`, `PI_*`, `XDG_*`, loader, shell, display, or path environment; collisions fail chart validation, controller reconciliation, and entrypoint preflight instead of silently replacing runtime authority. An administrator may instead set `allowUnauthenticated: true` only when both credential fields are empty and the private, identity- and NetworkPolicy-isolated model endpoint is intentionally unauthenticated. In that mode the referenced `models.yml` must declare `auth: none` and must not declare `apiKey` or `authHeader`; never use this opt-in for an Internet-reachable or shared endpoint. The chart does not select or hardcode a provider, model, or prompt policy in either mode.
+Reusable credential projection is unsupported because OMP and arbitrary session tools share one workload security boundary. `allowUnauthenticated: true` with empty `credentialSecret` and `credentialKey` is therefore mandatory. The two credential fields remain only as migration sentinels: Helm, the controller, and the image entrypoint all reject an old credential-mode configuration instead of exposing it. On upgrade, reconciliation first deletes any owned session Pod and Service still using credential mode and clears the advertised route. Before OMP starts, the image validates the pinned OMP auth schema, securely deletes only rows from `auth_credentials` and the pinned secret settings (`auth.broker.token`, `hindsight.apiToken`, `searxng.token`, and `dev.autoqaPush.token`), checkpoints and vacuums `agent.db`, and removes `${HOME}/.omp/auth-broker.token` plus the encrypted broker snapshot cache. Unrelated settings, session history, and other durable tables are preserved; an unknown schema or locked database fails closed before OMP starts. Existing deployments must move provider authentication behind a private model gateway that authorizes the session through infrastructure identity or network policy while presenting an `auth: none` endpoint inside the session's allowed route. Do not expose that endpoint to the Internet or a shared untrusted network. The chart remains provider- and model-neutral.
 
 Install or enable with immutable digests:
 
@@ -125,7 +124,9 @@ The chart creates dedicated controller, server, and session ServiceAccounts inst
 
 The Kubernetes API audience is configurable because managed clusters can reject the conventional `https://kubernetes.default.svc` audience. The same value is used for the controller API token, server API token, and session-host TokenReview credential. The internal server identity audience remains the fixed `t4-cluster-internal` boundary. DNS selectors default to the conventional `kube-system`/`k8s-app: kube-dns` pair and can be replaced together for clusters using a different DNS deployment.
 
-When chart-managed ingress is enabled, a host, ingress class, and TLS stanza are mandatory. For `ingressClassName: tailscale`, the chart renders the TLS host without a Secret reference so the Tailscale operator can provision and manage the certificate. Other ingress classes must reference an administrator-managed TLS Secret.
+The managed gateway has one explicit identity-provider contract: Tailscale. Startup requires `T4_CLUSTER_IDENTITY_PROVIDER=tailscale`, a narrow list of trusted proxy addresses or CIDRs, HTTPS forwarding, and the `Tailscale-User-Login` header supplied by Tailscale Serve or the Tailscale Kubernetes operator. Display-name headers are never principals. A direct deployment that omits the identity-provider setting fails at startup.
+
+When chart-managed ingress is enabled, the class must be `tailscale`, and a host and TLS stanza are mandatory. The chart renders the TLS host without a Secret reference so the Tailscale operator can provision and manage the certificate. Generic ingress controllers are deliberately unsupported because preserving caller-supplied `Tailscale-User-*` headers would allow identity spoofing even when their source network is trusted.
 
 ## API configuration
 
@@ -147,7 +148,7 @@ The optional initial prompt is referenced by Secret name and key `prompt`; the S
 
 The session runtime verifies and builds the exact OMP tag `t4code-17.0.5-appserver-10` at commit `8476f4451ed95c5d5401785d279a93d3c659fac4`. It preserves `t4-omp-authority/1`, starts the existing T4 session-host entrypoint, and provides Xvfb, a minimal window manager, and Chromium without privileged mode or host display access. The shared claim is mounted at `/workspace`; authority and browser state live in controller-selected per-session subdirectories. OMP configuration is copied from the read-only administrator ConfigMap projection into the private authority child home before launch. `/dev/shm` is an explicit memory-backed volume. Browser Preview remains the existing GUI stream and control surface.
 
-Session pods do not receive an automatically mounted ServiceAccount token. The explicit projected reviewer token can only create TokenReviews and is not resource-authorized. ConfigMap and credential inputs are namespace-local references; credential mode uses an explicit non-optional `SecretKeyRef`, while explicit unauthenticated mode adds no Secret reference. All containers drop capabilities, disallow privilege escalation, use RuntimeDefault seccomp, and use read-only root filesystems. No per-session NodePort, LoadBalancer, host network, host PID, host display, or hostPath is created.
+Session pods do not receive an automatically mounted ServiceAccount token. The explicit projected reviewer token can only create TokenReviews and is not resource-authorized. The namespace-local ConfigMap projection contains credential-free `auth: none` OMP models and credential-free settings; session Pods receive no provider Secret reference or reusable provider credential. All containers drop capabilities, disallow privilege escalation, use RuntimeDefault seccomp, and use read-only root filesystems. No per-session NodePort, LoadBalancer, host network, host PID, host display, or hostPath is created.
 
 ## Upgrade and rollback
 

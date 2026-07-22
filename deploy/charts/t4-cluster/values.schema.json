@@ -71,10 +71,11 @@
     },
     "server": {
       "type": "object",
-      "required": ["replicas", "terminationGracePeriodSeconds", "trustedProxyAddresses", "trustedProxyCIDRs", "resources"],
+      "required": ["replicas", "terminationGracePeriodSeconds", "identityProvider", "trustedProxyAddresses", "trustedProxyCIDRs", "resources"],
       "properties": {
         "replicas": { "type": "integer", "minimum": 2, "maximum": 9 },
         "terminationGracePeriodSeconds": { "type": "integer", "minimum": 30, "maximum": 300 },
+        "identityProvider": { "type": "string", "const": "tailscale" },
         "trustedProxyAddresses": {
           "type": "array",
           "maxItems": 64,
@@ -378,24 +379,11 @@
                 "properties": {
                   "configMap": { "minLength": 1 },
                   "modelsKey": { "minLength": 1 },
-                  "settingsKey": { "minLength": 1 }
-                },
-                "oneOf": [
-                  {
-                    "properties": {
-                      "allowUnauthenticated": { "const": false },
-                      "credentialSecret": { "minLength": 1 },
-                      "credentialKey": { "minLength": 1 }
-                    }
-                  },
-                  {
-                    "properties": {
-                      "allowUnauthenticated": { "const": true },
-                      "credentialSecret": { "maxLength": 0 },
-                      "credentialKey": { "maxLength": 0 }
-                    }
-                  }
-                ]
+                  "settingsKey": { "minLength": 1 },
+                  "allowUnauthenticated": { "const": true },
+                  "credentialSecret": { "maxLength": 0 },
+                  "credentialKey": { "maxLength": 0 }
+                }
               }
             }
           },
@@ -415,24 +403,15 @@
         "properties": {
           "ingress": {
             "properties": {
-              "className": { "minLength": 1 },
+              "className": { "const": "tailscale" },
               "host": { "minLength": 1 },
-              "tls": { "properties": { "enabled": { "const": true } } }
-            },
-            "oneOf": [
-              {
+              "tls": {
                 "properties": {
-                  "className": { "const": "tailscale" },
-                  "tls": { "properties": { "secretName": { "maxLength": 0 } } }
-                }
-              },
-              {
-                "properties": {
-                  "className": { "not": { "const": "tailscale" } },
-                  "tls": { "properties": { "secretName": { "minLength": 1 } } }
+                  "enabled": { "const": true },
+                  "secretName": { "maxLength": 0 }
                 }
               }
-            ]
+            }
           }
         }
       }

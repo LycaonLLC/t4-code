@@ -18,6 +18,7 @@ export interface ClusterServerConfig {
 	readonly kubernetesApiAudience: string;
 	readonly identityTokenPath: string;
 	readonly serverServiceAccountName: string;
+	readonly identityProvider: "tailscale";
 	readonly trustedProxyAddresses: readonly string[];
 	readonly trustedProxyCidrs: readonly string[];
 	readonly woodpecker?: {
@@ -27,6 +28,10 @@ export interface ClusterServerConfig {
 		readonly token?: string;
 		readonly tokenFile?: string;
 	};
+}
+function identityProvider(value: string): "tailscale" {
+	if (value !== "tailscale") throw new Error("T4_CLUSTER_IDENTITY_PROVIDER must be tailscale");
+	return value;
 }
 function required(env: Readonly<Record<string, string | undefined>>, name: string): string {
 	const value = env[name];
@@ -138,6 +143,7 @@ export function clusterServerConfigFromEnv(env: Readonly<Record<string, string |
 		hostName: dnsSubdomain(required(env, "T4_CLUSTER_HOST_NAME"), "T4_CLUSTER_HOST_NAME"),
 		gatewayPort: port(env.T4_CLUSTER_SERVER_PORT, 8080, "T4_CLUSTER_SERVER_PORT"),
 		adminPort: port(env.T4_CLUSTER_ADMIN_PORT, 9090, "T4_CLUSTER_ADMIN_PORT"),
+		identityProvider: identityProvider(required(env, "T4_CLUSTER_IDENTITY_PROVIDER")),
 		trustedProxyAddresses: proxyAddresses(env.T4_CLUSTER_TRUSTED_PROXY_ADDRESSES),
 		trustedProxyCidrs: proxyCidrs(env.T4_CLUSTER_TRUSTED_PROXY_CIDRS),
 		kubernetesBaseUrl: `https://${serviceHost}:${servicePort}`,

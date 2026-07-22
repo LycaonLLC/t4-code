@@ -13,6 +13,7 @@ const BASE_ENV = {
 	T4_CLUSTER_HOST_NAME: "default",
 	T4_CLUSTER_IDENTITY_TOKEN_FILE: "/var/run/secrets/t4-cluster-identity/token",
 	T4_CLUSTER_SERVER_SERVICE_ACCOUNT: "release-t4-cluster-server",
+	T4_CLUSTER_IDENTITY_PROVIDER: "tailscale",
 } as const;
 
 describe("cluster server configuration", () => {
@@ -112,6 +113,12 @@ describe("cluster server configuration", () => {
 });
 
 describe("trusted cluster gateway proxy sources", () => {
+	it("requires the explicit Tailscale identity provider", () => {
+		expect(clusterServerConfigFromEnv(BASE_ENV).identityProvider).toBe("tailscale");
+		expect(() => clusterServerConfigFromEnv({ ...BASE_ENV, T4_CLUSTER_IDENTITY_PROVIDER: undefined })).toThrow("T4_CLUSTER_IDENTITY_PROVIDER is required");
+		expect(() => clusterServerConfigFromEnv({ ...BASE_ENV, T4_CLUSTER_IDENTITY_PROVIDER: "generic" })).toThrow("must be tailscale");
+	});
+
 	it("accepts bounded canonical IPv4 and IPv6 networks", () => {
 		const config = clusterServerConfigFromEnv({
 			...BASE_ENV,
