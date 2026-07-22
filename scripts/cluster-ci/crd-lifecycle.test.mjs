@@ -69,7 +69,7 @@ if [ "\${1:-}" = served ] && [ -n "\${SERVED_RESULTS:-}" ]; then
   if [ -f "$served_counter_file" ]; then served_count=$(cat "$served_counter_file"); fi
   served_count=$((served_count + 1))
   printf '%s' "$served_count" >"$served_counter_file"
-  served_result=$(printf '%s' "$SERVED_RESULTS" | awk -F, -v index="$served_count" '{print $index}')
+  served_result=$(printf '%s' "$SERVED_RESULTS" | awk -F, -v field_index="$served_count" '{print $field_index}')
   if [ "$served_result" = stale ]; then exit 43; fi
 fi
 cat >/dev/null
