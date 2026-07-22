@@ -42,5 +42,5 @@ buildctl --addr "$BUILDKIT_ADDR" build \
   --opt "label:org.opencontainers.image.source=https://github.com/$canonical_build_source_repository" \
   --opt "label:org.opencontainers.image.revision=$CI_COMMIT_SHA" \
   --output "type=image,name=$reference,push=true,compression=zstd,force-compression=true,oci-mediatypes=true" \
-  --attest type=sbom \
-  --attest type=provenance,mode=max
+  --opt "attest:sbom=" \
+  --opt "attest:provenance=mode=max"

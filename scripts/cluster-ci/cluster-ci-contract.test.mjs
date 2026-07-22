@@ -430,6 +430,9 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
 
   const buildSource = await readFile(resolve(repoRoot, "scripts/cluster-ci/build-image.sh"), "utf8");
   assert.match(buildSource, /platform=linux\/amd64,linux\/arm64/u);
+  assert.match(buildSource, /--opt "attest:sbom="/u);
+  assert.match(buildSource, /--opt "attest:provenance=mode=max"/u);
+  assert.doesNotMatch(buildSource, /--attest/u);
   assert.match(buildSource, /source_context="https:\/\/github\.com\/\$canonical_build_source_repository\.git#\$CI_COMMIT_SHA"/u);
   assert.match(buildSource, /SOURCE_REPOSITORY=https:\/\/github\.com\/\$canonical_build_source_repository/u);
   assert.doesNotMatch(buildSource, /https:\/\/github\.com\/z-peterson\/t4-code/u);

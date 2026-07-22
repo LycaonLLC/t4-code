@@ -88,6 +88,9 @@ test("site image build and promotion use only the immutable Woodpecker commit SH
   assert.match(build, /build-arg:SOURCE_COMMIT=\$CI_COMMIT_SHA/u);
   assert.match(build, /repository="\$HARBOR_REGISTRY\/\$HARBOR_PROJECT\/quarantine\/t4-site"/u);
   assert.match(build, /reference="\$repository:\$CI_COMMIT_SHA"/u);
+  assert.match(build, /--opt "attest:sbom="/u);
+  assert.match(build, /--opt "attest:provenance=mode=max"/u);
+  assert.doesNotMatch(build, /--attest/u);
   assert.match(promote, /quarantine\/t4-site:\$CI_COMMIT_SHA/u);
   assert.match(promote, /linkedin-bot\/t4-site:\$CI_COMMIT_SHA|\$HARBOR_PROJECT\/t4-site:\$CI_COMMIT_SHA/u);
   assert.doesNotMatch(`${build}\n${promote}`, /:latest\b/u);
