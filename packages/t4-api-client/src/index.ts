@@ -235,29 +235,39 @@ function matchingHttpDate(
   timestamp: number,
   parts: RegExpExecArray,
   indexes: { readonly weekday: number; readonly day: number; readonly alternateDay?: number; readonly month: number; readonly year: number; readonly hour: number; readonly minute: number; readonly second: number },
-  shortYear = false,
+  expectedYear = Number(parts[indexes.year]),
 ): boolean {
   const date = new Date(timestamp);
-  const year = Number(parts[indexes.year]);
   return date.getUTCDay() === HTTP_WEEKDAYS[parts[indexes.weekday]!] &&
     date.getUTCDate() === Number(parts[indexes.day] ?? parts[indexes.alternateDay ?? indexes.day]) &&
     date.getUTCMonth() === HTTP_MONTHS[parts[indexes.month]!] &&
-    (shortYear ? date.getUTCFullYear() % 100 === year : date.getUTCFullYear() === year) &&
+    date.getUTCFullYear() === expectedYear &&
     date.getUTCHours() === Number(parts[indexes.hour]) &&
     date.getUTCMinutes() === Number(parts[indexes.minute]) &&
     date.getUTCSeconds() === Number(parts[indexes.second]);
 }
 
 function httpDateTimestamp(value: string): number | undefined {
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) return undefined;
   const imf = /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat), ([0-9]{2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) ([0-9]{4}) ([0-9]{2}):([0-9]{2}):([0-9]{2}) GMT$/u.exec(value);
-  if (imf !== null && matchingHttpDate(timestamp, imf, { weekday: 1, day: 2, month: 3, year: 4, hour: 5, minute: 6, second: 7 })) return timestamp;
+  if (imf !== null) {
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) && matchingHttpDate(timestamp, imf, { weekday: 1, day: 2, month: 3, year: 4, hour: 5, minute: 6, second: 7 }) ? timestamp : undefined;
+  }
   const rfc850 = /^(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday), ([0-9]{2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2}) GMT$/u.exec(value);
-  if (rfc850 !== null && matchingHttpDate(timestamp, rfc850, { weekday: 1, day: 2, month: 3, year: 4, hour: 5, minute: 6, second: 7 }, true)) return timestamp;
+  if (rfc850 !== null) {
+    const currentYear = new Date(Date.now()).getUTCFullYear();
+    let year = Math.floor(currentYear / 100) * 100 + Number(rfc850[4]);
+    if (year - currentYear > 50) year -= 100;
+    const date = new Date(0);
+    date.setUTCFullYear(year, HTTP_MONTHS[rfc850[3]!]!, Number(rfc850[2]));
+    date.setUTCHours(Number(rfc850[5]), Number(rfc850[6]), Number(rfc850[7]), 0);
+    const timestamp = date.getTime();
+    return matchingHttpDate(timestamp, rfc850, { weekday: 1, day: 2, month: 3, year: 4, hour: 5, minute: 6, second: 7 }, year) ? timestamp : undefined;
+  }
   const asctime = /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (?:([0-9]{2})| ([0-9])) ([0-9]{2}):([0-9]{2}):([0-9]{2}) ([0-9]{4})$/u.exec(value);
   if (asctime === null) return undefined;
-  return matchingHttpDate(timestamp, asctime, { weekday: 1, day: 3, alternateDay: 4, month: 2, year: 8, hour: 5, minute: 6, second: 7 }) ? timestamp : undefined;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && matchingHttpDate(timestamp, asctime, { weekday: 1, day: 3, alternateDay: 4, month: 2, year: 8, hour: 5, minute: 6, second: 7 }) ? timestamp : undefined;
 }
 
 function retryAfterMilliseconds(response: Response): number | undefined | typeof INVALID_RETRY_AFTER {
@@ -542,6 +552,21 @@ async function validateResponse(request: Request, response: Response, baseUrl: s
   }
 }
 
+function isKnownUtcLeapSecondDate(year: number, month: number, day: number): boolean {
+  // Update this IERS insertion-date table when a new UTC leap second is announced.
+  switch (year * 10_000 + month * 100 + day) {
+    case 19720630: case 19721231: case 19731231: case 19741231: case 19751231:
+    case 19761231: case 19771231: case 19781231: case 19791231: case 19810630:
+    case 19820630: case 19830630: case 19850630: case 19871231: case 19891231:
+    case 19901231: case 19920630: case 19930630: case 19940630: case 19951231:
+    case 19970630: case 19981231: case 20051231: case 20081231: case 20120630:
+    case 20150630: case 20161231:
+      return true;
+    default:
+      return false;
+  }
+}
+
 function validRfc3339DateTime(value: string): boolean {
   if (!hasAtMostCodePoints(value, 64)) return false;
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/iu.exec(value);
@@ -569,7 +594,7 @@ function validRfc3339DateTime(value: string): boolean {
   utc.setUTCFullYear(year, month - 1, day);
   utc.setUTCHours(hour, minute - offsetMinutes, 0, 0);
   return utc.getUTCHours() === 23 && utc.getUTCMinutes() === 59 &&
-    ((utc.getUTCMonth() === 5 && utc.getUTCDate() === 30) || (utc.getUTCMonth() === 11 && utc.getUTCDate() === 31));
+    isKnownUtcLeapSecondDate(utc.getUTCFullYear(), utc.getUTCMonth() + 1, utc.getUTCDate());
 }
 
 function watchEvent(value: unknown, eventId: string | undefined): WatchEvent {
