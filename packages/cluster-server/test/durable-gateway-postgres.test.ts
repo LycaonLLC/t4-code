@@ -597,10 +597,6 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 		const workspace = await json(await call(api, "POST", "/v1/workspaces", { key: "monotonic-workspace-key-1", body: { name: "monotonic" } }));
 		const session = await json(await call(api, "POST", `/v1/workspaces/${workspace.id}/sessions`, { key: "monotonic-session-key-01", body: { title: "monotonic" } }));
 		const firstCancel = await json(await call(api, "POST", `/v1/sessions/${session.id}/cancel`, { key: "monotonic-cancel-key-001" }));
-		const before = await admin`SELECT
-			(SELECT count(*) FROM t4_commands WHERE target_scope = ${`session:${session.id}`}) AS commands,
-			(SELECT count(*) FROM t4_outbox WHERE target_id = ${session.id}) AS outbox,
-			(SELECT count(*) FROM t4_events WHERE session_id = ${session.id}) AS events` as Array<{ commands: bigint; outbox: bigint; events: bigint }>;
 		const repeated = await call(api, "POST", `/v1/sessions/${session.id}/cancel`, { key: "monotonic-cancel-key-002" });
 		expect(repeated.status).toBe(202);
 		const repeatedReplay = await call(api, "POST", `/v1/sessions/${session.id}/cancel`, { key: "monotonic-cancel-key-002" });
@@ -749,7 +745,14 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 		const target = await admin`SELECT sequence FROM t4_events WHERE principal_id = 'owner@example.com' AND session_id = ${session.id} AND payload->>'commandId' = ${command.commandId}` as Array<{ sequence: bigint }>;
 		expect(target[0]).toBeDefined();
 		const blocker = new SQL(DATABASE_URL!, { max: 1, bigint: true });
-		await blocker`SELECT pg_advisory_lock(741408)`;
+		const releaseBlocker = Promise.withResolvers<void>();
+		const blockerReady = Promise.withResolvers<void>();
+		const blockerTask = blocker.begin(async transaction => {
+			await transaction`SELECT pg_advisory_xact_lock(741408)`;
+			blockerReady.resolve();
+			await releaseBlocker.promise;
+		});
+		await blockerReady.promise;
 		await admin.unsafe(`
 			CREATE SEQUENCE t4_test_event_pause_reached;
 			ALTER TABLE t4_events RENAME TO t4_events_base;
@@ -768,9 +771,12 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 				await transaction`DELETE FROM t4_events_base WHERE sequence = ${target[0]!.sequence}`;
 				await transaction`UPDATE t4_event_retention SET first_retained_sequence = ${target[0]!.sequence + 1n} WHERE principal_id = 'owner@example.com' AND session_id = ${session.id}`;
 			});
-			await blocker`SELECT pg_advisory_unlock(741408)`;
+			releaseBlocker.resolve();
+			await blockerTask;
 			response = await pendingWindow;
 		} finally {
+			releaseBlocker.resolve();
+			await blockerTask;
 			await blocker.close();
 			await Promise.allSettled([pendingWindow]);
 			await concurrent.close();
