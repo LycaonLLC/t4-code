@@ -26,6 +26,7 @@ export const RELEASE_CONTRACT_PATHS = [
   "docs/RELEASE_GATE.md",
   "ops/t4-maintainer/README.md",
   "packages/client/src/omp-client-frames.ts",
+  "provenance/omp-host-migration.json",
   "scripts/check-release-publication.mjs",
   "scripts/deploy-site.mjs",
   "scripts/dispatch-site-deployment.mjs",
@@ -42,6 +43,13 @@ const REPOSITORY_URL = "https://github.com/LycaonLLC/t4-code";
 const OMP_RUNTIME_REPOSITORY = "https://github.com/wolfiesch/oh-my-pi";
 const OMP_APP_WIRE_SOURCE_REPOSITORY = "https://github.com/lyc-aon/oh-my-pi";
 const OMP_UPSTREAM_REPOSITORY = "https://github.com/can1357/oh-my-pi";
+const OMP_HOST_MIGRATION_SOURCE_REPOSITORY = "https://github.com/lyc-aon/oh-my-pi";
+const OMP_HOST_MIGRATION_INPUTS = {
+  t4codeBase: "09835b929cd028e7e3f800b3e4203e3d1f37931c",
+  operationsContinuity: "08504b1281f01d8fb81e27306f7d3f6e6c29c4a6",
+  artifactAndTurnReview: "796bb7dca4f9c0ebba98bafc37dc67359bb6ea39",
+  runtimeAndWorkspaceAdapters: "6ce1d41b35db9a5feaa4743f4a3200d9a8f9ae61",
+};
 const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
@@ -475,6 +483,16 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
 
   const matrixPath = "compat/omp-app-matrix.json";
   const matrix = parseJson(files, matrixPath, errors);
+  const hostMigrationPath = "provenance/omp-host-migration.json";
+  const hostMigration = parseJson(files, hostMigrationPath, errors);
+  if (hostMigration?.sourceRepository !== OMP_HOST_MIGRATION_SOURCE_REPOSITORY) {
+    errors.push(
+      `${hostMigrationPath} source repository must remain ${OMP_HOST_MIGRATION_SOURCE_REPOSITORY}`,
+    );
+  }
+  if (!isDeepStrictEqual(hostMigration?.inputs, OMP_HOST_MIGRATION_INPUTS)) {
+    errors.push(`${hostMigrationPath} migration inputs must remain the frozen reviewed commits`);
+  }
   validateOfficialRuntimeMetadata(matrix?.officialRuntime, matrixPath, errors);
   const officialGatePath = "compat/official-omp-gate0.json";
   const officialGate = parseJson(files, officialGatePath, errors);

@@ -92,6 +92,38 @@ test("promotes the verified runtime into the product release", () => {
   assert.deepEqual(matrix.publishedRuntime, matrix.verifiedRuntime);
 });
 
+test("freezes the legacy OMP host-migration provenance literals", () => {
+  const sourceDrift = changed("provenance/omp-host-migration.json", (text) => {
+    const provenance = JSON.parse(text);
+    provenance.sourceRepository = "https://github.com/wolfiesch/oh-my-pi";
+    return JSON.stringify(provenance);
+  });
+  assert.ok(
+    collectReleaseConsistencyErrors(sourceDrift).some((error) =>
+      error.includes("source repository must remain"),
+    ),
+  );
+
+  for (const field of [
+    "t4codeBase",
+    "operationsContinuity",
+    "artifactAndTurnReview",
+    "runtimeAndWorkspaceAdapters",
+  ]) {
+    const inputDrift = changed("provenance/omp-host-migration.json", (text) => {
+      const provenance = JSON.parse(text);
+      provenance.inputs[field] = "0".repeat(40);
+      return JSON.stringify(provenance);
+    });
+    assert.ok(
+      collectReleaseConsistencyErrors(inputDrift).some((error) =>
+        error.includes("migration inputs must remain"),
+      ),
+      field,
+    );
+  }
+});
+
 test("pins official OMP artifacts and the Gate 0 proof contract", () => {
   const officialDrift = changedRuntime("officialRuntime", (runtime) => {
     runtime.artifacts["linux-arm64"].sha256 = "invalid";

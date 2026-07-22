@@ -137,6 +137,23 @@ case $tool in
       [[ $argument == repos/* ]] && endpoint=$argument
     done
     case $endpoint in
+      repos/can1357/oh-my-pi)
+        official_id=1125856365
+        official_node=R_kgDOQxs0bQ
+        [[ \${MOCK_OMP_OFFICIAL_ID_MISMATCH:-0} != 1 ]] || official_id=1
+        printf '{"id":%s,"node_id":"%s","full_name":"can1357/oh-my-pi"}\n' "$official_id" "$official_node"
+        ;;
+      repos/wolfiesch/oh-my-pi)
+        fork_id=1271775475
+        fork_node=R_kgDOS83A8w
+        parent_id=1125856365
+        parent_node=R_kgDOQxs0bQ
+        [[ \${MOCK_OMP_FORK_ID_MISMATCH:-0} != 1 ]] || fork_id=1
+        [[ \${MOCK_OMP_FORK_NODE_MISMATCH:-0} != 1 ]] || fork_node=wrong
+        [[ \${MOCK_OMP_FORK_PARENT_MISMATCH:-0} != 1 ]] || parent_id=1
+        printf '{"id":%s,"node_id":"%s","full_name":"wolfiesch/oh-my-pi","fork":true,"parent":{"id":%s,"node_id":"%s","full_name":"can1357/oh-my-pi"}}\n' \
+          "$fork_id" "$fork_node" "$parent_id" "$parent_node"
+        ;;
       'repos/LycaonLLC/t4-code/pulls?state=open&base=main&per_page=100')
         count=$(read_state t4-pr-queries 0)
         count=$((count + 1))
@@ -160,6 +177,9 @@ case $tool in
         printf '%s\n' "$MOCK_UPSTREAM_COMMIT"
         ;;
       repos/wolfiesch/oh-my-pi/commits/v1.2.3)
+        printf '%s\n' "$MOCK_UPSTREAM_COMMIT"
+        ;;
+      repos/wolfiesch/oh-my-pi/commits/$MOCK_UPSTREAM_COMMIT)
         printf '%s\n' "$MOCK_UPSTREAM_COMMIT"
         ;;
       repos/can1357/oh-my-pi/git/ref/tags/v1.2.3)
@@ -220,6 +240,9 @@ case $tool in
           "$upstream_tag" "$MOCK_UPSTREAM_COMMIT" "$MOCK_INTEGRATION_COMMIT"
         ;;
       repos/wolfiesch/oh-my-pi/commits/t4code-1.2.3-appserver-1)
+        printf '%s\n' "$MOCK_INTEGRATION_COMMIT"
+        ;;
+      repos/wolfiesch/oh-my-pi/commits/t4code/main)
         printf '%s\n' "$MOCK_INTEGRATION_COMMIT"
         ;;
       repos/LycaonLLC/t4-code/commits/main)
@@ -1521,6 +1544,10 @@ exec "$@"
     ...(options.forkMainRunCancelStuck ? { MOCK_FORK_MAIN_RUN_CANCEL_STUCK: "1" } : {}),
     ...(options.forkBaseTagMissing ? { MOCK_FORK_BASE_TAG_MISSING: "1" } : {}),
     ...(options.forkBaseTagMismatch ? { MOCK_FORK_BASE_TAG_MISMATCH: "1" } : {}),
+    ...(options.ompOfficialIdMismatch ? { MOCK_OMP_OFFICIAL_ID_MISMATCH: "1" } : {}),
+    ...(options.ompForkIdMismatch ? { MOCK_OMP_FORK_ID_MISMATCH: "1" } : {}),
+    ...(options.ompForkNodeMismatch ? { MOCK_OMP_FORK_NODE_MISMATCH: "1" } : {}),
+    ...(options.ompForkParentMismatch ? { MOCK_OMP_FORK_PARENT_MISMATCH: "1" } : {}),
     ...(options.staleLoopbackIdentity ? { MOCK_STALE_LOOPBACK_IDENTITY: "1" } : {}),
     ...(options.staleTailnetIdentity ? { MOCK_STALE_TAILNET_IDENTITY: "1" } : {}),
     ...(options.gatewayDisableFailAfterFirst
@@ -1610,6 +1637,10 @@ async function createRunnerFixture(options = {}) {
     forkMainRunCancelStuck: options.forkMainRunCancelStuck,
     forkBaseTagMissing: options.forkBaseTagMissing,
     forkBaseTagMismatch: options.forkBaseTagMismatch,
+    ompOfficialIdMismatch: options.ompOfficialIdMismatch,
+    ompForkIdMismatch: options.ompForkIdMismatch,
+    ompForkNodeMismatch: options.ompForkNodeMismatch,
+    ompForkParentMismatch: options.ompForkParentMismatch,
     staleLoopbackIdentity: options.staleLoopbackIdentity,
     staleTailnetIdentity: options.staleTailnetIdentity,
     ompWorkflowMissing: options.ompWorkflowMissing,
@@ -1681,7 +1712,7 @@ async function createRunnerFixture(options = {}) {
       pushedRefCount: 3,
       productionRemoteIdentity: true,
       officialRepository: "can1357/oh-my-pi",
-      forkRepository: "wolfiesch/oh-my-pi",
+      forkRepository: options.legacyAtomicReceipt ? "lyc-aon/oh-my-pi" : "wolfiesch/oh-my-pi",
       upstream: {
         tag: "v1.2.3",
         commit: upstreamCommit,
@@ -1696,6 +1727,55 @@ async function createRunnerFixture(options = {}) {
       intentObject: intentHash.stdout.trim(),
     })}\n`,
   );
+  const transferProof = join(fixture.root, "omp-fork-authority-transfer.json");
+  const mockDigest = createHash("sha256").update("mock-asset\n").digest("hex");
+  await writeFile(
+    transferProof,
+    `${JSON.stringify({
+      schemaVersion: 1,
+      purpose: "one-time-omp-fork-authority-transfer",
+      repositories: {
+        official: {
+          fullName: "can1357/oh-my-pi",
+          id: 1125856365,
+          nodeId: "R_kgDOQxs0bQ",
+        },
+        legacy: {
+          fullName: "lyc-aon/oh-my-pi",
+          id: 1271877000,
+          nodeId: "R_kgDOS89NiA",
+          parentId: 1125856365,
+          parentNodeId: "R_kgDOQxs0bQ",
+        },
+        current: {
+          fullName: "wolfiesch/oh-my-pi",
+          id: 1271775475,
+          nodeId: "R_kgDOS83A8w",
+          parentId: 1125856365,
+          parentNodeId: "R_kgDOQxs0bQ",
+        },
+      },
+      publication: {
+        upstreamTag: "v1.2.3",
+        upstreamCommit,
+        upstreamTagObject,
+        currentBaseTagObject: null,
+        currentBaseCommitAccessible: true,
+        productBranch: "t4code/main",
+        productCommit: integrationCommit,
+        integrationTag: "t4code-1.2.3-appserver-1",
+        integrationCommit,
+        integrationTagObject,
+      },
+      releaseAssets: [
+        "omp-darwin-arm64",
+        "omp-darwin-x64",
+        "omp-linux-arm64",
+        "omp-linux-x64",
+        "omp-windows-x64.exe",
+      ].map((name) => ({ name, size: 11, digest: `sha256:${mockDigest}` })),
+    })}\n`,
+  );
   const runnerEnv = {
     ...fixture.env,
     MOCK_RUNTIME_ROOT: runtimeRoot,
@@ -1705,6 +1785,7 @@ async function createRunnerFixture(options = {}) {
     T4_MAINTAINER_VERIFY_ATTEMPTS: "1",
     T4_MAINTAINER_VERIFY_INTERVAL_SECONDS: "1",
     T4_MAINTAINER_ATOMIC_STATE_DIR: atomicState,
+    T4_MAINTAINER_OMP_AUTHORITY_TRANSFER_FILE: transferProof,
     ...(options.localDeployFail ? { MOCK_LOCAL_DEPLOY_FAIL: "1" } : {}),
     ...(options.publicIncompatible ? { MOCK_PUBLIC_INCOMPATIBLE: "1" } : {}),
     ...(options.mainIncompatible ? { MOCK_MAIN_INCOMPATIBLE: "1" } : {}),
@@ -2522,6 +2603,51 @@ test("public verification rejects a changed fork base-tag object", async (t) => 
   assert.match(calls, /repos\/wolfiesch\/oh-my-pi\/git\/ref\/tags\/v1\.2\.3/mu);
   assert.equal(calls.split("\n").filter((line) => line.startsWith("local-deploy\t")).length, 0);
   assert.equal(calls.split("\n").filter((line) => line.startsWith("omp\t")).length, 0);
+});
+
+test("legacy atomic receipts remain valid only through the exact transfer proof", async (t) => {
+  const fixture = await createRunnerFixture({ legacyAtomicReceipt: true });
+  t.after(() => fixture.cleanup());
+  const result = fixture.runRunner();
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const processed = JSON.parse(await readFile(fixture.processed, "utf8"));
+  assert.equal(processed.atomicPublication.forkRepository, "lyc-aon/oh-my-pi");
+
+  const receiptPath = join(
+    fixture.maintainerRoot,
+    "state",
+    "atomic-publication",
+    "t4code-1.2.3-appserver-1",
+    "receipt.json",
+  );
+  const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
+  assert.equal(receipt.forkRepository, "lyc-aon/oh-my-pi");
+});
+
+test("fork repository identity drift blocks every fork-main mutation", async (t) => {
+  for (const option of [
+    "ompOfficialIdMismatch",
+    "ompForkIdMismatch",
+    "ompForkNodeMismatch",
+    "ompForkParentMismatch",
+  ]) {
+    await t.test(option, async (subtest) => {
+      const fixture = await createRunnerFixture({
+        forkMainBehind: true,
+        localDeployFail: true,
+        [option]: true,
+      });
+      subtest.after(() => fixture.cleanup());
+      const result = fixture.runRunner();
+      assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      assert.match(result.stderr, /repository identity does not match/u);
+      const calls = await fixture.callsText();
+      assert.doesNotMatch(calls, /actions\/workflows\/ci\.yml\/(?:disable|enable)/u);
+      assert.doesNotMatch(calls, /actions\/runs\/4242\/cancel/u);
+      assert.equal(await pathExists(join(fixture.state, "fork-main-synced")), false);
+      assert.equal(calls.split("\n").filter((line) => line.startsWith("omp\t")).length, 0);
+    });
+  }
 });
 
 test("site release-manifest drift blocks public verification and local work", async (t) => {
