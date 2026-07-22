@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
@@ -61,6 +62,22 @@ test("Woodpecker has a complete main-only site chain independent of controller p
   assert.deepEqual(pipeline.steps["cleanup-site-registry-auth"].commands, [
     "rm -rf .site-ci",
   ]);
+});
+
+test("site image build accepts only an exact 40-character commit SHA", () => {
+  const run = (commit) =>
+    spawnSync("sh", ["scripts/build-site-image.sh"], {
+      encoding: "utf8",
+      env: { CI_COMMIT_SHA: commit, PATH: process.env.PATH },
+    });
+
+  const valid = run("a".repeat(40));
+  assert.notEqual(valid.status, 64);
+  assert.match(valid.stderr, /BUILDKIT_ADDR.*required/u);
+
+  const truncated = run("a".repeat(39));
+  assert.equal(truncated.status, 64);
+  assert.match(truncated.stderr, /exact lowercase 40-character SHA/u);
 });
 
 test("site image build and promotion use only the immutable Woodpecker commit SHA", async () => {
