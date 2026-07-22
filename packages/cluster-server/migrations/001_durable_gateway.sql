@@ -1,4 +1,3 @@
-BEGIN;
 CREATE TABLE IF NOT EXISTS t4_schema_migrations (version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT clock_timestamp());
 CREATE TABLE IF NOT EXISTS t4_commands (
  command_id text PRIMARY KEY, principal_id text NOT NULL, operation text NOT NULL, target_scope text NOT NULL,
@@ -48,4 +47,3 @@ CREATE TABLE IF NOT EXISTS t4_outbox (
 );
 CREATE INDEX IF NOT EXISTS t4_outbox_ready ON t4_outbox (state, next_attempt_at, outbox_id);
 INSERT INTO t4_schema_migrations(version) VALUES (1) ON CONFLICT (version) DO NOTHING;
-COMMIT;

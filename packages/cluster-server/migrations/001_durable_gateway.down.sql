@@ -1,4 +1,3 @@
-BEGIN;
 DROP TABLE IF EXISTS t4_outbox;
 DROP TABLE IF EXISTS t4_owner_leases;
 DROP TABLE IF EXISTS t4_snapshot_entries;
@@ -8,4 +7,3 @@ DROP TABLE IF EXISTS t4_session_intents;
 DROP TABLE IF EXISTS t4_workspace_intents;
 DROP TABLE IF EXISTS t4_commands;
 DROP TABLE IF EXISTS t4_schema_migrations;
-COMMIT;

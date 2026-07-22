@@ -142,12 +142,19 @@ export class PostgresLedger {
 
 	async migrate(): Promise<void> {
 		const migration = await Bun.file(MIGRATION_URL).text();
-		await this.#sql.unsafe(migration);
+		await this.#sql.begin("ISOLATION LEVEL SERIALIZABLE", async transaction => {
+			await transaction`SELECT pg_advisory_xact_lock(741405)`;
+			await transaction.unsafe(migration);
+		});
 		const rows = await this.#sql<{ version: number }[]>`SELECT version FROM t4_schema_migrations ORDER BY version DESC LIMIT 1`;
 		if (rows[0]?.version !== 1) throw new Error("durable gateway schema migration did not reach version 1");
 	}
 	async rollback(): Promise<void> {
-		await this.#sql.unsafe(await Bun.file(ROLLBACK_URL).text());
+		const rollback = await Bun.file(ROLLBACK_URL).text();
+		await this.#sql.begin("ISOLATION LEVEL SERIALIZABLE", async transaction => {
+			await transaction`SELECT pg_advisory_xact_lock(741405)`;
+			await transaction.unsafe(rollback);
+		});
 	}
 	async close(): Promise<void> { await this.#sql.close(); }
 

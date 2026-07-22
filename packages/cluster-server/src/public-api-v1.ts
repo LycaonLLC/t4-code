@@ -4,8 +4,6 @@ import {
 	canonicalRequestFingerprint,
 	type LedgerMutationResult,
 	type PostgresLedger,
-	type SessionRecord,
-	type WorkspaceRecord,
 } from "./ledger.ts";
 
 type Discovery = components["schemas"]["Discovery"];
