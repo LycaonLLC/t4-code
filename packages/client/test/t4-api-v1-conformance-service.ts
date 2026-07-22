@@ -47,6 +47,26 @@ function json(status: number, body: unknown, headers: Record<string, string> = {
 function problem(status: number, code: string, message: string, extra: Record<string, unknown> = {}): Response {
   return json(status, { error: { code, message, requestId: `req-${code}`, retryable: status >= 500, ...extra } });
 }
+const SNAPSHOT_BYTES_MAX = 16 * 1024 * 1024;
+
+function snapshotResponseAtBytes(sessionId: unknown, state: unknown, targetBytes: number): Response {
+  const entries = Array.from({ length: 4 }, (_, sequence) => ({ sequence, kind: "output", text: "" }));
+  const snapshot = { sessionId, cursor: "cursor-2", state, entries };
+  let remaining = targetBytes - encoder.encode(JSON.stringify(snapshot)).byteLength;
+  for (const entry of entries) {
+    const astralCodePoints = Math.min(1_048_576, Math.floor(remaining / 4));
+    entry.text = "💚".repeat(astralCodePoints);
+    remaining -= astralCodePoints * 4;
+    if (remaining > 0 && remaining < 4) {
+      entry.text += "x".repeat(remaining);
+      remaining = 0;
+    }
+  }
+  expect(remaining).toBe(0);
+  const body = JSON.stringify(snapshot);
+  expect(encoder.encode(body).byteLength).toBe(targetBytes);
+  return new Response(body, { status: 200, headers: { "Content-Type": "application/json", "T4-API-Version": "1.0" } });
+}
 
 function compareUtf16(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -109,6 +129,7 @@ interface ReplayRecord {
 
 export interface T4ApiV1ConformanceOptions {
   readonly invalidPayload?: "discovery" | "workspace" | "session" | "command";
+  readonly snapshotBoundary?: "exact" | "over";
   readonly watchTransport?: "normal" | "bytewise" | "oversized" | "many-small";
 }
 
@@ -336,6 +357,9 @@ export class T4ApiV1ConformanceService {
     if (snapshotMatch && request.method === "GET") {
       const session = this.#sessions.get(decodeURIComponent(snapshotMatch[1]!));
       if (session?.tenant !== tenant) return problem(404, "not_found", "Session not found");
+      if (this.options.snapshotBoundary !== undefined) {
+        return snapshotResponseAtBytes(session.id, session.state, SNAPSHOT_BYTES_MAX + (this.options.snapshotBoundary === "over" ? 1 : 0));
+      }
       return json(200, { sessionId: session.id, cursor: "cursor-2", state: session.state, entries: [{ sequence: 2, kind: "output", text: "ready" }] });
     }
 

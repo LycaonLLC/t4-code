@@ -1395,20 +1395,24 @@ describe("generated T4 API v1 client conformance", () => {
     };
     expect(contract.components.schemas.SessionSnapshot["x-t4-maxUtf8Bytes"]).toBe(16 * 1024 * 1024);
 
-    const oversizedSnapshot = createT4ApiClient({
-      baseUrl: "https://aggregate-snapshot.test", credential: "token-a", majorVersion: 1,
-      fetch: async () => jsonResponse({
-        sessionId: "ses-1", cursor: "cursor-1", state: "ready",
-        entries: Array.from({ length: 17 }, (_, sequence) => ({ sequence, kind: "output", text: "x".repeat(1024 * 1024) })),
-      }),
-    });
-    await expect(oversizedSnapshot.http.GET("/v1/sessions/{sessionId}/snapshot", {
-      params: { header: VERSION_HEADERS, path: { sessionId: "ses-1" } },
-    })).rejects.toMatchObject({ code: "indeterminate", status: 502, retryable: false });
+    for (const boundary of ["exact", "over"] as const) {
+      const service = new T4ApiV1ConformanceService({ snapshotBoundary: boundary });
+      const client = await seededClient(service, `snapshot-${boundary}`);
+      const response = client.http.GET("/v1/sessions/{sessionId}/snapshot", {
+        params: { header: VERSION_HEADERS, path: { sessionId: "ses-1" } },
+      });
+      if (boundary === "exact") {
+        const snapshot = requireData(await response);
+        expect(snapshot.entries).toHaveLength(4);
+        expect(snapshot.entries[0]?.text).toContain("💚");
+      } else {
+        await expect(response).rejects.toMatchObject({ code: "indeterminate", status: 502, retryable: false });
+      }
+    }
   });
 
   it("rejects duplicate durable cursors within one SSE stream and after reconnect", async () => {
-    const event = 'data: {"type":"heartbeat","cursor":"duplicate-1","observedAt":"2026-07-21T00:00:00Z"}\n\n';
+    const event = 'data: {"type":"session","cursor":"duplicate-1","state":"ready","revision":1}\n\n';
     for (const delivery of ["same-stream", "reconnect"] as const) {
       let attempts = 0;
       const client = createT4ApiClient({
@@ -1423,6 +1427,45 @@ describe("generated T4 API v1 client conformance", () => {
       await expect(stream.next()).rejects.toMatchObject({ code: "indeterminate", status: 502, retryable: false });
       expect(attempts).toBe(delivery === "same-stream" ? 1 : 2);
     }
+  });
+
+  it("accepts current-cursor heartbeats without allowing them to advance the durable cursor", async () => {
+    const heartbeat = (cursor: string) => `data: ${JSON.stringify({ type: "heartbeat", cursor, observedAt: "2026-07-21T00:00:00Z" })}\n\n`;
+    const startingRequests: Array<{ query: string | null; header: string | null }> = [];
+    const starting = createT4ApiClient({
+      baseUrl: "https://starting-heartbeat.test", credential: "token-a", majorVersion: 1,
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        startingRequests.push({ query: new URL(request.url).searchParams.get("cursor"), header: request.headers.get("Last-Event-ID") });
+        return apiResponse(heartbeat("duplicate-1"), { headers: { "Content-Type": "text/event-stream" } });
+      },
+    });
+    await expect(starting.watchSession("ses-1", { cursor: "duplicate-1", maxEvents: 1, maxReconnectAttempts: 0 }).next()).resolves.toMatchObject({
+      value: { type: "heartbeat", cursor: "duplicate-1" }, done: false,
+    });
+    expect(startingRequests).toEqual([{ query: "duplicate-1", header: "duplicate-1" }]);
+
+    const reconnectRequests: Array<{ query: string | null; header: string | null }> = [];
+    const reconnecting = createT4ApiClient({
+      baseUrl: "https://reconnect-heartbeat.test", credential: "token-a", majorVersion: 1,
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        reconnectRequests.push({ query: new URL(request.url).searchParams.get("cursor"), header: request.headers.get("Last-Event-ID") });
+        return apiResponse(heartbeat("duplicate-1"), { headers: { "Content-Type": "text/event-stream" } });
+      },
+    });
+    const liveness: WatchEvent[] = [];
+    for await (const event of reconnecting.watchSession("ses-1", { maxEvents: 2, maxReconnectAttempts: 1, retryBackoffMs: 0 })) liveness.push(event);
+    expect(liveness.map((event) => event.cursor)).toEqual(["duplicate-1", "duplicate-1"]);
+    expect(reconnectRequests).toEqual([{ query: null, header: null }, { query: "duplicate-1", header: "duplicate-1" }]);
+
+    const advancing = createT4ApiClient({
+      baseUrl: "https://advancing-heartbeat.test", credential: "token-a", majorVersion: 1,
+      fetch: async () => apiResponse(heartbeat("different-2"), { headers: { "Content-Type": "text/event-stream" } }),
+    });
+    await expect(advancing.watchSession("ses-1", { cursor: "duplicate-1", maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({
+      code: "indeterminate", status: 502, retryable: false,
+    });
   });
 
   it("rejects duplicate version entries and malformed capability maps", async () => {
