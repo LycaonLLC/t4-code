@@ -20,7 +20,8 @@ T4 owns the client wire, generic host service, and standalone daemon in `@t4-cod
 | Linux    | x86_64                | `.deb`, AppImage                          |
 | macOS    | Apple Silicon (arm64) | `.dmg`, `.zip` (**signed and notarized**) |
 
-No Windows build and no Intel Mac build in v0.1.30. The iOS TestFlight build is coming soon.
+No Windows build, Intel Mac build, or native iOS application is currently shipped. iPhone and iPad
+access use the responsive Tailnet browser/PWA compatibility client.
 
 ## What changed in v0.1.30
 
@@ -124,11 +125,7 @@ pnpm test:soak        # headless 10k-history and 20-reconnect stress checks
 pnpm package:linux    # .deb + AppImage into release/
 pnpm package:mac:unsigned  # unsigned macOS build (on a Mac)
 pnpm package:mac      # maintainer-only signed and notarized macOS build
-cd apps/flutter
-flutter test            # shared client, protocol, settings, and UI contracts
-flutter build apk --debug
-flutter build ios --simulator --debug
-pnpm --dir ../.. build:flutter:macos
+pnpm --filter @t4-code/mobile check:android:debug  # React/Capacitor compatibility APK
 ```
 
 Prefer Task as a Make alternative? Install [Task](https://taskfile.dev/), then run `task setup`,
@@ -143,11 +140,11 @@ native release checks.
 ## Architecture
 
 ```
-apps/desktop   Electron main process: window, local OMP discovery,
-               host lifecycle, pairing, credential storage
-apps/flutter   Canonical Android/iOS/macOS/web UI: responsive workspace,
-               secure credentials, lifecycle, updates, OMP service controls
-apps/web       Legacy React compatibility UI for the Electron client
+apps/desktop   Primary Electron shell: windows, local OMP discovery,
+               host lifecycle, pairing, credential storage, native surfaces
+apps/web       Canonical React renderer shared by Electron, Tailnet browser/PWA,
+               and the React/Capacitor Android compatibility client
+apps/mobile    Android compatibility wrapper and native secure-storage/update bridges
 packages/      client, protocol, host-wire, host-service, remote,
                service-manager, ui
 ```

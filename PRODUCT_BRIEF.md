@@ -2,7 +2,8 @@
 
 ## Product
 
-T4 Code is a Flutter desktop, mobile, and web workspace for official Oh My Pi (OMP). It makes
+T4 Code is an Electron desktop workspace with a shared React compatibility client for official Oh
+My Pi (OMP). It makes
 projects, concurrent sessions, live streaming, tools, terminal activity, task agents, reviews, files,
 settings, and local or remote execution easier to operate without reimplementing OMP behavior.
 
@@ -17,8 +18,8 @@ settings, and local or remote execution easier to operate without reimplementing
 - Browser and app preview remains a focused workspace rather than a permanent sixth pane.
 - Keyboard shortcuts, Quick Open, workspace menus, and transcript links use one action registry so
   availability and behavior do not diverge.
-- Quick Open searches through bounded authorized operations. Flutter never receives or chooses an
-  absolute path it does not already own.
+- Quick Open searches through bounded authorized operations. The renderer never receives or
+  chooses an absolute path it does not already own.
 - The Universal Working Set lets a user deliberately stage exact material from a file preview,
   transcript message, review diff, selected terminal text, or browser accessibility snapshot. The
   user can inspect and remove each item before it joins one ordinary OMP prompt; it does not become
@@ -28,7 +29,9 @@ settings, and local or remote execution easier to operate without reimplementing
 
 ## Product modes
 
-T4 Code presents one client experience across four execution profiles:
+T4 Code presents one desktop-first client experience across four execution profiles. The
+responsive browser/PWA and React/Capacitor Android builds are compatibility clients for paired
+hosts; they do not promise native desktop parity.
 
 - **T4 Local:** native execution on this macOS or Linux computer.
 - **Personal Hub:** a managed installation on one Linux machine.

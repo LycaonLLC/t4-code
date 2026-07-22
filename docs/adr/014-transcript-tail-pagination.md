@@ -55,9 +55,10 @@ continue to append normally.
 - A stale paging generation is an explicit retryable history error; it does not disturb the live
   transcript.
 
-## Flutter handoff
+## Offline compatibility-client follow-up
 
-Flutter should use the same two-lane contract rather than copy the web implementation:
+Any future offline cache should use the same two-lane contract rather than copy the React
+implementation:
 
 ```text
 open screen

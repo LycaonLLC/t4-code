@@ -1,55 +1,14 @@
-## Flutter permanent foundations (development)
+## Electron and React are the product authority
 
-The local migration branch now contains the Flutter/Dart Stage 2 foundations for macOS, iOS,
-Android, and Web, with generated Windows and Linux targets. The client strictly decodes and
-encodes the pinned `omp-app/1` corpus, correlates commands, restores typed transcript and
-session-index cursors, negotiates host watching, and handles reconnect, resume, and continuity
-gaps without moving protocol logic into widgets.
+T4 Code has standardized on the Electron desktop shell and canonical React renderer. The abandoned
+Flutter migration, its duplicate platform targets, and its CI and release plumbing have been
+removed. macOS is the primary desktop target, Linux remains supported, and React/Capacitor Android
+plus the responsive Tailnet browser/PWA remain compatibility clients for paired hosts.
 
-Saved Tailnet hosts, active-host selection, device pairing, host switching, and credential removal
-now use shared Dart contracts. Host metadata is stored separately from device credentials; Android
-uses encrypted storage and migrates the released app's keyed credentials without exposing them to
-Dart, while Apple targets use Keychain-backed storage. Compact and wide layouts share the same
-immutable state and command surface, including onboarding, pairing, and host management.
-
-This is still a development migration, not a release cutover. The deterministic fixture suite,
-exact 390x844 and 1440x900 browser checks, iOS and Android target smokes, and an authenticated
-disposable T4 host connection backed by OMP's authority bridge pass locally. The existing Electron,
-React, browser, and Capacitor clients remain the released implementation until the complete feature
-matrix, packaging, update, migration, security, and release gates pass.
-
-Stage 3 host parity is now complete on the local migration branch. The Flutter client presents
-negotiated device permissions, deliberate disconnect/reconnect controls, cancellable pre-save host
-checks, an exact least-authority pairing command, pairing failures, and confirmed host removal that
-deletes only the device-local address and credential.
-
-Stage 3 project and session parity is also complete locally. The shared session rail consumes the
-canonical session index, groups and searches current or archived sessions, creates and selects
-sessions, and exposes rename, runtime termination, archive, restore, and confirmed permanent
-deletion through revisioned app-wire commands. Compact drawers and wide rails share the same state
-and actions.
-
-Stage 3 transcript and composer parity is complete locally. Durable and live transcript events now
-render Markdown, reasoning, tool progress/results, streaming state, and integrity-checked images.
-The composer preserves a separate draft and attachment set per session, uploads bounded images
-through the chunked app-wire protocol, exposes catalog-backed slash and model choices, applies
-thinking and fast-mode controls, and supports steering, queued follow-ups, and confirmed turn
-cancellation. Focused protocol, controller, and compact/wide widget coverage passes alongside the
-Web release build and fixture-connected macOS, iOS Simulator, and Android emulator smokes.
-
-Stage 3 decisions and attention parity is complete locally. The shared inbox groups approvals,
-questions, plans, security confirmations, failures, completions, and background-agent progress.
-Actions remain bound to the host session revision, acquire a negotiated prompt lease before
-dispatch, and reject replaced or expired requests. The full Flutter suite, Web release build,
-compact widget coverage, and an interactive compact-browser decision smoke pass.
-
-Stage 3 developer surfaces are complete locally. A shared developer workspace exposes redacted
-activity with filters and pause/copy controls, file browsing and source inspection, selected-file
-diff review, and protocol-backed PTY tabs with bounded scrollback, resize/input forwarding, exit
-state, and guarded paste. Preview navigation stays host-authoritative: Flutter renders only
-integrity-checked capture bytes and never executes page HTML or JavaScript. Focused controller and
-compact widget coverage, the full Flutter suite, and fixture-connected Web, iOS Simulator, and
-Android emulator smokes exercise the new path.
+The standardization preserves T4's standalone host, typed wire, OMP authority boundary, current
+session and transcript behavior, native Browser workspace, terminal, files, review, secure
+credentials, and signed update path. The public demo now builds from the same React client shipped
+inside Electron, eliminating a second product implementation.
 
 ## A session rail built for large libraries
 

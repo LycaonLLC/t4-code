@@ -1,6 +1,6 @@
 # Electron recovery and stabilization sprint
 
-- Status: planned
+- Status: active; source standardization and automated proof complete, native artifact proof pending
 - Baseline: `origin/main` at `49442848e0e07558de8033d894e647eb68691ddb`
 - Primary product: Electron shell plus the React renderer
 - Primary platform: macOS
@@ -19,6 +19,23 @@ Electron release.
 
 This is a recovery sprint, not a visual rewrite or a new-client project. Swift
 planning resumes only after the Electron release and rollback are stable.
+
+## Execution evidence
+
+- Exact baseline `49442848e0e07558de8033d894e647eb68691ddb` completed all required GitHub CI
+  jobs successfully.
+- PRs #130 and #146 were closed as superseded; independent heartbeat PR #145 was rebased,
+  reverified, and merged as `0eb07497f4345254134965e666d337dff438058a`.
+- Node 24.13.1 and pnpm 11.10.0 pass `pnpm check`, the full 16-workspace test and build graph,
+  32 Playwright scenarios, 49 packaging contracts, the bounded 10k-history proof, and 20
+  consecutive reconnect cycles.
+- Electron/React is now the sole active desktop product graph. Flutter source, duplicate CI lanes,
+  build commands, and demo deployment were removed; the historical migration material is archived.
+- The public demo builds from the same React renderer used by Electron and validates its `/demo/`
+  containment contract.
+- Remaining evidence is native: unsigned installed macOS package/window workflows, exact-head CI
+  on the sprint PR, protected signed artifacts, Linux package launch, Android native smoke, and
+  physical Tailnet Safari proof. No release or tag is authorized by this document.
 
 ## Current state at planning time
 

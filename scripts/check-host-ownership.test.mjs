@@ -37,7 +37,8 @@ test("product and ownership documents link the canonical architecture", () => {
   const ownership = readFileSync(join(root, "docs", "OWNERSHIP.md"), "utf8");
   const architecture = readFileSync(join(root, "docs", "T4_ARCHITECTURE.html"), "utf8");
 
-  assert.match(brief, /Flutter desktop, mobile, and web workspace/u);
+  assert.match(brief, /Electron desktop workspace/u);
+  assert.match(brief, /React compatibility client/u);
   assert.match(brief, /docs\/T4_ARCHITECTURE\.html/u);
   assert.doesNotMatch(brief, /packages\/host-service/u);
   assert.match(ownership, /packages\/host-wire/u);

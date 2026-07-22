@@ -275,7 +275,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug, flutter, flutter-android, flutter-apple]",
+          "needs: [changes, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
           "needs: [changes, core, tooling, android-debug]",
         ),
     ],
@@ -559,28 +559,11 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("run: pnpm test:cluster:ci"));
   assert.ok(ciWorkflow.includes("run: go test ./..."));
   assert.ok(ciWorkflow.includes("run: helm lint deploy/charts/t4-cluster"));
-  assert.ok(ciWorkflow.includes("flutter:"));
-  assert.ok(ciWorkflow.includes("flutter-android:"));
-  assert.ok(ciWorkflow.includes("flutter-apple:"));
-  assert.ok(ciWorkflow.includes("Run Flutter iOS launch smoke test"));
-  assert.ok(
-    ciWorkflow.includes(
-      'xcrun simctl install "$DEVICE_ID" build/ios/iphonesimulator/Runner.app',
-    ),
-  );
-  assert.ok(ciWorkflow.includes('kill -0 "$app_pid"'));
-  assert.ok(ciWorkflow.includes("Build standalone T4 host for Flutter macOS"));
-  assert.ok(ciWorkflow.includes("Verify bundled Flutter macOS host"));
-  assert.ok(
-    ciWorkflow.includes(
-      "test -x apps/flutter/build/macos/Build/Products/Debug/t4code.app/Contents/Resources/runtime/t4-host",
-    ),
-  );
   assert.ok(ciWorkflow.includes("name: verify"));
   assert.ok(ciWorkflow.includes("if: ${{ always() }}"));
   assert.ok(
     ciWorkflow.includes(
-      "needs: [changes, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug, flutter, flutter-android, flutter-apple]",
+      "needs: [changes, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
     ),
   );
   assert.ok(ciWorkflow.includes('test "$CHANGES_RESULT" = success'));
