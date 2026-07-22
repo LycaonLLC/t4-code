@@ -510,7 +510,8 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 			CREATE TRIGGER t4_test_pause_absent_key_trigger BEFORE INSERT ON t4_outbox
 			FOR EACH ROW EXECUTE FUNCTION t4_test_pause_first_absent_key();
 		`);
-		await admin`SELECT pg_advisory_lock(741406)`;
+		const blocker = new SQL(DATABASE_URL!, { max: 1, bigint: true });
+		await blocker`SELECT pg_advisory_lock(741406)`;
 		const first = call(api, "POST", "/v1/workspaces", { key: "absent-idempotency-key-01", body: { name: "one durable winner" } });
 		let second: Promise<Response> | undefined;
 		let responses: Response[] | undefined;
@@ -522,10 +523,10 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 				const blocked = await admin`SELECT count(*) AS count FROM pg_stat_activity WHERE datname = current_database() AND wait_event = 'advisory' AND query LIKE 'SELECT pg_advisory_xact_lock(hashtextextended%'` as Array<{ count: bigint }>;
 				return blocked[0]?.count === 1n;
 			});
-			await admin`SELECT pg_advisory_unlock(741406)`;
+			await blocker`SELECT pg_advisory_unlock(741406)`;
 			responses = await Promise.all([first, secondRequest]);
 		} finally {
-			await admin`SELECT pg_advisory_unlock(741406)`;
+			await blocker.close();
 			await Promise.allSettled([first, ...(second ? [second] : [])]);
 			await admin.unsafe("DROP TRIGGER IF EXISTS t4_test_pause_absent_key_trigger ON t4_outbox; DROP FUNCTION IF EXISTS t4_test_pause_first_absent_key(); DROP SEQUENCE IF EXISTS t4_test_absent_key_attempt");
 		}
@@ -602,18 +603,27 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 			(SELECT count(*) FROM t4_events WHERE session_id = ${session.id}) AS events` as Array<{ commands: bigint; outbox: bigint; events: bigint }>;
 		const repeated = await call(api, "POST", `/v1/sessions/${session.id}/cancel`, { key: "monotonic-cancel-key-002" });
 		expect(repeated.status).toBe(202);
+		const repeatedReplay = await call(api, "POST", `/v1/sessions/${session.id}/cancel`, { key: "monotonic-cancel-key-002" });
+		expect(repeatedReplay.status).toBe(200);
+		expect(await json(repeatedReplay)).toEqual(firstCancel);
 		expect(await json(repeated)).toEqual(firstCancel);
 		expect((await call(api, "PATCH", `/v1/sessions/${session.id}`, { key: "monotonic-patch-key-0001", ifMatch: String(firstCancel.revision), body: { title: "forbidden" } })).status).toBe(404);
 		expect((await call(api, "POST", `/v1/sessions/${session.id}/commands`, { key: "monotonic-command-key-01", body: { command: "forbidden" } })).status).toBe(404);
 		await admin`UPDATE t4_session_intents SET state = 'cancelled' WHERE session_id = ${session.id}`;
-		expect((await call(api, "POST", `/v1/sessions/${session.id}/cancel`, { key: "monotonic-cancel-key-003" })).status).toBe(202);
-		expect((await call(api, "DELETE", `/v1/sessions/${session.id}`, { key: "monotonic-delete-key-001" })).status).toBe(204);
+		const terminalCancel = await call(api, "POST", `/v1/sessions/${session.id}/cancel`, { key: "monotonic-cancel-key-003" });
+		expect(terminalCancel.status).toBe(202);
+		const firstDelete = await call(api, "DELETE", `/v1/sessions/${session.id}`, { key: "monotonic-delete-key-001" });
+		expect(firstDelete.status).toBe(204);
+		expect(firstDelete.headers.get("idempotency-replayed")).toBe("false");
+		const deleteReplay = await call(api, "DELETE", `/v1/sessions/${session.id}`, { key: "monotonic-delete-key-001" });
+		expect(deleteReplay.status).toBe(204);
+		expect(deleteReplay.headers.get("idempotency-replayed")).toBe("true");
 		const after = await admin`SELECT
 			(SELECT count(*) FROM t4_commands WHERE target_scope = ${`session:${session.id}`}) AS commands,
 			(SELECT count(*) FROM t4_outbox WHERE target_id = ${session.id}) AS outbox,
 			(SELECT count(*) FROM t4_events WHERE session_id = ${session.id}) AS events,
 			(SELECT revision FROM t4_session_intents WHERE session_id = ${session.id}) AS revision` as Array<{ commands: bigint; outbox: bigint; events: bigint; revision: bigint }>;
-		expect(after[0]).toMatchObject({ ...before[0], revision: BigInt(firstCancel.revision) });
+		expect(after[0]).toEqual({ commands: 4n, outbox: 3n, events: 3n, revision: BigInt(firstCancel.revision) });
 		await ledger.close();
 	});
 
@@ -689,7 +699,8 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 		const workspace = await json(await call(api, "POST", "/v1/workspaces", { key: "atomic-snapshot-workspace", body: { name: "atomic snapshot" } }));
 		const session = await json(await call(api, "POST", `/v1/workspaces/${workspace.id}/sessions`, { key: "atomic-snapshot-session-1", body: { title: "atomic snapshot" } }));
 		await call(api, "POST", `/v1/sessions/${session.id}/commands`, { key: "atomic-snapshot-command-1", body: { command: "before snapshot" } });
-		await admin`SELECT pg_advisory_lock(741407)`;
+		const blocker = new SQL(DATABASE_URL!, { max: 1, bigint: true });
+		await blocker`SELECT pg_advisory_lock(741407)`;
 		await admin.unsafe(`
 			CREATE SEQUENCE t4_test_snapshot_pause_reached;
 			ALTER TABLE t4_event_retention RENAME TO t4_event_retention_base;
@@ -711,10 +722,10 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 				const events = await transaction<{ sequence: bigint }[]>`INSERT INTO t4_events (principal_id, session_id, event_type, payload, owner_epoch) VALUES ('owner@example.com', ${session.id}, 'command', ${{ commandId: concurrentCommandId, state: "accepted" }}, 0) RETURNING sequence`;
 				await transaction`UPDATE t4_event_retention_base SET latest_sequence = ${events[0]!.sequence}, updated_at = clock_timestamp() WHERE principal_id = 'owner@example.com' AND session_id = ${session.id}`;
 			});
-			await admin`SELECT pg_advisory_unlock(741407)`;
+			await blocker`SELECT pg_advisory_unlock(741407)`;
 			snapshotResponse = await pendingSnapshot;
 		} finally {
-			await admin`SELECT pg_advisory_unlock(741407)`;
+			await blocker.close();
 			await Promise.allSettled([pendingSnapshot]);
 			await concurrent.close();
 			await admin.unsafe("DROP VIEW IF EXISTS t4_event_retention; ALTER TABLE t4_event_retention_base RENAME TO t4_event_retention; DROP FUNCTION IF EXISTS t4_test_pause_snapshot(bigint); DROP SEQUENCE IF EXISTS t4_test_snapshot_pause_reached");
@@ -737,7 +748,8 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 		const command = await json(await call(api, "POST", `/v1/sessions/${session.id}/commands`, { key: "atomic-window-command-001", body: { command: "must survive concurrent prune" } }));
 		const target = await admin`SELECT sequence FROM t4_events WHERE principal_id = 'owner@example.com' AND session_id = ${session.id} AND payload->>'commandId' = ${command.commandId}` as Array<{ sequence: bigint }>;
 		expect(target[0]).toBeDefined();
-		await admin`SELECT pg_advisory_lock(741408)`;
+		const blocker = new SQL(DATABASE_URL!, { max: 1, bigint: true });
+		await blocker`SELECT pg_advisory_lock(741408)`;
 		await admin.unsafe(`
 			CREATE SEQUENCE t4_test_event_pause_reached;
 			ALTER TABLE t4_events RENAME TO t4_events_base;
@@ -756,10 +768,10 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 				await transaction`DELETE FROM t4_events_base WHERE sequence = ${target[0]!.sequence}`;
 				await transaction`UPDATE t4_event_retention SET first_retained_sequence = ${target[0]!.sequence + 1n} WHERE principal_id = 'owner@example.com' AND session_id = ${session.id}`;
 			});
-			await admin`SELECT pg_advisory_unlock(741408)`;
+			await blocker`SELECT pg_advisory_unlock(741408)`;
 			response = await pendingWindow;
 		} finally {
-			await admin`SELECT pg_advisory_unlock(741408)`;
+			await blocker.close();
 			await Promise.allSettled([pendingWindow]);
 			await concurrent.close();
 			await admin.unsafe("DROP VIEW IF EXISTS t4_events; ALTER TABLE t4_events_base RENAME TO t4_events; DROP FUNCTION IF EXISTS t4_test_pause_event(bigint); DROP SEQUENCE IF EXISTS t4_test_event_pause_reached");
@@ -774,12 +786,13 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 		const ledger = await newLedger();
 		const api = newApi(ledger);
 		let pulls = 0;
+		let cancelledAt: number | undefined;
 		const body = new ReadableStream<Uint8Array>({
 			pull(controller) {
 				pulls++;
-				if (pulls <= 2) controller.enqueue(new Uint8Array(600_000));
-				else controller.error(new Error("body reader requested data after the limit"));
+				controller.enqueue(new Uint8Array(600_000));
 			},
+			cancel() { cancelledAt = pulls; },
 		});
 		const response = await api.handle(new Request("https://t4.example.test/v1/workspaces", {
 			method: "POST",
@@ -789,7 +802,10 @@ postgresSuite("PostgreSQL-backed public T4 API v1", () => {
 		} as RequestInit & { duplex: "half" }));
 		expect(response.status).toBe(400);
 		expect((await json(response)).error.message).toContain("maximum size");
-		expect(pulls).toBe(2);
+		expect(cancelledAt).toBeDefined();
+		const pullsAfterCancellation = pulls;
+		await Promise.resolve();
+		expect(pulls).toBe(pullsAfterCancellation);
 		await ledger.close();
 	});
 

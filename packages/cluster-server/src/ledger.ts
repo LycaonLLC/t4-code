@@ -111,6 +111,18 @@ function safeNumber(value: unknown, allowZero = false): number {
 	if (decoded > MAX_SAFE_BIGINT) throw new Error("persisted ledger integer is outside the public API range");
 	return Number(decoded);
 }
+function postgresSqlState(error: unknown): string | undefined {
+	if (!error || typeof error !== "object") return undefined;
+	const value = error as { readonly code?: unknown; readonly errno?: unknown };
+	if (typeof value.code === "string" && /^[0-9A-Z]{5}$/u.test(value.code)) return value.code;
+	return typeof value.errno === "string" && /^[0-9A-Z]{5}$/u.test(value.errno) ? value.errno : undefined;
+}
+function isIdempotencyUniqueRace(error: unknown): boolean {
+	if (postgresSqlState(error) !== "23505" || !error || typeof error !== "object") return false;
+	const value = error as { readonly constraint?: unknown; readonly constraint_name?: unknown };
+	const constraint = value.constraint ?? value.constraint_name;
+	return constraint === "t4_commands_principal_id_operation_target_scope_idempotency_key";
+}
 function labels(value: Record<string, string>): Record<string, string> | undefined {
 	return Object.keys(value).length > 0 ? value : undefined;
 }
@@ -352,7 +364,7 @@ export class PostgresLedger {
 
 	async eventWindow(principalId: string, sessionId: string, cursor: string | undefined, limit: number): Promise<EventWindow | undefined> {
 		let after = 0n;
-		if (cursor) {
+		if (cursor !== undefined) {
 			const decoded = this.#decodeCursor(cursor, "watch", principalId, sessionId);
 			if (typeof decoded !== "bigint") throw new Error("invalid_cursor");
 			after = decoded;
@@ -365,7 +377,7 @@ export class PostgresLedger {
 			const first = retentionRows[0] ? persistedBigint(retentionRows[0].first_retained_sequence, true) : 0n;
 			const latest = retentionRows[0] ? persistedBigint(retentionRows[0].latest_sequence, true) : 0n;
 			const resyncCursor = this.watchCursor(principalId, sessionId, latest);
-			if (first > 0n && after < first - 1n) return { events: [], cursor: resyncCursor, expired: true, resyncCursor };
+			if (cursor !== undefined && first > 0n && after < first - 1n) return { events: [], cursor: resyncCursor, expired: true, resyncCursor };
 			const rows = await transaction<EventRow[]>`SELECT sequence, event_type, payload FROM t4_events WHERE principal_id = ${principalId} AND session_id = ${sessionId} AND sequence > ${after} ORDER BY sequence LIMIT ${limit}`;
 			const delivered = rows.at(-1) ? persistedBigint(rows.at(-1)!.sequence) : after;
 			return { events: rows.map(row => ({ sequence: persistedBigint(row.sequence), type: row.event_type, payload: row.payload })), cursor: this.watchCursor(principalId, sessionId, delivered), expired: false, resyncCursor };
@@ -449,8 +461,9 @@ export class PostgresLedger {
 			try {
 				return await this.#sql.begin("ISOLATION LEVEL SERIALIZABLE", async transaction => await operation(transaction as unknown as SQL));
 			} catch (error) {
-				const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: unknown }).code : undefined;
-				if (attempt >= SERIALIZABLE_ATTEMPTS || code !== "40001" && code !== "40P01") throw error;
+				const code = postgresSqlState(error);
+				const retryable = code === "40001" || code === "40P01" || isIdempotencyUniqueRace(error);
+				if (attempt >= SERIALIZABLE_ATTEMPTS || !retryable) throw error;
 			}
 		}
 	}
