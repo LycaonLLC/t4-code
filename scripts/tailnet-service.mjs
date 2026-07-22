@@ -163,14 +163,13 @@ export function validateServiceConfig(input) {
     sourceRoot,
     nodeExecutable: absolutePath(input.nodeExecutable, "Node executable"),
     gatewayScript: absolutePath(input.gatewayScript ?? join(sourceRoot, "scripts", "tailnet-gateway.mjs"), "gateway script"),
-    webRoot: absolutePath(input.webRoot ?? join(sourceRoot, "apps", "web", "dist"), "web root"),
+    webRoot: absolutePath(input.webRoot ?? join(sourceRoot, "apps", "flutter", "build", "web"), "web root"),
     appSocket: absolutePath(input.appSocket, "OMP appserver socket"),
     allowedOrigin: normalizeServiceOrigin(input.allowedOrigin),
     nativeAllowedOrigins: normalizeServiceNativeOrigins(input.nativeAllowedOrigins),
     port: gatewayPort(input.port ?? DEFAULT_GATEWAY_PORT),
     label: cleanText(input.label ?? "OMP on this Tailnet host", "host label", 128),
     deploymentIdentity: deploymentIdentity(input.deploymentIdentity),
-    ...(input.electronRunAsNode === true ? { electronRunAsNode: true } : {}),
     ...(routes === undefined ? {} : { profileRoutes: routes, startProfiles: input.startProfiles === true }),
   };
   if (input.version !== undefined && input.version !== CONFIG_VERSION) fail("service config version is unsupported");
@@ -199,7 +198,6 @@ function gatewayEnvironment(config) {
     T4_APP_SERVER_SOCKET: config.appSocket,
     T4_HOST_LABEL: config.label,
     T4_DEPLOYMENT_IDENTITY: config.deploymentIdentity,
-    ...(config.electronRunAsNode ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
     ...(config.profileRoutes === undefined
       ? {}
       : {
@@ -598,7 +596,7 @@ export function parseCli(argv) {
     }
     if (!flag?.startsWith("--")) fail(`unexpected argument: ${flag}`);
     const key = flag.slice(2).replaceAll(/-([a-z])/gu, (_match, letter) => letter.toUpperCase());
-    if (flag === "--defer-start" || flag === "--start-profiles" || flag === "--electron-run-as-node") {
+    if (flag === "--defer-start" || flag === "--start-profiles") {
       if (key in options) fail(`${flag} was provided more than once`);
       options[key] = true;
       continue;
@@ -625,7 +623,6 @@ export function validateCliOptions(command, options) {
           "profileRoutes",
           "startProfiles",
           "deferStart",
-          "electronRunAsNode",
         ])
       : command === "status"
         ? new Set(["help", "deploymentIdentity"])
@@ -645,15 +642,13 @@ Usage:
 Install options:
   --origin URL          Exact Tailscale HTTPS origin (required)
   --port PORT           Loopback gateway port (default: 4194)
-  --web-root PATH       Built T4 web directory (default: apps/web/dist)
+  --web-root PATH       Built Flutter Web directory (default: apps/flutter/build/web)
   --app-socket PATH     OMP appserver Unix socket
   --profile-routes JSON Static named-profile route array
   --start-profiles       Allow configured named profiles to start on demand
   --label TEXT          Host label shown by T4 Code
   --deployment-identity SHA256:HEX
                         Immutable identity for the exact deployed T4/OMP tuple (required)
-  --electron-run-as-node
-                        Run the gateway with Electron's bundled Node runtime
   --defer-start         Install the definition durably disabled and stopped
 
 This manages only the loopback gateway service. Configure Tailscale Serve separately.
@@ -669,13 +664,12 @@ async function install(options, paths) {
     sourceRoot,
     nodeExecutable: process.execPath,
     gatewayScript: join(scriptDirectory, "tailnet-gateway.mjs"),
-    webRoot: options.webRoot ?? join(sourceRoot, "apps", "web", "dist"),
+    webRoot: options.webRoot ?? join(sourceRoot, "apps", "flutter", "build", "web"),
     appSocket: options.appSocket ?? defaultAppSocket(paths.platform),
     allowedOrigin: options.origin,
     port: options.port ?? DEFAULT_GATEWAY_PORT,
     label: options.label ?? "OMP on this Tailnet host",
     deploymentIdentity: options.deploymentIdentity,
-    electronRunAsNode: options.electronRunAsNode === true,
     ...(options.profileRoutes === undefined
       ? {}
       : {

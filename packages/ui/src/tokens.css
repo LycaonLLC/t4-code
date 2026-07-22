@@ -10,7 +10,7 @@
  */
 
 @custom-variant dark (&:is(.dark, .dark *));
-/* Window Controls Overlay: active when Electron exposes native titlebar control geometry. */
+/* Window Controls Overlay: active when the native shell exposes native titlebar control geometry. */
 @custom-variant wco (&:is(.wco, .wco *));
 
 :root {

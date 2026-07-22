@@ -11,11 +11,10 @@ export const RELEASE_CONTRACT_PATHS = [
   ".github/workflows/ci.yml",
   ".github/workflows/deploy-site.yml",
   ".github/workflows/release.yml",
-  "electron-builder.config.mjs",
   "README.md",
   "SECURITY.md",
   "THIRD_PARTY_NOTICES.md",
-  "apps/desktop/src/target-manager.ts",
+  "apps/flutter/pubspec.yaml",
   "apps/site/src/docs/content.ts",
   "apps/site/src/release.ts",
   "apps/web/src/platform/browser-shell-port.ts",
@@ -31,6 +30,7 @@ export const RELEASE_CONTRACT_PATHS = [
   "scripts/dispatch-site-deployment.mjs",
   "scripts/generate-release-manifest.mjs",
   "scripts/inspect-linux-update.mjs",
+  "scripts/package-flutter-macos.mjs",
   "scripts/read-bounded-response.mjs",
   "scripts/reconcile-release-assets.mjs",
   "scripts/wait-for-exact-ci.mjs",
@@ -59,7 +59,7 @@ export function expectedReleaseAssetNames(version) {
   return [
     `T4-Code-${version}-android.apk`,
     `T4-Code-${version}-linux-amd64.deb`,
-    `T4-Code-${version}-linux-x86_64.AppImage`,
+    `T4-Code-${version}-linux-x86_64.tar.gz`,
     `T4-Code-${version}-mac-arm64.dmg`,
     `T4-Code-${version}-mac-arm64.zip`,
   ];
@@ -849,7 +849,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
 
   const runtimeIdentifiers = [
-    ["apps/desktop/src/target-manager.ts", [`version: "${version}"`, 'build: "desktop"']],
+    ["apps/flutter/pubspec.yaml", [`version: ${version}+1`]],
     ["apps/web/src/platform/browser-shell-port.ts", [`version: "${version}"`]],
     ["packages/client/src/omp-client-frames.ts", [`version: "${version}"`, 'build: "client"']],
   ];
@@ -1013,7 +1013,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "T4_ANDROID_KEYSTORE_PASSWORD",
     "T4_ANDROID_KEY_ALIAS",
     "T4_ANDROID_KEY_PASSWORD",
-    "pnpm --filter @t4-code/mobile build:android:release",
+    "pnpm --filter @t4-code/flutter build:android:release",
     "node scripts/inspect-android-release.mjs",
     "node scripts/inspect-linux-update.mjs",
     '--metadata "$metadata"',
@@ -1065,16 +1065,14 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   ]) {
     requireText(exactCiWaiter, expected, "scripts/wait-for-exact-ci.mjs", errors);
   }
-  const builderConfig = files.get("electron-builder.config.mjs") ?? "";
+  const macPackager = files.get("scripts/package-flutter-macos.mjs") ?? "";
   for (const expected of [
-    'provider: "github"',
-    'owner: "LycaonLLC"',
-    'repo: "t4-code"',
-    'channel: "latest"',
-    "publish: [linuxUpdatePublish]",
-    "publish: []",
+    'buildFlutter("macos")',
+    'stageHost(join(app, "Contents", "Resources"))',
+    'notarytool", "submit"',
+    'stapler", "staple"',
   ]) {
-    requireText(builderConfig, expected, "electron-builder.config.mjs", errors);
+    requireText(macPackager, expected, "scripts/package-flutter-macos.mjs", errors);
   }
   const manifestGenerator = files.get("scripts/generate-release-manifest.mjs") ?? "";
   for (const expected of [
@@ -1246,7 +1244,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "exact seven-asset bundle",
     "whose six entries cover the packages and updater metadata",
     "https://t4code.net/releases/latest.json",
-    "downloads the live `latest-linux.yml`, deb, and AppImage",
+    "downloads the live `latest-linux.yml`, deb, and portable archive",
     "actual byte sizes and SHA-512",
   ]) {
     requireText(maintainerReadme, expected, "ops/t4-maintainer/README.md", errors);

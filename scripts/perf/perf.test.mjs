@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { compareReports } from "./compare.mjs";
-import { electronMemoryKilobytes, machineMetadata, percentile, summarize } from "./report.mjs";
+import { machineMetadata, percentile, summarize } from "./report.mjs";
 
 test("summarize reports stable median and nearest-rank p95", () => {
   assert.equal(percentile([1, 2, 3, 4, 5], 0.5), 3);
@@ -42,13 +42,4 @@ test("compareReports handles zero baselines without non-finite values", () => {
   });
   assert.equal(compareReports(baseline, increased, 0.1)[0]?.changeFraction, null);
   assert.equal(compareReports(baseline, increased, 0.1)[0]?.regression, true);
-});
-
-test("electron memory uses the available cross-platform metric", () => {
-  assert.equal(electronMemoryKilobytes({ workingSetSize: 10, privateBytes: 20 }), 10);
-  assert.equal(electronMemoryKilobytes({ privateBytes: 20 }), 20);
-  assert.throws(
-    () => electronMemoryKilobytes({}),
-    /neither workingSetSize nor privateBytes/,
-  );
 });

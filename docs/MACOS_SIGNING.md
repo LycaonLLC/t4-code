@@ -61,20 +61,19 @@ Signed Flutter milestone artifacts must be produced by a protected maintainer wo
 machine. Contributors do not need the certificate, provisioning profile, or Apple team membership
 to run those artifacts.
 
-### Released Electron application
+### Released Flutter desktop application
 
 
-Contributors can build the released Electron application without Apple credentials:
+Contributors can build the released Flutter desktop application without Apple credentials:
 
 ```bash
 pnpm package:mac:unsigned
 ```
 
-Maintainers can produce the release form when the five electron-builder credential variables are present:
+Maintainers can produce the release form after importing the Developer ID certificate and providing the signing identity and App Store Connect API credentials:
 
 ```bash
-CSC_LINK=/path/to/certificate.p12 \
-CSC_KEY_PASSWORD='...' \
+T4_MACOS_SIGNING_IDENTITY='Developer ID Application: …' \
 APPLE_API_KEY=/path/to/AuthKey.p8 \
 APPLE_API_KEY_ID='...' \
 APPLE_API_ISSUER='...' \
@@ -95,4 +94,4 @@ Do not put these values in `.env` files, shell history, source control, build lo
 - a valid stapled notarization ticket; and
 - acceptance by macOS Gatekeeper.
 
-The first signed release remains a manual GitHub download. Automatic macOS updates are a separate follow-up because migration from the older unsigned build must be tested independently.
+The Flutter application validates the signed release manifest and opens the notarized DMG for user-confirmed installation.

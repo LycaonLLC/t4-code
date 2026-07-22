@@ -3,8 +3,6 @@ packages:
   - packages/*
 
 allowBuilds:
-  electron: true
-  electron-winstaller: false
   esbuild: true
   node-pty: true
 
@@ -13,8 +11,6 @@ catalog:
   "@types/react": ~19.2.14
   "@types/react-dom": ~19.2.3
   "@typescript/native-preview": 7.0.0-dev.20260604.1
-  electron: 41.5.0
-  electron-builder: 26.15.6
   react: 19.2.6
   react-dom: 19.2.6
   typescript: ~6.0.3

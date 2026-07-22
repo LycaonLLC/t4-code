@@ -1,6 +1,6 @@
-## Flutter permanent foundations (development)
+## Flutter product cutover
 
-The local migration branch now contains the Flutter/Dart Stage 2 foundations for macOS, iOS,
+The canonical product client is now the Flutter/Dart implementation for macOS, iOS,
 Android, and Web, with generated Windows and Linux targets. The client strictly decodes and
 encodes the pinned `omp-app/1` corpus, correlates commands, restores typed transcript and
 session-index cursors, negotiates host watching, and handles reconnect, resume, and continuity
@@ -12,11 +12,10 @@ uses encrypted storage and migrates the released app's keyed credentials without
 Dart, while Apple targets use Keychain-backed storage. Compact and wide layouts share the same
 immutable state and command surface, including onboarding, pairing, and host management.
 
-This is still a development migration, not a release cutover. The deterministic fixture suite,
-exact 390x844 and 1440x900 browser checks, iOS and Android target smokes, and an authenticated
-disposable T4 host connection backed by OMP's authority bridge pass locally. The existing Electron,
-React, browser, and Capacitor clients remain the released implementation until the complete feature
-matrix, packaging, update, migration, security, and release gates pass.
+The source and release workflows now build Flutter for macOS, Linux, and Android. The retired
+desktop shell and its packaging toolchain have been removed from the live tree and remain available
+through git history. The React/Capacitor client remains only as a compatibility path for hosted web
+and migration coverage; it is not the desktop implementation.
 
 Stage 3 host parity is now complete on the local migration branch. The Flutter client presents
 negotiated device permissions, deliberate disconnect/reconnect controls, cancellable pre-save host
@@ -76,12 +75,6 @@ The bundled backend now also recovers from an inactive Unix socket when the cras
 T4 Code now packages its own standalone `t4-host` executable instead of running the network host inside OMP. The desktop replaces the old service definition directly and automatically repairs a stopped default service when the local connection falls back to reconnecting. The service label and local socket stay stable, so ordinary local clients and administrative commands keep using the same connection point.
 
 OMP remains the authority for session files, locks, agent execution, credentials, and takeover decisions. The smaller `omp bridge --stdio` command exposes only the versioned authority operations T4 needs. T4 validates the exact `t4-omp-authority/1` bridge before accepting an OMP installation and rejects older appserver-only runtimes.
-
-## Native Browser workspace
-
-The desktop app now includes a built-in Browser workspace that is distinct from the existing host-backed Browser Preview workspace. Its tabs expose stable native surface state for navigation and rendering. New tabs use the credential-isolated `isolated-session` profile. Authenticated profiles are never selected automatically: each use requires the exact user-selected profile with explicit opt-in.
-
-Native Browser automation is bounded to its surface contract. Touch input is currently unsupported and returns a capability error. The desktop closes native Browser surfaces and releases their supporting controllers when the renderer reloads, the window closes, or the app stops.
 
 ## Host Browser Preview workspace
 

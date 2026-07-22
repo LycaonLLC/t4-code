@@ -23,7 +23,7 @@ export function releasePackageDescriptors(version) {
   return [
     { platform: "android", kind: "apk", arch: "universal", name: names[0] },
     { platform: "linux", kind: "deb", arch: "x86_64", name: names[1] },
-    { platform: "linux", kind: "appimage", arch: "x86_64", name: names[2] },
+    { platform: "linux", kind: "archive", arch: "x86_64", name: names[2] },
     { platform: "mac", kind: "dmg", arch: "arm64", name: names[3] },
     { platform: "mac", kind: "zip", arch: "arm64", name: names[4] },
   ];

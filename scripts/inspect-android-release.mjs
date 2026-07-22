@@ -250,7 +250,7 @@ export function inspectAndroidRelease({ repoRoot, apk, metadata, aapt, apksigner
 
   const contract = readJson(resolve(repoRoot, ".github/android-release-identity.json"), "Android release identity contract");
   const rootPackage = readJson(resolve(repoRoot, "package.json"), "root package manifest");
-  const mobilePackage = readJson(resolve(repoRoot, "apps/mobile/package.json"), "mobile package manifest");
+  const mobilePackage = readJson(resolve(repoRoot, "apps/flutter/package.json"), "Flutter package manifest");
   const outputMetadata = readJson(metadata, "Android output metadata");
   const apkFileNames = readdirSync(dirname(apk)).filter((file) => file.endsWith(".apk")).sort();
   const badgingOutput = execFileSync(aapt, ["dump", "badging", apk], { encoding: "utf8" });

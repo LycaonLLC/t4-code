@@ -67,7 +67,7 @@ import type {
 /**
  * The slice of DesktopRuntimeController this module needs. Structural, so
  * tests can drive the seam with recorded snapshots and a scripted command
- * port instead of a full Electron shell.
+ * port instead of a full native shell.
  */
 export interface LiveInspectorRuntime extends AgentCancelRuntime {
   getSnapshot(): DesktopRuntimeSnapshot;

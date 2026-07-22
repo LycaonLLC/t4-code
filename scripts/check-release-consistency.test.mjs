@@ -220,10 +220,7 @@ test("rejects workspace, site, README, and runtime version drift", () => {
       (text) => text.replace('RELEASE_TAG = "v0.1.30"', 'RELEASE_TAG = "v0.1.3"'),
     ],
     ["README.md", (text) => text.replace("Download v0.1.30", "Download v0.1.3")],
-    [
-      "apps/desktop/src/target-manager.ts",
-      (text) => text.replace('version: "0.1.30"', 'version: "0.1.3"'),
-    ],
+    ["apps/flutter/pubspec.yaml", (text) => text.replace("version: 0.1.30+1", "version: 0.1.3+1")],
     [
       "apps/site/src/docs/content.ts",
       (text) => text.replace('id: "troubleshooting-large-session"', 'id: "missing-large-session"'),
@@ -250,9 +247,12 @@ test("rejects version drift in a newly added workspace package", () => {
   );
 });
 
-test("rejects updater channel, stable manifest, and publication-contract drift", () => {
+test("rejects stable manifest and publication-contract drift", () => {
   const cases = [
-    ["electron-builder.config.mjs", (text) => text.replace('repo: "t4-code"', 'repo: "renamed"')],
+    [
+      "scripts/package-flutter-macos.mjs",
+      (text) => text.replace('buildFlutter("macos")', 'buildFlutter("linux")'),
+    ],
     [
       "scripts/generate-release-manifest.mjs",
       (text) =>
@@ -646,7 +646,7 @@ test("deploys release site source only after artifact publication", () => {
   ]) {
     assert.ok(!releaseVerify.includes(duplicate));
   }
-  assert.ok(releaseWorkflow.includes("pnpm --filter @t4-code/mobile build:android:release"));
+  assert.ok(releaseWorkflow.includes("pnpm --filter @t4-code/flutter build:android:release"));
   assert.ok(releaseWorkflow.includes("T4_ANDROID_KEYSTORE_BASE64"));
   assert.ok(releaseWorkflow.includes("node scripts/inspect-android-release.mjs"));
   assert.ok(releaseWorkflow.includes('--metadata "$metadata"'));

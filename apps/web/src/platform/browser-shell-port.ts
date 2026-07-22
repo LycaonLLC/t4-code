@@ -1,6 +1,6 @@
 // Browser-direct shell port: implements DesktopShellPort by wrapping a single
 // OmpClient connected over a browser WebSocket to the OMP appserver. This is
-// the browser counterpart to the Electron preload bridge — instead of
+// the browser counterpart to the native preload bridge — instead of
 // ipcRenderer, it uses OmpClient directly.
 //
 // The browser counterpart connects to ONE preconfigured appserver endpoint.

@@ -90,7 +90,7 @@ ChatGPT OAuth credentials
 ```
 
 T4 currently mirrors OMP state and sends commands over app-wire. Adding direct OpenAI calls or
-passing arbitrary provider environment variables through Electron would break that ownership and
+passing arbitrary provider environment variables through a native client would break that ownership and
 make secret handling harder to reason about.
 
 ## Recommended implementation

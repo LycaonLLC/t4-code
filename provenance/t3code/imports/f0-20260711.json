@@ -101,14 +101,14 @@
       "sourceBlobSha": "1641bb6b109b44f2c7b0f2576fcf0750a96da88f",
       "targetPath": "packages/ui/src/tokens.css + packages/ui/src/terminal/xtermTheme.ts",
       "classification": "reference-only",
-      "checksum": "sha256:79a1e32e3947f4bec2e503135535bce98255d1545334b547970ce89efbc9747a;sha256:3168d798b2274b85ef07a06bcc03af060b179a173449a53b91a9c4960dacf0d2"
+      "checksum": "sha256:7f4ec53f03fb5ff34bf01ab245d2eb53c520d446f7a3661471b70fa93336af4a;sha256:3168d798b2274b85ef07a06bcc03af060b179a173449a53b91a9c4960dacf0d2"
     },
     {
       "sourcePath": "apps/web/src/index.css",
       "sourceBlobSha": "3ae42a3e61cac54e9fe75cb58a67313241989ec9",
       "targetPath": "packages/ui/src/tokens.css",
       "classification": "reference-only",
-      "checksum": "sha256:79a1e32e3947f4bec2e503135535bce98255d1545334b547970ce89efbc9747a"
+      "checksum": "sha256:7f4ec53f03fb5ff34bf01ab245d2eb53c520d446f7a3661471b70fa93336af4a"
     }
   ]
 }

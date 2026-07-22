@@ -33,7 +33,7 @@ export type BrowserShellEventListener = (event: BrowserEvent) => void;
 /** Removes a browser shell event listener. */
 export type BrowserShellSubscription = () => void;
 
-/** The renderer-facing browser surface exposed by an Electron host. */
+/** The renderer-facing browser surface exposed by a native host. */
 export interface BrowserShellPort {
   readonly kind: "desktop-browser";
   readonly call: (request: BrowserCall) => Promise<BrowserCallResult>;

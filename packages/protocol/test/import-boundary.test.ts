@@ -15,7 +15,7 @@ const scannedRoots = [join(repoRoot, "apps"), join(repoRoot, "packages")];
 function sourceFiles(directory: string): string[] {
   const files: string[] = [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    if (["node_modules", "dist", "dist-electron", ".next", ".turbo", "build", ".artifacts"].includes(entry.name)) continue;
+    if (["node_modules", "dist", ".next", ".turbo", "build", ".artifacts"].includes(entry.name)) continue;
     const absolute = join(directory, entry.name);
     if (entry.isDirectory()) files.push(...sourceFiles(absolute));
     else if (entry.isFile() && /\.[cm]?[jt]sx?$/u.test(entry.name)) files.push(absolute);

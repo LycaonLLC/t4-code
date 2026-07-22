@@ -4,7 +4,7 @@ import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-import { inspectPackage, locateAppRoot } from "./inspect-package.mjs";
+import { inspectPackage, locateAppRoot } from "./inspect-flutter-package.mjs";
 
 function asError(error) {
   return error instanceof Error ? error : new Error(String(error));
@@ -134,7 +134,7 @@ if (isMain) {
   } else {
     try {
       const result = inspectMacosDmg(paths[0]);
-      console.log(`${paths[0]}: mounted read-only and inspected ${result.asarEntries} ASAR entries`);
+      console.log(`${paths[0]}: mounted read-only and inspected ${result.bundleFiles} Flutter bundle files`);
     } catch (error) {
       console.error(error instanceof Error ? error.message : String(error));
       process.exitCode = 1;

@@ -1073,7 +1073,7 @@ $JQ -e \
   "$PNPM" check
   "$PNPM" build
 )
-require_regular_file "$T4_BUILD_ROOT/apps/web/dist/index.html" "built T4 web application"
+require_regular_file "$T4_BUILD_ROOT/apps/flutter/build/web/index.html" "built T4 web application"
 require_regular_file "$T4_BUILD_ROOT/node_modules/ws/package.json" "T4 gateway runtime dependency"
 $GIT -C "$T4_BUILD_ROOT" diff --quiet --exit-code HEAD -- \
   || fail "tagged T4 checkout has tracked changes after the release build"
@@ -1095,7 +1095,7 @@ mv -- "$WORK_DIR/ws-runtime" "$T4_BUILD_ROOT/node_modules/ws"
 mv -- "$T4_BUILD_ROOT" "$T4_RUNTIME_ROOT"
 
 GATEWAY_SCRIPT_SHA=$($SHA256SUM "$T4_RUNTIME_ROOT/scripts/tailnet-gateway.mjs" | awk '{print $1}')
-GATEWAY_WEB_TREE_SHA=$(tree_sha256 "$T4_RUNTIME_ROOT/apps/web/dist" "$T4_RUNTIME_ROOT") \
+GATEWAY_WEB_TREE_SHA=$(tree_sha256 "$T4_RUNTIME_ROOT/apps/flutter/build/web" "$T4_RUNTIME_ROOT") \
   || fail "built T4 web tree could not be hashed"
 GATEWAY_WS_TREE_SHA=$(tree_sha256 "$T4_RUNTIME_ROOT/node_modules/ws" "$T4_RUNTIME_ROOT") \
   || fail "T4 gateway ws runtime could not be hashed"
@@ -1198,7 +1198,7 @@ GATEWAY_INSTALL_ARGS=(
   --defer-start
   --origin "$GATEWAY_ORIGIN"
   --port "$GATEWAY_PORT"
-  --web-root "$T4_RUNTIME_ROOT/apps/web/dist"
+  --web-root "$T4_RUNTIME_ROOT/apps/flutter/build/web"
   --app-socket "$GATEWAY_SOCKET"
   --label "$GATEWAY_LABEL"
   --deployment-identity "$DEPLOYMENT_IDENTITY"
@@ -1237,7 +1237,7 @@ $GIT -C "$T4_RUNTIME_ROOT" diff --quiet --exit-code HEAD -- \
   || fail "retained tagged T4 runtime has tracked changes"
 [[ $($SHA256SUM "$T4_RUNTIME_ROOT/scripts/tailnet-gateway.mjs" | awk '{print $1}') == "$GATEWAY_SCRIPT_SHA" ]] \
   || fail "Tailnet gateway script changed during deployment"
-[[ $(tree_sha256 "$T4_RUNTIME_ROOT/apps/web/dist" "$T4_RUNTIME_ROOT") == "$GATEWAY_WEB_TREE_SHA" ]] \
+[[ $(tree_sha256 "$T4_RUNTIME_ROOT/apps/flutter/build/web" "$T4_RUNTIME_ROOT") == "$GATEWAY_WEB_TREE_SHA" ]] \
   || fail "built T4 web tree changed during deployment"
 [[ $(tree_sha256 "$T4_RUNTIME_ROOT/node_modules/ws" "$T4_RUNTIME_ROOT") == "$GATEWAY_WS_TREE_SHA" ]] \
   || fail "T4 gateway ws runtime changed during deployment"

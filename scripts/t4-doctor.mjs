@@ -1,7 +1,6 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
-import { createJiti } from "jiti";
+import { spawnSync } from "node:child_process";
 
 const help = `Usage: node scripts/t4-doctor.mjs [--json]
 
@@ -36,11 +35,27 @@ export async function runDoctorCli(args = process.argv.slice(2)) {
     return 0;
   }
 
-  const jiti = createJiti(import.meta.url);
-  const doctor = await jiti.import("../apps/desktop/src/doctor.ts");
-  const report = await doctor.collectDoctorReport();
-  console.log(options.json ? JSON.stringify(report, null, 2) : doctor.formatDoctorReport(report));
+  const checks = [
+    commandCheck("node", ["--version"]),
+    commandCheck("pnpm", ["--version"]),
+    commandCheck("flutter", ["--version", "--machine"]),
+    commandCheck(process.env.OMP_EXECUTABLE?.trim() || "omp", ["--version"]),
+  ];
+  const report = { schemaVersion: 1, ok: checks.every((check) => check.ok), checks };
+  console.log(options.json ? JSON.stringify(report, null, 2) : formatDoctorReport(report));
   return report.ok ? 0 : 1;
+}
+
+function commandCheck(command, args) {
+  const result = spawnSync(command, args, { encoding: "utf8", timeout: 10_000 });
+  if (result.error) return { command, ok: false, detail: result.error.code === "ENOENT" ? "not found" : "unavailable" };
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim().split(/\r?\n/u)[0]?.slice(0, 200) ?? "";
+  return { command, ok: result.status === 0, detail: output || `exit ${result.status}` };
+}
+
+function formatDoctorReport(report) {
+  const lines = report.checks.map((check) => `${check.ok ? "PASS" : "FAIL"} ${check.command}: ${check.detail}`);
+  return [`T4 Code Flutter environment: ${report.ok ? "ready" : "needs attention"}`, ...lines].join("\n");
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {

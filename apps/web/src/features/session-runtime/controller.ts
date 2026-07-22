@@ -1,7 +1,7 @@
 // Session runtime controller: the seam between the transcript surface and
 // whatever produces server frames. The renderer only ever sees this
 // interface; today the deterministic fixture implementation drives it, and
-// the Electron bridge replaces `createFixtureSessionRuntime` with an
+// the native bridge replaces `createFixtureSessionRuntime` with an
 // AppClient-backed implementation without touching a single component.
 import type { ProviderTransportState } from "@t4-code/protocol";
 

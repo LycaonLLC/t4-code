@@ -25,7 +25,7 @@ const CONFIG = {
   sourceRoot: "/home/alice/t4-code",
   nodeExecutable: "/opt/node/bin/node",
   gatewayScript: "/home/alice/t4-code/scripts/tailnet-gateway.mjs",
-  webRoot: "/home/alice/t4-code/apps/web/dist",
+  webRoot: "/home/alice/t4-code/apps/flutter/build/web",
   appSocket: "/run/user/1000/omp/appserver.sock",
   allowedOrigin: "https://workstation.example-tailnet.ts.net:8445",
   nativeAllowedOrigins: ["https://localhost", "capacitor://localhost"],
@@ -48,7 +48,7 @@ test("service config requires an exact Tailnet HTTPS origin and absolute local p
     /must contain exactly/u,
   );
   assert.throws(
-    () => validateServiceConfig({ ...CONFIG, webRoot: "apps/web/dist" }),
+    () => validateServiceConfig({ ...CONFIG, webRoot: "apps/flutter/build/web" }),
     /absolute path/u,
   );
   assert.throws(() => validateServiceConfig({ ...CONFIG, port: 80 }), /1024 through 65535/u);

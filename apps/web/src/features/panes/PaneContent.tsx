@@ -23,7 +23,7 @@ import { ReviewPane } from "./ReviewPane.tsx";
 import { TerminalsPane } from "./TerminalsPane.tsx";
 
 // Fixture wiring for the whole surface: inspector data and the sample PTY
-// bridge. The Electron shell installs real factories before first render
+// bridge. The native shell installs real factories before first render
 // instead, and this branch never runs.
 if (rendererPlatform.mode === "browser") {
   installFixtureInspector();

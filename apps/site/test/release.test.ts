@@ -24,7 +24,7 @@ describe("release assets", () => {
     expect(RELEASE_ASSETS.map((a) => a.filename)).toEqual([
       "T4-Code-0.1.30-android.apk",
       "T4-Code-0.1.30-linux-amd64.deb",
-      "T4-Code-0.1.30-linux-x86_64.AppImage",
+      "T4-Code-0.1.30-linux-x86_64.tar.gz",
       "T4-Code-0.1.30-mac-arm64.dmg",
       "T4-Code-0.1.30-mac-arm64.zip",
     ]);

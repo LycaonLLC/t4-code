@@ -1,5 +1,5 @@
 // User-PTY bridge: the seam between the terminal drawer and whatever hosts
-// the real shells. Electron injects a wire-backed bridge (see wire.ts) that
+// the real shells. The native shell injects a wire-backed bridge (see wire.ts) that
 // speaks app-wire 0.4 `term.open` (cwd optional, relative to the project
 // root) / `terminal.input` / `terminal.resize` /
 // `terminal.close` and consumes `terminal.output` / `terminal.exit`; until

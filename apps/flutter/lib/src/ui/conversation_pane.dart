@@ -2203,7 +2203,7 @@ void _toggleMenu(MenuController controller) {
 /// Provider-grouped model selector for the composer.
 ///
 /// Replaces the giant flat catalog list with a navigable provider → model menu
-/// that mirrors the Electron/web T4 model picker. Human model names render as
+/// that mirrors the web T4 model picker. Human model names render as
 /// the primary label; raw `provider/modelId` selectors are carried through as
 /// the submitted values. Unknown providers/models stay selectable under an
 /// 'Other models' group. A single-provider host collapses to a flat list so

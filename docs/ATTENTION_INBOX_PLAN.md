@@ -54,7 +54,7 @@ Two baseline fields needed special care:
 Add an Inbox row above the working-folder tabs in the expanded rail. It shows a number for items
 that need action or failure review. Unseen completions use a quiet dot and do not inflate the urgent
 number. The collapsed rail gets the same icon and badge. `Cmd/Ctrl+Shift+I` may be added if it does
-not collide with browser or Electron shortcuts; the command palette must always offer **Open Inbox**.
+not collide with browser or Flutter desktop shortcuts; the command palette must always offer **Open Inbox**.
 
 ### Desktop layout
 
@@ -247,7 +247,7 @@ form one release slice.
 - Turn this document's conceptual shape into exact `app-wire` types and byte limits.
 - Add golden frames for approval, question, plan, completed, failed, truncated, and legacy refs.
 - Add deterministic T4 fixture data for empty, mixed, offline, expired, and multi-host inbox states.
-- Decide the exact shortcut after checking Electron, browser, and macOS conflicts.
+- Decide the exact shortcut after checking Flutter desktop, browser, and macOS conflicts.
 
 Exit gate: strict consumers decode new frames, legacy frames still decode, and the fixture produces
 the intended item ordering without any live runtime.

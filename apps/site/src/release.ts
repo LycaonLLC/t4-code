@@ -20,7 +20,7 @@ export const RELEASE_MANIFEST_URL = `${SITE_URL}/releases/latest.json`;
 
 export type Platform = "android" | "linux" | "mac";
 export type DesktopPlatform = Exclude<Platform, "android">;
-export type AssetKind = "apk" | "deb" | "appimage" | "dmg" | "zip";
+export type AssetKind = "apk" | "deb" | "archive" | "dmg" | "zip";
 
 export interface ReleaseAsset {
   readonly platform: Platform;
@@ -51,7 +51,7 @@ function asset(
 export const RELEASE_ASSETS: readonly ReleaseAsset[] = [
   asset("android", "apk", "universal", "T4-Code-0.1.30-android.apk", "Android APK"),
   asset("linux", "deb", "x86_64", "T4-Code-0.1.30-linux-amd64.deb", "Linux .deb"),
-  asset("linux", "appimage", "x86_64", "T4-Code-0.1.30-linux-x86_64.AppImage", "Linux AppImage"),
+  asset("linux", "archive", "x86_64", "T4-Code-0.1.30-linux-x86_64.tar.gz", "Linux portable archive"),
   asset("mac", "dmg", "arm64", "T4-Code-0.1.30-mac-arm64.dmg", "macOS .dmg"),
   asset("mac", "zip", "arm64", "T4-Code-0.1.30-mac-arm64.zip", "macOS .zip"),
 ];

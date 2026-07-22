@@ -10,7 +10,7 @@ export type DesktopUpdatePhase =
   | "ready"
   | "error";
 
-/** Renderer-safe update metadata. Download URLs and filesystem paths stay in Electron main. */
+/** Client-safe update metadata. Download URLs and filesystem paths stay in the native shell. */
 export interface DesktopUpdateState {
   readonly version: 1;
   readonly currentVersion: string;
@@ -90,7 +90,7 @@ function displayText(value: unknown, name: string): string | undefined {
   return cleaned;
 }
 
-/** Strictly decode and freeze update state before it crosses either Electron IPC boundary. */
+/** Strictly decode and freeze update state before it crosses a native platform boundary. */
 export function decodeDesktopUpdateState(value: unknown): DesktopUpdateState {
   const item = record(value, "desktop update state");
   exact(item, [

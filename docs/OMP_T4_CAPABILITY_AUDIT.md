@@ -27,7 +27,7 @@ The truthful-command foundation is split cleanly between merged host work and th
 - **Merged:** PR #113 queries official OMP's bounded `get_available_commands`, supplements omitted terminal-only commands from a pinned reviewed manifest, and blocks known terminal-only slash text before prompt dispatch.
 - **Corrected boundary:** PR #114 proved restart continuity with the released Lycaon fallback artifact, despite the harness's old official-OMP name. This sprint adds a separate official OMP 17.0.6 pin and runs the proof against that unmodified binary.
 - **Merged:** PR #117 preserves `catalog.get.result.operations` through the desktop runtime.
-- **Merged:** PRs #118 and #120 make web/Electron and Flutter build truthful slash menus from the runtime capability contract and fail closed when that contract is absent or unavailable.
+- **Merged:** PRs #118 and #120 make legacy web and Flutter build truthful slash menus from the runtime capability contract and fail closed when that contract is absent or unavailable.
 - **This sprint:** the official OMP 17.0.6 harness passes lifecycle, crash/resume, steer, follow-up, approval, and cancellation on macOS ARM64; the host/client failure tests prove a dispatched command becomes `outcome_unknown` and is never automatically replayed.
 - **This sprint:** `compat/official-omp-gate0.json` records the exact runtime, required platforms/scenarios, direct RPC support, and three missing stock seams. macOS ARM64 plus Linux x64 and ARM64 CI jobs retain per-platform lifecycle and packaged-host evidence.
 - **This sprint:** the shared supervisor synthesizes the missing ready watermark from official JSONL, projects complete durable records, conservatively correlates matching user prompts, and deduplicates the Lycaon fallback's richer live frames.
@@ -38,7 +38,7 @@ The tracker distinguishes merged source, work in this sprint, and public release
 
 ### Sprint 1 coverage matrix
 
-| Slice | Host/runtime | Desktop web/Electron | Mobile web/Capacitor | Flutter desktop/mobile | Evidence state |
+| Slice | Host/runtime | Legacy TypeScript client | Mobile web/Capacitor | Flutter desktop/mobile | Evidence state |
 |---|---|---|---|---|---|
 | Operation capability contract | Merged | Decodes shared contract | Same web client | Dart decoder merged | PR #111 green |
 | Official OMP command discovery and rejection | Merged | Receives through host | Receives through host | Receives through host | PR #113 green |
@@ -62,7 +62,7 @@ This matrix is intentionally stricter than “the protocol supports it.” A row
 | Flutter merge | [`LycaonLLC/t4-code#104`](https://github.com/LycaonLLC/t4-code/pull/104) | New shared desktop/mobile client now on `main` |
 | Public T4 release | [`v0.1.28`](https://github.com/LycaonLLC/t4-code/releases/tag/v0.1.28) | Latest public release visible during the audit |
 
-This is primarily a source audit, supplemented by merged official-adapter smokes, focused TypeScript tests, and one compiled-host proof. It does not prove that every path works in a packaged desktop or mobile app. Live Flutter desktop, Android, iOS, web, and Electron round trips remain a separate verification pass.
+This is primarily a source audit, supplemented by merged official-adapter smokes, focused TypeScript tests, and one compiled-host proof. It does not prove that every path works in a packaged desktop or mobile app. Live Flutter desktop, Android, iOS, and web round trips remain a separate verification pass.
 
 Relevant planning and implementation changes:
 
@@ -146,7 +146,7 @@ Fork PR [#22](https://github.com/lyc-aon/oh-my-pi/pull/22) removed more than 37,
 | Transcript | Durable entries, reconnect reconciliation, images, paging, search, surrounding context, attention summaries, and latest outcomes |
 | Developer tools | Confined files, diff/review, one-shot bash, persistent terminal, preview navigation/input/capture, and audit events |
 | Host-wide OMP truth | Session discovery/lifecycle, roots, locks, settings/catalog, provider broker status, usage, files, review, bash, and terminal through the authority bridge |
-| Desktop web/Electron | Session library, composer, attention, agent view, files, review, terminal, browser preview, settings, transcript search, usage, and host management |
+| Legacy TypeScript client | Session library, composer, attention, agent view, files, review, terminal, browser preview, settings, transcript search, usage, and host management |
 | Responsive web/Capacitor | Shares most web UI and supports remote T4 gateway use; native Android shell adds secure storage, updates, and speech support |
 | Flutter on `main` | Host/pairing management, sessions, conversation, attention, developer surfaces, settings, transcript search, usage, model controls, and structured tool cards |
 
@@ -324,11 +324,11 @@ For each future sprint:
 
 ## Audit limitations and next proof pass
 
-- This pass ran the compiled `t4-host` against the pinned official OMP binary on macOS ARM64, but did not run a packaged Electron/Flutter application bundle.
+- This pass ran the compiled `t4-host` against the pinned official OMP binary on macOS ARM64, but did not run a packaged Flutter application bundle.
 - It did not visually inspect every desktop, Android, or iOS screen.
 - Optional protocol features may not be negotiated by every host instance.
 - The shared adapter is currently an official-OMP seam, not proof that T4 is a generic multi-runtime product.
 - OMP Home and Mechanism were cataloged but not judged as required T4 screens.
 - TUI decoration, key bindings, status-line layout, and editor overlays should be judged by functional outcome, not pixel-for-pixel parity.
 
-The next audit pass should execute Tier 0 and Tier 1 rows against packaged Flutter desktop, Android, and iOS builds, plus the still-supported web/Electron client where applicable, and attach proof to this tracker.
+The next audit pass should execute Tier 0 and Tier 1 rows against packaged Flutter desktop, Android, and iOS builds, plus the still-supported legacy web client where applicable, and attach proof to this tracker.

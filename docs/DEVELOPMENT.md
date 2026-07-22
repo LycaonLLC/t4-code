@@ -33,7 +33,7 @@ versions.
 
 If Node reports a different major version, select a compatible Node 24 release with your normal
 version manager and reinstall dependencies. Do not ignore the engine warning: using another Node
-major can change Electron, WebSocket, and test behavior.
+major can change Flutter desktop, WebSocket, and test behavior.
 
 ## 2. Run the setup check
 

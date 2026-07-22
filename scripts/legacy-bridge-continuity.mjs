@@ -21,7 +21,7 @@ import {
   clusterOperatorRequestedFeatures,
   createOmpClient,
 } from "../packages/client/src/index.ts";
-import { UnixWebSocketTransport } from "../apps/desktop/src/transport.ts";
+import { UnixWebSocketTransport } from "./unix-websocket-transport.mjs";
 import {
   ADDITIVE_FEATURES,
   decodeSessionListResult,

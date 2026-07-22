@@ -41,7 +41,7 @@ export interface DocGroup {
   readonly topics: readonly DocTopic[];
 }
 
-function assetOfKind(platform: "linux" | "mac", kind: "appimage" | "zip") {
+function assetOfKind(platform: "linux" | "mac", kind: "archive" | "zip") {
   const found = assetsFor(platform).find((asset) => asset.kind === kind);
   if (!found) throw new Error(`no ${kind} asset for ${platform}`);
   return found;
@@ -49,7 +49,7 @@ function assetOfKind(platform: "linux" | "mac", kind: "appimage" | "zip") {
 
 const androidApk = primaryAsset("android");
 const linuxDeb = primaryAsset("linux");
-const linuxAppImage = assetOfKind("linux", "appimage");
+const linuxArchive = assetOfKind("linux", "archive");
 const macDmg = primaryAsset("mac");
 const macZip = assetOfKind("mac", "zip");
 
@@ -86,10 +86,10 @@ const install: DocTopic = {
       kind: "p",
       text: "`apt install` resolves system dependencies for you; prefer it over `dpkg -i`.",
     },
-    { kind: "p", text: "Or use the AppImage on any distribution:" },
+    { kind: "p", text: "Or use the portable archive on any distribution:" },
     {
       kind: "code",
-      code: `chmod +x ${linuxAppImage.filename}\n./${linuxAppImage.filename}`,
+      code: `mkdir t4-code\ntar -xzf ${linuxArchive.filename} -C t4-code\n./t4-code/t4code`,
     },
     { kind: "h2", id: "install-macos", text: "macOS (Apple Silicon)" },
     {

@@ -2,7 +2,7 @@ import type { DesktopUpdatePhase, DesktopUpdateState } from "@t4-code/protocol/d
 
 export type AppUpdateDelivery = "desktop" | "android" | "web";
 
-/** One renderer-owned shape across Electron, Android, and the hosted web app. */
+/** One renderer-owned shape across native desktop, Android, and the hosted web app. */
 export interface AppUpdateState extends DesktopUpdateState {
   readonly delivery: AppUpdateDelivery;
   /** Monotonic Android-native state revision; renderer snapshots never synthesize this. */

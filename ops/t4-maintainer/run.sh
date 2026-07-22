@@ -939,7 +939,7 @@ local_state_matches_record() {
   gateway_script=$($JQ -er '.gatewayScript | strings | select(startswith("/"))' "$GATEWAY_CONFIG") || return 1
   web_root=$($JQ -er '.webRoot | strings | select(startswith("/"))' "$GATEWAY_CONFIG") || return 1
   [[ $gateway_script == "$runtime_root/scripts/tailnet-gateway.mjs" ]] || return 1
-  [[ $web_root == "$runtime_root/apps/web/dist" ]] || return 1
+  [[ $web_root == "$runtime_root/apps/flutter/build/web" ]] || return 1
   [[ $($SHA256SUM "$gateway_script" | awk '{print $1}') == "$gateway_script_sha" ]] || return 1
   [[ $(tree_sha256 "$web_root" "$runtime_root") == "$web_tree_sha" ]] || return 1
   [[ $(tree_sha256 "$runtime_root/node_modules/ws" "$runtime_root") == "$ws_tree_sha" ]] || return 1
@@ -978,7 +978,7 @@ release_assets_are_public() {
     "SHA256SUMS.txt"
     "T4-Code-${version}-android.apk"
     "T4-Code-${version}-linux-amd64.deb"
-    "T4-Code-${version}-linux-x86_64.AppImage"
+    "T4-Code-${version}-linux-x86_64.tar.gz"
     "T4-Code-${version}-mac-arm64.dmg"
     "T4-Code-${version}-mac-arm64.zip"
     "latest-linux.yml"
@@ -1047,7 +1047,7 @@ canonical_linux_update_assets() {
   printf '%s' "$release_json" | $JQ -ceS --arg version "$version" '
     [
       {name: "T4-Code-\($version)-linux-amd64.deb", maximumSize: 536870912},
-      {name: "T4-Code-\($version)-linux-x86_64.AppImage", maximumSize: 536870912},
+      {name: "T4-Code-\($version)-linux-x86_64.tar.gz", maximumSize: 536870912},
       {name: "latest-linux.yml", maximumSize: 65536}
     ] as $expected |
     . as $release |
@@ -1097,7 +1097,7 @@ download_exact_release_asset() {
 verify_live_linux_update() {
   local result_file=$1 release_json=$2 version=$3 allow_stored_proof=${4:-false}
   local canonical fingerprint stored download_dir asset name url size expected_digest actual_digest
-  local metadata_path deb_path appimage_path temporary
+  local metadata_path deb_path archive_path temporary
   canonical=$(canonical_linux_update_assets "$release_json" "$version") || return 1
   fingerprint=$(printf '%s' "$canonical" | $SHA256SUM | awk '{print "sha256:" $1}') || return 1
   [[ $fingerprint =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
@@ -1151,12 +1151,12 @@ verify_live_linux_update() {
 
   metadata_path="$download_dir/latest-linux.yml"
   deb_path="$download_dir/T4-Code-${version}-linux-amd64.deb"
-  appimage_path="$download_dir/T4-Code-${version}-linux-x86_64.AppImage"
+  archive_path="$download_dir/T4-Code-${version}-linux-x86_64.tar.gz"
   "$NODE" "$LINUX_UPDATE_INSPECTOR" \
     --version "$version" \
     --metadata "$metadata_path" \
     --artifact "$deb_path" \
-    --artifact "$appimage_path" >/dev/null || {
+    --artifact "$archive_path" >/dev/null || {
     rm -rf -- "$download_dir"
     return 1
   }
@@ -1232,7 +1232,7 @@ site_release_manifest_matches() {
       def expected_packages($version): [
         {platform: "android", kind: "apk", arch: "universal", name: "T4-Code-\($version)-android.apk"},
         {platform: "linux", kind: "deb", arch: "x86_64", name: "T4-Code-\($version)-linux-amd64.deb"},
-        {platform: "linux", kind: "appimage", arch: "x86_64", name: "T4-Code-\($version)-linux-x86_64.AppImage"},
+        {platform: "linux", kind: "archive", arch: "x86_64", name: "T4-Code-\($version)-linux-x86_64.tar.gz"},
         {platform: "mac", kind: "dmg", arch: "arm64", name: "T4-Code-\($version)-mac-arm64.dmg"},
         {platform: "mac", kind: "zip", arch: "arm64", name: "T4-Code-\($version)-mac-arm64.zip"}
       ];
@@ -1566,7 +1566,7 @@ site_has_release() {
   local -a release_assets=(
     "T4-Code-${version}-android.apk"
     "T4-Code-${version}-linux-amd64.deb"
-    "T4-Code-${version}-linux-x86_64.AppImage"
+    "T4-Code-${version}-linux-x86_64.tar.gz"
     "T4-Code-${version}-mac-arm64.dmg"
     "T4-Code-${version}-mac-arm64.zip"
   )

@@ -44,7 +44,7 @@ For a manual failure investigation, rerun with `T4_KEEP_CONTINUITY_SANDBOX=1`. T
 2. Connect two independent T4 clients. Create a disposable session and confirm both clients receive it.
 3. Send a prompt, wait for the durable transcript, reconnect both clients, and confirm the history appears once in the same order.
 4. Rename, archive, restore, and permanently delete the disposable session. Confirm both clients converge after every change and that archived sessions reject writes.
-5. Build and install the Linux desktop package. Launch the installed executable, not a development Electron process, and confirm the expected T4 host service, socket, host identity, session list, transcript, and composer state.
+5. Build and install the Linux desktop package. Launch the installed executable, not a development Flutter desktop process, and confirm the expected T4 host service, socket, host identity, session list, transcript, and composer state.
 6. Open the actual Tailscale Serve HTTPS URL in a touch browser. Confirm connected state, shared history, model selection, prompt round-trip, reload recovery, and usable controls at the narrowest viewport.
 7. Confirm the route is Tailscale Serve only. Funnel must be off.
 8. Verify the exact seven-asset GitHub bundle: five installable packages, `latest-linux.yml`, and `SHA256SUMS.txt`. The checksum file must contain exactly the five package digests plus the Linux updater-metadata digest. Fetch `https://t4code.net/releases/latest.json` and match its schema, version, tag, release URL, five canonical package records, sizes, immutable URLs, and SHA-256 digests against that GitHub release.
@@ -56,6 +56,6 @@ An ordinary main-branch site run defers only when the exact GitHub release looku
 
 ## Why this gate exists
 
-Earlier releases over-weighted fixture coverage and treated a product-surface roadmap as a completion contract. That left gaps at the boundaries between OMP, the client cache, Electron, the gateway, and a real touch browser. It also let single-client tests pass without proving desktop/phone convergence.
+Earlier releases over-weighted fixture coverage and treated a product-surface roadmap as a completion contract. That left gaps at the boundaries between OMP, the client cache, Flutter desktop, the gateway, and a real touch browser. It also let single-client tests pass without proving desktop/phone convergence.
 
 Fixture proof is enough to merge code. A release still needs installed-runtime and Tailnet proof.

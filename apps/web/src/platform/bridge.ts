@@ -1,4 +1,4 @@
-// Renderer platform seam. The Electron preload injects `window.ompShell`,
+// Renderer platform seam. The native preload injects `window.ompShell`,
 // which is a `DesktopShellPort` — a typed command/event port to the desktop
 // backend and nothing more. It has no UI persistence: workspace view state
 // is always renderer-local (localStorage), in both modes. Components never
@@ -18,7 +18,7 @@ export interface RendererPlatformOptions {
 export interface RendererPlatform {
   /** "desktop" when a live desktop-compatible shell port is available. */
   readonly mode: "desktop" | "browser";
-  /** Native window chrome exists only when Electron injected the shell port. */
+  /** Native window chrome exists only when a native shell injected the shell port. */
   readonly windowChrome: ShellPlatform | null;
   /** True only for the explicit, read-only public demo build. */
   readonly demo: boolean;

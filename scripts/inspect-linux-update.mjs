@@ -36,7 +36,7 @@ function validSha512(value, label) {
   return value;
 }
 
-/** Parse the intentionally small electron-builder update-info subset we publish. */
+/** Parse the intentionally small Linux update-info subset we publish. */
 export function parseLinuxUpdateMetadata(text) {
   if (typeof text !== "string" || text.length === 0 || text.length > 64 * 1024) {
     throw new Error("latest-linux.yml must be non-empty and at most 64 KiB");
@@ -88,7 +88,7 @@ export function expectedLinuxUpdateNames(version) {
   if (!VERSION_PATTERN.test(version)) throw new Error("version must be x.y.z");
   return [
     `T4-Code-${version}-linux-amd64.deb`,
-    `T4-Code-${version}-linux-x86_64.AppImage`,
+    `T4-Code-${version}-linux-x86_64.tar.gz`,
   ];
 }
 
@@ -104,10 +104,10 @@ export function validateLinuxUpdateMetadata(text, { version, artifacts }) {
   }
   const expectedNames = expectedLinuxUpdateNames(version);
   if (!(artifacts instanceof Map) || artifacts.size !== expectedNames.length) {
-    throw new Error("Linux updater validation requires exactly the deb and AppImage artifacts");
+    throw new Error("Linux updater validation requires exactly the deb and portable archive artifacts");
   }
   if (metadata.files.length !== expectedNames.length) {
-    throw new Error("latest-linux.yml must contain exactly the deb and AppImage entries");
+    throw new Error("latest-linux.yml must contain exactly the deb and portable archive entries");
   }
 
   const entries = new Map();
@@ -126,14 +126,7 @@ export function validateLinuxUpdateMetadata(text, { version, artifacts }) {
     if (entry.size !== undefined && positiveSize(entry.size, `${name} metadata size`) !== artifact.size) {
       throw new Error(`${name} metadata size does not match the artifact`);
     }
-    if (name.endsWith(".AppImage")) {
-      const blockMapSize = positiveSize(entry.blockMapSize ?? "", `${name} blockMapSize`);
-      if (blockMapSize >= artifact.size) {
-        throw new Error(`${name} blockMapSize must be smaller than the artifact`);
-      }
-    } else if (entry.blockMapSize !== undefined) {
-      throw new Error(`${name} must not declare AppImage block-map metadata`);
-    }
+    if (entry.blockMapSize !== undefined) throw new Error(`${name} must not declare block-map metadata`);
     if (artifact.sha512 !== undefined && sha512 !== artifact.sha512) {
       throw new Error(`${name} metadata SHA-512 does not match the artifact`);
     }
@@ -189,7 +182,7 @@ function parseArguments(args) {
     else throw new Error(`unknown argument ${flag}`);
   }
   if (!options.metadataPath || !options.version || options.artifactPaths.length !== 2) {
-    throw new Error("usage: inspect-linux-update.mjs --version x.y.z --metadata latest-linux.yml --artifact file.deb --artifact file.AppImage");
+    throw new Error("usage: inspect-linux-update.mjs --version x.y.z --metadata latest-linux.yml --artifact file.deb --artifact file.tar.gz");
   }
   return options;
 }

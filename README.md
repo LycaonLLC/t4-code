@@ -17,7 +17,7 @@ T4 owns the client wire, generic host service, and standalone daemon in `@t4-cod
 | Platform | Arch                  | Package                                   |
 | -------- | --------------------- | ----------------------------------------- |
 | Android  | arm64, armv7, x86_64  | `.apk` (**signed**)                       |
-| Linux    | x86_64                | `.deb`, AppImage                          |
+| Linux    | x86_64                | `.deb`, `.tar.gz` portable archive        |
 | macOS    | Apple Silicon (arm64) | `.dmg`, `.zip` (**signed and notarized**) |
 
 No Windows build and no Intel Mac build in v0.1.30. The iOS TestFlight build is coming soon.
@@ -67,12 +67,13 @@ sudo apt install ./T4-Code-0.1.30-linux-amd64.deb
 
 Use `apt install` rather than `dpkg -i` so system dependencies resolve automatically.
 
-### Linux (AppImage)
+### Linux (portable archive)
 
 ```sh
-wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.30/T4-Code-0.1.30-linux-x86_64.AppImage
-chmod +x T4-Code-0.1.30-linux-x86_64.AppImage
-./T4-Code-0.1.30-linux-x86_64.AppImage
+wget https://github.com/LycaonLLC/t4-code/releases/download/v0.1.30/T4-Code-0.1.30-linux-x86_64.tar.gz
+mkdir t4-code
+tar -xzf T4-Code-0.1.30-linux-x86_64.tar.gz -C t4-code
+./t4-code/t4code
 ```
 
 ### macOS (Apple Silicon)
@@ -99,7 +100,7 @@ Some actions depend on what the host supports. When a host can't do something (s
 
 **Local.** T4 Code looks for the `omp` executable via `$OMP_EXECUTABLE`, your `PATH`, and common install locations (`~/.local/bin`, `/usr/local/bin`, `/opt/omp/bin`, ...). It then manages one T4 host per OMP profile for you: a systemd user service on Linux, a launch agent on macOS. Named profiles under `~/.omp/profiles` appear as their own local hosts and can auto-start with the app. Host logs remain in the compatibility paths `~/.local/state/t4-code/appserver` (Linux) or `~/Library/Logs/T4 Code/appserver` (macOS); named profiles log under `profiles/<id>` inside those directories.
 
-**Paired.** Connect to an OMP host on another machine through a `t4-code://pair/...` link generated on that host. Device credentials are encrypted with your OS keychain (Electron `safeStorage`) before they touch disk. Dropped connections reconnect automatically with backoff, and any settings you had staged stay staged until the host confirms.
+**Paired.** Connect to an OMP host on another machine through a `t4-code://pair/...` link generated on that host. Device credentials are encrypted with platform secure storage before they touch disk. Dropped connections reconnect automatically with backoff, and any settings you had staged stay staged until the host confirms.
 
 **Tailnet browser.** A source checkout can serve the web app to a phone through Tailscale Serve; see [Tailnet remote access](docs/TAILNET_REMOTE.md). There is no T4 app password in this mode. Tailscale identity plus your tailnet ACLs or grants are the access boundary, so keep the route on Serve and never enable Funnel. Anyone allowed to reach the node and port can operate the connected T4 host and its OMP sessions.
 
@@ -121,7 +122,7 @@ pnpm dev              # web + desktop in watch mode
 pnpm check            # release contract, provenance, lint, typecheck
 pnpm test             # workspace tests
 pnpm test:soak        # headless 10k-history and 20-reconnect stress checks
-pnpm package:linux    # .deb + AppImage into release/
+pnpm package:linux    # .deb + portable archive into release/
 pnpm package:mac:unsigned  # unsigned macOS build (on a Mac)
 pnpm package:mac      # maintainer-only signed and notarized macOS build
 cd apps/flutter
@@ -143,11 +144,9 @@ native release checks.
 ## Architecture
 
 ```
-apps/desktop   Electron main process: window, local OMP discovery,
-               host lifecycle, pairing, credential storage
-apps/flutter   Canonical Android/iOS/macOS/web UI: responsive workspace,
+apps/flutter   Canonical Android/iOS/macOS/Linux/Windows/web UI: responsive workspace,
                secure credentials, lifecycle, updates, OMP service controls
-apps/web       Legacy React compatibility UI for the Electron client
+apps/web       Browser and Capacitor compatibility client pending their cutover
 packages/      client, protocol, host-wire, host-service, remote,
                service-manager, ui
 ```

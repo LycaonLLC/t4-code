@@ -223,13 +223,13 @@ export function Landing() {
             <div className="install-grid">
               <div className="install-card">
                 <h3>Linux</h3>
-                <p className="arch">x86_64 · .deb or AppImage</p>
+                <p className="arch">x86_64 · .deb or portable archive</p>
                 <pre className="code">
                   <code>sudo apt install ./{assetsFor("linux")[0]!.filename}</code>
                 </pre>
                 <p>
                   {renderInline(
-                    "`apt install` pulls in system dependencies. Prefer the AppImage on non-Debian distributions.",
+                    "`apt install` pulls in system dependencies. Prefer the portable archive on non-Debian distributions.",
                   )}
                 </p>
               </div>

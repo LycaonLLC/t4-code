@@ -1,5 +1,5 @@
 // Persistence adapter boundary for the workspace store. The web build talks
-// to localStorage; the Electron shell substitutes its own adapter through the
+// to localStorage; the native shell substitutes its own adapter through the
 // shell bridge without the store noticing. Renderer state only — runtime
 // truth never lives here.
 

@@ -18,17 +18,17 @@ tasks:
       - node scripts/t4-doctor.mjs
 
   dev:
-    desc: Start the web and desktop apps in development mode
+    desc: Start the canonical Flutter app in development mode
     cmds:
       - pnpm dev
 
   dev:web:
-    desc: Start the web app with sample data
+    desc: Start the Flutter Web client
     cmds:
       - pnpm dev:web
 
   dev:desktop:
-    desc: Start the desktop app in development mode
+    desc: Start the Flutter desktop client
     cmds:
       - pnpm dev:desktop
 
@@ -59,7 +59,7 @@ tasks:
       - pnpm build
 
   test:e2e:
-    desc: Build the web apps and run the end-to-end browser tests
+    desc: Build and test the public site in a browser
     cmds:
       - pnpm test:e2e
 

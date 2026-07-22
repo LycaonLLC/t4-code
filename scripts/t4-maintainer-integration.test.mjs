@@ -100,32 +100,31 @@ write_state() {
 linux_update_metadata() {
   local version=$1
   local deb_name="T4-Code-$version-linux-amd64.deb"
-  local appimage_name="T4-Code-$version-linux-x86_64.AppImage"
+  local archive_name="T4-Code-$version-linux-x86_64.tar.gz"
   local deb_size=${mockDebSize}
-  local appimage_size=${mockAssetSize}
+  local archive_size=${mockAssetSize}
   local deb_sha512=${mockDebSha512}
-  local appimage_sha512=${mockAssetSha512}
+  local archive_sha512=${mockAssetSha512}
   case \${MOCK_LINUX_UPDATE_MODE:-valid} in
     deb-name) deb_name="T4-Code-$version-linux-renamed.deb" ;;
     deb-size) deb_size=$((deb_size - 1)) ;;
     deb-sha512) deb_sha512=${mockDriftSha512} ;;
-    appimage-name) appimage_name="T4-Code-$version-linux-renamed.AppImage" ;;
-    appimage-size) appimage_size=$((appimage_size - 1)) ;;
-    appimage-sha512) appimage_sha512=${mockDriftSha512} ;;
+    archive-name) archive_name="T4-Code-$version-linux-renamed.tar.gz" ;;
+    archive-size) archive_size=$((archive_size - 1)) ;;
+    archive-sha512) archive_sha512=${mockDriftSha512} ;;
     compatibility-sha512) ;;
   esac
   cat <<YAML
 version: $version
 files:
-  - url: $appimage_name
-    sha512: $appimage_sha512
-    size: $appimage_size
-    blockMapSize: 1
+  - url: $archive_name
+    sha512: $archive_sha512
+    size: $archive_size
   - url: $deb_name
     sha512: $deb_sha512
     size: $deb_size
-path: $appimage_name
-sha512: $(if [[ \${MOCK_LINUX_UPDATE_MODE:-valid} == compatibility-sha512 ]]; then printf '%s' '${mockDriftSha512}'; else printf '%s' "$appimage_sha512"; fi)
+path: $archive_name
+sha512: $(if [[ \${MOCK_LINUX_UPDATE_MODE:-valid} == compatibility-sha512 ]]; then printf '%s' '${mockDriftSha512}'; else printf '%s' "$archive_sha512"; fi)
 releaseDate: '2026-07-15T00:00:00Z'
 YAML
 }
@@ -375,7 +374,7 @@ JSON
         metadata=$(linux_update_metadata "$release_version")
         metadata_digest=$(printf '%s\n' "$metadata" | sha256sum | awk '{print $1}')
         metadata_size=$(printf '%s\n' "$metadata" | wc -c)
-        manifest=$(printf '%s  T4-Code-%s-android.apk\n%s  T4-Code-%s-linux-amd64.deb\n%s  T4-Code-%s-linux-x86_64.AppImage\n%s  T4-Code-%s-mac-arm64.dmg\n%s  T4-Code-%s-mac-arm64.zip\n%s  latest-linux.yml\n' \
+        manifest=$(printf '%s  T4-Code-%s-android.apk\n%s  T4-Code-%s-linux-amd64.deb\n%s  T4-Code-%s-linux-x86_64.tar.gz\n%s  T4-Code-%s-mac-arm64.dmg\n%s  T4-Code-%s-mac-arm64.zip\n%s  latest-linux.yml\n' \
           "$asset_digest" "$release_version" "$deb_digest" "$release_version" "$asset_digest" "$release_version" \
           "$asset_digest" "$release_version" "$asset_digest" "$release_version" "$metadata_digest")
         manifest_digest=$(printf '%s\n' "$manifest" | sha256sum | awk '{print $1}')
@@ -385,7 +384,7 @@ JSON
   {"name":"SHA256SUMS.txt","state":"uploaded","size":$manifest_size,"digest":"sha256:$manifest_digest","browser_download_url":"$release_prefix/SHA256SUMS.txt"},
   {"name":"T4-Code-$release_version-android.apk","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-android.apk"},
   {"name":"T4-Code-$release_version-linux-amd64.deb","state":"uploaded","size":${mockDebSize},"digest":"sha256:$deb_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-linux-amd64.deb"},
-  {"name":"T4-Code-$release_version-linux-x86_64.AppImage","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-linux-x86_64.AppImage"},
+  {"name":"T4-Code-$release_version-linux-x86_64.tar.gz","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-linux-x86_64.tar.gz"},
   {"name":"T4-Code-$release_version-mac-arm64.dmg","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-mac-arm64.dmg"},
   {"name":"T4-Code-$release_version-mac-arm64.zip","state":"uploaded","size":${mockAssetSize},"digest":"sha256:$asset_digest","browser_download_url":"$release_prefix/T4-Code-$release_version-mac-arm64.zip"},
   {"name":"latest-linux.yml","state":"uploaded","size":$metadata_size,"digest":"sha256:$metadata_digest","browser_download_url":"$release_prefix/latest-linux.yml"}
@@ -436,7 +435,7 @@ JSON
 {"schemaVersion":$schema,"channel":"stable","version":"$manifest_version","tag":"$manifest_tag","publishedAt":"$published_at","releaseUrl":"$release_url","assets":[
   {"platform":"android","kind":"apk","arch":"universal","name":"T4-Code-$version-android.apk","url":"$apk_url","size":${mockAssetSize},"sha256":"$apk_digest"},
   {"platform":"linux","kind":"deb","arch":"x86_64","name":"T4-Code-$version-linux-amd64.deb","url":"$release_prefix/T4-Code-$version-linux-amd64.deb","size":$deb_size,"sha256":"$deb_digest"},
-  {"platform":"linux","kind":"appimage","arch":"x86_64","name":"T4-Code-$version-linux-x86_64.AppImage","url":"$release_prefix/T4-Code-$version-linux-x86_64.AppImage","size":${mockAssetSize},"sha256":"$asset_digest"},
+  {"platform":"linux","kind":"archive","arch":"x86_64","name":"T4-Code-$version-linux-x86_64.tar.gz","url":"$release_prefix/T4-Code-$version-linux-x86_64.tar.gz","size":${mockAssetSize},"sha256":"$asset_digest"},
   {"platform":"mac","kind":"dmg","arch":"arm64","name":"T4-Code-$version-mac-arm64.dmg","url":"$release_prefix/T4-Code-$version-mac-arm64.dmg","size":${mockAssetSize},"sha256":"$asset_digest"},
   {"platform":"mac","kind":"zip","arch":"arm64","name":"T4-Code-$version-mac-arm64.zip","url":"$release_prefix/T4-Code-$version-mac-arm64.zip","size":${mockAssetSize},"sha256":"$asset_digest"}$extra
 ]}
@@ -448,7 +447,7 @@ JSON
         asset_digest=$(printf 'mock-asset\n' | sha256sum | awk '{print $1}')
         metadata=$(linux_update_metadata "$version")
         metadata_digest=$(printf '%s\n' "$metadata" | sha256sum | awk '{print $1}')
-        printf '%s  T4-Code-%s-android.apk\n%s  T4-Code-%s-linux-amd64.deb\n%s  T4-Code-%s-linux-x86_64.AppImage\n%s  T4-Code-%s-mac-arm64.dmg\n%s  T4-Code-%s-mac-arm64.zip\n%s  latest-linux.yml\n' \
+        printf '%s  T4-Code-%s-android.apk\n%s  T4-Code-%s-linux-amd64.deb\n%s  T4-Code-%s-linux-x86_64.tar.gz\n%s  T4-Code-%s-mac-arm64.dmg\n%s  T4-Code-%s-mac-arm64.zip\n%s  latest-linux.yml\n' \
           "$asset_digest" "$version" "$deb_digest" "$version" "$asset_digest" "$version" \
           "$asset_digest" "$version" "$asset_digest" "$version" "$metadata_digest" >"$output"
       elif [[ $url == *latest-linux.yml ]]; then
@@ -480,7 +479,7 @@ JSON
         exit 0
       fi
       if [[ $url == https://t4code.net/*assets/* ]]; then
-        printf 'v1.2.3 t4code-1.2.3-appserver-1 T4-Code-1.2.3-android.apk T4-Code-1.2.3-linux-amd64.deb T4-Code-1.2.3-linux-x86_64.AppImage T4-Code-1.2.3-mac-arm64.dmg T4-Code-1.2.3-mac-arm64.zip\n'
+        printf 'v1.2.3 t4code-1.2.3-appserver-1 T4-Code-1.2.3-android.apk T4-Code-1.2.3-linux-amd64.deb T4-Code-1.2.3-linux-x86_64.tar.gz T4-Code-1.2.3-mac-arm64.dmg T4-Code-1.2.3-mac-arm64.zip\n'
         exit 0
       fi
       if [[ $url == https://t4code.net/* ]]; then
@@ -511,7 +510,7 @@ JSON
         printf 'omp\n' >"$destination/.mock-kind"
       else
         mkdir -p -- "$destination/compat" "$destination/scripts" \
-          "$destination/apps/web/dist" \
+          "$destination/apps/flutter/build/web" \
           "$destination/node_modules/.pnpm/ws@mock/node_modules/ws"
         printf '{"version":"1.2.3"}\n' >"$destination/package.json"
         cat >"$destination/compat/omp-app-matrix.json" <<JSON
@@ -519,7 +518,7 @@ JSON
 JSON
         printf 'service\n' >"$destination/scripts/tailnet-service.mjs"
         printf 'gateway\n' >"$destination/scripts/tailnet-gateway.mjs"
-        printf '<html>built</html>\n' >"$destination/apps/web/dist/index.html"
+        printf '<html>built</html>\n' >"$destination/apps/flutter/build/web/index.html"
         printf '{"name":"ws"}\n' >"$destination/node_modules/.pnpm/ws@mock/node_modules/ws/package.json"
         if [[ \${MOCK_WS_ESCAPE:-0} == 1 ]]; then
           ln -s -- "$state/escaping-ws" "$destination/node_modules/ws"
@@ -929,11 +928,11 @@ printf '%s' "$((count + 1))" >"$MOCK_STATE/local-deploy-count"
 mkdir -p -- "$(dirname -- "$receipt")" "$work"
 mkdir -p -- \
   "$MOCK_RUNTIME_ROOT/scripts" \
-  "$MOCK_RUNTIME_ROOT/apps/web/dist" \
+  "$MOCK_RUNTIME_ROOT/apps/flutter/build/web" \
   "$MOCK_RUNTIME_ROOT/node_modules/ws"
 printf 'service\n' >"$MOCK_RUNTIME_ROOT/scripts/tailnet-service.mjs"
 printf 'gateway\n' >"$MOCK_RUNTIME_ROOT/scripts/tailnet-gateway.mjs"
-printf '<html>runner</html>\n' >"$MOCK_RUNTIME_ROOT/apps/web/dist/index.html"
+printf '<html>runner</html>\n' >"$MOCK_RUNTIME_ROOT/apps/flutter/build/web/index.html"
 printf '{"name":"ws"}\n' >"$MOCK_RUNTIME_ROOT/node_modules/ws/package.json"
 printf 'new-unit\n' >"$MOCK_GATEWAY_UNIT"
 cat >"$MOCK_OMP_TARGET" <<'SH'
@@ -960,7 +959,7 @@ printf 'healthy' >"$MOCK_STATE/gateway-health"
 printf '%s' "$deployment_identity" >"$MOCK_STATE/deployment-identity"
 
 gateway_script="$MOCK_RUNTIME_ROOT/scripts/tailnet-gateway.mjs"
-web_root="$MOCK_RUNTIME_ROOT/apps/web/dist"
+web_root="$MOCK_RUNTIME_ROOT/apps/flutter/build/web"
 ws_root="$MOCK_RUNTIME_ROOT/node_modules/ws"
 node_executable="$MOCK_NODE_EXECUTABLE"
 gateway_origin=https://mock.tailnet.ts.net
@@ -2569,7 +2568,7 @@ test("live Linux updater verification downloads the exact bounded public files",
     );
   for (const [name, size] of [
     ["T4-Code-1.2.3-linux-amd64.deb", mockDebSize],
-    ["T4-Code-1.2.3-linux-x86_64.AppImage", mockAssetSize],
+    ["T4-Code-1.2.3-linux-x86_64.tar.gz", mockAssetSize],
   ]) {
     const line = downloads.find((candidate) => candidate.includes(`/${name}\t`));
     assert.ok(line, downloads.join("\n"));
@@ -2586,9 +2585,9 @@ test("self-consistent checksum drift in live Linux metadata still blocks deploym
     ["deb name", "deb-name"],
     ["deb size", "deb-size"],
     ["deb SHA-512", "deb-sha512"],
-    ["AppImage name", "appimage-name"],
-    ["AppImage size", "appimage-size"],
-    ["AppImage SHA-512", "appimage-sha512"],
+    ["portable archive name", "archive-name"],
+    ["portable archive size", "archive-size"],
+    ["portable archive SHA-512", "archive-sha512"],
     ["compatibility SHA-512", "compatibility-sha512"],
   ]) {
     await t.test(name, async (subtest) => {
@@ -2749,7 +2748,7 @@ test("receipt-bound local drift redeploys the exact pending publication without 
   const driftTargets = [
     ["OMP executable", (fixture) => fixture.ompTarget],
     ["gateway script", (fixture) => join(fixture.runtimeRoot, "scripts", "tailnet-gateway.mjs")],
-    ["web tree", (fixture) => join(fixture.runtimeRoot, "apps", "web", "dist", "index.html")],
+    ["web tree", (fixture) => join(fixture.runtimeRoot, "apps", "flutter", "build", "web", "index.html")],
     ["ws tree", (fixture) => join(fixture.runtimeRoot, "node_modules", "ws", "package.json")],
     ["gateway config", (fixture) => fixture.gatewayConfig],
     ["gateway unit", (fixture) => fixture.gatewayUnit],

@@ -17,7 +17,7 @@ const version = "0.1.17";
 const tag = `v${version}`;
 const packageDescriptors = releasePackageDescriptors(version);
 const deb = packageDescriptors.find(({ kind }) => kind === "deb").name;
-const appImage = packageDescriptors.find(({ kind }) => kind === "appimage").name;
+const archive = packageDescriptors.find(({ kind }) => kind === "archive").name;
 const debSha512 = Buffer.alloc(64, 1).toString("base64");
 const appImageSha512 = Buffer.alloc(64, 2).toString("base64");
 
@@ -54,14 +54,13 @@ function jsonResponse(status, value) {
 function healthyFixture({ corruptChecksums = false } = {}) {
   const linuxMetadataText = `version: ${version}
 files:
-  - url: ${appImage}
+  - url: ${archive}
     sha512: ${appImageSha512}
     size: 200
-    blockMapSize: 20
   - url: ${deb}
     sha512: ${debSha512}
     size: 100
-path: ${appImage}
+path: ${archive}
 sha512: ${appImageSha512}
 releaseDate: '2026-07-15T20:00:00Z'
 `;
@@ -85,7 +84,7 @@ releaseDate: '2026-07-15T20:00:00Z'
   ]);
   const assets = expectedPublishedAssetNames(version).map((name, index) => {
     const body = bodies.get(name);
-    const size = name === deb ? 100 : name === appImage ? 200 : body ? Buffer.byteLength(body) : 300 + index;
+    const size = name === deb ? 100 : name === archive ? 200 : body ? Buffer.byteLength(body) : 300 + index;
     const digest = body ? sha256(body) : sha256(name);
     return {
       id: index + 1,

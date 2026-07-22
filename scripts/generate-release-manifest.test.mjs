@@ -16,7 +16,7 @@ const version = "0.1.17";
 const tag = `v${version}`;
 const packages = releasePackageDescriptors(version);
 const deb = packages.find(({ kind }) => kind === "deb").name;
-const appImage = packages.find(({ kind }) => kind === "appimage").name;
+const archive = packages.find(({ kind }) => kind === "archive").name;
 const debSha512 = Buffer.alloc(64, 1).toString("base64");
 const appImageSha512 = Buffer.alloc(64, 2).toString("base64");
 
@@ -30,7 +30,7 @@ function fixture() {
   const assets = expectedPublishedAssetNames(version).map((name, index) => ({
     name,
     state: "uploaded",
-    size: name === deb ? 100 : name === appImage ? 200 : 300 + index,
+    size: name === deb ? 100 : name === archive ? 200 : 300 + index,
     digest: `sha256:${name === CHECKSUMS_NAME ? digest("checksum-file") : digest(name)}`,
     browser_download_url: `https://github.com/LycaonLLC/t4-code/releases/download/${tag}/${name}`,
   }));
@@ -38,14 +38,13 @@ function fixture() {
     checksumsText,
     linuxMetadataText: `version: ${version}
 files:
-  - url: ${appImage}
+  - url: ${archive}
     sha512: ${appImageSha512}
     size: 200
-    blockMapSize: 20
   - url: ${deb}
     sha512: ${debSha512}
     size: 100
-path: ${appImage}
+path: ${archive}
 sha512: ${appImageSha512}
 releaseDate: '2026-07-15T20:00:00Z'
 `,
@@ -93,7 +92,7 @@ test("builds the small deterministic stable manifest in canonical platform order
   ]);
   assert.equal(manifest.schemaVersion, 1);
   assert.equal(manifest.channel, "stable");
-  assert.deepEqual(manifest.assets.map(({ kind }) => kind), ["apk", "deb", "appimage", "dmg", "zip"]);
+  assert.deepEqual(manifest.assets.map(({ kind }) => kind), ["apk", "deb", "archive", "dmg", "zip"]);
   assert.deepEqual(manifest.assets.map(({ sha256 }) => sha256), packages.map(({ name }) => digest(name)));
   assert.ok(manifest.assets.every(({ url }) => url.includes(`/releases/download/${tag}/`)));
 });

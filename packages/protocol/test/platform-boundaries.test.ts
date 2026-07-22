@@ -69,7 +69,7 @@ describe("headless platform contracts", () => {
     ).toBe("x".repeat(512));
   });
 
-  it("rejects malformed pair events before Electron IPC receives them", () => {
+  it("rejects malformed pair events before native IPC receives them", () => {
     expect(decodePairLinkEvent({ hostHint: "host-a", code: "123456", issuedAt: 1 })).toEqual({
       hostHint: "host-a",
       code: "123456",

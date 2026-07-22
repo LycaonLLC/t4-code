@@ -2,7 +2,7 @@ import { isIP } from "node:net";
 import { DEVICE_CAPABILITIES, isCapability, type DeviceCapability } from "@t4-code/protocol";
 
 // Node-compatible registry policy belongs here. Platform shells supply the
-// persistence and encryption adapters without leaking Electron into this package.
+// persistence and encryption adapters without leaking native-shell details into this package.
 
 export const REMOTE_TARGET_SCHEMA_VERSION = 1 as const;
 export const DEVICE_CREDENTIAL_SCHEMA_VERSION = 1 as const;

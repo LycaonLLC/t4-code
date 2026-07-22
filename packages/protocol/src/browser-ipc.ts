@@ -1,6 +1,6 @@
 import { isSecretLikeKey, utf8ByteLength } from "@t4-code/host-wire";
 
-/** Browser IPC wire version. The version is intentionally independent of Electron. */
+/** Browser IPC wire version. The version is intentionally independent of any native shell. */
 export const BROWSER_IPC_VERSION = 1 as const;
 
 export const BROWSER_METHODS = [

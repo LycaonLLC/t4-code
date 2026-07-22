@@ -1,5 +1,5 @@
 // Remote target view models and the renderer-side mirror of the desktop
-// validation contract (apps/desktop remote-runtime/registry.ts). Everything
+// validation contract formerly owned by the retired desktop shell. Everything
 // here is display shapes and pre-flight validation — the desktop main
 // process re-validates every request, and nothing in this module ever sees
 // a token, a credential, or a socket path.

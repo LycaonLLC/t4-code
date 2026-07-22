@@ -50,7 +50,7 @@ function outboundMessages(): OmpClientMessage[] {
   return [
     {
       kind: "hello",
-      client: { name: "t4-code", version: "test", build: "test", platform: "electron" },
+      client: { name: "t4-code", version: "test", build: "test", platform: "web" },
       requestedFeatures: ["resume"],
       savedCursors: [],
       capabilities: ["sessions.read"],

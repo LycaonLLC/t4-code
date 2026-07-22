@@ -1,6 +1,6 @@
 // Per-session inspector store: the state behind the five right-pane
 // families. Renderer projection only — frames arrive through the attached
-// controller (fixture today, the Electron bridge later) and the store never
+// controller (fixture today, the native bridge later) and the store never
 // invents runtime truth. One store per session keeps A→B→A switches cheap
 // and isolates progress churn to the session that produced it.
 import { useStore } from "zustand";
@@ -143,7 +143,7 @@ export type InspectorStore = InspectorState & InspectorActions;
 export type InspectorStoreApi = StoreApi<InspectorStore>;
 
 /**
- * The seam the Electron bridge replaces. The fixture controller answers
+ * The seam the native bridge replaces. The fixture controller answers
  * synchronously and deterministically; a live controller forwards app-wire
  * commands and streams results back through the ingest actions.
  */
@@ -726,7 +726,7 @@ export type InspectorStoreFactory = (sessionId: string) => InspectorStoreApi;
 
 let factory: InspectorStoreFactory | null = null;
 
-/** The shell bridge (fixture boot today, Electron later) installs this once. */
+/** The shell bridge (fixture boot today, native shell later) installs this once. */
 export function installInspectorStoreFactory(next: InspectorStoreFactory): void {
   factory = next;
   storesBySession.clear();

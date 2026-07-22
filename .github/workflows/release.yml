@@ -135,6 +135,16 @@ jobs:
           node-version: 24.13.1
           cache: pnpm
 
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: 3.44.6
+          channel: stable
+          cache: true
+
+      - name: Install Flutter Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install --yes clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -142,7 +152,7 @@ jobs:
         run: pnpm package:linux
 
       - name: Inspect Linux packages
-        run: pnpm inspect:package -- release/*.deb release/*.AppImage
+        run: pnpm inspect:package -- release/*.deb release/*.tar.gz
 
       - name: Inspect Linux updater metadata
         env:
@@ -152,13 +162,13 @@ jobs:
           --version "$VERSION"
           --metadata release/latest-linux.yml
           --artifact "release/T4-Code-${VERSION}-linux-amd64.deb"
-          --artifact "release/T4-Code-${VERSION}-linux-x86_64.AppImage"
+          --artifact "release/T4-Code-${VERSION}-linux-x86_64.tar.gz"
 
       - name: Stage Linux artifacts
         shell: bash
         run: |
           mkdir -p artifacts
-          cp release/T4-Code-*.deb release/T4-Code-*.AppImage release/latest-linux.yml artifacts/
+          cp release/T4-Code-*.deb release/T4-Code-*.tar.gz release/latest-linux.yml artifacts/
           (cd artifacts && sha256sum T4-Code-* > SHA256SUMS-linux.txt)
           (cd artifacts && sha256sum latest-linux.yml >> SHA256SUMS-linux.txt)
 
@@ -192,6 +202,13 @@ jobs:
           node-version: 24.13.1
           cache: pnpm
 
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: 3.44.6
+          channel: stable
+          cache: true
+
       - name: Install Java
         uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
         with:
@@ -207,12 +224,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Build web application for Android
-        run: pnpm build:web
-
-      - name: Verify unsigned Android application
-        run: pnpm --filter @t4-code/mobile check:android:debug
 
       - name: Restore and validate Android release signing key
         shell: bash
@@ -248,15 +259,14 @@ jobs:
           T4_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.T4_ANDROID_KEYSTORE_PASSWORD }}
           T4_ANDROID_KEY_ALIAS: ${{ secrets.T4_ANDROID_KEY_ALIAS }}
           T4_ANDROID_KEY_PASSWORD: ${{ secrets.T4_ANDROID_KEY_PASSWORD }}
-        run: |
-          pnpm --filter @t4-code/mobile build:android:release
+        run: pnpm --filter @t4-code/flutter build:android:release
 
       - name: Inspect signed Android APK
         shell: bash
         run: |
           set -euo pipefail
-          apk="apps/mobile/android/app/build/outputs/apk/release/app-release.apk"
-          metadata="apps/mobile/android/app/build/outputs/apk/release/output-metadata.json"
+          apk="apps/flutter/build/app/outputs/flutter-apk/app-release.apk"
+          metadata="apps/flutter/build/app/outputs/apk/release/output-metadata.json"
           build_tools="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools/36.0.0"
           node scripts/inspect-android-release.mjs \
             --apk "$apk" \
@@ -271,7 +281,7 @@ jobs:
         run: |
           mkdir -p artifacts
           cp \
-            apps/mobile/android/app/build/outputs/apk/release/app-release.apk \
+            apps/flutter/build/app/outputs/flutter-apk/app-release.apk \
             "artifacts/T4-Code-${VERSION}-android.apk"
           (cd artifacts && sha256sum T4-Code-* > SHA256SUMS-android.txt)
 
@@ -305,6 +315,13 @@ jobs:
           node-version: 24.13.1
           cache: pnpm
 
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: 3.44.6
+          channel: stable
+          cache: true
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -322,10 +339,26 @@ jobs:
           printf '%s' "$T4_APPLE_API_KEY_BASE64" | openssl base64 -d -A -out "$key_path"
           chmod 600 "$key_path"
 
+      - name: Restore Developer ID signing identity
+        shell: bash
+        env:
+          T4_MACOS_CERTIFICATE_BASE64: ${{ secrets.T4_MACOS_CERTIFICATE_BASE64 }}
+          T4_MACOS_CERTIFICATE_PASSWORD: ${{ secrets.T4_MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/t4-code-signing.keychain-db"
+          certificate="$RUNNER_TEMP/t4-code-signing.p12"
+          security create-keychain -p "" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "" "$keychain"
+          printf '%s' "$T4_MACOS_CERTIFICATE_BASE64" | openssl base64 -d -A -out "$certificate"
+          security import "$certificate" -k "$keychain" -P "$T4_MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain-db
+
       - name: Build signed and notarized macOS packages
         env:
-          CSC_LINK: ${{ secrets.T4_MACOS_CERTIFICATE_BASE64 }}
-          CSC_KEY_PASSWORD: ${{ secrets.T4_MACOS_CERTIFICATE_PASSWORD }}
+          T4_MACOS_SIGNING_IDENTITY: "Developer ID Application: Michael Schoenberger (WJLM3D3DK6)"
           APPLE_API_KEY: ${{ runner.temp }}/AuthKey.p8
           APPLE_API_KEY_ID: ${{ secrets.T4_APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.T4_APPLE_API_ISSUER_ID }}
@@ -410,7 +443,7 @@ jobs:
             "SHA256SUMS.txt" \
             "T4-Code-${VERSION}-android.apk" \
             "T4-Code-${VERSION}-linux-amd64.deb" \
-            "T4-Code-${VERSION}-linux-x86_64.AppImage" \
+            "T4-Code-${VERSION}-linux-x86_64.tar.gz" \
             "T4-Code-${VERSION}-mac-arm64.dmg" \
             "T4-Code-${VERSION}-mac-arm64.zip" \
             "latest-linux.yml" | sort)
@@ -437,7 +470,7 @@ jobs:
           files: |
             artifacts/T4-Code-*.apk
             artifacts/T4-Code-*.deb
-            artifacts/T4-Code-*.AppImage
+            artifacts/T4-Code-*.tar.gz
             artifacts/T4-Code-*.dmg
             artifacts/T4-Code-*.zip
             artifacts/latest-linux.yml

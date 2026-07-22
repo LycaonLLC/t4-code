@@ -11,7 +11,7 @@ test("builds the five package, Linux updater, and checksum URLs for one release 
     [
       "T4-Code-0.1.17-android.apk",
       "T4-Code-0.1.17-linux-amd64.deb",
-      "T4-Code-0.1.17-linux-x86_64.AppImage",
+      "T4-Code-0.1.17-linux-x86_64.tar.gz",
       "T4-Code-0.1.17-mac-arm64.dmg",
       "T4-Code-0.1.17-mac-arm64.zip",
       "latest-linux.yml",

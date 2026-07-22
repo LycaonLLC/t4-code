@@ -1,5 +1,5 @@
 // Presentation-only humanization for the in-chat model selector, mirroring the
-// Electron/web T4 model picker (apps/web/src/features/settings/settings-presentation.ts).
+// web T4 model picker (apps/web/src/features/settings/settings-presentation.ts).
 //
 // The host catalog's `name` is the label authority when it names a model; every
 // fallback is deterministic so the same input always renders the same words.

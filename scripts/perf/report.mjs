@@ -51,14 +51,6 @@ function gitValue(args) {
   }
 }
 
-export function electronMemoryKilobytes(memory) {
-  for (const key of ["workingSetSize", "privateBytes"]) {
-    const value = memory?.[key];
-    if (Number.isFinite(value) && value >= 0) return value;
-  }
-  throw new Error("Electron process metrics contain neither workingSetSize nor privateBytes");
-}
-
 export function machineMetadata() {
   const processors = cpus();
   const sourceDirty = process.env.T4_PERF_SOURCE_DIRTY;
