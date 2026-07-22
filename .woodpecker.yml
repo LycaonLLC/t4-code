@@ -339,7 +339,7 @@ steps:
     depends_on: [dependencies]
     image: harbor.tailb18de3.ts.net/linkedin-bot/woodpecker-buildkit-deploy-tools@sha256:7936be1edac8ce3c225b148cff0e89b1446fc88185d72379398617f7279ad8cc
     environment:
-      T4_REGISTRY_AUTH_DIR: .site-ci/registry-auth
+      T4_REGISTRY_AUTH_DIR: .cluster-ci/site-registry-auth
     commands:
       - sh scripts/cluster-ci/load-registry-auth.sh
     when:
@@ -361,37 +361,14 @@ steps:
             ephemeral-storage: 512Mi
 
 
-  prepare-site-image:
-    depends_on: [dependencies]
-    image: mirror.gcr.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7
-    commands:
-      - version=$(node -p "require('./package.json').version") && node scripts/generate-release-manifest.mjs --version "$version" --output apps/site/public/releases/latest.json
-    when:
-      - event: push
-        branch: main
-      - event: manual
-        branch: main
-    backend_options:
-      kubernetes:
-        serviceAccountName: woodpecker-ci-untrusted
-        resources:
-          requests:
-            cpu: "0"
-            memory: 128Mi
-            ephemeral-storage: 128Mi
-          limits:
-            cpu: 500m
-            memory: 512Mi
-            ephemeral-storage: 512Mi
-
   build-site:
-    depends_on: [harbor-auth-site, prepare-site-image]
+    depends_on: [harbor-auth-site]
     image: mirror.gcr.io/moby/buildkit:v0.30.0-rootless@sha256:d76eb1caecac5733ef7553c1e90a1b21f1bb218cd1142d3553de0747b4a14ba9
     environment:
       BUILDKIT_ADDR: tcp://woodpecker-buildkitd.linkedin-ci.svc.cluster.local:1234
       HARBOR_REGISTRY: harbor.tailb18de3.ts.net
       HARBOR_PROJECT: linkedin-bot
-      T4_REGISTRY_AUTH_DIR: .site-ci/registry-auth
+      T4_REGISTRY_AUTH_DIR: .cluster-ci/site-registry-auth
     commands:
       - scripts/build-site-image.sh
     when:
@@ -418,7 +395,7 @@ steps:
     environment:
       HARBOR_REGISTRY: harbor.tailb18de3.ts.net
       HARBOR_PROJECT: linkedin-bot
-      T4_REGISTRY_AUTH_DIR: .site-ci/registry-auth
+      T4_REGISTRY_AUTH_DIR: .cluster-ci/site-registry-auth
     commands:
       - scripts/promote-site-image.sh
     when:
@@ -468,7 +445,7 @@ steps:
     depends_on: [deploy-site]
     image: mirror.gcr.io/library/busybox:1.37.0-musl@sha256:222ad6d973c0d198014546a65cd02c5fdedcc172123c5b4c2bf0af636550bd94
     commands:
-      - rm -rf .site-ci
+      - rm -rf .site-ci .cluster-ci/site-registry-auth
     when:
       - event: push
         branch: main

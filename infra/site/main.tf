@@ -9,32 +9,127 @@ data "google_dns_managed_zone" "site" {
   project = var.project_id
 }
 
-resource "google_compute_global_network_endpoint_group" "origin" {
-  name                  = "${local.resource_tag}-origin-neg"
-  project               = var.project_id
-  network_endpoint_type = "INTERNET_FQDN_PORT"
-  default_port          = var.origin_port
+resource "google_service_account" "edge" {
+  account_id   = "t4-site-edge"
+  display_name = "t4code.com edge gateway"
+  project      = var.project_id
 }
 
-resource "google_compute_global_network_endpoint" "origin" {
-  project                       = var.project_id
-  global_network_endpoint_group = google_compute_global_network_endpoint_group.origin.name
-  fqdn                          = var.origin_fqdn
-  port                          = var.origin_port
+resource "google_secret_manager_secret" "tailscale_oauth" {
+  project   = var.project_id
+  secret_id = "t4-site-edge-tailscale-oauth-client-secret"
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_iam_member" "edge_oauth" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.tailscale_oauth.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.edge.email}"
+}
+
+resource "google_compute_address" "edge" {
+  name         = "${local.resource_tag}-edge-address"
+  project      = var.project_id
+  region       = var.region
+  address_type = "EXTERNAL"
+}
+
+resource "google_compute_firewall" "edge_from_google" {
+  name          = "${local.resource_tag}-edge-from-google"
+  project       = var.project_id
+  network       = var.network
+  direction     = "INGRESS"
+  source_ranges = ["130.211.0.0/22", "35.191.0.0/16"]
+  target_tags   = [local.resource_tag]
+
+  allow {
+    protocol = "tcp"
+    ports    = [tostring(var.edge_port)]
+  }
+}
+
+resource "google_compute_instance" "edge" {
+  name         = "${local.resource_tag}-edge"
+  project      = var.project_id
+  zone         = var.zone
+  machine_type = var.edge_machine_type
+  tags         = [local.resource_tag]
+
+  allow_stopping_for_update = true
+
+  boot_disk {
+    initialize_params {
+      image = "projects/debian-cloud/global/images/family/debian-12"
+      size  = 10
+      type  = "pd-standard"
+    }
+  }
+
+  network_interface {
+    network = var.network
+
+    access_config {
+      nat_ip = google_compute_address.edge.address
+    }
+  }
+
+  service_account {
+    email  = google_service_account.edge.email
+    scopes = ["cloud-platform"]
+  }
+
+  metadata_startup_script = templatefile("${path.module}/edge-startup.sh.tftpl", {
+    edge_port       = var.edge_port
+    origin_hostname = var.origin_hostname
+    project_id      = var.project_id
+    secret_id       = google_secret_manager_secret.tailscale_oauth.secret_id
+    tailscale_tag   = var.tailscale_tag
+  })
+
+  depends_on = [google_secret_manager_secret_iam_member.edge_oauth]
+}
+
+resource "google_compute_instance_group" "edge" {
+  name      = "${local.resource_tag}-edge-group"
+  project   = var.project_id
+  zone      = var.zone
+  instances = [google_compute_instance.edge.self_link]
+
+  named_port {
+    name = "http"
+    port = var.edge_port
+  }
+}
+
+resource "google_compute_health_check" "site" {
+  name                = "${local.resource_tag}-health"
+  project             = var.project_id
+  check_interval_sec  = 10
+  timeout_sec         = 5
+  healthy_threshold   = 2
+  unhealthy_threshold = 3
+
+  http_health_check {
+    port         = var.edge_port
+    request_path = "/healthz"
+  }
 }
 
 resource "google_compute_backend_service" "site" {
   name                  = "${local.resource_tag}-backend"
   project               = var.project_id
-  protocol              = "HTTPS"
-  port_name             = "https"
+  protocol              = "HTTP"
+  port_name             = "http"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   timeout_sec           = 30
-
-  custom_request_headers = ["Host: ${var.origin_fqdn}"]
+  health_checks         = [google_compute_health_check.site.self_link]
 
   backend {
-    group = google_compute_global_network_endpoint_group.origin.self_link
+    group = google_compute_instance_group.edge.self_link
   }
 }
 

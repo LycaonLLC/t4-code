@@ -397,6 +397,13 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
     );
   }
 
+  const mainOnlySiteSteps = new Set([
+    "harbor-auth-site",
+    "build-site",
+    "promote-site",
+    "deploy-site",
+    "cleanup-site-registry-auth",
+  ]);
   for (const [name, step] of Object.entries(steps)) {
     assert.match(step.image, /@sha256:[0-9a-f]{64}$/u, `${name} image must be immutable`);
     if (step.environment?.HARBOR_REGISTRY) {
@@ -404,7 +411,8 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
     }
     for (const condition of step.when ?? []) {
       if (condition.event === "manual") {
-        assert.deepEqual(condition.branch, ["main", "agent/t4-cluster-operator"]);
+        const expectedBranches = mainOnlySiteSteps.has(name) ? "main" : ["main", "agent/t4-cluster-operator"];
+        assert.deepEqual(condition.branch, expectedBranches);
       }
     }
   }

@@ -31,8 +31,7 @@ test("Woodpecker has a complete main-only site chain independent of controller p
   const pipeline = await loadYaml(".woodpecker.yml");
   const siteSteps = {
     "harbor-auth-site": ["dependencies"],
-    "prepare-site-image": ["dependencies"],
-    "build-site": ["harbor-auth-site", "prepare-site-image"],
+    "build-site": ["harbor-auth-site"],
     "promote-site": ["build-site"],
     "deploy-site": ["promote-site"],
     "cleanup-site-registry-auth": ["deploy-site"],
@@ -52,11 +51,11 @@ test("Woodpecker has a complete main-only site chain independent of controller p
   );
   assert.equal(
     pipeline.steps["build-site"].environment.T4_REGISTRY_AUTH_DIR,
-    ".site-ci/registry-auth",
+    ".cluster-ci/site-registry-auth",
   );
   assert.equal(
     pipeline.steps["promote-site"].environment.T4_REGISTRY_AUTH_DIR,
-    ".site-ci/registry-auth",
+    ".cluster-ci/site-registry-auth",
   );
 });
 

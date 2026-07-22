@@ -18,8 +18,7 @@ service:
 ingress:
   enabled: true
   className: tailscale
-  annotations:
-    tailscale.com/funnel: "true"
+  annotations: {}
   hostname: t4-site
 
 resources:

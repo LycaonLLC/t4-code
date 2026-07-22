@@ -8,13 +8,28 @@ output "public_url" {
   value       = "https://${local.domain}"
 }
 
-output "origin_endpoint" {
-  description = "HTTPS Funnel origin configured in the Internet NEG."
-  value       = "https://${var.origin_fqdn}:${var.origin_port}"
+output "cluster_origin_hostname" {
+  description = "Tailnet-only Kubernetes ingress proxied by the edge gateway."
+  value       = var.origin_hostname
+}
+
+output "edge_instance_name" {
+  description = "Compute instance proxying Google Front End traffic into the tailnet."
+  value       = google_compute_instance.edge.name
+}
+
+output "edge_public_ip_address" {
+  description = "Static egress address used by the edge gateway to join the tailnet."
+  value       = google_compute_address.edge.address
+}
+
+output "tailscale_oauth_secret_name" {
+  description = "Secret Manager secret that must contain the edge Tailscale OAuth client secret."
+  value       = google_secret_manager_secret.tailscale_oauth.secret_id
 }
 
 output "backend_service_name" {
-  description = "Global backend service forwarding requests to the Funnel origin."
+  description = "Global backend service forwarding requests to the edge gateway."
   value       = google_compute_backend_service.site.name
 }
 

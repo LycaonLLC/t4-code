@@ -4,18 +4,28 @@ run "default_public_edge_contract" {
   command = apply
 
   assert {
-    condition     = google_compute_global_network_endpoint_group.origin.network_endpoint_type == "INTERNET_FQDN_PORT"
-    error_message = "The origin must use a global Internet FQDN NEG."
+    condition     = google_compute_instance.edge.zone == "us-central1-a" && google_compute_instance.edge.machine_type == "e2-micro"
+    error_message = "The edge gateway must use the small, explicitly zoned default instance."
   }
 
   assert {
-    condition     = google_compute_global_network_endpoint.origin.fqdn == "davailocal.tailb18de3.ts.net" && google_compute_global_network_endpoint.origin.port == 10000
-    error_message = "The default origin must target the HTTPS Tailscale Funnel relay."
+    condition     = google_compute_backend_service.site.protocol == "HTTP" && google_compute_backend_service.site.port_name == "http"
+    error_message = "Google Front Ends must proxy HTTP to the private edge gateway port."
   }
 
   assert {
-    condition     = google_compute_backend_service.site.protocol == "HTTPS" && contains(google_compute_backend_service.site.custom_request_headers, "Host: davailocal.tailb18de3.ts.net")
-    error_message = "The backend must use HTTPS and send the Funnel hostname as the Host header."
+    condition     = contains(google_compute_firewall.edge_from_google.source_ranges, "130.211.0.0/22") && contains(google_compute_firewall.edge_from_google.source_ranges, "35.191.0.0/16")
+    error_message = "Only documented Google Front End and health-check ranges may reach the gateway."
+  }
+
+  assert {
+    condition     = google_secret_manager_secret.tailscale_oauth.secret_id == "t4-site-edge-tailscale-oauth-client-secret" && google_secret_manager_secret_iam_member.edge_oauth.member == "serviceAccount:${google_service_account.edge.email}"
+    error_message = "The gateway alone must be able to read its Tailscale credential."
+  }
+
+  assert {
+    condition     = strcontains(google_compute_instance.edge.metadata_startup_script, "t4-site.tailb18de3.ts.net") && strcontains(google_compute_instance.edge.metadata_startup_script, "tag:k8s-shared-ops-ingress-proxy")
+    error_message = "The gateway bootstrap must proxy the private Kubernetes ingress with the shared-ops identity."
   }
 
   assert {

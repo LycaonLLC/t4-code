@@ -45,11 +45,7 @@
         "className": { "type": "string", "const": "tailscale" },
         "annotations": {
           "type": "object",
-          "additionalProperties": { "type": "string" },
-          "required": ["tailscale.com/funnel"],
-          "properties": {
-            "tailscale.com/funnel": { "type": "string", "const": "true" }
-          }
+          "additionalProperties": { "type": "string" }
         },
         "hostname": { "type": "string", "const": "t4-site" }
       }
