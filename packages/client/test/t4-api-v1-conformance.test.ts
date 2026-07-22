@@ -944,13 +944,25 @@ describe("generated T4 API v1 client conformance", () => {
     const workspaceCursor = (await workspacePage.json() as { nextCursor: string }).nextCursor;
     expect((await service.fetch(`${service.origin}/v1/workspaces?pageSize=1&cursor=${workspaceCursor}`, { headers })).status).toBe(200);
     const base64UrlAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    const terminalIndex = base64UrlAlphabet.indexOf(workspaceCursor.at(-1)!);
+    const signatureSegment = workspaceCursor.split(".").at(-1)!;
+    const encodedRemainder = signatureSegment.length % 4;
+    const unusedBits = encodedRemainder === 2 ? 4 : encodedRemainder === 3 ? 2 : 0;
+    const terminalIndex = base64UrlAlphabet.indexOf(signatureSegment.at(-1)!);
     expect(terminalIndex).toBeGreaterThanOrEqual(0);
-    expect(terminalIndex % 4).toBe(0);
-    const noncanonicalCursor = `${workspaceCursor.slice(0, -1)}${base64UrlAlphabet[terminalIndex + 1]}`;
-    const noncanonical = await service.fetch(`${service.origin}/v1/workspaces?pageSize=1&cursor=${noncanonicalCursor}`, { headers });
-    expect(noncanonical.status).toBe(422);
-    expect(await noncanonical.json()).toMatchObject({ error: { code: "invalid_request" } });
+    const aliasMask = (1 << unusedBits) - 1;
+    expect(terminalIndex & aliasMask).toBe(0);
+    const signatureAliases = [...base64UrlAlphabet.slice(
+      terminalIndex & ~aliasMask,
+      (terminalIndex & ~aliasMask) + aliasMask + 1,
+    )].filter((terminal) => terminal !== signatureSegment.at(-1));
+    expect(signatureAliases.length).toBeGreaterThan(0);
+    expect(signatureAliases).toHaveLength(3);
+    for (const signatureAlias of signatureAliases) {
+      const noncanonicalCursor = `${workspaceCursor.slice(0, -1)}${signatureAlias}`;
+      const noncanonical = await service.fetch(`${service.origin}/v1/workspaces?pageSize=1&cursor=${noncanonicalCursor}`, { headers });
+      expect(noncanonical.status).toBe(422);
+      expect(await noncanonical.json()).toMatchObject({ error: { code: "invalid_request" } });
+    }
     const sessionPage = await service.fetch(`${service.origin}/v1/workspaces/ws-1/sessions?pageSize=1`, { headers });
     const sessionCursor = (await sessionPage.json() as { nextCursor: string }).nextCursor;
 
