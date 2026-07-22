@@ -3,7 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { describeSessionState } from "../src/components/Rail.tsx";
 import {
+  FreshnessBadge,
+  resolveSessionActivity,
   SessionActivityBanner,
+  SessionConnectionBadge,
   SessionLifecycleBadge,
 } from "../src/features/transcript/SessionMain.tsx";
 import type { WorkspaceSession } from "../src/lib/workspace-data.ts";
@@ -50,6 +53,31 @@ describe("truthful session state presentation", () => {
     expect(idle).toContain("Idle");
     expect(stopped).toContain("Stopped");
     expect(unknown).toContain("Status unknown");
+  });
+
+  it("keeps connection, activity, and ownership as separate signals", () => {
+    const connected = renderToStaticMarkup(<SessionConnectionBadge state="connected" />);
+    const syncing = renderToStaticMarkup(
+      <FreshnessBadge session={{ ...BASE_SESSION, freshness: "cached" }} />,
+    );
+    const observedIdle = renderToStaticMarkup(
+      <SessionLifecycleBadge
+        session={{ ...BASE_SESSION, control: "observer", lifecycle: "idle" }}
+      />,
+    );
+
+    expect(connected).toContain("Connected");
+    expect(syncing).toContain("Cached");
+    expect(observedIdle).toContain("Idle");
+    expect(
+      resolveSessionActivity({
+        archived: false,
+        catchingUp: false,
+        contextMaintenance: false,
+        link: "live",
+        sessionActive: true,
+      }),
+    ).toBe("working");
   });
 
   it("renders a moving visual heartbeat only while work is confirmed", () => {

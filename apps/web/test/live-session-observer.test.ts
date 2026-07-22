@@ -201,9 +201,9 @@ describe("live runtime observer gating", () => {
     expect(shell.commandCount("session.thinking.set")).toBe(0);
     expect(shell.commandCount("session.fast.set")).toBe(0);
 
-    // The rail row reads Active elsewhere instead of a status pill.
+    // Ownership remains separate from confirmed turn activity.
     const row = deriveWorkspaceData(controller.getSnapshot()).sessions[0];
-    expect(row).toMatchObject({ control: "observer", status: null });
+    expect(row).toMatchObject({ control: "observer", status: "working" });
 
     runtime.dispose();
     await controller.stop();
@@ -236,7 +236,7 @@ describe("live runtime observer gating", () => {
     expect(snapshot.canPrompt).toBe(false);
     expect(deriveWorkspaceData(controller.getSnapshot()).sessions[0]).toMatchObject({
       control: "reconciling",
-      status: null,
+      status: "working",
     });
     runtime.dispose();
     await controller.stop();
