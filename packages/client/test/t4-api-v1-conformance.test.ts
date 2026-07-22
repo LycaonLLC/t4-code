@@ -632,6 +632,20 @@ describe("generated T4 API v1 client conformance", () => {
     }
   });
 
+  it("accepts every RFC 9110 HTTP-date form in Retry-After", async () => {
+    for (const retryAfter of [
+      "Sun, 06 Nov 1994 08:49:37 GMT",
+      "Sunday, 06-Nov-94 08:49:37 GMT",
+      "Sun Nov  6 08:49:37 1994",
+    ]) {
+      const client = createT4ApiClient({
+        baseUrl: "https://http-date-retry-after.test", credential: "token-a", majorVersion: 1,
+        fetch: async () => jsonResponse({ error: { code: "unavailable", message: "later", requestId: "r", retryable: true } }, { status: 503, headers: { "Retry-After": retryAfter } }),
+      });
+      await expect(client.http.GET("/v1", { params: { header: VERSION_HEADERS } })).resolves.toMatchObject({ error: { error: { code: "unavailable" } } });
+    }
+  });
+
   it("takes a snapshot and watches bounded SSE with heartbeat, reconnect, cancellation, and typed resync", async () => {
     const service = new T4ApiV1ConformanceService();
     const client = createT4ApiClient({ baseUrl: service.origin, credential: "token-a", majorVersion: 1, fetch: service.fetch });

@@ -10,6 +10,16 @@ const MAX_EVENT_BYTES = 1024 * 1024;
 const MAX_JSON_RESPONSE_BYTES = 16 * 1024 * 1024;
 const CURSOR_PATTERN = /^[A-Za-z0-9._~-]+$/u;
 const SELECTED_VERSION_MAX_LENGTH = 16;
+const INVALID_RETRY_AFTER = Symbol("invalid Retry-After");
+const HTTP_MONTHS: Readonly<Record<string, number>> = {
+  Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
+  Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11,
+};
+const HTTP_WEEKDAYS: Readonly<Record<string, number>> = {
+  Sun: 0, Sunday: 0, Mon: 1, Monday: 1, Tue: 2, Tuesday: 2,
+  Wed: 3, Wednesday: 3, Thu: 4, Thursday: 4, Fri: 5, Friday: 5,
+  Sat: 6, Saturday: 6,
+};
 const SELECTED_VERSION_PATTERN = /^1\.[0-9]+$/u;
 const ERROR_CODES = {
   invalid_request: true, unauthenticated: true, forbidden: true, not_found: true,
@@ -65,6 +75,10 @@ export interface WatchSessionOptions {
 }
 
 export interface T4ApiClient {
+  /**
+   * Low-level generated client. Event-stream calls must pass `parseAs: "stream"`;
+   * use `watchSession` for bounded, validated event decoding and reconnects.
+   */
   readonly http: Client<paths>;
   watchSession(sessionId: string, options?: WatchSessionOptions): AsyncGenerator<WatchEvent, void, undefined>;
 }
@@ -217,12 +231,43 @@ async function boundedResponseText(response: Response, maximumBytes = MAX_ERROR_
   try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { return undefined; }
 }
 
-function retryAfterMilliseconds(response: Response): number | undefined {
-  const value = response.headers.get("Retry-After")?.trim();
-  if (value === undefined || value === "") return undefined;
-  if (/^[0-9]+$/u.test(value)) return Math.min(30_000, Number(value) * 1000);
+function matchingHttpDate(
+  timestamp: number,
+  parts: RegExpExecArray,
+  indexes: { readonly weekday: number; readonly day: number; readonly alternateDay?: number; readonly month: number; readonly year: number; readonly hour: number; readonly minute: number; readonly second: number },
+  shortYear = false,
+): boolean {
+  const date = new Date(timestamp);
+  const year = Number(parts[indexes.year]);
+  return date.getUTCDay() === HTTP_WEEKDAYS[parts[indexes.weekday]!] &&
+    date.getUTCDate() === Number(parts[indexes.day] ?? parts[indexes.alternateDay ?? indexes.day]) &&
+    date.getUTCMonth() === HTTP_MONTHS[parts[indexes.month]!] &&
+    (shortYear ? date.getUTCFullYear() % 100 === year : date.getUTCFullYear() === year) &&
+    date.getUTCHours() === Number(parts[indexes.hour]) &&
+    date.getUTCMinutes() === Number(parts[indexes.minute]) &&
+    date.getUTCSeconds() === Number(parts[indexes.second]);
+}
+
+function httpDateTimestamp(value: string): number | undefined {
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) return undefined;
+  const imf = /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat), ([0-9]{2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) ([0-9]{4}) ([0-9]{2}):([0-9]{2}):([0-9]{2}) GMT$/u.exec(value);
+  if (imf !== null && matchingHttpDate(timestamp, imf, { weekday: 1, day: 2, month: 3, year: 4, hour: 5, minute: 6, second: 7 })) return timestamp;
+  const rfc850 = /^(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday), ([0-9]{2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2}) GMT$/u.exec(value);
+  if (rfc850 !== null && matchingHttpDate(timestamp, rfc850, { weekday: 1, day: 2, month: 3, year: 4, hour: 5, minute: 6, second: 7 }, true)) return timestamp;
+  const asctime = /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (?:([0-9]{2})| ([0-9])) ([0-9]{2}):([0-9]{2}):([0-9]{2}) ([0-9]{4})$/u.exec(value);
+  if (asctime === null) return undefined;
+  return matchingHttpDate(timestamp, asctime, { weekday: 1, day: 3, alternateDay: 4, month: 2, year: 8, hour: 5, minute: 6, second: 7 }) ? timestamp : undefined;
+}
+
+function retryAfterMilliseconds(response: Response): number | undefined | typeof INVALID_RETRY_AFTER {
+  const header = response.headers.get("Retry-After");
+  if (header === null) return undefined;
+  const value = header.trim();
+  if (value === "" || !hasAtMostCodePoints(value, 128)) return INVALID_RETRY_AFTER;
+  if (/^[0-9]+$/u.test(value)) return Math.min(30_000, Number(value) * 1000);
+  const timestamp = httpDateTimestamp(value);
+  if (timestamp === undefined) return INVALID_RETRY_AFTER;
   return Math.min(30_000, Math.max(0, timestamp - Date.now()));
 }
 
@@ -247,6 +292,7 @@ async function parsedError(response: Response): Promise<T4ApiError | undefined> 
     const decoded = apiError(JSON.parse(text), response.status);
     if (decoded === undefined) return undefined;
     const retryAfterMs = retryAfterMilliseconds(response);
+    if (retryAfterMs === INVALID_RETRY_AFTER) return undefined;
     return retryAfterMs === undefined
       ? new T4ApiError(response.status, decoded)
       : new T4ApiError(response.status, decoded, { retryAfterMs });
@@ -498,7 +544,7 @@ async function validateResponse(request: Request, response: Response, baseUrl: s
 
 function validRfc3339DateTime(value: string): boolean {
   if (!hasAtMostCodePoints(value, 64)) return false;
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/u.exec(value);
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/iu.exec(value);
   if (match === null) return false;
   const year = Number(match[1]);
   const month = Number(match[2]);
@@ -800,7 +846,9 @@ export function createT4ApiClient(options: T4ApiClientOptions): T4ApiClient {
     const request = new Request(input, init);
     request.headers.set("Authorization", `Bearer ${credential}`);
     request.headers.set("T4-API-Version", majorVersion);
-    request.headers.set("Accept", "application/json");
+    const path = relativeApiPath(request, baseUrl);
+    const contract = path === undefined ? undefined : responseContract(request.method, path);
+    request.headers.set("Accept", contract?.success[200] === "event-stream" ? "text/event-stream" : "application/json");
     const response = await fetchImpl(request);
     await validateResponse(request, response, baseUrl);
     return response;

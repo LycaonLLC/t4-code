@@ -277,6 +277,7 @@ export class T4ApiV1ConformanceService {
 
     const watchMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/events$/u);
     if (watchMatch && request.method === "GET") {
+      if (request.headers.get("Accept") !== "text/event-stream") return problem(406, "incompatible_version", "Watch requests must accept text/event-stream", { supportedMajors: [1] });
       const id = decodeURIComponent(watchMatch[1]!);
       const session = this.#sessions.get(id);
       if (session?.tenant !== tenant) return problem(404, "not_found", "Session not found");
