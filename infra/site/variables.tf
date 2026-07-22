@@ -16,11 +16,6 @@ variable "zone" {
   default     = "us-central1-a"
 }
 
-variable "network" {
-  description = "VPC network that carries load-balancer traffic to the edge gateway."
-  type        = string
-  default     = "default"
-}
 
 variable "edge_machine_type" {
   description = "Machine type for the single-purpose Tailscale edge gateway."

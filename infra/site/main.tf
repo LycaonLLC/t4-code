@@ -31,6 +31,22 @@ resource "google_secret_manager_secret_iam_member" "edge_oauth" {
   member    = "serviceAccount:${google_service_account.edge.email}"
 }
 
+resource "google_compute_network" "edge" {
+  name                    = "${local.resource_tag}-edge-network"
+  project                 = var.project_id
+  auto_create_subnetworks = false
+  routing_mode            = "REGIONAL"
+}
+
+resource "google_compute_subnetwork" "edge" {
+  name                     = "${local.resource_tag}-edge-subnet"
+  project                  = var.project_id
+  region                   = var.region
+  network                  = google_compute_network.edge.id
+  ip_cidr_range            = "10.64.0.0/28"
+  private_ip_google_access = true
+}
+
 resource "google_compute_address" "edge" {
   name         = "${local.resource_tag}-edge-address"
   project      = var.project_id
@@ -41,7 +57,7 @@ resource "google_compute_address" "edge" {
 resource "google_compute_firewall" "edge_from_google" {
   name          = "${local.resource_tag}-edge-from-google"
   project       = var.project_id
-  network       = var.network
+  network       = google_compute_network.edge.id
   direction     = "INGRESS"
   source_ranges = ["130.211.0.0/22", "35.191.0.0/16"]
   target_tags   = [local.resource_tag]
@@ -70,7 +86,7 @@ resource "google_compute_instance" "edge" {
   }
 
   network_interface {
-    network = var.network
+    subnetwork = google_compute_subnetwork.edge.id
 
     access_config {
       nat_ip = google_compute_address.edge.address
@@ -94,15 +110,20 @@ resource "google_compute_instance" "edge" {
 }
 
 resource "google_compute_instance_group" "edge" {
-  name      = "${local.resource_tag}-edge-group"
+  name      = "${local.resource_tag}-edge-group-v2"
   project   = var.project_id
   zone      = var.zone
+  network   = google_compute_network.edge.id
   instances = [google_compute_instance.edge.self_link]
 
   named_port {
     name = "http"
     port = var.edge_port
   }
+  lifecycle {
+    create_before_destroy = true
+  }
+
 }
 
 resource "google_compute_health_check" "site" {

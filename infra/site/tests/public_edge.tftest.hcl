@@ -14,6 +14,11 @@ run "default_public_edge_contract" {
   }
 
   assert {
+    condition     = !google_compute_network.edge.auto_create_subnetworks && google_compute_subnetwork.edge.ip_cidr_range == "10.64.0.0/28"
+    error_message = "The public gateway must run in an isolated custom subnet."
+  }
+
+  assert {
     condition     = contains(google_compute_firewall.edge_from_google.source_ranges, "130.211.0.0/22") && contains(google_compute_firewall.edge_from_google.source_ranges, "35.191.0.0/16")
     error_message = "Only documented Google Front End and health-check ranges may reach the gateway."
   }
