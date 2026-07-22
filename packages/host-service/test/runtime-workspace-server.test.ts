@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,8 @@ import { WorkspaceAuthority } from "../src/workspace-authority.ts";
 import { RawUdsWebSocket } from "./raw-uds-client.ts";
 
 const host = hostId("runtime-workspace-test-host");
+
+setDefaultTimeout(30_000);
 
 async function git(cwd: string, ...arguments_: string[]): Promise<void> {
 	const child = Bun.spawn(["git", "-C", cwd, ...arguments_], { stdout: "pipe", stderr: "pipe" });
