@@ -472,6 +472,7 @@ export class TailscaleRemotePolicy implements RemoteConnectionPolicy {
 	authorize(connection: RemoteConnection, frame: ClientFrame, context: RemoteAuthorizationContext): boolean {
 		const state = this.#states.get(connection.connectionId);
 		if (!state) return false;
+		if (frame.type === "ping") return true;
 		const principal = this.#livePrincipal(state);
 		if (!principal || state.justPaired) return false;
 		const feature = frameFeature(frame);
