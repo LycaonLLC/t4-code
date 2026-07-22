@@ -386,7 +386,7 @@ describe.sequential("PostgreSQL-backed public T4 API v1", () => {
 				(SELECT count(*) FROM t4_workspace_intents WHERE name = 'must not persist') AS intents,
 				(SELECT count(*) FROM t4_outbox WHERE idempotency_key = 'rollback-key-000000001') AS outbox
 		`);
-		expect(rows[0]).toMatchObject({ commands: "0", intents: "0", outbox: "0" });
+		expect(rows[0]).toMatchObject({ commands: 0n, intents: 0n, outbox: 0n });
 		await admin.unsafe("DROP TRIGGER t4_test_reject_outbox_trigger ON t4_outbox; DROP FUNCTION t4_test_reject_outbox()");
 		await ledger.close();
 	});
