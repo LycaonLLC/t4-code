@@ -427,23 +427,67 @@
         "description": "True when this response replays a prior identical request.",
         "required": true,
         "schema": { "type": "string", "enum": ["true", "false"] }
+      },
+      "EventCursor": {
+        "description": "Durable event cursor committed with the accepted mutation and preserved by replay.",
+        "required": true,
+        "schema": { "$ref": "#/components/schemas/Cursor" }
       }
     },
     "schemas": {
       "ResourceId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$" },
       "Cursor": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[A-Za-z0-9._~-]+$", "description": "Opaque server-issued header-safe SSE cursor." },
       "Revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
-      "OperationState": { "type": "string", "enum": ["accepted", "rejected", "conflict", "unavailable", "indeterminate"] },
+      "CommandState": { "type": "string", "enum": ["accepted", "projected", "dispatching", "running", "succeeded", "failed", "cancelling", "cancelled", "rejected", "unavailable", "indeterminate"] },
       "WorkspaceState": { "type": "string", "enum": ["accepted", "provisioning", "ready", "deleting", "deleted", "failed", "unavailable", "indeterminate"] },
       "SessionState": { "type": "string", "enum": ["accepted", "provisioning", "ready", "cancelling", "cancelled", "failed", "unavailable", "indeterminate"] },
+      "ServerBuild": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["version", "revision"],
+        "properties": {
+          "version": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "revision": { "type": "string", "minLength": 1, "maxLength": 128 }
+        }
+      },
+      "CapabilityDeprecation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["message"],
+        "properties": {
+          "message": { "type": "string", "minLength": 1, "maxLength": 1024 },
+          "sinceVersion": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "sunsetAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+          "replacement": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9.-]*$" }
+        }
+      },
+      "CapabilityStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["supported", "enabled", "authorized", "available"],
+        "properties": {
+          "supported": { "type": "boolean" },
+          "enabled": { "type": "boolean" },
+          "authorized": { "type": "boolean" },
+          "available": { "type": "boolean" },
+          "deprecation": { "$ref": "#/components/schemas/CapabilityDeprecation" }
+        }
+      },
+      "Capabilities": {
+        "type": "object",
+        "maxProperties": 128,
+        "propertyNames": { "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9.-]*$" },
+        "additionalProperties": { "$ref": "#/components/schemas/CapabilityStatus" }
+      },
       "Discovery": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["apiVersion", "supportedMajors", "capabilities", "limits"],
+        "required": ["apiVersion", "serverBuild", "supportedMajors", "capabilities", "limits"],
         "properties": {
           "apiVersion": { "type": "string", "pattern": "^1\\.[0-9]+$" },
+          "serverBuild": { "$ref": "#/components/schemas/ServerBuild" },
           "supportedMajors": { "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": { "type": "integer", "minimum": 1 } },
-          "capabilities": { "type": "array", "maxItems": 128, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9.-]*$" } },
+          "capabilities": { "$ref": "#/components/schemas/Capabilities" },
           "limits": {
             "type": "object",
             "additionalProperties": false,
@@ -574,7 +618,7 @@
         "required": ["commandId", "state"],
         "properties": {
           "commandId": { "$ref": "#/components/schemas/ResourceId" },
-          "state": { "$ref": "#/components/schemas/OperationState" }
+          "state": { "$ref": "#/components/schemas/CommandState" }
         }
       },
       "SnapshotEntry": {
@@ -627,7 +671,7 @@
           "type": { "type": "string", "const": "command" },
           "cursor": { "$ref": "#/components/schemas/Cursor" },
           "commandId": { "$ref": "#/components/schemas/ResourceId" },
-          "state": { "$ref": "#/components/schemas/OperationState" }
+          "state": { "$ref": "#/components/schemas/CommandState" }
         }
       },
       "WatchEvent": {
@@ -791,17 +835,17 @@
     "responses": {
       "Discovery": { "description": "Negotiated v1 discovery", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Discovery" } } } },
       "Workspace": { "description": "Workspace", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Workspace" } } } },
-      "WorkspaceAccepted": { "description": "Workspace intent accepted", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Workspace" } } } },
-      "WorkspaceReplay": { "description": "Identical workspace request replay", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Workspace" } } } },
+      "WorkspaceAccepted": { "description": "Workspace intent accepted", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" }, "T4-Event-Cursor": { "$ref": "#/components/headers/EventCursor" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Workspace" } } } },
+      "WorkspaceReplay": { "description": "Identical workspace request replay", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" }, "T4-Event-Cursor": { "$ref": "#/components/headers/EventCursor" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Workspace" } } } },
       "WorkspacePage": { "description": "Bounded workspace page", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspacePage" } } } },
       "Session": { "description": "Session", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Session" } } } },
-      "SessionAccepted": { "description": "Session intent accepted", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Session" } } } },
-      "SessionReplay": { "description": "Identical session mutation replay", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Session" } } } },
+      "SessionAccepted": { "description": "Session intent accepted", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" }, "T4-Event-Cursor": { "$ref": "#/components/headers/EventCursor" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Session" } } } },
+      "SessionReplay": { "description": "Identical session mutation replay", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" }, "T4-Event-Cursor": { "$ref": "#/components/headers/EventCursor" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Session" } } } },
       "SessionPage": { "description": "Bounded session page", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionPage" } } } },
-      "CommandAccepted": { "description": "Command intent accepted with a stable outcome state", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CommandResult" } } } },
-      "CommandReplay": { "description": "Identical command request replay", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CommandResult" } } } },
+      "CommandAccepted": { "description": "Command intent accepted with a stable outcome state", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" }, "T4-Event-Cursor": { "$ref": "#/components/headers/EventCursor" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CommandResult" } } } },
+      "CommandReplay": { "description": "Identical command request replay", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" }, "T4-Event-Cursor": { "$ref": "#/components/headers/EventCursor" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CommandResult" } } } },
       "Snapshot": { "description": "Bounded session snapshot and reconnect cursor", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionSnapshot" } } } },
-      "Deleted": { "description": "Idempotent deletion accepted or resource already absent", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" } } },
+      "Deleted": { "description": "Idempotent deletion accepted or resource already absent", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" }, "T4-Event-Cursor": { "$ref": "#/components/headers/EventCursor" } } },
       "Error400": { "description": "Malformed request or missing idempotency key", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BadRequestErrorEnvelope" } } } },
       "Error401": { "description": "Missing or invalid opaque bearer credential", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UnauthenticatedErrorEnvelope" } } } },
       "Error403": { "description": "Credential lacks the deny-by-default operation or resource scope", "headers": { "T4-API-Version": { "$ref": "#/components/headers/SelectedVersion" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ForbiddenErrorEnvelope" } } } },

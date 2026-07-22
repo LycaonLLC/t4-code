@@ -23,14 +23,18 @@ if (commandCreate?.properties?.command?.["x-t4-maxUtf8Bytes"] !== 262144) throw 
 const metadataString = commandCreate?.properties?.metadata?.additionalProperties?.oneOf?.find((item) => item?.type === "string");
 if (metadataString?.["x-t4-maxUtf8Bytes"] !== 262144) throw new Error("command metadata strings must retain their UTF-8 byte bound");
 
-for (const [schema, property] of [["Discovery", "supportedMajors"], ["Discovery", "capabilities"], ["ApiError", "supportedMajors"]]) {
+for (const [schema, property] of [["Discovery", "supportedMajors"], ["ApiError", "supportedMajors"]]) {
   if (schemas[schema]?.properties?.[property]?.uniqueItems !== true) throw new Error(`${schema}.${property} must retain uniqueItems`);
 }
+if (schemas.Discovery?.required?.includes("serverBuild") !== true || schemas.Discovery?.properties?.capabilities?.$ref !== "#/components/schemas/Capabilities") throw new Error("Discovery must require structured server build and capabilities");
+if (schemas.Capabilities?.maxProperties !== 128 || schemas.Capabilities?.additionalProperties?.$ref !== "#/components/schemas/CapabilityStatus") throw new Error("Capabilities must remain a bounded status map");
 
 const selectedVersionHeader = document.components?.headers?.SelectedVersion;
 const replayHeaderObject = document.components?.headers?.IdempotencyReplayed;
+const eventCursorHeader = document.components?.headers?.EventCursor;
 if (selectedVersionHeader?.required !== true) throw new Error("SelectedVersion must remain required wherever referenced");
 if (replayHeaderObject?.required !== true) throw new Error("IdempotencyReplayed must remain required wherever referenced");
+if (eventCursorHeader?.required !== true || eventCursorHeader?.schema?.$ref !== "#/components/schemas/Cursor") throw new Error("EventCursor must remain a required header-safe cursor");
 const selectedVersion = document.components?.headers?.SelectedVersion?.schema;
 if (selectedVersion?.pattern !== "^1\\.[0-9]+$" || selectedVersion?.maxLength !== 16) throw new Error("SelectedVersion must remain a bounded v1 minor");
 const replayHeader = document.components?.headers?.IdempotencyReplayed?.schema;
@@ -42,8 +46,10 @@ const selectedVersionResponses = ["Discovery", "Workspace", "WorkspaceAccepted",
 for (const responseName of selectedVersionResponses) {
   if (document.components?.responses?.[responseName]?.headers?.["T4-API-Version"]?.$ref !== selectedVersionRef) throw new Error(`${responseName} must declare SelectedVersion`);
 }
-for (const responseName of ["WorkspaceAccepted", "WorkspaceReplay", "SessionAccepted", "SessionReplay", "CommandAccepted", "CommandReplay", "Deleted"]) {
+const mutationResponses = ["WorkspaceAccepted", "WorkspaceReplay", "SessionAccepted", "SessionReplay", "CommandAccepted", "CommandReplay", "Deleted"];
+for (const responseName of mutationResponses) {
   if (document.components?.responses?.[responseName]?.headers?.["Idempotency-Replayed"]?.$ref !== replayRef) throw new Error(`${responseName} must declare IdempotencyReplayed`);
+  if (document.components?.responses?.[responseName]?.headers?.["T4-Event-Cursor"]?.$ref !== "#/components/headers/EventCursor") throw new Error(`${responseName} must declare EventCursor`);
 }
 if (document.paths?.["/v1/sessions/{sessionId}/events"]?.get?.responses?.["200"]?.headers?.["T4-API-Version"]?.$ref !== selectedVersionRef) throw new Error("watch success must declare SelectedVersion");
 const watchCacheControl = document.paths?.["/v1/sessions/{sessionId}/events"]?.get?.responses?.["200"]?.headers?.["Cache-Control"];

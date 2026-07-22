@@ -70,6 +70,7 @@ interface ReplayRecord {
   readonly identity: string;
   readonly body: unknown;
   readonly replayStatus: number;
+  readonly cursor: string;
 }
 
 export interface T4ApiV1ConformanceOptions {
@@ -87,6 +88,7 @@ export class T4ApiV1ConformanceService {
   #workspaceSequence = 0;
   #sessionSequence = 0;
   #commandSequence = 0;
+  #eventSequence = 0;
   readonly #workspaces = new Map<string, Record<string, unknown>>();
   readonly #sessions = new Map<string, Record<string, unknown>>();
   readonly #replays = new Map<string, ReplayRecord>();
@@ -112,8 +114,18 @@ export class T4ApiV1ConformanceService {
     if (request.method === "GET" && url.pathname === "/v1") {
       return json(200, this.#payload("discovery", {
         apiVersion: "1.0",
+        serverBuild: { version: "0.1.30", revision: "fixture-revision-1" },
         supportedMajors: [1],
-        capabilities: ["workspace.lifecycle", "session.lifecycle", "session.commands", "session.watch.sse"],
+        capabilities: {
+          "workspace.lifecycle": { supported: true, enabled: true, authorized: true, available: true },
+          "session.lifecycle": { supported: true, enabled: true, authorized: true, available: true },
+          "session.commands": { supported: true, enabled: true, authorized: true, available: true },
+          "session.watch.sse": { supported: true, enabled: true, authorized: true, available: true },
+          "optional.preview": {
+            supported: true, enabled: false, authorized: false, available: false,
+            deprecation: { message: "Use workspace.lifecycle", sinceVersion: "1.0", sunsetAt: "2027-01-01T00:00:00Z", replacement: "workspace.lifecycle" },
+          },
+        },
         limits: {
           pageSizeDefault: 2,
           pageSizeMax: 3,
@@ -265,7 +277,7 @@ export class T4ApiV1ConformanceService {
       if (Object.keys(body).some((key) => key !== "command" && key !== "metadata")) return this.#invalid("body", "schema", "command create must match CommandCreate");
       if (typeof body.command !== "string" || body.command.length < 1 || encoder.encode(body.command).byteLength > COMMAND_BYTES_MAX) return this.#invalid("command", "maxBytes", `command must contain 1 to ${COMMAND_BYTES_MAX} UTF-8 bytes`);
       if (!this.#validMetadata(body.metadata)) return this.#invalid("metadata", "bounds", "metadata keys and values exceed the discovered bounds");
-      const states: Record<string, true> = { accepted: true, rejected: true, conflict: true, unavailable: true, indeterminate: true };
+      const states: Record<string, true> = { accepted: true, projected: true, dispatching: true, running: true, succeeded: true, failed: true, cancelling: true, cancelled: true, rejected: true, unavailable: true, indeterminate: true };
       const state = states[body.command] === true ? body.command : "accepted";
       return this.#idempotent(request, tenant, "submitCommand", [id], { metadata: {}, ...body }, 202, 200, () => ({ commandId: `cmd-${++this.#commandSequence}`, state }));
     }
@@ -395,13 +407,15 @@ export class T4ApiV1ConformanceService {
     const prior = this.#replays.get(scope);
     if (prior !== undefined) {
       if (prior.identity !== identity) return problem(409, "idempotency_conflict", "Idempotency key was reused with a different canonical request");
+      const headers = { "T4-API-Version": "1.0", "Idempotency-Replayed": "true", "T4-Event-Cursor": prior.cursor };
       return prior.body === null
-        ? new Response(null, { status: prior.replayStatus, headers: { "T4-API-Version": "1.0", "Idempotency-Replayed": "true" } })
-        : json(prior.replayStatus, prior.body, { "Idempotency-Replayed": "true" });
+        ? new Response(null, { status: prior.replayStatus, headers })
+        : json(prior.replayStatus, prior.body, headers);
     }
     const validation = validate?.();
     if (validation !== undefined) return validation;
     const created = create();
+    const cursor = `event-${++this.#eventSequence}`;
     const visibleValue = created !== null && typeof created === "object" && !Array.isArray(created)
       ? this.#visible(created as Record<string, unknown>)
       : created;
@@ -415,9 +429,10 @@ export class T4ApiV1ConformanceService {
     const visible = visibleValue !== null && typeof visibleValue === "object" && !Array.isArray(visibleValue) && responseKind !== undefined
       ? this.#payload(responseKind, visibleValue as Record<string, unknown>)
       : visibleValue;
-    this.#replays.set(scope, { identity, body: visible, replayStatus });
+    this.#replays.set(scope, { identity, body: visible, replayStatus, cursor });
+    const headers = { "Idempotency-Replayed": "false", "T4-Event-Cursor": cursor };
     return visible === null
-      ? new Response(null, { status: firstStatus, headers: { "T4-API-Version": "1.0", "Idempotency-Replayed": "false" } })
-      : json(firstStatus, visible, { "Idempotency-Replayed": "false" });
+      ? new Response(null, { status: firstStatus, headers: { "T4-API-Version": "1.0", ...headers } })
+      : json(firstStatus, visible, headers);
   }
 }

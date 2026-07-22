@@ -50,9 +50,10 @@ const SESSION_STATES = {
   accepted: true, provisioning: true, ready: true, cancelling: true,
   cancelled: true, failed: true, unavailable: true, indeterminate: true,
 } as const satisfies Record<components["schemas"]["SessionState"], true>;
-const OPERATION_STATES = {
-  accepted: true, rejected: true, conflict: true, unavailable: true, indeterminate: true,
-} as const satisfies Record<components["schemas"]["OperationState"], true>;
+const COMMAND_STATES = {
+  accepted: true, projected: true, dispatching: true, running: true, succeeded: true, failed: true,
+  cancelling: true, cancelled: true, rejected: true, unavailable: true, indeterminate: true,
+} as const satisfies Record<components["schemas"]["CommandState"], true>;
 
 type ApiError = components["schemas"]["ApiError"];
 type Resync = components["schemas"]["Resync"];
@@ -374,16 +375,38 @@ function validSession(value: unknown): boolean {
 function validCommandResult(value: unknown): boolean {
   const item = record(value);
   return item !== undefined && hasOnlyKeys(item, { commandId: true, state: true }) && validResourceId(item.commandId) &&
-    typeof item.state === "string" && OPERATION_STATES[item.state as components["schemas"]["OperationState"]] === true;
+    typeof item.state === "string" && COMMAND_STATES[item.state as components["schemas"]["CommandState"]] === true;
+}
+
+function validCapabilityDeprecation(value: unknown): boolean {
+  if (value === undefined) return true;
+  const deprecation = record(value);
+  return deprecation !== undefined && hasOnlyKeys(deprecation, { message: true, sinceVersion: true, sunsetAt: true, replacement: true }) &&
+    typeof deprecation.message === "string" && deprecation.message !== "" && hasAtMostCodePoints(deprecation.message, 1024) &&
+    (deprecation.sinceVersion === undefined || (typeof deprecation.sinceVersion === "string" && deprecation.sinceVersion !== "" && hasAtMostCodePoints(deprecation.sinceVersion, 128))) &&
+    (deprecation.sunsetAt === undefined || (typeof deprecation.sunsetAt === "string" && validRfc3339DateTime(deprecation.sunsetAt))) &&
+    (deprecation.replacement === undefined || (typeof deprecation.replacement === "string" && /^[a-z][a-z0-9.-]{0,127}$/u.test(deprecation.replacement)));
+}
+
+function validCapabilityStatus(value: unknown): boolean {
+  const status = record(value);
+  return status !== undefined && hasOnlyKeys(status, { supported: true, enabled: true, authorized: true, available: true, deprecation: true }) &&
+    typeof status.supported === "boolean" && typeof status.enabled === "boolean" &&
+    typeof status.authorized === "boolean" && typeof status.available === "boolean" && validCapabilityDeprecation(status.deprecation);
 }
 
 function validDiscovery(value: unknown): boolean {
   const discovery = record(value);
+  const serverBuild = record(discovery?.serverBuild);
+  const capabilities = record(discovery?.capabilities);
   const limits = record(discovery?.limits);
-  return discovery !== undefined && hasOnlyKeys(discovery, { apiVersion: true, supportedMajors: true, capabilities: true, limits: true }) &&
+  return discovery !== undefined && hasOnlyKeys(discovery, { apiVersion: true, serverBuild: true, supportedMajors: true, capabilities: true, limits: true }) &&
     typeof discovery.apiVersion === "string" && /^1\.[0-9]+$/u.test(discovery.apiVersion) &&
+    serverBuild !== undefined && hasOnlyKeys(serverBuild, { version: true, revision: true }) &&
+    typeof serverBuild.version === "string" && serverBuild.version !== "" && hasAtMostCodePoints(serverBuild.version, 128) &&
+    typeof serverBuild.revision === "string" && serverBuild.revision !== "" && hasAtMostCodePoints(serverBuild.revision, 128) &&
     Array.isArray(discovery.supportedMajors) && discovery.supportedMajors.length >= 1 && discovery.supportedMajors.length <= 8 && hasUniqueItems(discovery.supportedMajors) && discovery.supportedMajors.every((major) => Number.isSafeInteger(major) && Number(major) >= 1) &&
-    Array.isArray(discovery.capabilities) && discovery.capabilities.length <= 128 && hasUniqueItems(discovery.capabilities) && discovery.capabilities.every((capability) => typeof capability === "string" && /^[a-z][a-z0-9.-]{0,127}$/u.test(capability)) &&
+    capabilities !== undefined && Object.keys(capabilities).length <= 128 && Object.entries(capabilities).every(([id, status]) => /^[a-z][a-z0-9.-]{0,127}$/u.test(id) && validCapabilityStatus(status)) &&
     limits !== undefined && hasOnlyKeys(limits, { pageSizeDefault: true, pageSizeMax: true, commandBytesMax: true, commandRequestBytesMax: true, commandMetadataValueBytesMax: true, watchEventsMax: true, heartbeatSeconds: true }) &&
     [limits.pageSizeDefault, limits.pageSizeMax, limits.commandBytesMax, limits.commandRequestBytesMax, limits.commandMetadataValueBytesMax, limits.watchEventsMax, limits.heartbeatSeconds].every((limit) => Number.isSafeInteger(limit) && Number(limit) >= 1) &&
     Number(limits.pageSizeDefault) <= Number(limits.pageSizeMax) && Number(limits.commandBytesMax) <= Number(limits.commandRequestBytesMax) && Number(limits.commandMetadataValueBytesMax) <= Number(limits.commandRequestBytesMax) &&
@@ -492,6 +515,7 @@ function validReplayHeader(response: Response): boolean {
   return replayed === "true" || replayed === "false";
 }
 
+
 async function validateResponse(request: Request, response: Response, baseUrl: string): Promise<void> {
   const path = relativeApiPath(request, baseUrl);
   const contract = path === undefined ? undefined : responseContract(request.method, path);
@@ -526,6 +550,10 @@ async function validateResponse(request: Request, response: Response, baseUrl: s
   if (contract.replaySuccess?.includes(response.status) === true && !validReplayHeader(response)) {
     void response.body?.cancel().catch(() => {});
     throw protocolError(502, "T4 API returned a missing or invalid replay header");
+  }
+  if (contract.replaySuccess?.includes(response.status) === true && !validCursor(response.headers.get("T4-Event-Cursor"))) {
+    void response.body?.cancel().catch(() => {});
+    throw protocolError(502, "T4 API returned a missing or invalid durable event cursor");
   }
   if (validator === "empty") {
     if (response.body !== null || response.headers.has("content-type")) {
@@ -633,7 +661,7 @@ function watchEvent(value: unknown, eventId: string | undefined): WatchEvent {
     event.commandId !== "" && hasAtMostCodePoints(event.commandId, 128) &&
     /^[A-Za-z0-9][A-Za-z0-9._~-]*$/u.test(event.commandId) &&
     typeof event.state === "string" &&
-    OPERATION_STATES[event.state as components["schemas"]["OperationState"]] === true
+    COMMAND_STATES[event.state as components["schemas"]["CommandState"]] === true
   ) return event as WatchEvent;
   throw protocolError(502, "T4 API returned an invalid watch event");
 }

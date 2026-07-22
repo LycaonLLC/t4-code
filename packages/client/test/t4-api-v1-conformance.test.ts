@@ -51,8 +51,7 @@ const VERSION_HEADERS = { "T4-API-Version": "1" } as const;
 const COMMAND_STATES = [
   "accepted", "projected", "dispatching", "running", "succeeded", "failed",
   "cancelling", "cancelled", "rejected", "unavailable", "indeterminate",
-] as const;
-
+] as const satisfies readonly components["schemas"]["CommandState"][];
 const DISCOVERY = {
   apiVersion: "1.0",
   serverBuild: { version: "0.1.30", revision: "fixture-revision-1" },
@@ -1155,7 +1154,7 @@ describe("generated T4 API v1 client conformance", () => {
       components: {
         headers: Record<string, { required?: boolean }>;
         responses: Record<string, { headers?: Record<string, { $ref?: string }> }>;
-        schemas: Record<string, { required?: string[]; additionalProperties?: boolean; properties?: Record<string, { type?: string; maxProperties?: number; propertyNames?: { pattern?: string; maxLength?: number }; additionalProperties?: { $ref?: string } }> }>;
+        schemas: Record<string, { required?: string[]; maxProperties?: number; propertyNames?: { pattern?: string; maxLength?: number }; additionalProperties?: boolean | { $ref?: string }; properties?: Record<string, { $ref?: string }> }>;
       };
     };
     expect(contract.paths["/v1/workspaces/{workspaceId}"]?.patch?.responses["200"]?.$ref).toBe("#/components/responses/WorkspaceReplay");
@@ -1171,8 +1170,9 @@ describe("generated T4 API v1 client conformance", () => {
 
     const discovery = contract.components.schemas.Discovery!;
     expect(discovery.required).toContain("serverBuild");
-    expect(discovery.properties?.capabilities).toMatchObject({
-      type: "object", maxProperties: 128,
+    expect(discovery.properties?.capabilities).toEqual({ $ref: "#/components/schemas/Capabilities" });
+    expect(contract.components.schemas.Capabilities).toMatchObject({
+      maxProperties: 128,
       propertyNames: { pattern: "^[a-z][a-z0-9.-]*$", maxLength: 128 },
       additionalProperties: { $ref: "#/components/schemas/CapabilityStatus" },
     });
