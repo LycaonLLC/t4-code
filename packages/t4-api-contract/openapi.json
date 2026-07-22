@@ -652,7 +652,7 @@
         "additionalProperties": false,
         "required": ["snapshotUrl", "cursor"],
         "properties": {
-          "snapshotUrl": { "type": "string", "pattern": "^/v1/sessions/[A-Za-z0-9._~-]+/snapshot$", "maxLength": 512 },
+          "snapshotUrl": { "type": "string", "pattern": "^/v1/sessions/[A-Za-z0-9][A-Za-z0-9._~-]{0,127}/snapshot$", "maxLength": 150 },
           "cursor": { "$ref": "#/components/schemas/Cursor" }
         }
       },

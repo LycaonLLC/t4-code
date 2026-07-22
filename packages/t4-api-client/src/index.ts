@@ -177,8 +177,9 @@ function validViolation(value: unknown): boolean {
 
 function validResync(value: unknown): value is Resync {
   const resync = record(value);
-  return resync !== undefined && Object.keys(resync).every((key) => key === "snapshotUrl" || key === "cursor") &&
-    typeof resync.snapshotUrl === "string" && hasAtMostCodePoints(resync.snapshotUrl, 512) && /^\/v1\/sessions\/[A-Za-z0-9._~-]+\/snapshot$/u.test(resync.snapshotUrl) &&
+  if (resync === undefined || Object.keys(resync).some((key) => key !== "snapshotUrl" && key !== "cursor") || typeof resync.snapshotUrl !== "string") return false;
+  const snapshot = /^\/v1\/sessions\/([^/]+)\/snapshot$/u.exec(resync.snapshotUrl);
+  return hasAtMostCodePoints(resync.snapshotUrl, 150) && snapshot !== null && validResourceId(snapshot[1]) &&
     typeof resync.cursor === "string" && hasAtMostCodePoints(resync.cursor, 512) && CURSOR_PATTERN.test(resync.cursor);
 }
 
