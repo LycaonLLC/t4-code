@@ -20,13 +20,13 @@ export DOCKER_CONFIG="$auth_dir"
 source="$HARBOR_REGISTRY/$HARBOR_PROJECT/quarantine/t4-site:$CI_COMMIT_SHA"
 destination="$HARBOR_REGISTRY/$HARBOR_PROJECT/t4-site:$CI_COMMIT_SHA"
 digest_file=${T4_SITE_DIGEST_FILE:-.site-ci/site-image-digest}
-source_digest=$(oras resolve "$source")
+source_digest=$(oras resolve --plain-http "$source")
 case "$source_digest" in
   sha256:????????????????????????????????????????????????????????????????) ;;
   *) echo "site quarantine image did not resolve to an immutable digest" >&2; exit 65 ;;
 esac
 
-if destination_digest=$(oras resolve "$destination" 2>&1); then
+if destination_digest=$(oras resolve --plain-http "$destination" 2>&1); then
   if [ "$destination_digest" != "$source_digest" ]; then
     echo "site destination commit tag already resolves to a different digest" >&2
     exit 65
@@ -36,9 +36,9 @@ else
     *"failed to resolve digest: $CI_COMMIT_SHA: not found") ;;
     *) printf '%s\n' "$destination_digest" >&2; exit 65 ;;
   esac
-  oras copy --recursive "$source" "$destination"
+  oras copy --plain-http --recursive "$source" "$destination"
 fi
 
-test "$(oras resolve "$destination")" = "$source_digest"
+test "$(oras resolve --plain-http "$destination")" = "$source_digest"
 mkdir -p "$(dirname "$digest_file")"
 printf '%s\n' "$source_digest" > "$digest_file"

@@ -93,5 +93,7 @@ test("site image build and promotion use only the immutable Woodpecker commit SH
   assert.doesNotMatch(build, /--attest/u);
   assert.match(promote, /quarantine\/t4-site:\$CI_COMMIT_SHA/u);
   assert.match(promote, /linkedin-bot\/t4-site:\$CI_COMMIT_SHA|\$HARBOR_PROJECT\/t4-site:\$CI_COMMIT_SHA/u);
+  assert.match(promote, /oras resolve --plain-http/u);
+  assert.match(promote, /oras copy --plain-http --recursive/u);
   assert.doesNotMatch(`${build}\n${promote}`, /:latest\b/u);
 });
