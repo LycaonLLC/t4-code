@@ -9,6 +9,7 @@
     "controller",
     "server",
     "session",
+    "modelGateway",
     "storage",
     "woodpecker",
     "ingress",
@@ -46,11 +47,12 @@
     },
     "images": {
       "type": "object",
-      "required": ["controller", "server", "sessionRuntime"],
+      "required": ["controller", "server", "sessionRuntime", "modelGateway"],
       "properties": {
         "controller": { "$ref": "#/definitions/image" },
         "server": { "$ref": "#/definitions/image" },
-        "sessionRuntime": { "$ref": "#/definitions/image" }
+        "sessionRuntime": { "$ref": "#/definitions/image" },
+        "modelGateway": { "$ref": "#/definitions/image" }
       }
     },
     "imagePullSecrets": {
@@ -108,16 +110,41 @@
         "temporarySize": { "type": "string", "pattern": "^[1-9][0-9]*(Mi|Gi)$" },
         "omp": {
           "type": "object",
-          "required": ["configMap", "modelsKey", "settingsKey", "credentialSecret", "credentialKey", "allowUnauthenticated"],
+          "additionalProperties": false,
+          "required": ["configMap", "modelsKey", "settingsKey"],
           "properties": {
             "configMap": { "$ref": "#/definitions/optionalDNSSubdomain" },
             "modelsKey": { "$ref": "#/definitions/optionalConfigKey" },
-            "settingsKey": { "$ref": "#/definitions/optionalConfigKey" },
-            "credentialSecret": { "$ref": "#/definitions/optionalDNSSubdomain" },
-            "credentialKey": { "$ref": "#/definitions/optionalCredentialEnvVarName" },
-            "allowUnauthenticated": { "type": "boolean" }
+            "settingsKey": { "$ref": "#/definitions/optionalConfigKey" }
           }
         }
+      }
+    },
+    "modelGateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "replicas", "upstreamOrigin", "allowedPaths", "existingSecret", "credentialKey", "credentialHeader", "timeoutMs", "maxRequestBodyBytes", "resources"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicas": { "type": "integer", "minimum": 2, "maximum": 9 },
+        "upstreamOrigin": { "type": "string", "maxLength": 256, "pattern": "^$|^https://[A-Za-z0-9](?:[-.A-Za-z0-9]*[A-Za-z0-9])?(?::[1-9][0-9]{0,4})?$" },
+        "allowedPaths": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "allOf": [
+              { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^/[A-Za-z0-9._~!$&'()*+,;=:@/-]+$" },
+              { "not": { "pattern": "^//" } }
+            ]
+          }
+        },
+        "existingSecret": { "$ref": "#/definitions/optionalDNSSubdomain" },
+        "credentialKey": { "$ref": "#/definitions/configKey" },
+        "credentialHeader": { "type": "string", "enum": ["authorization", "x-api-key", "api-key"] },
+        "timeoutMs": { "type": "integer", "minimum": 1000, "maximum": 900000 },
+        "maxRequestBodyBytes": { "type": "integer", "minimum": 1024, "maximum": 67108864 },
+        "resources": { "type": "object" }
       }
     },
     "storage": {
@@ -172,13 +199,15 @@
     },
     "networkPolicy": {
       "type": "object",
-      "required": ["enabled", "kubernetesApiCIDRs", "modelRouteCIDRs", "modelRoutePorts", "modelRoute", "ciProviderCIDRs", "ciProviderPorts", "ciProvider", "dns", "gatewayIngress", "observability"],
+      "required": ["enabled", "kubernetesApiCIDRs", "modelRouteCIDRs", "modelRoutePorts", "modelRoute", "modelGatewayUpstreamCIDRs", "modelGatewayUpstreamPorts", "ciProviderCIDRs", "ciProviderPorts", "ciProvider", "dns", "gatewayIngress", "observability"],
       "properties": {
         "enabled": { "type": "boolean" },
         "kubernetesApiCIDRs": { "$ref": "#/definitions/cidrList" },
         "modelRouteCIDRs": { "$ref": "#/definitions/cidrList" },
         "modelRoutePorts": { "$ref": "#/definitions/tcpPortList" },
         "modelRoute": { "$ref": "#/definitions/pairedSelectors" },
+        "modelGatewayUpstreamCIDRs": { "$ref": "#/definitions/cidrList" },
+        "modelGatewayUpstreamPorts": { "$ref": "#/definitions/tcpPortList" },
         "ciProviderCIDRs": { "$ref": "#/definitions/cidrList" },
         "ciProviderPorts": { "$ref": "#/definitions/tcpPortList" },
         "ciProvider": { "$ref": "#/definitions/pairedSelectors" },
@@ -263,28 +292,6 @@
       "type": "string",
       "maxLength": 253,
       "pattern": "^$|^[-._A-Za-z0-9]+$"
-    },
-    "optionalEnvVarName": {
-      "type": "string",
-      "maxLength": 253,
-      "pattern": "^$|^[A-Za-z_][A-Za-z0-9_]*$"
-    },
-    "optionalCredentialEnvVarName": {
-      "allOf": [
-        { "$ref": "#/definitions/optionalEnvVarName" },
-        {
-          "not": {
-            "anyOf": [
-              { "pattern": "^T4_" },
-              { "pattern": "^OMP_" },
-              { "pattern": "^PI_" },
-              { "pattern": "^XDG_" },
-              { "pattern": "^LD_" },
-              { "enum": ["HOME", "DISPLAY", "PATH", "BASH_ENV", "ENV", "SHELLOPTS", "NODE_OPTIONS", "BUN_OPTIONS", "PI_CODING_AGENT_DIR", "PI_CONFIG_DIR"] }
-            ]
-          }
-        }
-      ]
     },
     "nonDefaultRouteCIDR": {
       "type": "string",
@@ -379,10 +386,7 @@
                 "properties": {
                   "configMap": { "minLength": 1 },
                   "modelsKey": { "minLength": 1 },
-                  "settingsKey": { "minLength": 1 },
-                  "allowUnauthenticated": { "const": true },
-                  "credentialSecret": { "maxLength": 0 },
-                  "credentialKey": { "maxLength": 0 }
+                  "settingsKey": { "minLength": 1 }
                 }
               }
             }
@@ -392,6 +396,41 @@
               "controller": { "properties": { "digest": { "pattern": "^sha256:[0-9a-f]{64}$" } } },
               "server": { "properties": { "digest": { "pattern": "^sha256:[0-9a-f]{64}$" } } },
               "sessionRuntime": { "properties": { "digest": { "pattern": "^sha256:[0-9a-f]{64}$" } } }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "modelGateway": { "properties": { "enabled": { "const": true } } } } },
+      "then": {
+        "properties": {
+          "enabled": { "const": true },
+          "modelGateway": {
+            "properties": {
+              "upstreamOrigin": { "minLength": 1 },
+              "allowedPaths": { "minItems": 1 },
+              "existingSecret": { "minLength": 1 }
+            }
+          },
+          "images": {
+            "properties": {
+              "modelGateway": { "properties": { "digest": { "pattern": "^sha256:[0-9a-f]{64}$" } } }
+            }
+          },
+          "networkPolicy": {
+            "properties": {
+              "enabled": { "const": true },
+              "modelRouteCIDRs": { "maxItems": 0 },
+              "modelRoutePorts": { "maxItems": 0 },
+              "modelRoute": {
+                "properties": {
+                  "namespaceSelector": { "maxProperties": 0 },
+                  "podSelector": { "maxProperties": 0 }
+                }
+              },
+              "modelGatewayUpstreamCIDRs": { "minItems": 1 },
+              "modelGatewayUpstreamPorts": { "minItems": 1 }
             }
           }
         }

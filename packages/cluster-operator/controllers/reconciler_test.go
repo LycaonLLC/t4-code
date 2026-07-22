@@ -223,7 +223,6 @@ func TestSessionFailsClosedWhenAnyOMPReferenceIsMissing(t *testing.T) {
 		{name: "ConfigMap", remove: func(config *controllers.SessionOMPConfig) { config.ConfigMapName = "" }, reason: "OMPReferencesMissing"},
 		{name: "models key", remove: func(config *controllers.SessionOMPConfig) { config.ModelsKey = "" }, reason: "OMPReferencesMissing"},
 		{name: "settings key", remove: func(config *controllers.SessionOMPConfig) { config.SettingsKey = "" }, reason: "OMPReferencesMissing"},
-		{name: "unsafe credential mode", remove: func(config *controllers.SessionOMPConfig) { config.AllowUnauthenticated = false }, reason: "OMPCredentialProjectionUnsupported"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			scheme := testScheme(t)
@@ -254,15 +253,12 @@ func TestSessionFailsClosedWhenAnyOMPReferenceIsMissing(t *testing.T) {
 	}
 }
 
-func TestSessionRejectsInvalidOMPAuthenticationAndProjectionReferences(t *testing.T) {
+func TestSessionRejectsInvalidOMPProjectionReferences(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		mutate func(*controllers.SessionOMPConfig)
 		reason string
 	}{
-		{name: "legacy credential Secret", mutate: func(config *controllers.SessionOMPConfig) { config.CredentialSecretName = "omp-runtime-credential" }, reason: "OMPCredentialProjectionUnsupported"},
-		{name: "legacy credential key", mutate: func(config *controllers.SessionOMPConfig) { config.CredentialKey = "MODEL_API_KEY" }, reason: "OMPCredentialProjectionUnsupported"},
-		{name: "credential mode", mutate: func(config *controllers.SessionOMPConfig) { config.AllowUnauthenticated = false }, reason: "OMPCredentialProjectionUnsupported"},
 		{name: "identical projected keys", mutate: func(config *controllers.SessionOMPConfig) { config.SettingsKey = config.ModelsKey }, reason: "OMPReferencesInvalid"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -284,50 +280,6 @@ func TestSessionRejectsInvalidOMPAuthenticationAndProjectionReferences(t *testin
 				t.Fatalf("RuntimeConfigured = %#v, want False/%s", condition, test.reason)
 			}
 		})
-	}
-}
-
-func TestSessionCredentialModeUpgradeStopsExistingAuthorityAndClearsRoute(t *testing.T) {
-	scheme := testScheme(t)
-	workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
-	workspace.Status.PVCName = "workspace-a-data"
-	pvc := &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: workspace.Status.PVCName, Namespace: "team"},
-		Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}},
-		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
-	}
-	session := testSession()
-	session.UID = "session-uid"
-	c := fake.NewClientBuilder().WithScheme(scheme).
-		WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).
-		WithObjects(testHost(), workspace, pvc, session).Build()
-	r := configuredSessionReconciler(c, scheme)
-	reconcileMany(t, 2, func() error {
-		_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)})
-		return err
-	})
-	var running clusterv1alpha1.T4Session
-	if err := c.Get(context.Background(), client.ObjectKeyFromObject(session), &running); err != nil {
-		t.Fatal(err)
-	}
-	if running.Status.PodName == "" || running.Status.ServiceName == "" {
-		t.Fatalf("session did not publish its initial route: %#v", running.Status)
-	}
-
-	r.OMPConfig.AllowUnauthenticated = false
-	r.OMPConfig.CredentialSecretName = "omp-runtime-credential"
-	r.OMPConfig.CredentialKey = "MODEL_API_KEY"
-	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
-		t.Fatal(err)
-	}
-	assertObjectCounts(t, c, 0, 0)
-	var failed clusterv1alpha1.T4Session
-	if err := c.Get(context.Background(), client.ObjectKeyFromObject(session), &failed); err != nil {
-		t.Fatal(err)
-	}
-	condition := findCondition(failed.Status.Conditions, "RuntimeConfigured")
-	if failed.Status.PodName != "" || failed.Status.ServiceName != "" || failed.Status.Phase != clusterv1alpha1.InfrastructureFailed || condition == nil || condition.Reason != "OMPCredentialProjectionUnsupported" {
-		t.Fatalf("unsafe upgrade retained authority route: status=%#v condition=%#v", failed.Status, condition)
 	}
 }
 
@@ -672,7 +624,6 @@ func TestSessionWaitsForBoundRWXThenCreatesExactlyOnePodAndService(t *testing.T)
 	}
 	serverIdentity := ""
 	configSource := ""
-	allowUnauthenticated := ""
 	for i := range pod.Spec.Containers[0].Env {
 		env := &pod.Spec.Containers[0].Env[i]
 		if env.Name == "T4_CLUSTER_SERVER_SERVICE_ACCOUNT" {
@@ -681,9 +632,6 @@ func TestSessionWaitsForBoundRWXThenCreatesExactlyOnePodAndService(t *testing.T)
 		if env.Name == "T4_OMP_CONFIG_SOURCE_DIR" {
 			configSource = env.Value
 		}
-		if env.Name == "T4_OMP_ALLOW_UNAUTHENTICATED" {
-			allowUnauthenticated = env.Value
-		}
 		if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
 			t.Fatalf("session runtime retained a Secret environment reference: %#v", env)
 		}
@@ -691,8 +639,8 @@ func TestSessionWaitsForBoundRWXThenCreatesExactlyOnePodAndService(t *testing.T)
 	if serverIdentity != controllers.DefaultServerServiceAccount {
 		t.Fatalf("expected server ServiceAccount = %q", serverIdentity)
 	}
-	if configSource != "/run/t4-omp-config-source" || allowUnauthenticated != "true" {
-		t.Fatalf("OMP preflight environment = source %q allowUnauthenticated %q", configSource, allowUnauthenticated)
+	if configSource != "/run/t4-omp-config-source" {
+		t.Fatalf("OMP preflight source = %q", configSource)
 	}
 	if len(pod.Spec.Containers[0].Args) != 0 {
 		t.Fatalf("session runtime received credential arguments: %#v", pod.Spec.Containers[0].Args)
@@ -747,7 +695,7 @@ func TestSessionWaitsForBoundRWXThenCreatesExactlyOnePodAndService(t *testing.T)
 	}
 }
 
-func TestSessionOMPModeOmitsCredentialSecretReference(t *testing.T) {
+func TestSessionOMPModeOmitsCredentialReferences(t *testing.T) {
 	scheme := testScheme(t)
 	workspace := testWorkspace(clusterv1alpha1.RetentionPolicyDelete)
 	workspace.Status.PVCName = "workspace-a-data"
@@ -769,17 +717,13 @@ func TestSessionOMPModeOmitsCredentialSecretReference(t *testing.T) {
 	if err := c.Get(context.Background(), types.NamespacedName{Namespace: session.Namespace, Name: controllers.SessionPodName(session)}, &pod); err != nil {
 		t.Fatal(err)
 	}
-	allowUnauthenticated := ""
 	for _, env := range pod.Spec.Containers[0].Env {
-		if env.Name == "T4_OMP_ALLOW_UNAUTHENTICATED" {
-			allowUnauthenticated = env.Value
-		}
 		if len(pod.Spec.Containers[0].Args) != 0 || env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
-			t.Fatalf("unauthenticated OMP mode retained a credential reference: %#v", env)
+			t.Fatalf("OMP mode retained a credential reference: %#v", env)
 		}
-	}
-	if allowUnauthenticated != "true" {
-		t.Fatalf("T4_OMP_ALLOW_UNAUTHENTICATED = %q, want true", allowUnauthenticated)
+		if env.Name == "T4_OMP_ALLOW_UNAUTHENTICATED" || strings.Contains(env.Name, "CREDENTIAL") {
+			t.Fatalf("OMP mode retained a legacy credential mode sentinel: %#v", env)
+		}
 	}
 }
 
@@ -1029,7 +973,7 @@ func TestSessionFailsClosedWhenOMPConfigMapIsMissing(t *testing.T) {
 				objects = append(objects, test.configMap)
 			}
 			c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&clusterv1alpha1.T4Session{}, &corev1.PersistentVolumeClaim{}, &corev1.Pod{}).WithObjects(objects...).Build()
-			r := &controllers.SessionReconciler{Client: c, APIReader: c, Scheme: scheme, RuntimeImage: testRuntimeImage, OMPConfig: controllers.SessionOMPConfig{ConfigMapName: "omp-runtime-config", ModelsKey: "provider-models", SettingsKey: "agent-settings", AllowUnauthenticated: true}}
+			r := &controllers.SessionReconciler{Client: c, APIReader: c, Scheme: scheme, RuntimeImage: testRuntimeImage, OMPConfig: controllers.SessionOMPConfig{ConfigMapName: "omp-runtime-config", ModelsKey: "provider-models", SettingsKey: "agent-settings"}}
 			if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(session)}); err != nil {
 				t.Fatal(err)
 			}
@@ -1274,10 +1218,9 @@ func configuredSessionReconciler(c client.Client, scheme *runtime.Scheme) *contr
 		Scheme:       scheme,
 		RuntimeImage: testRuntimeImage,
 		OMPConfig: controllers.SessionOMPConfig{
-			ConfigMapName:        "omp-runtime-config",
-			ModelsKey:            "provider-models",
-			SettingsKey:          "agent-settings",
-			AllowUnauthenticated: true,
+			ConfigMapName: "omp-runtime-config",
+			ModelsKey:     "provider-models",
+			SettingsKey:   "agent-settings",
 		},
 	}
 }

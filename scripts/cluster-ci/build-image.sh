@@ -12,7 +12,8 @@ dockerfile=${3:-}
 case "$component:$repository_suffix:$dockerfile" in
   controller:t4-cluster-operator:cluster/images/controller/Dockerfile | \
   cluster-server:t4-cluster-server:cluster/images/cluster-server/Dockerfile | \
-  session-runtime:t4-session-runtime:cluster/images/session-runtime/Dockerfile)
+  session-runtime:t4-session-runtime:cluster/images/session-runtime/Dockerfile | \
+  model-gateway:t4-model-gateway:cluster/images/model-gateway/Dockerfile)
     ;;
   *)
     echo "component, repository suffix, and Dockerfile do not match the fixed T4 image contract" >&2

@@ -20,6 +20,7 @@ const suffixes = {
   controller: "t4-cluster-operator",
   "cluster-server": "t4-cluster-server",
   "session-runtime": "t4-session-runtime",
+  "model-gateway": "t4-model-gateway",
 };
 
 function requiredEnvironment(name, environment = process.env) {

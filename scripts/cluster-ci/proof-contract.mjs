@@ -4,7 +4,7 @@ import { basename, relative, resolve, sep } from "node:path";
 
 export const CANONICAL_BUILD_SOURCE_REPOSITORY = "usr-bin-roygbiv/t4-code";
 export const AUTHORIZED_CI_MIRROR = "z-peterson/t4-code";
-export const IMAGE_COMPONENTS = Object.freeze(["controller", "cluster-server", "session-runtime"]);
+export const IMAGE_COMPONENTS = Object.freeze(["controller", "cluster-server", "session-runtime", "model-gateway"]);
 export const PROOF_SCENARIOS = Object.freeze([
   "ha-manifest",
   "leader-election",

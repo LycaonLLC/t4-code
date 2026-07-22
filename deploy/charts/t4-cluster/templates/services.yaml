@@ -52,6 +52,26 @@ spec:
       port: 8080
       targetPort: metrics
       protocol: TCP
+{{- if .Values.modelGateway.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "model-gateway") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+    app.kubernetes.io/component: model-gateway
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "t4-cluster.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: model-gateway
+  ports:
+    - name: model
+      port: 8080
+      targetPort: model
+      protocol: TCP
+{{- end }}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -66,4 +86,20 @@ spec:
     matchLabels:
       {{- include "t4-cluster.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: server
+{{- if .Values.modelGateway.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "t4-cluster.suffixedName" (dict "context" . "suffix" "model-gateway") | quote }}
+  labels:
+    {{- include "t4-cluster.labels" . | nindent 4 }}
+    app.kubernetes.io/component: model-gateway
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "t4-cluster.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: model-gateway
+{{- end }}
 {{- end }}

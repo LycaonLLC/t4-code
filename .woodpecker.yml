@@ -208,8 +208,10 @@ steps:
       - export SSL_CERT_FILE="$PWD/.ci/ca-certificates.crt"
       - export NODE_EXTRA_CA_CERTS="$SSL_CERT_FILE"
       - (cd packages/cluster-server && bun --bun run test)
+      - (cd packages/model-gateway && bun --bun run test)
       - bun test cluster/images/session-runtime/assert-omp-credentials-absent.test.ts
       - (cd packages/cluster-server && bun --bun run typecheck)
+      - (cd packages/model-gateway && bun --bun run typecheck)
     backend_options:
       kubernetes:
         serviceAccountName: woodpecker-ci-untrusted
@@ -546,6 +548,7 @@ steps:
       HARBOR_PROJECT: linkedin-bot
     commands:
       - scripts/cluster-ci/build-image.sh session-runtime t4-session-runtime cluster/images/session-runtime/Dockerfile
+      - scripts/cluster-ci/build-image.sh model-gateway t4-model-gateway cluster/images/model-gateway/Dockerfile
     when:
       - event: push
         branch: main
@@ -577,6 +580,7 @@ steps:
       - echo "$CI_SCRIPT" | /busybox/base64 -d | /busybox/sh -e
     commands:
       - sh scripts/cluster-ci/capture-image-evidence.sh sbom session-runtime t4-session-runtime
+      - sh scripts/cluster-ci/capture-image-evidence.sh sbom model-gateway t4-model-gateway
     when:
       - event: push
         branch: main
@@ -603,6 +607,7 @@ steps:
       HARBOR_PROJECT: linkedin-bot
     commands:
       - scripts/cluster-ci/capture-image-evidence.sh vulnerability session-runtime t4-session-runtime
+      - scripts/cluster-ci/capture-image-evidence.sh vulnerability model-gateway t4-model-gateway
     when:
       - event: push
         branch: main
@@ -633,6 +638,7 @@ steps:
       - echo "$CI_SCRIPT" | /busybox/base64 -d | /busybox/sh -e
     commands:
       - sh scripts/cluster-ci/capture-image-evidence.sh provenance session-runtime t4-session-runtime
+      - sh scripts/cluster-ci/capture-image-evidence.sh provenance model-gateway t4-model-gateway
     when:
       - event: push
         branch: main

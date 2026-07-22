@@ -126,12 +126,9 @@ func splitNonempty(value string) []string {
 
 func sessionOMPConfigFromEnv() controllers.SessionOMPConfig {
 	return controllers.SessionOMPConfig{
-		ConfigMapName:        os.Getenv("T4_SESSION_OMP_CONFIG_MAP"),
-		ModelsKey:            os.Getenv("T4_SESSION_OMP_MODELS_KEY"),
-		SettingsKey:          os.Getenv("T4_SESSION_OMP_SETTINGS_KEY"),
-		CredentialSecretName: os.Getenv("T4_SESSION_OMP_CREDENTIAL_SECRET"),
-		CredentialKey:        os.Getenv("T4_SESSION_OMP_CREDENTIAL_KEY"),
-		AllowUnauthenticated: strings.EqualFold(strings.TrimSpace(os.Getenv("T4_SESSION_OMP_ALLOW_UNAUTHENTICATED")), "true"),
+		ConfigMapName: os.Getenv("T4_SESSION_OMP_CONFIG_MAP"),
+		ModelsKey:     os.Getenv("T4_SESSION_OMP_MODELS_KEY"),
+		SettingsKey:   os.Getenv("T4_SESSION_OMP_SETTINGS_KEY"),
 	}
 }
 

@@ -7,7 +7,7 @@ mode=${1:-}
 component=${2:-}
 repository_suffix=${3:-}
 case "$component:$repository_suffix" in
-  controller:t4-cluster-operator | cluster-server:t4-cluster-server | session-runtime:t4-session-runtime) ;;
+  controller:t4-cluster-operator | cluster-server:t4-cluster-server | session-runtime:t4-session-runtime | model-gateway:t4-model-gateway) ;;
   *)
     echo "component and repository suffix do not match the fixed T4 image contract" >&2
     exit 64
