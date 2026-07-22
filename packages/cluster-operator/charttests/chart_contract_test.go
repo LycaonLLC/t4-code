@@ -596,8 +596,8 @@ func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 		`install -m 0600 "${settings_source}"`,
 		`"${PI_CODING_AGENT_DIR}/models.yml"`,
 		`"${PI_CODING_AGENT_DIR}/config.yml"`,
-		`/usr/local/bin/bun /opt/t4/cluster/images/session-runtime/scrub-omp-credentials.ts`,
-		"omp_credential_state_scrub",
+		`/usr/local/bin/bun /opt/t4/cluster/images/session-runtime/assert-omp-credentials-absent.ts`,
+		"omp_credential_state_present",
 	)
 }
 

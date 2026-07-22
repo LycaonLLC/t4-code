@@ -46,8 +46,8 @@ install -m 0600 "${settings_source}" "${settings_private}"
 mv -f "${models_private}" "${PI_CODING_AGENT_DIR}/models.yml"
 mv -f "${settings_private}" "${PI_CODING_AGENT_DIR}/config.yml"
 trap - EXIT
-/usr/local/bin/bun /opt/t4/cluster/images/session-runtime/scrub-omp-credentials.ts "${PI_CODING_AGENT_DIR}" "${HOME}" || {
-  echo '{"component":"session-runtime","result":"invalid_state","condition":"omp_credential_state_scrub"}' >&2
+/usr/local/bin/bun /opt/t4/cluster/images/session-runtime/assert-omp-credentials-absent.ts "${PI_CODING_AGENT_DIR}" "${HOME}" || {
+  echo '{"component":"session-runtime","result":"invalid_state","condition":"omp_credential_state_present"}' >&2
   exit 64
 }
 export DISPLAY="${DISPLAY:-:99}"

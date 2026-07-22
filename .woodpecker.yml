@@ -208,6 +208,7 @@ steps:
       - export SSL_CERT_FILE="$PWD/.ci/ca-certificates.crt"
       - export NODE_EXTRA_CA_CERTS="$SSL_CERT_FILE"
       - (cd packages/cluster-server && bun --bun run test)
+      - bun test cluster/images/session-runtime/assert-omp-credentials-absent.test.ts
       - (cd packages/cluster-server && bun --bun run typecheck)
     backend_options:
       kubernetes:

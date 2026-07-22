@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { lstat, unlink } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import path from "node:path";
 
 const AUTH_SCHEMA_VERSION = 6;
@@ -43,106 +43,110 @@ function requireExactColumns(database: Database, table: string, expected: readon
 	}
 }
 
-async function removeCredentialFile(filePath: string): Promise<void> {
-	let metadata;
+async function requireDirectory(directoryPath: string): Promise<void> {
+	const metadata = await lstat(directoryPath);
+	if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+		throw new Error(`OMP profile path must be a real directory: ${path.basename(directoryPath)}`);
+	}
+}
+
+async function requireDirectoryChain(home: string, agentDir: string): Promise<void> {
+	await requireDirectory(home);
+	const relativeAgentDir = path.relative(home, agentDir);
+	if (
+		relativeAgentDir === "" ||
+		relativeAgentDir.startsWith(`..${path.sep}`) ||
+		path.isAbsolute(relativeAgentDir)
+	) {
+		throw new Error("OMP credential check paths are outside the profile home");
+	}
+	let current = home;
+	for (const segment of relativeAgentDir.split(path.sep)) {
+		current = path.join(current, segment);
+		await requireDirectory(current);
+	}
+}
+
+async function requireAbsent(filePath: string): Promise<void> {
 	try {
-		metadata = await lstat(filePath);
+		await lstat(filePath);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
 		throw error;
 	}
-	if (metadata.isDirectory()) throw new Error(`credential path is a directory: ${path.basename(filePath)}`);
-	await unlink(filePath);
+	throw new Error(`credential state is present: ${path.basename(filePath)}`);
 }
 
-export async function scrubOMPProfileCredentials(input: {
+export async function assertOMPProfileCredentialsAbsent(input: {
 	readonly agentDir: string;
 	readonly home: string;
-}): Promise<{ credentialRows: number; settingRows: number }> {
+}): Promise<void> {
+	if (!path.isAbsolute(input.agentDir) || !path.isAbsolute(input.home)) {
+		throw new Error("OMP credential check paths must be absolute");
+	}
 	const agentDir = path.resolve(input.agentDir);
 	const home = path.resolve(input.home);
-	const profilesRoot = path.join(home, ".omp", "profiles") + path.sep;
-	if (!path.isAbsolute(input.agentDir) || !path.isAbsolute(input.home) || !agentDir.startsWith(profilesRoot)) {
-		throw new Error("OMP credential scrub paths are outside the profile home");
+	const expectedProfilesRoot = path.join(home, ".omp", "profiles") + path.sep;
+	if (!agentDir.startsWith(expectedProfilesRoot)) {
+		throw new Error("OMP credential check paths are outside the profile home");
 	}
+	await requireDirectoryChain(home, agentDir);
+
 	const databasePath = path.join(agentDir, "agent.db");
 	const tokenPath = path.join(home, ".omp", "auth-broker.token");
-	const snapshotPath = path.join(home, ".omp", "cache", "auth-broker-snapshot.enc");
+	const cachePath = path.join(home, ".omp", "cache");
+	const snapshotPath = path.join(cachePath, "auth-broker-snapshot.enc");
+	await requireAbsent(tokenPath);
+	try {
+		await requireDirectory(cachePath);
+		await requireAbsent(snapshotPath);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
 
 	let databaseMetadata;
 	try {
 		databaseMetadata = await lstat(databasePath);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-		for (const sidecar of [`${databasePath}-wal`, `${databasePath}-shm`]) {
-			try {
-				await lstat(sidecar);
-				throw new Error("agent database sidecar exists without agent.db");
-			} catch (sidecarError) {
-				if ((sidecarError as NodeJS.ErrnoException).code !== "ENOENT") throw sidecarError;
-			}
-		}
-		await removeCredentialFile(tokenPath);
-		await removeCredentialFile(snapshotPath);
-		return { credentialRows: 0, settingRows: 0 };
+		for (const sidecar of [`${databasePath}-wal`, `${databasePath}-shm`]) await requireAbsent(sidecar);
+		return;
 	}
 	if (!databaseMetadata.isFile() || databaseMetadata.isSymbolicLink()) {
 		throw new Error("agent.db must be a regular file");
 	}
 
-	const database = new Database(databasePath, { create: false, readwrite: true });
-	let credentialRows = 0;
-	let settingRows = 0;
+	const database = new Database(databasePath, { create: false, readonly: true });
 	try {
-		database.run("PRAGMA busy_timeout = 5000");
-		database.run("PRAGMA secure_delete = ON");
-		const hasCredentials = tableExists(database, "auth_credentials");
-		const hasSettings = tableExists(database, "settings");
-		if (hasCredentials) {
+		if (tableExists(database, "auth_credentials")) {
 			requireExactColumns(database, "auth_credentials", AUTH_COLUMNS);
 			if (!tableExists(database, "auth_schema_version")) throw new Error("auth schema version is missing");
 			requireExactColumns(database, "auth_schema_version", ["id", "version"]);
 			const version = database.query("SELECT version FROM auth_schema_version WHERE id = 1").get() as VersionRow | null;
 			if (version?.version !== AUTH_SCHEMA_VERSION) throw new Error("unsupported auth schema version");
 			const count = database.query("SELECT COUNT(*) AS count FROM auth_credentials").get() as CountRow;
-			if (typeof count.count !== "number") throw new Error("credential row count is invalid");
-			credentialRows = count.count;
+			if (typeof count.count !== "number" || count.count !== 0) {
+				throw new Error("OMP auth credentials must be absent");
+			}
 		}
-		if (hasSettings) {
+		if (tableExists(database, "settings")) {
 			requireExactColumns(database, "settings", SETTINGS_COLUMNS);
 			const placeholders = SECRET_SETTING_KEYS.map(() => "?").join(", ");
 			const count = database
 				.query(`SELECT COUNT(*) AS count FROM settings WHERE key IN (${placeholders})`)
 				.get(...SECRET_SETTING_KEYS) as CountRow;
-			if (typeof count.count !== "number") throw new Error("secret setting row count is invalid");
-			settingRows = count.count;
-		}
-
-		const scrub = database.transaction(() => {
-			if (hasCredentials) database.run("DELETE FROM auth_credentials");
-			if (hasSettings) {
-				const placeholders = SECRET_SETTING_KEYS.map(() => "?").join(", ");
-				database.query(`DELETE FROM settings WHERE key IN (${placeholders})`).run(...SECRET_SETTING_KEYS);
+			if (typeof count.count !== "number" || count.count !== 0) {
+				throw new Error("OMP secret settings must be absent");
 			}
-		});
-		scrub.immediate();
-		database.run("PRAGMA wal_checkpoint(TRUNCATE)");
-		database.run("VACUUM");
-		database.run("PRAGMA wal_checkpoint(TRUNCATE)");
+		}
 	} finally {
 		database.close();
 	}
-
-	await removeCredentialFile(tokenPath);
-	await removeCredentialFile(snapshotPath);
-	return { credentialRows, settingRows };
 }
 
 if (import.meta.main) {
 	const [agentDir, home] = process.argv.slice(2);
-	if (!agentDir || !home) throw new Error("usage: scrub-omp-credentials <agent-dir> <home>");
-	const result = await scrubOMPProfileCredentials({ agentDir, home });
-	process.stdout.write(
-		JSON.stringify({ component: "session-runtime", result: "credentials_scrubbed", ...result }) + "\n",
-	);
+	if (!agentDir || !home) throw new Error("usage: assert-omp-credentials-absent <agent-dir> <home>");
+	await assertOMPProfileCredentialsAbsent({ agentDir, home });
+	process.stdout.write(JSON.stringify({ component: "session-runtime", result: "credential_state_absent" }) + "\n");
 }

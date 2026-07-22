@@ -333,6 +333,11 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   assert.ok(
     steps["cluster-server-tests"].commands.includes("(cd packages/cluster-server && bun --bun run test)"),
   );
+  assert.ok(
+    steps["cluster-server-tests"].commands.includes(
+      "bun test cluster/images/session-runtime/assert-omp-credentials-absent.test.ts",
+    ),
+  );
   assert.match(steps["cluster-wire-tests"].image, /library\/node:[^@]+@sha256:[0-9a-f]{64}$/u);
   assert.deepEqual(steps["cluster-wire-tests"].depends_on, ["cluster-server-tests", "bun-runtime"]);
   assert.ok(steps["cluster-wire-tests"].commands.includes('export PATH="$PWD/.ci:$PATH"'));

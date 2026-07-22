@@ -281,6 +281,9 @@ jobs:
       - name: Run cluster server tests
         run: pnpm --filter @t4-code/cluster-server test
 
+      - name: Run session runtime credential preflight tests
+        run: bun test cluster/images/session-runtime/assert-omp-credentials-absent.test.ts
+
       - name: Typecheck cluster server
         run: pnpm --filter @t4-code/cluster-server typecheck
 
