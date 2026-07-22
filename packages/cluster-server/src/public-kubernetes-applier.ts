@@ -1,6 +1,12 @@
 import { semanticResourceHash, KubernetesApiClient, KubernetesApiError } from "./kubernetes-client.ts";
 import type { KubernetesResource } from "./kubernetes-projection.ts";
-import type { KubernetesOutboxApplier, OutboxApplyContext, OutboxMutation } from "./outbox-worker.ts";
+import type {
+	KubernetesOutboxApplier,
+	OutboxApplyContext,
+	OutboxMutation,
+	StaleCreateCleanup,
+	StaleCreateCleanupReplayContext,
+} from "./outbox-worker.ts";
 import type { OwnerLease } from "./ledger.ts";
 
 export interface PublicKubernetesOutboxApplierOptions {
@@ -75,6 +81,34 @@ export class PublicKubernetesOutboxApplier implements KubernetesOutboxApplier {
 		return await this.#delete("t4sessions", mutation, fence, context);
 	}
 
+	async replayStaleCreateCleanup(cleanup: StaleCreateCleanup, context: StaleCreateCleanupReplayContext): Promise<void> {
+		if (context.signal?.aborted) throw context.signal.reason;
+		if (!await context.claimIsCurrent()) throw new Error("outbox lease is no longer current");
+		if (context.signal?.aborted) throw context.signal.reason;
+		let current: KubernetesResource;
+		try {
+			current = await this.#client.get(cleanup.resourceType, cleanup.targetId, context.signal);
+		} catch (error) {
+			if (error instanceof KubernetesApiError && error.status === 404) {
+				if (!await context.claimIsCurrent()) throw new Error("outbox lease is no longer current");
+				if (context.signal?.aborted) throw context.signal.reason;
+				return;
+			}
+			throw error;
+		}
+		if (!await context.claimIsCurrent()) throw new Error("outbox lease is no longer current");
+		if (context.signal?.aborted) throw context.signal.reason;
+		if (current.metadata.uid !== cleanup.uid) return;
+		assertResourceIdentity(current, cleanup.resourceType, cleanup.targetId);
+		const resourceVersion = current.metadata.resourceVersion;
+		if (!resourceVersion) throw new Error("Kubernetes stale-create cleanup resourceVersion is unavailable");
+		try {
+			await this.#client.delete(cleanup.resourceType, cleanup.targetId, { uid: cleanup.uid, resourceVersion }, context.signal);
+		} catch (error) {
+			if (!(error instanceof KubernetesApiError) || error.status !== 404) throw error;
+		}
+	}
+
 	async #assertCurrent(context?: OutboxApplyContext): Promise<void> {
 		if (context?.signal?.aborted) throw context.signal.reason;
 		if (context?.claimIsCurrent && !await context.claimIsCurrent()) throw new Error("outbox lease is no longer current");
@@ -126,7 +160,10 @@ export class PublicKubernetesOutboxApplier implements KubernetesOutboxApplier {
 		const current = await this.#owned("t4sessions", mutation, fence, context?.signal);
 		await this.#assertCurrent(context);
 		await this.#client.patch("t4sessions", mutation.targetId, {
-			metadata: { resourceVersion: current.metadata.resourceVersion, annotations: annotations(mutation, fence) },
+			metadata: {
+				resourceVersion: current.metadata.resourceVersion,
+				annotations: { ...annotations(mutation, fence), "cluster.t4.dev/pending-command": null },
+			},
 			spec: { title: String(mutation.payload.title) },
 		}, context?.signal);
 	}
@@ -138,6 +175,7 @@ export class PublicKubernetesOutboxApplier implements KubernetesOutboxApplier {
 				resourceVersion: current.metadata.resourceVersion,
 				annotations: {
 					...annotations(mutation, fence),
+					"cluster.t4.dev/pending-command": null,
 					"cluster.t4.dev/pending-command-id": boundedAnnotation("pending command id", mutation.commandId),
 					"cluster.t4.dev/pending-command-epoch": fence.epoch.toString(),
 				},
@@ -186,27 +224,26 @@ export class PublicKubernetesOutboxApplier implements KubernetesOutboxApplier {
 			throw new Error("Kubernetes workspace ownership identity is invalid");
 		return workspace;
 	}
-	async #cleanupCreate(resourceType: ResourceType, mutation: OutboxMutation, fence: OwnerLease, body: KubernetesResource, created?: KubernetesResource): Promise<void> {
-		const signal = AbortSignal.timeout(5_000);
-		let current = created;
-		if (!current?.metadata?.uid || !current.metadata.resourceVersion) {
-			try {
-				current = await this.#client.get(resourceType, mutation.targetId, signal);
-			} catch (error) {
-				if (error instanceof KubernetesApiError && error.status === 404) return;
-				throw error;
-			}
-		}
-		const expectedAnnotations = annotations(mutation, fence);
-		const currentAnnotations = current.metadata.annotations ?? {};
-		if (current.apiVersion !== API_VERSION || current.kind !== (resourceType === "t4workspaces" ? "T4Workspace" : "T4Session") || current.metadata.name !== mutation.targetId
-			|| semanticResourceHash(record(current.spec)) !== semanticResourceHash(body.spec)
-			|| LEDGER_ANNOTATIONS.some(key => currentAnnotations[key] !== expectedAnnotations[key])) return;
-		if (!current.metadata.uid || !current.metadata.resourceVersion) return;
+	async #persistCreateCleanup(resourceType: ResourceType, targetId: string, created: KubernetesResource, context?: OutboxApplyContext): Promise<StaleCreateCleanup | undefined> {
+		const uid = created.metadata?.uid;
+		const resourceVersion = created.metadata?.resourceVersion;
+		if (!uid || !resourceVersion) return undefined;
+		assertResourceIdentity(created, resourceType, targetId);
+		const cleanup: StaleCreateCleanup = { resourceType, targetId, uid, resourceVersion };
+		await context?.persistStaleCreateCleanup?.(cleanup);
+		return cleanup;
+	}
+
+	async #cleanupCreate(cleanup: StaleCreateCleanup): Promise<void> {
 		try {
-			await this.#client.delete(resourceType, mutation.targetId, { uid: current.metadata.uid, resourceVersion: current.metadata.resourceVersion }, signal);
+			await this.#client.delete(
+				cleanup.resourceType,
+				cleanup.targetId,
+				{ uid: cleanup.uid, resourceVersion: cleanup.resourceVersion },
+				AbortSignal.timeout(5_000),
+			);
 		} catch (error) {
-			if (!(error instanceof KubernetesApiError) || error.status !== 404 && error.status !== 409) throw error;
+			if (!(error instanceof KubernetesApiError) || error.status !== 404) throw error;
 		}
 	}
 
@@ -216,10 +253,7 @@ export class PublicKubernetesOutboxApplier implements KubernetesOutboxApplier {
 		try {
 			created = await this.#client.create(resourceType, body, context?.signal);
 		} catch (error) {
-			if (!(error instanceof KubernetesApiError) || error.status !== 409) {
-				await this.#cleanupCreate(resourceType, mutation, fence, body);
-				throw error;
-			}
+			if (!(error instanceof KubernetesApiError) || error.status !== 409) throw error;
 			try {
 				const current = await this.#client.get(resourceType, mutation.targetId, context?.signal);
 				assertResourceIdentity(current, resourceType, mutation.targetId);
@@ -246,10 +280,11 @@ export class PublicKubernetesOutboxApplier implements KubernetesOutboxApplier {
 				throw new Error("Kubernetes resource conflicts with durable ledger intent");
 			}
 		}
+		const cleanup = await this.#persistCreateCleanup(resourceType, mutation.targetId, created, context);
 		try {
 			await this.#assertCurrent(context);
 		} catch (error) {
-			await this.#cleanupCreate(resourceType, mutation, fence, body, created);
+			if (cleanup) await this.#cleanupCreate(cleanup);
 			throw error;
 		}
 	}

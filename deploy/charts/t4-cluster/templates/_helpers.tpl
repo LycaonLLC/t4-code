@@ -39,6 +39,9 @@ app.kubernetes.io/instance: {{ .Release.Name | quote }}
 {{- $existingSecret := required "publicApi.existingSecret is required when publicApi.enabled is true" .Values.publicApi.existingSecret -}}
 {{- $postgresURLKey := required "publicApi.postgresURLKey is required when publicApi.enabled is true" .Values.publicApi.postgresURLKey -}}
 {{- $credentialsKey := required "publicApi.credentialsKey is required when publicApi.enabled is true" .Values.publicApi.credentialsKey -}}
+{{- if eq $postgresURLKey $credentialsKey -}}
+{{- fail "publicApi.postgresURLKey and publicApi.credentialsKey must be different" -}}
+{{- end -}}
 {{- if not .Values.networkPolicy.enabled -}}
 {{- fail "networkPolicy.enabled must be true when publicApi.enabled is true" -}}
 {{- end -}}

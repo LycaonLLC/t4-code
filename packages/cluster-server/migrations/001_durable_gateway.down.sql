@@ -1,3 +1,5 @@
+DROP TABLE IF EXISTS t4_stale_create_cleanups;
+DROP TABLE IF EXISTS t4_kubernetes_status_cursors;
 DROP TABLE IF EXISTS t4_outbox;
 DROP TABLE IF EXISTS t4_owner_leases;
 DROP TABLE IF EXISTS t4_snapshot_entries;

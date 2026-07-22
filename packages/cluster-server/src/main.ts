@@ -28,11 +28,17 @@ export async function runClusterServer(env: Readonly<Record<string, string | und
 		tokenFile: config.kubernetesTokenPath,
 		ca,
 	});
+	let ledger: PostgresLedger | undefined;
 	const projection = new ClusterInfrastructureProjection({ epoch: config.epoch, namespace: config.namespace });
 	const runner = new KubernetesProjectionRunner({
 		client: kubernetes,
 		projection,
 		hostName: config.hostName,
+		statusIngress: async (collection, observation) => {
+			if (!ledger) return;
+			const lease = await ledger.tryAcquireLease(config.epoch);
+			if (lease) await ledger.ingestKubernetesStatus(lease, collection, observation);
+		},
 		onSynchronized: () => health.markKubernetesSynced(),
 		onError: error => {
 			health.markKubernetesUnavailable();
@@ -45,7 +51,6 @@ export async function runClusterServer(env: Readonly<Record<string, string | und
 	let authority: SessionAuthorityRunner | undefined;
 	let ciProjection: CiProjectionRunner | undefined;
 	let servers: ClusterHttpServers | undefined;
-	let ledger: PostgresLedger | undefined;
 	let publicApi: T4PublicApiV1 | undefined;
 	let outboxAbort: AbortController | undefined;
 	let outboxTask: Promise<void> | undefined;

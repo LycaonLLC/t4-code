@@ -27,10 +27,16 @@ export interface T4PublicApiV1Options {
 	readonly allowedOrigins?: readonly string[] | (() => readonly string[]);
 }
 
-const DISCOVERY: Discovery = {
+const CAPABILITY_REQUIRED_SCOPES = [
+	["workspace.lifecycle", ["workspaces.read", "workspaces.write"]],
+	["session.lifecycle", ["sessions.read", "sessions.write"]],
+	["session.commands", ["commands.write"]],
+	["session.watch.sse", ["events.read"]],
+] as const;
+const DISCOVERY: Omit<Discovery, "capabilities"> = {
 	apiVersion: "1.0",
+	serverBuild: { version: "0.1.30", revision: "cluster" },
 	supportedMajors: [1],
-	capabilities: ["commands.write", "events.read", "sessions.read", "sessions.write", "workspaces.read", "workspaces.write"],
 	limits: {
 		pageSizeDefault: 25,
 		pageSizeMax: 100,
@@ -41,6 +47,18 @@ const DISCOVERY: Discovery = {
 		heartbeatSeconds: 15,
 	},
 };
+function discoveryFor(principal: ApiPrincipal): Discovery {
+	const capabilities: Discovery["capabilities"] = {};
+	for (const [capability, requiredScopes] of CAPABILITY_REQUIRED_SCOPES) {
+		capabilities[capability] = {
+			supported: true,
+			enabled: true,
+			authorized: requiredScopes.every(scope => principal.scopes.has(scope)),
+			available: true,
+		};
+	}
+	return { ...DISCOVERY, capabilities };
+}
 const RESOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u;
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9._~-]{16,128}$/u;
 const VERSION = /^[1-9][0-9]{0,3}(?:\.[0-9]+)?$/u;
@@ -169,7 +187,7 @@ export class T4PublicApiV1 {
 			const origin = request.headers.get("origin");
 			if (origin && !this.#allowedOrigins().includes(origin)) return apiError(requestId, 400, "invalid_origin", "request origin is not allowed");
 			const authorization = request.headers.get("authorization");
-			if (!authorization?.startsWith("Bearer ") || authorization.length > 16_391) return apiError(requestId, 401, "unauthenticated", "valid bearer authentication is required");
+			if (!authorization || !/^Bearer /iu.test(authorization) || authorization.length > 16_391) return apiError(requestId, 401, "unauthenticated", "valid bearer authentication is required");
 			const token = authorization.slice(7);
 			if (!token || /\s/u.test(token)) return apiError(requestId, 401, "unauthenticated", "valid bearer authentication is required");
 			const principal = await this.#authenticator.authenticate(token);
@@ -190,7 +208,7 @@ export class T4PublicApiV1 {
 		if (segments[0] !== "v1") return notFound(context.requestId);
 		if (segments.length === 1 && request.method === "GET") {
 			if (!this.#scope(context, "discovery.read")) return apiError(context.requestId, 403, "forbidden", "credential lacks the required operation scope");
-			return jsonResponse(200, DISCOVERY);
+			return jsonResponse(200, discoveryFor(context.principal));
 		}
 		if (segments.length === 2 && segments[1] === "workspaces") {
 			if (request.method === "GET") return await this.#listWorkspaces(url, context);
@@ -389,7 +407,7 @@ export class T4PublicApiV1 {
 	}
 	async #events(request: Request, url: URL, sessionId: string, context: ApiContext): Promise<Response> {
 		const forbidden = this.#requireScope(context, "events.read"); if (forbidden) return forbidden;
-		if (!acceptsEventStream(request.headers.get("accept"))) return apiError(context.requestId, 406, "invalid_request", "Accept must allow text/event-stream");
+		if (!acceptsEventStream(request.headers.get("accept"))) return apiError(context.requestId, 406, "incompatible_version", "Accept must allow text/event-stream", { supportedMajors: [1] });
 		const maxEvents = integerQuery(url.searchParams.get("maxEvents"), 100, 1, DISCOVERY.limits.watchEventsMax);
 		const heartbeat = integerQuery(url.searchParams.get("heartbeatSeconds"), DISCOVERY.limits.heartbeatSeconds, 5, 60);
 		if (!maxEvents || !heartbeat) return this.#validation(context, "watch bounds are invalid");

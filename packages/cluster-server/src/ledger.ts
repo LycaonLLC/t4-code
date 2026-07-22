@@ -49,10 +49,42 @@ export interface OutboxClaim {
 	readonly ownerId: string;
 	readonly ownerEpoch: bigint;
 	readonly expiresAt: number;
+	readonly claimedAt: string;
 }
 export interface OwnerLease {
 	readonly ownerId: string;
 	readonly epoch: bigint;
+}
+export type KubernetesStatusCollection = "t4workspaces" | "t4sessions";
+export interface AuthoritativeKubernetesStatusObservation {
+	readonly resourceId: string;
+	readonly principalId: string;
+	readonly workspaceId?: string;
+	readonly uid: string;
+	readonly resourceVersion: string;
+	readonly generation: bigint;
+	readonly observedGeneration: bigint;
+	readonly phase: "Pending" | "Ready" | "Running" | "Failed" | "Terminating" | "Unknown";
+	readonly deleted?: boolean;
+}
+export interface AuthoritativeKubernetesStatusSnapshot {
+	readonly relisted: true;
+	readonly resourceVersion: string;
+	readonly resourceIds: readonly string[];
+}
+export type AuthoritativeKubernetesStatusIngress = AuthoritativeKubernetesStatusObservation | AuthoritativeKubernetesStatusSnapshot;
+export interface StaleCreateCleanup {
+	readonly resourceType: KubernetesStatusCollection;
+	readonly targetId: string;
+	readonly uid: string;
+	readonly resourceVersion: string;
+}
+export interface StaleCreateCleanupClaim extends StaleCreateCleanup {
+	readonly cleanupId: bigint;
+	readonly ownerId: string;
+	readonly ownerEpoch: bigint;
+	readonly expiresAt: number;
+	readonly claimedAt: string;
 }
 
 interface CommandRow {
@@ -83,7 +115,6 @@ interface EventRow {
 }
 interface RetentionRow { readonly first_retained_sequence: bigint; readonly latest_sequence: bigint; }
 interface LeaseRow { readonly owner_id: string; readonly epoch: bigint; readonly expired: boolean; }
-interface LeaseClaimRow extends LeaseRow { readonly expires_at_ms: bigint; }
 interface OutboxRow {
 	readonly outbox_id: bigint;
 	readonly command_id: string;
@@ -94,12 +125,39 @@ interface OutboxRow {
 	readonly target_revision: bigint;
 	readonly mutation: Record<string, unknown>;
 }
+interface LockedOutboxRow extends OutboxRow {
+	readonly state: "pending" | "claimed" | "applied" | "skipped" | "failed";
+	readonly owner_id: string | null;
+	readonly owner_epoch: bigint | null;
+	readonly claimed_at: string | null;
+}
+interface CleanupRow {
+	readonly cleanup_id: bigint;
+	readonly resource_type: KubernetesStatusCollection;
+	readonly target_id: string;
+	readonly uid: string;
+	readonly resource_version: string;
+}
+interface MissingWorkspaceStatusRow { readonly workspace_id: string; }
+interface MissingSessionStatusRow { readonly session_id: string; readonly principal_id: string; readonly revision: bigint; }
+interface KubernetesStatusRow {
+	readonly state: WorkspaceRecord["state"] | SessionRecord["state"];
+	readonly revision: bigint;
+	readonly generation: bigint;
+	readonly kube_uid: string | null;
+	readonly kube_resource_version: string | null;
+	readonly kube_generation: bigint | null;
+	readonly kube_observed_generation: bigint | null;
+	readonly cancellation_requested?: boolean;
+	readonly deletion_requested: boolean;
+}
 
 const MIGRATION_URL = new URL("../migrations/001_durable_gateway.sql", import.meta.url);
 const ROLLBACK_URL = new URL("../migrations/001_durable_gateway.down.sql", import.meta.url);
 const OUTBOX_LEASE = "gateway-outbox";
 const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
 const SERIALIZABLE_ATTEMPTS = 3;
+const STALE_APPLY_DEADLINE_SECONDS = 5;
 
 function persistedBigint(value: unknown, allowZero = false): bigint {
 	if (typeof value !== "bigint") throw new Error("persisted ledger bigint is invalid");
@@ -143,6 +201,10 @@ function stableJson(value: unknown): string {
 		return `{${Object.keys(value as Record<string, unknown>).sort().map(key => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`).join(",")}}`;
 	}
 	throw new Error("canonical JSON value is invalid");
+}
+function semanticJsonEqual(left: unknown, right: unknown): boolean {
+	try { return stableJson(left) === stableJson(right); }
+	catch { return false; }
 }
 export function canonicalRequestFingerprint(value: unknown): string {
 	return `sha256:${createHash("sha256").update(stableJson(value), "utf8").digest("hex")}`;
@@ -311,11 +373,12 @@ export class PostgresLedger {
 				const value = session(current);
 				const commandId = `cmd_${randomUUID()}`;
 				const dispatchDeletion = deletion && !current.deletion_requested;
-				await transaction`INSERT INTO t4_commands (command_id, principal_id, operation, target_scope, idempotency_key, fingerprint, lifecycle_state, response_status, response_body) VALUES (${commandId}, ${principalId}, ${operation}, ${scope}, ${idempotencyKey}, ${fingerprint}, ${dispatchDeletion ? "accepted" : "completed"}, ${deletion ? 204 : 202}, ${value})`;
+				await transaction`INSERT INTO t4_commands (command_id, principal_id, operation, target_scope, idempotency_key, fingerprint, lifecycle_state, response_status, response_body) VALUES (${commandId}, ${principalId}, ${operation}, ${scope}, ${idempotencyKey}, ${fingerprint}, ${dispatchDeletion ? "accepted" : "projected"}, ${deletion ? 204 : 202}, ${value})`;
 				if (dispatchDeletion) {
 					await transaction`UPDATE t4_session_intents SET deletion_requested = true, generation = generation + 1, updated_at = clock_timestamp() WHERE session_id = ${sessionId}`;
 					await transaction`INSERT INTO t4_outbox (command_id, principal_id, idempotency_key, mutation_kind, target_id, target_revision, mutation) VALUES (${commandId}, ${principalId}, ${idempotencyKey}, 'session.delete', ${sessionId}, ${current.revision}, ${{ sessionId, revision: safeNumber(current.revision) }})`;
 				}
+				await this.#terminalizePendingSessionCommands(transaction, principalId, sessionId, "session cancelled or deleted", 0n);
 				await this.#appendEvent(transaction, principalId, sessionId, "session", { state: current.state, revision: safeNumber(current.revision) }, 0n);
 				return { kind: "accepted", commandId, value };
 			}
@@ -324,7 +387,8 @@ export class PostgresLedger {
 			const commandId = `cmd_${randomUUID()}`;
 			await transaction`INSERT INTO t4_commands (command_id, principal_id, operation, target_scope, idempotency_key, fingerprint, lifecycle_state, response_status, response_body) VALUES (${commandId}, ${principalId}, ${operation}, ${scope}, ${idempotencyKey}, ${fingerprint}, 'accepted', ${deletion ? 204 : 202}, ${value})`;
 			await transaction`UPDATE t4_session_intents SET state = 'cancelling', cancellation_requested = true, deletion_requested = deletion_requested OR ${deletion}, revision = ${revision}, generation = generation + 1, updated_at = clock_timestamp() WHERE session_id = ${sessionId}`;
-			await transaction`UPDATE t4_outbox SET state = 'skipped', terminal_result = ${{ reason: "superseded by cancellation" }}, updated_at = clock_timestamp() WHERE target_id = ${sessionId} AND mutation_kind = 'session.create' AND state IN ('pending','claimed')`;
+			await transaction`UPDATE t4_outbox SET state = 'skipped', owner_id = NULL, owner_epoch = NULL, claimed_at = NULL, terminal_result = ${{ reason: "superseded by cancellation" }}, updated_at = clock_timestamp() WHERE target_id = ${sessionId} AND mutation_kind = 'session.create' AND state IN ('pending','claimed')`;
+			await this.#terminalizePendingSessionCommands(transaction, principalId, sessionId, "session cancelled or deleted", 0n);
 			await transaction`INSERT INTO t4_outbox (command_id, principal_id, idempotency_key, mutation_kind, target_id, target_revision, mutation) VALUES (${commandId}, ${principalId}, ${idempotencyKey}, ${deletion ? "session.delete" : "session.cancel"}, ${sessionId}, ${revision}, ${{ sessionId, revision: safeNumber(revision) }})`;
 			await this.#appendEvent(transaction, principalId, sessionId, "session", { state: "cancelling", revision: safeNumber(revision) }, 0n);
 			return { kind: "accepted", commandId, value };
@@ -391,69 +455,227 @@ export class PostgresLedger {
 		return typeof result === "string" ? result : undefined;
 	}
 
-	async acquireLease(ownerId: string, leaseSeconds = 30): Promise<OwnerLease> {
+	async tryAcquireLease(ownerId: string, leaseSeconds = 30): Promise<OwnerLease | undefined> {
+		if (!ownerId.trim() || Buffer.byteLength(ownerId, "utf8") > 256) throw new Error("outbox owner id is invalid");
+		if (!Number.isSafeInteger(leaseSeconds) || leaseSeconds <= 0) throw new Error("outbox lease duration is invalid");
 		const rows = await this.#serializable(async transaction => {
 			const current = await transaction<LeaseRow[]>`SELECT owner_id, epoch, expires_at <= clock_timestamp() AS expired FROM t4_owner_leases WHERE lease_name = ${OUTBOX_LEASE} FOR UPDATE`;
-			if (!current[0]) {
-				return await transaction<LeaseRow[]>`INSERT INTO t4_owner_leases (lease_name, owner_id, epoch, expires_at) VALUES (${OUTBOX_LEASE}, ${ownerId}, 1, clock_timestamp() + (${leaseSeconds} * interval '1 second')) RETURNING owner_id, epoch, false AS expired`;
-			}
-			if (current[0].owner_id === ownerId && !current[0].expired) {
-				return await transaction<LeaseRow[]>`UPDATE t4_owner_leases SET expires_at = clock_timestamp() + (${leaseSeconds} * interval '1 second'), updated_at = clock_timestamp() WHERE lease_name = ${OUTBOX_LEASE} RETURNING owner_id, epoch, false AS expired`;
-			}
-			if (!current[0].expired) throw new Error("outbox lease is held by another owner");
+			if (!current[0]) return await transaction<LeaseRow[]>`INSERT INTO t4_owner_leases (lease_name, owner_id, epoch, expires_at) VALUES (${OUTBOX_LEASE}, ${ownerId}, 1, clock_timestamp() + (${leaseSeconds} * interval '1 second')) RETURNING owner_id, epoch, false AS expired`;
+			if (current[0].owner_id === ownerId && !current[0].expired) return await transaction<LeaseRow[]>`UPDATE t4_owner_leases SET expires_at = clock_timestamp() + (${leaseSeconds} * interval '1 second'), updated_at = clock_timestamp() WHERE lease_name = ${OUTBOX_LEASE} RETURNING owner_id, epoch, false AS expired`;
+			if (!current[0].expired) return undefined;
 			return await transaction<LeaseRow[]>`UPDATE t4_owner_leases SET owner_id = ${ownerId}, epoch = epoch + 1, expires_at = clock_timestamp() + (${leaseSeconds} * interval '1 second'), updated_at = clock_timestamp() WHERE lease_name = ${OUTBOX_LEASE} RETURNING owner_id, epoch, false AS expired`;
 		});
-		return { ownerId: rows[0]!.owner_id, epoch: persistedBigint(rows[0]!.epoch) };
+		return rows?.[0] ? { ownerId: rows[0].owner_id, epoch: persistedBigint(rows[0].epoch) } : undefined;
+	}
+
+	async acquireLease(ownerId: string, leaseSeconds = 30): Promise<OwnerLease> {
+		const lease = await this.tryAcquireLease(ownerId, leaseSeconds);
+		if (!lease) throw new Error("outbox lease is held by another owner");
+		return lease;
 	}
 
 	async claimNext(lease: OwnerLease): Promise<OutboxClaim | undefined> {
 		return await this.#serializable(async transaction => {
-			const current = await transaction<LeaseClaimRow[]>`SELECT owner_id, epoch, expires_at <= clock_timestamp() AS expired, floor(extract(epoch FROM expires_at) * 1000)::bigint AS expires_at_ms FROM t4_owner_leases WHERE lease_name = ${OUTBOX_LEASE} FOR UPDATE`;
+			const current = await transaction<LeaseRow[]>`SELECT owner_id, epoch, expires_at <= clock_timestamp() AS expired FROM t4_owner_leases WHERE lease_name = ${OUTBOX_LEASE} FOR UPDATE`;
 			if (current[0]?.owner_id !== lease.ownerId || current[0].epoch !== lease.epoch || current[0].expired) return undefined;
-			const rows = await transaction<OutboxRow[]>`SELECT outbox_id, command_id, principal_id, idempotency_key, mutation_kind, target_id, target_revision, mutation FROM t4_outbox WHERE (state = 'pending' OR (state = 'claimed' AND owner_epoch < ${lease.epoch})) AND next_attempt_at <= clock_timestamp() ORDER BY outbox_id FOR UPDATE SKIP LOCKED LIMIT 1`;
+			const rows = await transaction<OutboxRow[]>`SELECT outbox_id, command_id, principal_id, idempotency_key, mutation_kind, target_id, target_revision, mutation FROM t4_outbox WHERE (state = 'pending' OR (state = 'claimed' AND owner_epoch < ${lease.epoch}) OR (state = 'claimed' AND owner_id = ${lease.ownerId} AND owner_epoch = ${lease.epoch} AND claimed_at <= clock_timestamp() - (${STALE_APPLY_DEADLINE_SECONDS} * interval '1 second'))) AND next_attempt_at <= clock_timestamp() ORDER BY outbox_id FOR UPDATE SKIP LOCKED LIMIT 1`;
 			const row = rows[0];
 			if (!row) return undefined;
 			let superseded = false;
 			if (row.mutation_kind.startsWith("session.")) {
 				const intent = await transaction<{ revision: bigint; cancellation_requested: boolean }[]>`SELECT revision, cancellation_requested FROM t4_session_intents WHERE session_id = ${row.target_id}`;
 				superseded = !intent[0] || intent[0].revision !== row.target_revision || row.mutation_kind === "session.create" && intent[0].cancellation_requested;
+			} else if (row.mutation_kind === "command.submit") {
+				const intent = await transaction<{ state: SessionRecord["state"]; cancellation_requested: boolean; deletion_requested: boolean }[]>`SELECT state, cancellation_requested, deletion_requested FROM t4_session_intents WHERE session_id = ${row.target_id}`;
+				if (intent[0] && (intent[0].cancellation_requested || intent[0].deletion_requested || intent[0].state === "cancelling" || intent[0].state === "cancelled")) {
+					await this.#terminalizePendingSessionCommands(transaction, row.principal_id, row.target_id, "session cancelled or deleted", lease.epoch);
+					return undefined;
+				}
 			} else if (row.mutation_kind.startsWith("workspace.")) {
 				const intent = await transaction<{ revision: bigint; deletion_requested: boolean }[]>`SELECT revision, deletion_requested FROM t4_workspace_intents WHERE workspace_id = ${row.target_id}`;
 				superseded = !intent[0] || intent[0].revision !== row.target_revision || row.mutation_kind === "workspace.create" && intent[0].deletion_requested;
 			}
 			if (superseded) {
-				await transaction`UPDATE t4_outbox SET state = 'skipped', owner_id = ${lease.ownerId}, owner_epoch = ${lease.epoch}, terminal_result = ${{ reason: "superseded intent" }}, updated_at = clock_timestamp() WHERE outbox_id = ${row.outbox_id}`;
+				await transaction`UPDATE t4_outbox SET state = 'skipped', owner_id = NULL, owner_epoch = NULL, claimed_at = NULL, terminal_result = ${{ reason: "superseded intent", ownerId: lease.ownerId, ownerEpoch: lease.epoch.toString() }}, updated_at = clock_timestamp() WHERE outbox_id = ${row.outbox_id}`;
 				return undefined;
 			}
-			await transaction`UPDATE t4_outbox SET state = 'claimed', owner_id = ${lease.ownerId}, owner_epoch = ${lease.epoch}, attempts = attempts + 1, claimed_at = clock_timestamp(), updated_at = clock_timestamp() WHERE outbox_id = ${row.outbox_id}`;
-			return { outboxId: row.outbox_id, commandId: row.command_id, principalId: row.principal_id, idempotencyKey: row.idempotency_key, kind: row.mutation_kind, targetId: row.target_id, targetRevision: row.target_revision, mutation: row.mutation, ownerId: lease.ownerId, ownerEpoch: lease.epoch, expiresAt: safeNumber(current[0].expires_at_ms) };
+			const claimed = await transaction<{ claimed_at: string; apply_expires_at_ms: bigint }[]>`UPDATE t4_outbox SET state = 'claimed', owner_id = ${lease.ownerId}, owner_epoch = ${lease.epoch}, attempts = attempts + 1, claimed_at = clock_timestamp(), updated_at = clock_timestamp() WHERE outbox_id = ${row.outbox_id} RETURNING floor(extract(epoch FROM claimed_at) * 1000000)::numeric::text AS claimed_at, floor(extract(epoch FROM LEAST(claimed_at + (${STALE_APPLY_DEADLINE_SECONDS} * interval '1 second'), (SELECT expires_at FROM t4_owner_leases WHERE lease_name = ${OUTBOX_LEASE}))) * 1000)::bigint AS apply_expires_at_ms`;
+			return { outboxId: row.outbox_id, commandId: row.command_id, principalId: row.principal_id, idempotencyKey: row.idempotency_key, kind: row.mutation_kind, targetId: row.target_id, targetRevision: row.target_revision, mutation: row.mutation, ownerId: lease.ownerId, ownerEpoch: lease.epoch, expiresAt: safeNumber(claimed[0]!.apply_expires_at_ms), claimedAt: claimed[0]!.claimed_at };
 		});
 	}
 
 	async claimIsCurrent(claim: OutboxClaim): Promise<boolean> {
-		const rows = await this.#sql<{ valid: boolean }[]>`SELECT EXISTS (SELECT 1 FROM t4_owner_leases lease JOIN t4_outbox item ON item.outbox_id = ${claim.outboxId} WHERE lease.lease_name = ${OUTBOX_LEASE} AND lease.owner_id = ${claim.ownerId} AND lease.epoch = ${claim.ownerEpoch} AND lease.expires_at > clock_timestamp() AND item.state = 'claimed' AND item.owner_id = lease.owner_id AND item.owner_epoch = lease.epoch) AS valid`;
-		return rows[0]?.valid === true;
+		const rows = await this.#sql<{ mutation: Record<string, unknown> }[]>`SELECT item.mutation FROM t4_owner_leases lease JOIN t4_outbox item ON item.outbox_id = ${claim.outboxId} WHERE lease.lease_name = ${OUTBOX_LEASE} AND lease.owner_id = ${claim.ownerId} AND lease.epoch = ${claim.ownerEpoch} AND lease.expires_at > clock_timestamp() AND item.state = 'claimed' AND item.owner_id = lease.owner_id AND item.owner_epoch = lease.epoch AND floor(extract(epoch FROM item.claimed_at) * 1000000)::numeric::text = ${claim.claimedAt} AND item.command_id = ${claim.commandId} AND item.principal_id = ${claim.principalId} AND item.idempotency_key = ${claim.idempotencyKey} AND item.mutation_kind = ${claim.kind} AND item.target_id = ${claim.targetId} AND item.target_revision = ${claim.targetRevision} LIMIT 1`;
+		return rows[0] !== undefined && semanticJsonEqual(rows[0].mutation, claim.mutation);
 	}
 
 	async acknowledge(claim: OutboxClaim): Promise<boolean> {
 		return await this.#serializable(async transaction => {
 			const lease = await transaction<LeaseRow[]>`SELECT owner_id, epoch, expires_at <= clock_timestamp() AS expired FROM t4_owner_leases WHERE lease_name = ${OUTBOX_LEASE} FOR UPDATE`;
 			if (lease[0]?.owner_id !== claim.ownerId || lease[0].epoch !== claim.ownerEpoch || lease[0].expired) return false;
-			const updated = await transaction<{ outbox_id: bigint }[]>`UPDATE t4_outbox SET state = 'applied', terminal_result = ${{ applied: true }}, updated_at = clock_timestamp() WHERE outbox_id = ${claim.outboxId} AND state = 'claimed' AND owner_id = ${claim.ownerId} AND owner_epoch = ${claim.ownerEpoch} RETURNING outbox_id`;
-			if (!updated[0]) return false;
-			await transaction`UPDATE t4_commands SET lifecycle_state = 'completed', updated_at = clock_timestamp() WHERE command_id = ${claim.commandId}`;
-			if (claim.kind === "workspace.create") await transaction`UPDATE t4_workspace_intents SET state = 'provisioning', updated_at = clock_timestamp() WHERE workspace_id = ${claim.targetId} AND revision = ${claim.targetRevision} AND state = 'accepted' AND deletion_requested = false`;
-			if (claim.kind === "session.create") {
-				const transitioned = await transaction<{ session_id: string }[]>`UPDATE t4_session_intents SET state = 'provisioning', updated_at = clock_timestamp() WHERE session_id = ${claim.targetId} AND revision = ${claim.targetRevision} AND state = 'accepted' AND cancellation_requested = false RETURNING session_id`;
-				if (transitioned[0]) await this.#appendEvent(transaction, claim.principalId, claim.targetId, "session", { state: "provisioning", revision: safeNumber(claim.targetRevision) }, claim.ownerEpoch);
+			const rows = await transaction<LockedOutboxRow[]>`SELECT outbox_id, command_id, principal_id, idempotency_key, mutation_kind, target_id, target_revision, mutation, state, owner_id, owner_epoch, floor(extract(epoch FROM claimed_at) * 1000000)::numeric::text AS claimed_at FROM t4_outbox WHERE outbox_id = ${claim.outboxId} FOR UPDATE`;
+			const row = rows[0];
+			if (!row || row.state !== "claimed" || row.owner_id !== claim.ownerId || row.owner_epoch !== claim.ownerEpoch || row.claimed_at !== claim.claimedAt
+				|| row.command_id !== claim.commandId || row.principal_id !== claim.principalId || row.idempotency_key !== claim.idempotencyKey
+				|| row.mutation_kind !== claim.kind || row.target_id !== claim.targetId || row.target_revision !== claim.targetRevision
+				|| !semanticJsonEqual(row.mutation, claim.mutation)) return false;
+			await transaction`UPDATE t4_outbox SET state = 'applied', owner_id = NULL, owner_epoch = NULL, claimed_at = NULL, terminal_result = ${{ applied: true, ownerId: claim.ownerId, ownerEpoch: claim.ownerEpoch.toString() }}, updated_at = clock_timestamp() WHERE outbox_id = ${row.outbox_id}`;
+			await transaction`UPDATE t4_stale_create_cleanups SET state = 'applied', owner_id = NULL, owner_epoch = NULL, claimed_at = NULL, last_error = NULL, updated_at = clock_timestamp() WHERE outbox_id = ${row.outbox_id} AND state <> 'applied'`;
+			const projected = await transaction<{ command_id: string }[]>`UPDATE t4_commands SET lifecycle_state = 'projected', updated_at = clock_timestamp() WHERE command_id = ${row.command_id} AND lifecycle_state = 'accepted' RETURNING command_id`;
+			if (projected[0] && row.mutation_kind === "command.submit") await this.#appendEvent(transaction, row.principal_id, row.target_id, "command", { commandId: row.command_id, state: "projected" }, claim.ownerEpoch);
+			if (row.mutation_kind === "workspace.create") await transaction`UPDATE t4_workspace_intents SET state = 'provisioning', updated_at = clock_timestamp() WHERE workspace_id = ${row.target_id} AND revision = ${row.target_revision} AND state = 'accepted' AND deletion_requested = false`;
+			if (row.mutation_kind === "session.create") {
+				const transitioned = await transaction<{ session_id: string }[]>`UPDATE t4_session_intents SET state = 'provisioning', updated_at = clock_timestamp() WHERE session_id = ${row.target_id} AND revision = ${row.target_revision} AND state = 'accepted' AND cancellation_requested = false RETURNING session_id`;
+				if (transitioned[0]) await this.#appendEvent(transaction, row.principal_id, row.target_id, "session", { state: "provisioning", revision: safeNumber(row.target_revision) }, claim.ownerEpoch);
 			}
 			return true;
 		});
 	}
 
 	async recordFailure(claim: OutboxClaim, message: string): Promise<boolean> {
-		const result = await this.#sql<{ outbox_id: bigint }[]>`UPDATE t4_outbox item SET state = 'pending', owner_id = NULL, owner_epoch = NULL, last_error = ${message.slice(0, 1024)}, next_attempt_at = clock_timestamp() + interval '1 second', updated_at = clock_timestamp() FROM t4_owner_leases lease WHERE item.outbox_id = ${claim.outboxId} AND item.state = 'claimed' AND item.owner_id = ${claim.ownerId} AND item.owner_epoch = ${claim.ownerEpoch} AND lease.lease_name = ${OUTBOX_LEASE} AND lease.owner_id = ${claim.ownerId} AND lease.epoch = ${claim.ownerEpoch} AND lease.expires_at > clock_timestamp() RETURNING item.outbox_id`;
-		return result.length === 1;
+		return await this.#serializable(async transaction => {
+			const lease = await transaction<LeaseRow[]>`SELECT owner_id, epoch, expires_at <= clock_timestamp() AS expired FROM t4_owner_leases WHERE lease_name = ${OUTBOX_LEASE} FOR UPDATE`;
+			if (lease[0]?.owner_id !== claim.ownerId || lease[0].epoch !== claim.ownerEpoch || lease[0].expired) return false;
+			const rows = await transaction<LockedOutboxRow[]>`SELECT outbox_id, command_id, principal_id, idempotency_key, mutation_kind, target_id, target_revision, mutation, state, owner_id, owner_epoch, floor(extract(epoch FROM claimed_at) * 1000000)::numeric::text AS claimed_at FROM t4_outbox WHERE outbox_id = ${claim.outboxId} FOR UPDATE`;
+			const row = rows[0];
+			if (!row || row.state !== "claimed" || row.owner_id !== claim.ownerId || row.owner_epoch !== claim.ownerEpoch || row.claimed_at !== claim.claimedAt
+				|| row.command_id !== claim.commandId || row.principal_id !== claim.principalId || row.idempotency_key !== claim.idempotencyKey
+				|| row.mutation_kind !== claim.kind || row.target_id !== claim.targetId || row.target_revision !== claim.targetRevision
+				|| !semanticJsonEqual(row.mutation, claim.mutation)) return false;
+			await transaction`UPDATE t4_outbox SET state = 'pending', owner_id = NULL, owner_epoch = NULL, claimed_at = NULL, last_error = ${message.slice(0, 1024)}, next_attempt_at = clock_timestamp() + interval '1 second', updated_at = clock_timestamp() WHERE outbox_id = ${row.outbox_id}`;
+			return true;
+		});
+	}
+
+	async ingestKubernetesStatus(lease: OwnerLease, collection: KubernetesStatusCollection, ingress: AuthoritativeKubernetesStatusIngress): Promise<void> {
+		if (collection !== "t4workspaces" && collection !== "t4sessions") throw new Error("Kubernetes status collection is invalid");
+		if ("relisted" in ingress) {
+			if (!ingress.resourceVersion || Buffer.byteLength(ingress.resourceVersion, "utf8") > 256
+				|| !Array.isArray(ingress.resourceIds) || ingress.resourceIds.some(resourceId => typeof resourceId !== "string" || !resourceId || Buffer.byteLength(resourceId, "utf8") > 256)) throw new Error("Kubernetes status relist identity is invalid");
+			const present = new Set(ingress.resourceIds);
+			await this.#serializable(async transaction => {
+				const currentLease = await transaction<LeaseRow[]>`SELECT owner_id, epoch, expires_at <= clock_timestamp() AS expired FROM t4_owner_leases WHERE lease_name = ${OUTBOX_LEASE} FOR UPDATE`;
+				if (currentLease[0]?.owner_id !== lease.ownerId || currentLease[0].epoch !== lease.epoch || currentLease[0].expired) throw new Error("Kubernetes status owner lease is no longer current");
+				if (collection === "t4workspaces") {
+					const missing = await transaction<MissingWorkspaceStatusRow[]>`SELECT workspace_id FROM t4_workspace_intents WHERE state = 'deleting' AND deletion_requested = true FOR UPDATE`;
+					for (const row of missing) {
+						if (!present.has(row.workspace_id)) await transaction`UPDATE t4_workspace_intents SET state = 'deleted', updated_at = clock_timestamp() WHERE workspace_id = ${row.workspace_id} AND state = 'deleting'`;
+					}
+				} else {
+					const missing = await transaction<MissingSessionStatusRow[]>`SELECT session_id, principal_id, revision FROM t4_session_intents WHERE state <> 'cancelled' AND (state = 'cancelling' AND cancellation_requested = true OR deletion_requested = true) FOR UPDATE`;
+					for (const row of missing) {
+						if (present.has(row.session_id)) continue;
+						const transitioned = await transaction<{ session_id: string }[]>`UPDATE t4_session_intents SET state = 'cancelled', updated_at = clock_timestamp() WHERE session_id = ${row.session_id} AND state <> 'cancelled' RETURNING session_id`;
+						if (transitioned[0]) {
+							await this.#terminalizePendingSessionCommands(transaction, row.principal_id, row.session_id, "session absent from authoritative relist", lease.epoch);
+							await this.#appendEvent(transaction, row.principal_id, row.session_id, "session", { state: "cancelled", revision: safeNumber(row.revision) }, lease.epoch);
+						}
+					}
+				}
+				await transaction`INSERT INTO t4_kubernetes_status_cursors (collection, resource_version, owner_epoch) VALUES (${collection}, ${ingress.resourceVersion}, ${lease.epoch}) ON CONFLICT (collection) DO UPDATE SET resource_version = EXCLUDED.resource_version, owner_epoch = EXCLUDED.owner_epoch, updated_at = clock_timestamp()`;
+			});
+			return;
+		}
+		const observation = ingress;
+		if (!observation.resourceId || !observation.principalId || !observation.uid || !observation.resourceVersion || Buffer.byteLength(observation.uid, "utf8") > 256 || Buffer.byteLength(observation.resourceVersion, "utf8") > 256) throw new Error("Kubernetes status identity is incomplete or unbounded");
+		if (typeof observation.generation !== "bigint" || observation.generation <= 0n || typeof observation.observedGeneration !== "bigint" || observation.observedGeneration < 0n) throw new Error("Kubernetes status generation is invalid");
+		if (collection === "t4sessions" && !observation.workspaceId) throw new Error("Kubernetes session status lacks workspace identity");
+		await this.#serializable(async transaction => {
+			const currentLease = await transaction<LeaseRow[]>`SELECT owner_id, epoch, expires_at <= clock_timestamp() AS expired FROM t4_owner_leases WHERE lease_name = ${OUTBOX_LEASE} FOR UPDATE`;
+			if (currentLease[0]?.owner_id !== lease.ownerId || currentLease[0].epoch !== lease.epoch || currentLease[0].expired) throw new Error("Kubernetes status owner lease is no longer current");
+			const rows = collection === "t4workspaces"
+				? await transaction<KubernetesStatusRow[]>`SELECT state, revision, generation, kube_uid, kube_resource_version, kube_generation, kube_observed_generation, deletion_requested FROM t4_workspace_intents WHERE workspace_id = ${observation.resourceId} AND principal_id = ${observation.principalId} FOR UPDATE`
+				: await transaction<KubernetesStatusRow[]>`SELECT state, revision, generation, kube_uid, kube_resource_version, kube_generation, kube_observed_generation, cancellation_requested, deletion_requested FROM t4_session_intents WHERE session_id = ${observation.resourceId} AND principal_id = ${observation.principalId} AND workspace_id = ${observation.workspaceId!} FOR UPDATE`;
+			const row = rows[0];
+			await transaction`INSERT INTO t4_kubernetes_status_cursors (collection, resource_version, owner_epoch) VALUES (${collection}, ${observation.resourceVersion}, ${lease.epoch}) ON CONFLICT (collection) DO UPDATE SET resource_version = EXCLUDED.resource_version, owner_epoch = EXCLUDED.owner_epoch, updated_at = clock_timestamp()`;
+			if (!row) return;
+			if (row.kube_uid !== null && row.kube_uid !== observation.uid) throw new Error("Kubernetes status UID conflicts with the durable resource identity");
+			if (row.kube_resource_version === observation.resourceVersion && !observation.deleted) return;
+			if (!observation.deleted && (row.kube_generation !== null && observation.generation < row.kube_generation
+				|| row.kube_generation === observation.generation && row.kube_observed_generation !== null && observation.observedGeneration < row.kube_observed_generation)) return;
+			const statusIsCurrent = observation.observedGeneration >= observation.generation && observation.generation >= row.generation;
+			if (collection === "t4workspaces") {
+				const absorbed = row.deletion_requested || row.state === "deleting" || row.state === "deleted";
+				const mapped: WorkspaceRecord["state"] = observation.phase === "Pending" ? "provisioning"
+					: observation.phase === "Ready" || observation.phase === "Running" ? "ready"
+						: observation.phase === "Failed" ? "failed"
+							: observation.phase === "Terminating" ? "deleting" : "indeterminate";
+				const nextState: WorkspaceRecord["state"] = observation.deleted ? "deleted" : statusIsCurrent && !absorbed ? mapped : row.state as WorkspaceRecord["state"];
+				await transaction`UPDATE t4_workspace_intents SET kube_uid = ${observation.uid}, kube_resource_version = ${observation.resourceVersion}, kube_generation = ${observation.generation}, kube_observed_generation = ${observation.observedGeneration}, state = ${nextState}, updated_at = clock_timestamp() WHERE workspace_id = ${observation.resourceId}`;
+			} else {
+				const absorbed = row.cancellation_requested === true || row.deletion_requested || row.state === "cancelling" || row.state === "cancelled";
+				const mapped: SessionRecord["state"] = observation.phase === "Pending" ? "provisioning"
+					: observation.phase === "Ready" || observation.phase === "Running" ? "ready"
+						: observation.phase === "Failed" ? "failed"
+							: observation.phase === "Terminating" ? "cancelling" : "indeterminate";
+				const nextState: SessionRecord["state"] = observation.deleted ? "cancelled" : statusIsCurrent && !absorbed ? mapped : row.state as SessionRecord["state"];
+				await transaction`UPDATE t4_session_intents SET kube_uid = ${observation.uid}, kube_resource_version = ${observation.resourceVersion}, kube_generation = ${observation.generation}, kube_observed_generation = ${observation.observedGeneration}, state = ${nextState}, updated_at = clock_timestamp() WHERE session_id = ${observation.resourceId}`;
+				if (nextState !== row.state) {
+					if (nextState === "cancelled") await this.#terminalizePendingSessionCommands(transaction, observation.principalId, observation.resourceId, "session deleted in Kubernetes", lease.epoch);
+					await this.#appendEvent(transaction, observation.principalId, observation.resourceId, "session", { state: nextState, revision: safeNumber(row.revision) }, lease.epoch);
+				}
+			}
+		});
+	}
+
+	async persistStaleCreateCleanup(claim: OutboxClaim, cleanup: StaleCreateCleanup): Promise<boolean> {
+		if ((cleanup.resourceType !== "t4workspaces" && cleanup.resourceType !== "t4sessions") || !cleanup.targetId || !cleanup.uid || !cleanup.resourceVersion
+			|| Buffer.byteLength(cleanup.uid, "utf8") > 256 || Buffer.byteLength(cleanup.resourceVersion, "utf8") > 256) return false;
+		return await this.#serializable(async transaction => {
+			const rows = await transaction<LockedOutboxRow[]>`SELECT outbox_id, command_id, principal_id, idempotency_key, mutation_kind, target_id, target_revision, mutation, state, owner_id, owner_epoch, floor(extract(epoch FROM claimed_at) * 1000000)::numeric::text AS claimed_at FROM t4_outbox WHERE outbox_id = ${claim.outboxId} FOR UPDATE`;
+			const row = rows[0];
+			const resourceType = row?.mutation_kind === "workspace.create" ? "t4workspaces" : row?.mutation_kind === "session.create" ? "t4sessions" : undefined;
+			if (!row || row.state === "applied" || resourceType !== cleanup.resourceType || row.target_id !== cleanup.targetId || row.command_id !== claim.commandId || row.principal_id !== claim.principalId
+				|| row.idempotency_key !== claim.idempotencyKey || row.mutation_kind !== claim.kind || row.target_id !== claim.targetId || row.target_revision !== claim.targetRevision
+				|| !semanticJsonEqual(row.mutation, claim.mutation)) return false;
+			await transaction`INSERT INTO t4_stale_create_cleanups (outbox_id, resource_type, target_id, uid, resource_version) VALUES (${row.outbox_id}, ${cleanup.resourceType}, ${cleanup.targetId}, ${cleanup.uid}, ${cleanup.resourceVersion}) ON CONFLICT (outbox_id, uid) DO UPDATE SET resource_version = EXCLUDED.resource_version, state = CASE WHEN t4_stale_create_cleanups.state = 'applied' THEN 'applied' ELSE 'pending' END, owner_id = NULL, owner_epoch = NULL, claimed_at = NULL, next_attempt_at = clock_timestamp(), updated_at = clock_timestamp()`;
+			return true;
+		});
+	}
+
+	async claimStaleCreateCleanup(lease: OwnerLease): Promise<StaleCreateCleanupClaim | undefined> {
+		return await this.#serializable(async transaction => {
+			const current = await transaction<LeaseRow[]>`SELECT owner_id, epoch, expires_at <= clock_timestamp() AS expired FROM t4_owner_leases WHERE lease_name = ${OUTBOX_LEASE} FOR UPDATE`;
+			if (current[0]?.owner_id !== lease.ownerId || current[0].epoch !== lease.epoch || current[0].expired) return undefined;
+			const rows = await transaction<CleanupRow[]>`SELECT cleanup.cleanup_id, cleanup.resource_type, cleanup.target_id, cleanup.uid, cleanup.resource_version FROM t4_stale_create_cleanups cleanup JOIN t4_outbox item ON item.outbox_id = cleanup.outbox_id WHERE item.state <> 'applied' AND (cleanup.state = 'pending' OR (cleanup.state = 'claimed' AND cleanup.owner_epoch < ${lease.epoch}) OR (cleanup.state = 'claimed' AND cleanup.owner_id = ${lease.ownerId} AND cleanup.owner_epoch = ${lease.epoch} AND cleanup.claimed_at <= clock_timestamp() - (${STALE_APPLY_DEADLINE_SECONDS} * interval '1 second'))) AND cleanup.next_attempt_at <= clock_timestamp() ORDER BY cleanup.cleanup_id FOR UPDATE OF cleanup SKIP LOCKED LIMIT 1`;
+			const row = rows[0];
+			if (!row) return undefined;
+			const claimed = await transaction<{ claimed_at: string; apply_expires_at_ms: bigint }[]>`UPDATE t4_stale_create_cleanups SET state = 'claimed', owner_id = ${lease.ownerId}, owner_epoch = ${lease.epoch}, attempts = attempts + 1, claimed_at = clock_timestamp(), updated_at = clock_timestamp() WHERE cleanup_id = ${row.cleanup_id} RETURNING floor(extract(epoch FROM claimed_at) * 1000000)::numeric::text AS claimed_at, floor(extract(epoch FROM LEAST(claimed_at + (${STALE_APPLY_DEADLINE_SECONDS} * interval '1 second'), (SELECT expires_at FROM t4_owner_leases WHERE lease_name = ${OUTBOX_LEASE}))) * 1000)::bigint AS apply_expires_at_ms`;
+			return { cleanupId: row.cleanup_id, resourceType: row.resource_type, targetId: row.target_id, uid: row.uid, resourceVersion: row.resource_version, ownerId: lease.ownerId, ownerEpoch: lease.epoch, expiresAt: safeNumber(claimed[0]!.apply_expires_at_ms), claimedAt: claimed[0]!.claimed_at };
+		});
+	}
+
+	async staleCreateCleanupClaimIsCurrent(claim: StaleCreateCleanupClaim): Promise<boolean> {
+		const rows = await this.#sql<{ valid: boolean }[]>`SELECT EXISTS (SELECT 1 FROM t4_owner_leases lease JOIN t4_stale_create_cleanups cleanup ON cleanup.cleanup_id = ${claim.cleanupId} JOIN t4_outbox item ON item.outbox_id = cleanup.outbox_id WHERE lease.lease_name = ${OUTBOX_LEASE} AND lease.owner_id = ${claim.ownerId} AND lease.epoch = ${claim.ownerEpoch} AND lease.expires_at > clock_timestamp() AND item.state <> 'applied' AND cleanup.state = 'claimed' AND cleanup.owner_id = lease.owner_id AND cleanup.owner_epoch = lease.epoch AND floor(extract(epoch FROM cleanup.claimed_at) * 1000000)::numeric::text = ${claim.claimedAt} AND cleanup.resource_type = ${claim.resourceType} AND cleanup.target_id = ${claim.targetId} AND cleanup.uid = ${claim.uid} AND cleanup.resource_version = ${claim.resourceVersion}) AS valid`;
+		return rows[0]?.valid === true;
+	}
+
+	async acknowledgeStaleCreateCleanup(claim: StaleCreateCleanupClaim): Promise<boolean> {
+		return await this.#finishStaleCreateCleanup(claim, undefined);
+	}
+
+	async recordStaleCreateCleanupFailure(claim: StaleCreateCleanupClaim, message: string): Promise<boolean> {
+		return await this.#finishStaleCreateCleanup(claim, message.slice(0, 1024));
+	}
+
+	async #finishStaleCreateCleanup(claim: StaleCreateCleanupClaim, failure: string | undefined): Promise<boolean> {
+		return await this.#serializable(async transaction => {
+			const lease = await transaction<LeaseRow[]>`SELECT owner_id, epoch, expires_at <= clock_timestamp() AS expired FROM t4_owner_leases WHERE lease_name = ${OUTBOX_LEASE} FOR UPDATE`;
+			if (lease[0]?.owner_id !== claim.ownerId || lease[0].epoch !== claim.ownerEpoch || lease[0].expired) return false;
+			const rows = await transaction<{ cleanup_id: bigint }[]>`SELECT cleanup_id FROM t4_stale_create_cleanups WHERE cleanup_id = ${claim.cleanupId} AND state = 'claimed' AND owner_id = ${claim.ownerId} AND owner_epoch = ${claim.ownerEpoch} AND floor(extract(epoch FROM claimed_at) * 1000000)::numeric::text = ${claim.claimedAt} AND resource_type = ${claim.resourceType} AND target_id = ${claim.targetId} AND uid = ${claim.uid} AND resource_version = ${claim.resourceVersion} FOR UPDATE`;
+			if (!rows[0]) return false;
+			if (failure === undefined) await transaction`UPDATE t4_stale_create_cleanups SET state = 'applied', owner_id = NULL, owner_epoch = NULL, claimed_at = NULL, last_error = NULL, updated_at = clock_timestamp() WHERE cleanup_id = ${claim.cleanupId}`;
+			else await transaction`UPDATE t4_stale_create_cleanups SET state = 'pending', owner_id = NULL, owner_epoch = NULL, claimed_at = NULL, last_error = ${failure}, next_attempt_at = clock_timestamp() + interval '1 second', updated_at = clock_timestamp() WHERE cleanup_id = ${claim.cleanupId}`;
+			return true;
+		});
+	}
+
+	async #terminalizePendingSessionCommands(transaction: SQL, principalId: string, sessionId: string, reason: string, ownerEpoch: bigint): Promise<void> {
+		const skipped = await transaction<{ command_id: string }[]>`UPDATE t4_outbox SET state = 'skipped', owner_id = NULL, owner_epoch = NULL, claimed_at = NULL, terminal_result = ${{ reason }}, updated_at = clock_timestamp() WHERE principal_id = ${principalId} AND target_id = ${sessionId} AND mutation_kind = 'command.submit' AND state IN ('pending','claimed') RETURNING command_id`;
+		for (const row of skipped) {
+			const terminal = await transaction<{ command_id: string }[]>`UPDATE t4_commands SET lifecycle_state = 'cancelled', updated_at = clock_timestamp() WHERE command_id = ${row.command_id} AND lifecycle_state = 'accepted' RETURNING command_id`;
+			if (terminal[0]) await this.#appendEvent(transaction, principalId, sessionId, "command", { commandId: row.command_id, state: "cancelled" }, ownerEpoch);
+		}
 	}
 
 	async #serializable<T>(operation: (transaction: SQL) => Promise<T>): Promise<T> {
