@@ -861,9 +861,18 @@ async function* watch(
           const chunk = await reader.read();
           const events = chunk.done ? decodedFrames(parser, undefined) : decodedFrames(parser, chunk.value);
           for (const event of events) {
-            if (deliveredCursors.has(event.cursor)) throw protocolError(502, "T4 API watch repeated a durable event cursor");
-            deliveredCursors.add(event.cursor);
-            cursor = event.cursor;
+            if (event.type === "heartbeat") {
+              if (cursor === undefined) {
+                cursor = event.cursor;
+                deliveredCursors.add(event.cursor);
+              } else if (event.cursor !== cursor) {
+                throw protocolError(502, "T4 API watch heartbeat advanced the durable event cursor");
+              }
+            } else {
+              if (deliveredCursors.has(event.cursor)) throw protocolError(502, "T4 API watch repeated a durable event cursor");
+              deliveredCursors.add(event.cursor);
+              cursor = event.cursor;
+            }
             delivered += 1;
             reconnectAttempts = 0;
             yield event;
