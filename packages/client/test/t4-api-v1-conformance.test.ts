@@ -573,6 +573,7 @@ describe("generated T4 API v1 client conformance", () => {
       "2026-02-31T00:00:00Z", "2026-13-01T00:00:00Z", "2025-02-29T00:00:00Z",
       "2026-04-31T00:00:00Z", "2026-01-01T24:00:00Z", "2026-01-01T00:60:00Z",
       "2026-01-01T00:00:00+24:00", "2026-01-01T00:00:00+01:60",
+      "2026-06-30T23:59:60Z", "2026-12-31T23:59:60Z", "2026-06-30T15:59:60-08:00",
     ]) {
       const calendarClient = createT4ApiClient({
         baseUrl: "https://watch-calendar.test", credential: "token-a", majorVersion: 1,
@@ -632,7 +633,7 @@ describe("generated T4 API v1 client conformance", () => {
     }
   });
 
-  it("accepts every RFC 9110 HTTP-date form in Retry-After", async () => {
+  it("accepts every RFC 9110 HTTP-date form in Retry-After without dropping its delay", async () => {
     for (const retryAfter of [
       "Sun, 06 Nov 1994 08:49:37 GMT",
       "Sunday, 06-Nov-94 08:49:37 GMT",
@@ -642,7 +643,25 @@ describe("generated T4 API v1 client conformance", () => {
         baseUrl: "https://http-date-retry-after.test", credential: "token-a", majorVersion: 1,
         fetch: async () => jsonResponse({ error: { code: "unavailable", message: "later", requestId: "r", retryable: true } }, { status: 503, headers: { "Retry-After": retryAfter } }),
       });
-      await expect(client.http.GET("/v1", { params: { header: VERSION_HEADERS } })).resolves.toMatchObject({ error: { error: { code: "unavailable" } } });
+      await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({
+        status: 502, cause: { status: 503, retryAfterMs: 0 },
+      });
+    }
+  });
+
+  it("resolves RFC 850 two-digit years relative to the current year", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-07-21T00:00:00Z"));
+      const client = createT4ApiClient({
+        baseUrl: "https://rfc850-year.test", credential: "token-a", majorVersion: 1,
+        fetch: async () => jsonResponse({ error: { code: "unavailable", message: "later", requestId: "r", retryable: true } }, { status: 503, headers: { "Retry-After": "Saturday, 01-Jan-50 00:00:00 GMT" } }),
+      });
+      await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({
+        status: 502, cause: { status: 503, retryAfterMs: 30_000 },
+      });
+    } finally {
+      vi.useRealTimers();
     }
   });
 
