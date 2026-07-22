@@ -495,6 +495,35 @@ describe("generated T4 API v1 client conformance", () => {
     })).response.status).toBe(202);
   });
 
+  it("rejects undeclared JSON request media before mutation and idempotency", async () => {
+    for (const contentType of [undefined, "text/plain"]) {
+      const service = new T4ApiV1ConformanceService();
+      await seededClient(service, `request-media-${contentType ?? "missing"}`);
+      const cases = [
+        ["POST", "/v1/workspaces", '{"name":"media-workspace"}', {}, 202, { id: "ws-2" }],
+        ["POST", "/v1/workspaces/ws-1/sessions", '{"title":"media-session"}', {}, 202, { id: "ses-2" }],
+        ["PATCH", "/v1/workspaces/ws-1", '{"name":"renamed"}', { "If-Match": "1" }, 200, { revision: 2 }],
+        ["PATCH", "/v1/sessions/ses-1", '{"title":"retitled"}', { "If-Match": "1" }, 200, { revision: 2 }],
+        ["POST", "/v1/sessions/ses-1/commands", '{"command":"ok"}', {}, 202, { commandId: "cmd-1" }],
+      ] as const;
+      for (const [index, [method, path, body, routeHeaders, successStatus, successBody]] of cases.entries()) {
+        const key = `request-media-${contentType ?? "missing"}-${index}`;
+        const headers = { Authorization: "Bearer token-a", "T4-API-Version": "1", "Idempotency-Key": key, ...routeHeaders };
+        const invalid = await service.fetch(`${service.origin}${path}`, {
+          method, headers: { ...headers, ...(contentType === undefined ? {} : { "Content-Type": contentType }) }, body,
+        });
+        expect(invalid.status).toBe(400);
+        expect(await invalid.json()).toMatchObject({ error: { code: "invalid_request" } });
+        const valid = await service.fetch(`${service.origin}${path}`, {
+          method, headers: { ...headers, "Content-Type": "Application/JSON; Charset=UTF-8" }, body,
+        });
+        expect(valid.status).toBe(successStatus);
+        expect(valid.headers.get("Idempotency-Replayed")).toBe("false");
+        expect(await valid.json()).toMatchObject(successBody);
+      }
+    }
+  });
+
   it("validates If-Match syntax before PATCH idempotency lookup", async () => {
     const service = new T4ApiV1ConformanceService();
     const client = createT4ApiClient({ baseUrl: service.origin, credential: "token-a", majorVersion: 1, fetch: service.fetch });
@@ -659,6 +688,22 @@ describe("generated T4 API v1 client conformance", () => {
       });
       await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({
         status: 502, cause: { status: 503, retryAfterMs: 30_000 },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("applies the RFC 850 pivot to the complete timestamp", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-07-21T00:00:00Z"));
+      const client = createT4ApiClient({
+        baseUrl: "https://rfc850-boundary.test", credential: "token-a", majorVersion: 1,
+        fetch: async () => jsonResponse({ error: { code: "unavailable", message: "later", requestId: "r", retryable: true } }, { status: 503, headers: { "Retry-After": "Friday, 31-Dec-76 00:00:00 GMT" } }),
+      });
+      await expect(client.watchSession("ses-1", { maxEvents: 1, maxReconnectAttempts: 0 }).next()).rejects.toMatchObject({
+        status: 502, cause: { status: 503, retryAfterMs: 0 },
       });
     } finally {
       vi.useRealTimers();
