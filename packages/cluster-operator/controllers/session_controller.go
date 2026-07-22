@@ -421,6 +421,17 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, true, "RuntimeConfigured", reason, message)
 	}
+	reason, message, err = r.authoritativePVCValidation(ctx, &workspace, &pvc, host.Spec.StorageClassName)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if reason != "" {
+		if err := r.deleteOwnedSessionResources(ctx, &session); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, false, "WorkspaceReady", reason, message)
+	}
+
 
 	serviceName := SessionServiceName(&session)
 	podName := SessionPodName(&session)
