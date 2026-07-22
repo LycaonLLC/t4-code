@@ -44,9 +44,14 @@ spec:
                     https://github.com/LycaonLLC/t4-code.git "${worktree}/repository"
                   git -C "${worktree}/repository" remote add gitlab \
                     https://gitlab.com/z-peterson/t4-code.git
+                  commit="$(git -C "${worktree}/repository" rev-parse HEAD)"
+                  current="$(git ls-remote --heads gitlab refs/heads/main | awk '{print $1}')"
+                  if [ "${current}" = "${commit}" ]; then
+                    printf 'GitLab main already matches upstream revision %s.\n' "${commit}"
+                    exit 0
+                  fi
                   git -C "${worktree}/repository" push --force gitlab \
                     HEAD:refs/heads/main
-                  commit="$(git -C "${worktree}/repository" rev-parse HEAD)"
                   payload="$(printf '{\"repo\":\"z-peterson/t4-code\",\"branch\":\"main\",\"commit\":\"%s\",\"event\":\"manual\",\"environment\":\"development\"}' "${commit}")"
                   wget --quiet --timeout=90 --tries=1 --output-document=- \
                     --header="Authorization: Bearer ${WOODPECKER_TRIGGER_TOKEN}" \

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { waitForSiteRevision } from "./verify-site-revision.mjs";
 
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
+const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const FIXED_CONFIG = Object.freeze({
   namespace: "t4-site",
   release: "t4-site",
@@ -22,6 +23,10 @@ export function resolveDeployConfig(environment = process.env) {
   if (!COMMIT_PATTERN.test(imageTag)) {
     throw new Error("T4_SITE_IMAGE_TAG or CI_COMMIT_SHA must be an exact lowercase 40-character commit SHA");
   }
+  const imageDigest = environment.T4_SITE_IMAGE_DIGEST?.trim() ?? "";
+  if (!DIGEST_PATTERN.test(imageDigest)) {
+    throw new Error("T4_SITE_IMAGE_DIGEST must be an exact lowercase sha256 digest");
+  }
 
   for (const [name, expected] of [
     ["T4_SITE_NAMESPACE", FIXED_CONFIG.namespace],
@@ -36,7 +41,7 @@ export function resolveDeployConfig(environment = process.env) {
     }
   }
 
-  return { ...FIXED_CONFIG, imageTag };
+  return { ...FIXED_CONFIG, imageTag, imageDigest };
 }
 
 function run(command, args, cwd) {
@@ -72,6 +77,8 @@ export async function deploySite(
       `image.repository=${config.imageRepository}`,
       "--set-string",
       `image.tag=${config.imageTag}`,
+      "--set-string",
+      `image.digest=${config.imageDigest}`,
     ],
     repoRoot,
   );

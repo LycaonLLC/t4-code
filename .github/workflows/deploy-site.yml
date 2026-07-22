@@ -19,8 +19,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: t4code-com-production
-  cancel-in-progress: false
+  group: t4code-com-production-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   verify-production:

@@ -2,7 +2,7 @@
 set -eu
 
 umask 077
-canonical_build_source_repository=usr-bin-roygbiv/t4-code
+canonical_build_source_repository=LycaonLLC/t4-code
 authorized_ci_mirror=z-peterson/t4-code
 dockerfile=cluster/images/site/Dockerfile
 

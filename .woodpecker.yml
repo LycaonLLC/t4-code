@@ -445,7 +445,7 @@ steps:
     environment:
       T4_SITE_IMAGE_REPOSITORY: harbor.tailb18de3.ts.net/linkedin-bot/t4-site
     commands:
-      - node scripts/deploy-site.mjs
+      - export T4_SITE_IMAGE_DIGEST="$(cat .site-ci/site-image-digest)" && node scripts/deploy-site.mjs
     when:
       - event: push
         branch: main
@@ -468,7 +468,7 @@ steps:
     depends_on: [deploy-site]
     image: mirror.gcr.io/library/busybox:1.37.0-musl@sha256:222ad6d973c0d198014546a65cd02c5fdedcc172123c5b4c2bf0af636550bd94
     commands:
-      - rm -rf .site-ci/registry-auth
+      - rm -rf .site-ci
     when:
       - event: push
         branch: main

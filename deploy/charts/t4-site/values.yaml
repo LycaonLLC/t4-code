@@ -3,6 +3,7 @@ replicaCount: 2
 image:
   repository: harbor.tailb18de3.ts.net/linkedin-bot/t4-site
   tag: ""
+  digest: ""
   pullPolicy: IfNotPresent
 
 imagePullSecrets:
