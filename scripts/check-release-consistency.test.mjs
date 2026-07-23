@@ -322,7 +322,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
+          "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
           "needs: [changes, core, tooling, android-debug]",
         ),
     ],
@@ -580,6 +580,7 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("android-debug:"));
   assert.ok(ciWorkflow.includes("core:"));
   assert.ok(ciWorkflow.includes("legacy-bridge-continuity:"));
+  assert.ok(ciWorkflow.includes("current-bridge-continuity:"));
   assert.ok(ciWorkflow.includes("ref: ${{ github.event.pull_request.head.sha || github.sha }}"));
   assert.ok(
     ciWorkflow.includes(
@@ -599,6 +600,16 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("T4_OMP_SOURCE_DIR: ${{ github.workspace }}/.continuity/omp"));
   assert.ok(ciWorkflow.includes("run: pnpm test:legacy-bridge-continuity"));
   assert.ok(ciWorkflow.includes("path: artifacts/legacy-bridge-continuity/"));
+  assert.ok(
+    ciWorkflow.includes("sha=\"$(jq -er '.verifiedRuntime.sourceCommit' compat/omp-app-matrix.json)\""),
+  );
+  assert.ok(
+    ciWorkflow.includes("T4_CURRENT_OMP_SOURCE_DIR: ${{ github.workspace }}/.current-continuity/omp"),
+  );
+  assert.ok(
+    ciWorkflow.includes("run: pnpm --filter @t4-code/host-service verify:current-omp-bridge"),
+  );
+  assert.ok(ciWorkflow.includes("path: artifacts/current-omp-bridge/"));
   assert.ok(ciWorkflow.includes("if-no-files-found: error"));
   assert.ok(ciWorkflow.includes("tooling:"));
   assert.ok(ciWorkflow.includes("cluster:"));
@@ -610,12 +621,16 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("if: ${{ always() }}"));
   assert.ok(
     ciWorkflow.includes(
-      "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
+      "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
     ),
   );
   assert.ok(ciWorkflow.includes('test "$CHANGES_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$T4_API_GENERATION_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$CORE_RESULT" = success'));
+  assert.ok(
+    ciWorkflow.includes("CURRENT_CONTINUITY_RESULT: ${{ needs.current-bridge-continuity.result }}"),
+  );
+  assert.ok(ciWorkflow.includes('"$CURRENT_CONTINUITY_RESULT" \\'));
   assert.ok(ciWorkflow.includes("for result in \\"));
   assert.ok(ciWorkflow.includes("success|skipped) ;;"));
   assert.ok(ciWorkflow.includes("github.event_name == 'pull_request' && github.ref || github.sha"));

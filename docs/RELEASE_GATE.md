@@ -24,15 +24,15 @@ Every release must pass the layers below. Destructive lifecycle checks use a dis
 
 ## OMP bridge continuity proof
 
-Run the deterministic compatibility gate from the T4 repository root with Node 24.13.1 and the pinned Lycaon OMP source:
+Run the deterministic historical compatibility gate from the T4 repository root with Node 24.13.1 and the pinned migration-era OMP source:
 
 ```sh
 T4_OMP_SOURCE_DIR=/path/to/lycaon-oh-my-pi pnpm test:legacy-bridge-continuity
 ```
 
-The gate builds and launches T4's standalone `t4-host`, connects it to `omp bridge --stdio` from the pinned authority source, and starts a real OMP TUI plus multiple production T4 clients. Its historical command name still says `legacy-bridge`. The gate proves client compatibility across bounded transcript loading, live ownership refusal, concurrent profile isolation, reconnect after an in-flight transport loss, host restart recovery, transcript search/read-around, stale-revision rejection, recovered control, and cleanup.
+The gate builds and launches T4's standalone `t4-host`, connects it to the migration-era authority source, and starts a real OMP TUI plus multiple production T4 clients. Its historical command name still says `legacy-bridge`. The gate proves that the host migration did not regress bounded transcript loading, live ownership refusal, concurrent profile isolation, reconnect after an in-flight transport loss, host restart recovery, transcript search/read-around, stale-revision rejection, recovered control, and cleanup. It does not prove compatibility with the currently published OMP release pair.
 
-CI resolves the exact OMP authority commit from `provenance/omp-host-migration.json`, checks out the exact T4 pull-request head, runs this gate, and attaches the evidence directory to that commit's check run.
+CI retains that historical gate by resolving its exact authority commit from `provenance/omp-host-migration.json`. A separate required `current-bridge-continuity` job resolves both repository and commit from `compat/omp-app-matrix.json#verifiedRuntime`, builds the current OMP native addon, runs the focused authority tests, and launches the exact current OMP source through T4's `t4-omp-authority/1` bridge client. The aggregate `verify` check requires both proof boundaries. Each job checks out the exact T4 pull-request head and attaches evidence to that commit's check run.
 
 Each successful run writes machine-readable evidence under the historical `artifacts/legacy-bridge-continuity/<run>/` path: `report.json`, sanitized `wire-events.ndjson`, `failure-matrix.json`, `cleanup-status.json`, and an executable `rollback.sh`. The report names the host implementation, records both source commits and dirty-state fingerprints, and captures bounded snapshot sizes, failure codes, delivered cursor integrity, profile overlap, restart persistence, search/context results, and cleanup state. These artifacts are local and ignored by Git.
 

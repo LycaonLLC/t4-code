@@ -297,6 +297,36 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   assert.deepEqual(steps["legacy-bridge-continuity"].depends_on, ["legacy-authority-build"]);
   assert.ok(steps["legacy-bridge-continuity"].commands.includes("pnpm test:legacy-bridge-continuity"));
   assert.equal(steps["legacy-bridge-continuity"].environment.T4_OMP_SOURCE_DIR, ".continuity/omp");
+  assert.deepEqual(steps["current-authority-build"].depends_on, [
+    "current-authority-source",
+    "bun-runtime",
+  ]);
+  assert.equal(
+    steps["current-authority-build"].environment.CARGO_TARGET_DIR,
+    "/tmp/t4-current-authority-target",
+  );
+  assert.ok(
+    steps["current-authority-build"].commands.includes(
+      "(cd .current-continuity/omp && bun test packages/coding-agent/test/appserver-bridge.test.ts packages/coding-agent/test/appserver-session-lifecycle.test.ts)",
+    ),
+  );
+  assert.deepEqual(steps["current-bridge-continuity"].depends_on, [
+    "current-authority-build",
+  ]);
+  assert.equal(
+    steps["current-bridge-continuity"].environment.T4_CURRENT_OMP_SOURCE_DIR,
+    ".current-continuity/omp",
+  );
+  assert.ok(
+    steps["current-bridge-continuity"].commands.includes(
+      "pnpm --filter @t4-code/host-service verify:current-omp-bridge",
+    ),
+  );
+  assert.equal(steps["current-bridge-continuity"].commands[0], 'export PATH="$PWD/.ci:$PATH"');
+  assert.deepEqual(steps["android-debug"].depends_on, [
+    "legacy-bridge-continuity",
+    "current-bridge-continuity",
+  ]);
   assert.ok(
     steps["android-debug"].commands.includes("pnpm --filter @t4-code/mobile check:android:debug"),
   );

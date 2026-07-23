@@ -187,8 +187,77 @@ steps:
             memory: 2Gi
             ephemeral-storage: 2Gi
 
+  current-authority-source:
+    depends_on: [upstream-tooling]
+    image: mirror.gcr.io/alpine/git:2.49.1@sha256:c0280cf9572316299b08544065d3bf35db65043d5e3963982ec50647d2746e26
+    commands:
+      - git init .current-continuity/omp
+      - git -C .current-continuity/omp remote add origin https://github.com/wolfiesch/oh-my-pi.git
+      - git -C .current-continuity/omp fetch --depth=1 origin fc0c391334c08ab260057756aa84bd2b07741ee7
+      - git -C .current-continuity/omp checkout --detach FETCH_HEAD
+      - test "$(git -C .current-continuity/omp rev-parse HEAD)" = fc0c391334c08ab260057756aa84bd2b07741ee7
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 128Mi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+
+  current-authority-build:
+    depends_on: [current-authority-source, bun-runtime]
+    image: docker.io/library/rust:1.86-slim-bookworm@sha256:57d415bbd61ce11e2d5f73de068103c7bd9f3188dc132c97cef4a8f62989e944
+    environment:
+      RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
+      CARGO_TARGET_DIR: /tmp/t4-current-authority-target
+      CARGO_INCREMENTAL: "0"
+    commands:
+      - sh scripts/cluster-ci/install-legacy-authority-toolchain.sh
+      - (cd .current-continuity/omp && bun install --frozen-lockfile)
+      - (cd .current-continuity/omp && bun run build:native)
+      - (cd .current-continuity/omp && bun test packages/coding-agent/test/appserver-bridge.test.ts packages/coding-agent/test/appserver-session-lifecycle.test.ts)
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+          limits:
+            cpu: "2"
+            memory: 6Gi
+            ephemeral-storage: 12Gi
+
+  current-bridge-continuity:
+    depends_on: [current-authority-build]
+    image: mirror.gcr.io/library/node:24.13.1-bookworm@sha256:00e9195ebd49985a6da8921f419978d85dfe354589755192dc090425ce4da2f7
+    environment:
+      T4_CURRENT_OMP_SOURCE_DIR: .current-continuity/omp
+    commands:
+      - export PATH="$PWD/.ci:$PATH"
+      - corepack enable
+      - pnpm --filter @t4-code/host-service verify:current-omp-bridge
+    backend_options:
+      kubernetes:
+        serviceAccountName: woodpecker-ci-untrusted
+        resources:
+          requests:
+            cpu: "0"
+            memory: 512Mi
+            ephemeral-storage: 512Mi
+          limits:
+            cpu: "1"
+            memory: 2Gi
+            ephemeral-storage: 2Gi
+
   android-debug:
-    depends_on: [legacy-bridge-continuity]
+    depends_on: [legacy-bridge-continuity, current-bridge-continuity]
     image: cimg/android:2026.03.1-node@sha256:b62bbea69ba6bb28fe165ff913c23bde5220d0305fed7247121fb2919ecffd0e
     commands:
       - corepack enable
