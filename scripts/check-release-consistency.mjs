@@ -334,6 +334,7 @@ function validateOfficialGate0Snapshot(snapshot, officialRuntime, path, errors) 
     "follow-up",
     "approval",
     "cancellation",
+    "large-rpc-payload",
     "crash-after-dispatch-no-replay",
   ];
   if (!isDeepStrictEqual(snapshot?.requiredScenarios, requiredScenarios)) {

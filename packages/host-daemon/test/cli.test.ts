@@ -174,7 +174,7 @@ describe("T4 host daemon CLI", () => {
     expect(captured).toMatchObject({
       ompVersion: OFFICIAL_OMP_VERSION,
       ompBuild: OFFICIAL_OMP_BUILD,
-      rpcDialect: "official-17.0.6",
+      rpcDialect: "official-17.0.9",
       claimLocklessSessions: true,
       sessionOwnershipPath: expect.stringContaining("/owned-sessions.json"),
     });

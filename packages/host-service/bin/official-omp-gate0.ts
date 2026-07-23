@@ -5,12 +5,18 @@ import { createReadStream } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
+import { projectId, sessionId } from "@t4-code/host-wire";
+import { BunRpcChildFactory, RpcChildSupervisor } from "../src/rpc-child.ts";
+import type { SessionRecord } from "../src/types.ts";
 
 const FRAME_TIMEOUT_MS = 10_000;
 const STALE_LOCK_RECOVERY_MS = 20_500;
 const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 const MAX_FRAMES_PER_TURN = 1_000;
 const MAX_SESSION_ENTRIES = 10_000;
+const LARGE_RPC_PROBE = "T4 large RPC payload probe";
+const LARGE_RPC_RESPONSE_BYTES = 2 * 1024 * 1024;
+const LARGE_RPC_RESPONSE_SHA256 = "6932fd31e5daf4739b9fa78ff777b2831b0995cc1d0b0093cac80601902013bc";
 
 type JsonMap = Record<string, unknown>;
 
@@ -248,6 +254,9 @@ export function startDeterministicModel(): DeterministicModel {
       const ordinal = requests.length;
       const model = typeof body.model === "string" ? body.model : "deterministic";
       const id = `chatcmpl-t4-gate0-${ordinal}`;
+      const responseText = messages.some((message) => message.includes(LARGE_RPC_PROBE))
+        ? "x".repeat(LARGE_RPC_RESPONSE_BYTES)
+        : `Gate 0 response ${ordinal}`;
       const events: unknown[] = [
         {
           id,
@@ -257,7 +266,7 @@ export function startDeterministicModel(): DeterministicModel {
           choices: [
             {
               index: 0,
-              delta: { role: "assistant", content: `Gate 0 response ${ordinal}` },
+              delta: { role: "assistant", content: responseText },
               finish_reason: null,
             },
           ],
@@ -555,6 +564,116 @@ async function runApprovalScenario(input: {
   }
 }
 
+async function runLargeRpcPayloadScenario(input: {
+  readonly runtime: VerifiedRuntime;
+  readonly root: string;
+  readonly workspace: string;
+  readonly profile: string;
+}): Promise<{ responseBytes: number; responseSha256: string }> {
+  const path = join(input.root, "large-rpc-payload.jsonl");
+  const record: SessionRecord = {
+    sessionId: sessionId("official-large-rpc-payload"),
+    path,
+    cwd: input.workspace,
+    projectId: projectId("official-large-rpc-project"),
+    title: "Large RPC payload",
+    updatedAt: new Date().toISOString(),
+    status: "idle",
+    entries: [],
+  };
+  const factory = new BunRpcChildFactory(
+    { executable: input.runtime.path, prefixArgv: [] },
+    undefined,
+    { PI_CODING_AGENT_DIR: input.profile, PI_NOTIFICATIONS: "off" },
+  );
+  const completion = Promise.withResolvers<
+    { readonly kind: "agent_end" } | { readonly kind: "crashed"; readonly error: Error }
+  >();
+  const supervisor = new RpcChildSupervisor(
+    factory,
+    record,
+    {
+      entry: () => {},
+      event: (frame) => {
+        if (frame.type === "agent_end") completion.resolve({ kind: "agent_end" });
+      },
+      crashed: (error) => completion.resolve({ kind: "crashed", error }),
+    },
+    [
+      input.runtime.path,
+      "--mode",
+      "rpc",
+      "--session",
+      path,
+      "--cwd",
+      input.workspace,
+      "--model",
+      "gate0/deterministic",
+      "--no-tools",
+      "--no-extensions",
+      "--no-skills",
+      "--no-rules",
+      "--no-title",
+    ],
+    undefined,
+    input.runtime.matrix.officialRuntime.version,
+  );
+  try {
+    await supervisor.start();
+    const prompt = await supervisor.call({ type: "prompt", message: LARGE_RPC_PROBE }, "large-rpc-prompt");
+    if (!prompt.success) throw new Error(`large RPC probe prompt failed: ${prompt.error}`);
+    const outcome = await Promise.race([
+      completion.promise,
+      Bun.sleep(FRAME_TIMEOUT_MS).then(() => {
+        throw new Error("large RPC probe timed out");
+      }),
+    ]);
+    if (outcome.kind === "crashed") throw outcome.error;
+    const messages: JsonMap[] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    let totalMessages: number | undefined;
+    do {
+      const page = await supervisor.call(
+        { type: "get_messages_page", limit: 10, ...(cursor ? { cursor } : {}) },
+        `large-rpc-page-${messages.length}`,
+      );
+      if (!page.success) throw new Error(`large RPC page failed: ${page.error}`);
+      const data = map(page.data, "large RPC page data");
+      if (!Array.isArray(data.messages)) throw new Error("large RPC page messages are missing");
+      if (!Number.isSafeInteger(data.totalMessages) || (data.totalMessages as number) < 0)
+        throw new Error("large RPC page total is invalid");
+      if (totalMessages !== undefined && data.totalMessages !== totalMessages)
+        throw new Error("large RPC page total changed");
+      totalMessages = data.totalMessages as number;
+      messages.push(
+        ...data.messages.map((message, index) =>
+          map(message, `large RPC page message ${messages.length + index}`),
+        ),
+      );
+      cursor = data.nextCursor === undefined ? undefined : text(data.nextCursor, "large RPC page cursor");
+      if (cursor && seenCursors.has(cursor)) throw new Error("large RPC page repeated a cursor");
+      if (cursor) seenCursors.add(cursor);
+    } while (cursor);
+    if (messages.length !== totalMessages) throw new Error("large RPC pagination ended early");
+    const response = messages.find(
+      (message) => message.role === "assistant" && messageText(message).length === LARGE_RPC_RESPONSE_BYTES,
+    );
+    if (!response) throw new Error("large RPC response was not reassembled losslessly");
+    const responseBytes = Buffer.byteLength(messageText(response), "utf8");
+    if (responseBytes !== LARGE_RPC_RESPONSE_BYTES)
+      throw new Error(`large RPC response has ${responseBytes} bytes`);
+    const responseSha256 = createHash("sha256").update(messageText(response), "utf8").digest("hex");
+    if (responseSha256 !== LARGE_RPC_RESPONSE_SHA256)
+      throw new Error(`large RPC response digest is ${responseSha256}`);
+    return { responseBytes, responseSha256 };
+  } finally {
+    const child = supervisor.child();
+    supervisor.stop();
+    await child?.exited.catch(() => undefined);
+  }
+}
+
 export async function verifyRuntime(repoRoot: string): Promise<VerifiedRuntime> {
   const matrix = decodeRuntimeMatrix(await readJson(join(repoRoot, "compat", "omp-app-matrix.json")));
   const manifestPath = join(repoRoot, ".artifacts", "omp-runtime-official", "manifest.json");
@@ -680,6 +799,7 @@ async function main(): Promise<void> {
       profile,
       model,
     });
+    const largeRpcPayload = await runLargeRpcPayloadScenario({ runtime, root, workspace, profile });
     const result = {
       schemaVersion: 1,
       runtime: {
@@ -700,6 +820,7 @@ async function main(): Promise<void> {
         followUp,
         approval,
         cancellation,
+        largeRpcPayload,
       },
       observedStockSeams: {
         readyTranscriptWatermark: initialWatermark !== null && restartWatermark !== null,

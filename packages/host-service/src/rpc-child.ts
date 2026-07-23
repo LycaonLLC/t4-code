@@ -7,14 +7,100 @@ import { OfficialOmpCapabilityAdapter } from "./official-omp-capabilities.ts";
 import type { ChildHandle, RpcChildFactory, SessionRecord } from "./types.ts";
 
 const MAX_LINE_BYTES = 1024 * 1024;
+const MAX_RPC_REASSEMBLED_BYTES = 64 * 1024 * 1024;
+const RPC_CHUNK_PAYLOAD_BYTES = 256 * 1024;
 const STDERR_BYTES = 64 * 1024;
 const FAILURE_STOP_GRACE_MS = 2_000;
+const PROTOCOL_NEGOTIATION_TIMEOUT_MS = 10_000;
 const TRANSCRIPT_READ_BYTES = 64 * 1024;
 const MAX_PENDING_DURABLE_CORRELATIONS = 64;
 
 interface PendingDurableCorrelation {
 	readonly internalId: string;
 	readonly message: string;
+}
+
+interface PendingRpcChunks {
+	readonly chunkId: string;
+	readonly count: number;
+	readonly byteLength: number;
+	readonly chunks: Buffer[];
+	nextIndex: number;
+	receivedBytes: number;
+}
+
+class RpcChunkDecoder {
+	#pending?: PendingRpcChunks;
+
+	push(frame: Record<string, unknown>): Record<string, unknown> | undefined {
+		if (frame.type !== "rpc_chunk") {
+			if (this.#pending) throw new Error("rpc chunk sequence interrupted");
+			return frame;
+		}
+		const { chunkId, index, count, byteLength, data } = frame;
+		if (
+			typeof chunkId !== "string" ||
+			chunkId.length === 0 ||
+			chunkId.length > 128 ||
+			typeof index !== "number" ||
+			typeof count !== "number" ||
+			typeof byteLength !== "number" ||
+			typeof data !== "string"
+		)
+			throw new Error("malformed rpc chunk");
+		if (
+			!Number.isSafeInteger(index) ||
+			!Number.isSafeInteger(count) ||
+			!Number.isSafeInteger(byteLength) ||
+			index < 0 ||
+			count < 2 ||
+			count > Math.ceil(MAX_RPC_REASSEMBLED_BYTES / RPC_CHUNK_PAYLOAD_BYTES) ||
+			index >= count ||
+			byteLength < MAX_LINE_BYTES ||
+			byteLength > MAX_RPC_REASSEMBLED_BYTES ||
+			data.length === 0 ||
+			!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)
+		)
+			throw new Error("malformed rpc chunk");
+		const bytes = Buffer.from(data, "base64");
+		if (bytes.toString("base64") !== data || bytes.byteLength > RPC_CHUNK_PAYLOAD_BYTES)
+			throw new Error("malformed rpc chunk");
+
+		if (!this.#pending) {
+			if (index !== 0) throw new Error("rpc chunk sequence must start at index 0");
+			this.#pending = { chunkId, count, byteLength, chunks: [], nextIndex: 0, receivedBytes: 0 };
+		}
+		const pending = this.#pending;
+		if (
+			pending.chunkId !== chunkId ||
+			pending.count !== count ||
+			pending.byteLength !== byteLength ||
+			pending.nextIndex !== index
+		)
+			throw new Error("rpc chunk sequence mismatch");
+		pending.chunks.push(bytes);
+		pending.receivedBytes += bytes.byteLength;
+		pending.nextIndex++;
+		if (pending.receivedBytes > pending.byteLength) throw new Error("rpc chunk sequence exceeds declared length");
+		if (pending.nextIndex < pending.count) return undefined;
+		if (pending.receivedBytes !== pending.byteLength) throw new Error("rpc chunk sequence length mismatch");
+
+		this.#pending = undefined;
+		let decoded: string;
+		try {
+			decoded = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(pending.chunks));
+		} catch {
+			throw new Error("invalid UTF-8 rpc frame");
+		}
+		let value: unknown;
+		try {
+			value = JSON.parse(decoded);
+		} catch {
+			throw new Error("malformed reassembled rpc frame");
+		}
+		if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("rpc frame must be an object");
+		return value as Record<string, unknown>;
+	}
 }
 
 function rawEntryId(value: unknown): string | undefined {
@@ -63,6 +149,8 @@ class DurableJsonlReconciler {
 	#offset = 0;
 	#entryCount = 0;
 	#lastEntryId: string | null = null;
+	#skippingOversizedLine = false;
+	#oversizedLineStart = 0;
 	readonly #projectedEntryIds = new Set<string>();
 	readonly #pendingCorrelations: PendingDurableCorrelation[] = [];
 	#reconcileTail: Promise<void> = Promise.resolve();
@@ -70,6 +158,7 @@ class DurableJsonlReconciler {
 	constructor(
 		private readonly path: string,
 		private readonly emit: (frame: RpcSessionEntryFrame) => void,
+		private readonly transcriptRecordOmitted?: (offset: number) => void,
 	) {}
 
 	watermark(): RpcLoadedTranscriptWatermark {
@@ -133,6 +222,8 @@ class DurableJsonlReconciler {
 			this.#offset = 0;
 			this.#entryCount = 0;
 			this.#lastEntryId = null;
+			this.#skippingOversizedLine = false;
+			this.#oversizedLineStart = 0;
 			this.#projectedEntryIds.clear();
 			await this.initialize();
 			return;
@@ -145,33 +236,60 @@ class DurableJsonlReconciler {
 		const handle = await open(this.path, "r");
 		let position = this.#offset;
 		let pending = Buffer.alloc(0);
+		let pendingStart = position;
 		try {
 			while (position < size) {
 				const length = Math.min(TRANSCRIPT_READ_BYTES, size - position);
 				const bytes = Buffer.allocUnsafe(length);
-				const result = await handle.read(bytes, 0, length, position);
+				const chunkStart = position;
+				const result = await handle.read(bytes, 0, length, chunkStart);
 				if (result.bytesRead === 0) throw new Error("session transcript changed during reconciliation");
 				position += result.bytesRead;
-				const buffered = pending.byteLength === 0
-					? bytes.subarray(0, result.bytesRead)
-					: Buffer.concat([pending, bytes.subarray(0, result.bytesRead)]);
-				let start = 0;
-				let newline = buffered.indexOf(0x0a, start);
-				while (newline >= 0) {
-					const line = buffered.subarray(start, newline);
-					if (line.byteLength > MAX_LINE_BYTES) throw new Error("session transcript line exceeds 1 MiB");
-					if (line.byteLength > 0)
-						this.#observeLine(new TextDecoder("utf-8", { fatal: true }).decode(line), publish);
-					start = newline + 1;
-					newline = buffered.indexOf(0x0a, start);
+				const chunk = bytes.subarray(0, result.bytesRead);
+				let cursor = 0;
+				while (cursor < chunk.byteLength) {
+					const newline = chunk.indexOf(0x0a, cursor);
+					const end = newline < 0 ? chunk.byteLength : newline;
+					const segment = chunk.subarray(cursor, end);
+					if (this.#skippingOversizedLine) {
+						if (newline < 0) break;
+						this.#skippingOversizedLine = false;
+						this.#omitOversizedRecord(publish);
+						pendingStart = chunkStart + newline + 1;
+					} else if (pending.byteLength + segment.byteLength > MAX_LINE_BYTES) {
+						this.#oversizedLineStart = pendingStart;
+						pending = Buffer.alloc(0);
+						if (newline < 0) {
+							this.#skippingOversizedLine = true;
+							break;
+						}
+						this.#omitOversizedRecord(publish);
+						pendingStart = chunkStart + newline + 1;
+					} else if (newline < 0) {
+						pending = pending.byteLength === 0 ? Buffer.from(segment) : Buffer.concat([pending, segment]);
+						break;
+					} else {
+						const line = pending.byteLength === 0 ? segment : Buffer.concat([pending, segment]);
+						if (line.byteLength > 0)
+							this.#observeLine(new TextDecoder("utf-8", { fatal: true }).decode(line), publish);
+						pending = Buffer.alloc(0);
+						pendingStart = chunkStart + newline + 1;
+					}
+					cursor = end + 1;
 				}
-				pending = Buffer.from(buffered.subarray(start));
-				if (pending.byteLength > MAX_LINE_BYTES) throw new Error("session transcript line exceeds 1 MiB");
 			}
 		} finally {
 			await handle.close();
 		}
-		this.#offset = position - pending.byteLength;
+		this.#offset = this.#skippingOversizedLine ? position : position - pending.byteLength;
+	}
+
+	#omitOversizedRecord(publish: boolean): void {
+		// The skipped record could be the durable user entry at the head of the
+		// correlation queue. Its identity is unknowable without parsing it, so
+		// retain no correlation across this gap.
+		this.#pendingCorrelations.length = 0;
+		if (publish) this.transcriptRecordOmitted?.(this.#oversizedLineStart);
 	}
 
 	#observeLine(line: string, publish: boolean): void {
@@ -214,6 +332,7 @@ export interface ChildCallbacks {
 	entry(frame: RpcSessionEntryFrame): void;
 	event(frame: Record<string, unknown>): void;
 	capabilities?(operations: readonly OperationCapability[]): void;
+	transcriptRecordOmitted?(offset: number): void;
 	crashed(error: Error): void;
 }
 
@@ -328,14 +447,16 @@ async function* lines(stream: AsyncIterable<string | Uint8Array>): AsyncGenerato
 			throw new Error("invalid UTF-8 stdout");
 		}
 		pending += text;
-		if (stringBytes(pending) > MAX_LINE_BYTES) throw new Error("rpc line exceeds 1MiB");
 		let index = pending.indexOf("\n");
 		while (index >= 0) {
+			if (stringBytes(pending.slice(0, index + 1)) > MAX_LINE_BYTES)
+				throw new Error("rpc line exceeds 1MiB");
 			const line = pending.slice(0, index).replace(/\r$/, "");
 			pending = pending.slice(index + 1);
 			yield line;
 			index = pending.indexOf("\n");
 		}
+		if (stringBytes(pending) > MAX_LINE_BYTES) throw new Error("rpc line exceeds 1MiB");
 	}
 	try {
 		pending += decoder.decode();
@@ -358,6 +479,9 @@ export class RpcChildSupervisor {
 	#counter = 0;
 	#stderr = "";
 	#ready = false;
+	#supportsProtocolV2 = false;
+	#protocolV2 = false;
+	readonly #frameDecoder = new RpcChunkDecoder();
 	#termination?: Promise<void>;
 	#operationCapabilities: OfficialOmpCapabilityAdapter;
 	#transcript: DurableJsonlReconciler;
@@ -368,11 +492,22 @@ export class RpcChildSupervisor {
 		private readonly argv = ["omp", "--mode", "rpc"],
 		private readonly failureStopGraceMs = FAILURE_STOP_GRACE_MS,
 		private readonly runtimeVersion?: string,
+		private readonly protocolNegotiationTimeoutMs = PROTOCOL_NEGOTIATION_TIMEOUT_MS,
 	) {
 		this.#operationCapabilities = new OfficialOmpCapabilityAdapter(runtimeVersion);
-		this.#transcript = new DurableJsonlReconciler(session.path, frame => this.callbacks.entry(frame));
+		this.#transcript = new DurableJsonlReconciler(
+			session.path,
+			frame => this.callbacks.entry(frame),
+			offset => this.callbacks.transcriptRecordOmitted?.(offset),
+		);
 		if (!Number.isSafeInteger(failureStopGraceMs) || failureStopGraceMs <= 0 || failureStopGraceMs > 60_000)
 			throw new Error("failureStopGraceMs must be between 1 and 60000");
+		if (
+			!Number.isSafeInteger(protocolNegotiationTimeoutMs) ||
+			protocolNegotiationTimeoutMs <= 0 ||
+			protocolNegotiationTimeoutMs > 60_000
+		)
+			throw new Error("protocolNegotiationTimeoutMs must be between 1 and 60000");
 	}
 	hasPendingCalls(): boolean {
 		return this.#pending.size > 0;
@@ -390,6 +525,35 @@ export class RpcChildSupervisor {
 		const timer = setTimeout(() => ready.reject(new Error("rpc child ready timeout")), 10_000);
 		try {
 			await ready.promise;
+			if (this.#supportsProtocolV2) {
+				this.#protocolV2 = true;
+				const abort = new AbortController();
+				const negotiationTimer = setTimeout(() => abort.abort(), this.protocolNegotiationTimeoutMs);
+				let negotiated: RpcResponse;
+				try {
+					negotiated = await this.call(
+						{ type: "negotiate_protocol", protocolVersion: 2 },
+						"rpc-protocol",
+						abort.signal,
+						undefined,
+						false,
+					);
+				} catch (error) {
+					if (abort.signal.aborted)
+						throw new Error("rpc protocol v2 negotiation timed out", { cause: error });
+					throw error;
+				} finally {
+					clearTimeout(negotiationTimer);
+				}
+				if (
+					!negotiated.success ||
+					!negotiated.data ||
+					typeof negotiated.data !== "object" ||
+					Array.isArray(negotiated.data) ||
+					(negotiated.data as Record<string, unknown>).protocolVersion !== 2
+				)
+					throw new Error("rpc protocol v2 negotiation failed");
+			}
 		} catch (error) {
 			this.stop();
 			throw error;
@@ -527,8 +691,20 @@ export class RpcChildSupervisor {
 				}
 				if (!value || typeof value !== "object" || Array.isArray(value))
 					throw new Error("rpc frame must be an object");
-				const frame = value as Record<string, unknown>;
+				const parsed = value as Record<string, unknown>;
+				if (parsed.type === "rpc_chunk" && !this.#protocolV2) throw new Error("rpc chunk received before negotiation");
+				const decoded = this.#frameDecoder.push(parsed);
+				if (!decoded) continue;
+				const frame = decoded;
 				if (frame.type === "ready") {
+					const versions = frame.supportedProtocolVersions;
+					const maxFrameBytes = frame.maxFrameBytes;
+					const maxReassembledFrameBytes = frame.maxReassembledFrameBytes;
+					this.#supportsProtocolV2 =
+						Array.isArray(versions) &&
+						versions.includes(2) &&
+						maxFrameBytes === MAX_LINE_BYTES &&
+						maxReassembledFrameBytes === MAX_RPC_REASSEMBLED_BYTES;
 					const watermark = frame.transcriptWatermark;
 					if (watermark && typeof watermark === "object" && !Array.isArray(watermark)) {
 						const candidate = watermark as Record<string, unknown>;
