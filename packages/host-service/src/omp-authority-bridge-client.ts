@@ -81,6 +81,24 @@ function contextPayload(context: OperationContext): Record<string, unknown> {
 	};
 }
 
+function sessionReference(session: SessionRecord): SessionRecord {
+	return { ...session, entriesLoaded: false, entries: [] };
+}
+
+function sparseSessionListResponse(value: unknown): unknown {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+	const frame = value as Record<string, unknown>;
+	if (frame.type !== "response" || frame.ok !== true || !Array.isArray(frame.result)) return value;
+	return {
+		...frame,
+		result: frame.result.map(session =>
+			session && typeof session === "object" && !Array.isArray(session)
+				? { ...(session as Record<string, unknown>), entriesLoaded: false, entries: [] }
+				: session,
+		),
+	};
+}
+
 async function* lines(stream: AsyncIterable<string | Uint8Array>): AsyncGenerator<string> {
 	const decoder = new TextDecoder("utf-8", { fatal: true });
 	let pending = "";
@@ -180,18 +198,18 @@ export class OmpAuthorityBridgeClient {
 		const sessionAuthority: SessionAuthority = {
 			create: async (cwd, title) => call("session.create", { cwd, ...(title === undefined ? {} : { title }) }) as never,
 			list: async () => call("session.list", {}) as never,
-			archive: async (session, archivedAt) => { await call("session.archive", { session, archivedAt }); },
-			restore: async session => { await call("session.restore", { session }); },
-			delete: async session => { await call("session.delete", { session }); },
+			archive: async (session, archivedAt) => { await call("session.archive", { session: sessionReference(session), archivedAt }); },
+			restore: async session => { await call("session.restore", { session: sessionReference(session) }); },
+			delete: async session => { await call("session.delete", { session: sessionReference(session) }); },
 		};
 		const discovery: SessionDiscovery = {
 			list: () => sessionAuthority.list(),
 			...(this.#methods.has("discovery.load")
-				? { load: async (session: SessionRecord) => call("discovery.load", { session }) as Promise<SessionRecord> }
+				? { load: async (session: SessionRecord) => call("discovery.load", { session: sessionReference(session) }) as Promise<SessionRecord> }
 				: {}),
 			...(this.#methods.has("discovery.page")
 				? { page: async (session: SessionRecord, args: Record<string, unknown>) =>
-					call("discovery.page", { session, args }) as never }
+					call("discovery.page", { session: sessionReference(session), args }) as never }
 				: {}),
 		};
 		const operationsAuthority: DesktopOperationsAuthority = {};
@@ -228,8 +246,9 @@ export class OmpAuthorityBridgeClient {
 				await call("project.rootForProject", { projectId }), "project root"),
 			projectRootForSession: async sessionId => asString(
 				await call("project.rootForSession", { sessionId }), "session root"),
-			lockCheck: async session => { await call("lock.check", { session }); },
-			lockStatus: async session => asString(await call("lock.status", { session }), "lock status") as never,
+			lockCheck: async session => { await call("lock.check", { session: sessionReference(session) }); },
+			lockStatus: async session => asString(
+				await call("lock.status", { session: sessionReference(session) }), "lock status") as never,
 		};
 	}
 
@@ -269,7 +288,14 @@ export class OmpAuthorityBridgeClient {
 		try {
 			for await (const line of lines(child.stdout)) {
 				if (!line) continue;
-				const frame = decodeOmpAuthorityBridgeServerFrame(JSON.parse(line));
+				const value = JSON.parse(line);
+				const requestId = value && typeof value === "object" && !Array.isArray(value) && typeof value.id === "string"
+					? value.id
+					: undefined;
+				const expected = requestId === undefined ? undefined : this.#pending.get(requestId);
+				const frame = decodeOmpAuthorityBridgeServerFrame(
+					expected?.method === "session.list" ? sparseSessionListResponse(value) : value,
+				);
 				if (frame.type === "ready") {
 					if (this.#ready) throw new Error("OMP authority bridge sent duplicate ready frame");
 					this.#ready = frame;

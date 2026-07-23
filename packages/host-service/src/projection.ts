@@ -253,16 +253,21 @@ export class SessionProjection {
 		return this.updateRef(next, `session-control:${control?.mode ?? "clear"}`);
 	}
 	rebaseEntries(entries: readonly DurableEntry[]): ServerFrame[] {
+		const reboundEntries = entries.map(entry =>
+			entry.hostId === this.value.hostId && entry.sessionId === this.value.sessionId
+				? entry
+				: { ...entry, hostId: this.value.hostId, sessionId: this.value.sessionId },
+		);
 		const current = this.value.entries;
 		const prefix =
-			entries.length >= current.length &&
-			current.every((entry, index) => JSON.stringify(entry) === JSON.stringify(entries[index]));
+			reboundEntries.length >= current.length &&
+			current.every((entry, index) => JSON.stringify(entry) === JSON.stringify(reboundEntries[index]));
 		if (prefix) {
 			const previous = { ...this.value.cursor };
 			const frames: ServerFrame[] = [];
 			let frameBytes = 0;
 			let budgetExceeded = false;
-			for (const entry of entries.slice(current.length)) {
+			for (const entry of reboundEntries.slice(current.length)) {
 				const frame = this.appendEntry(entry);
 				if (!frame || budgetExceeded) continue;
 				const bytes = encoder.encode(JSON.stringify(frame)).byteLength;
@@ -293,13 +298,13 @@ export class SessionProjection {
 		this.#byId.clear();
 		this.#revisionHash = createHash("sha256");
 		this.value.entries = [];
-		for (const entry of entries) {
+		for (const entry of reboundEntries) {
 			this.#byId.set(entry.id, entry);
 			this.value.entries.push(entry);
 			this.#revisionHash.update(`${JSON.stringify(entry)}\n`);
 		}
 		this.value.revision = revision(`r-${this.#revisionHash.copy().digest("hex").slice(0, 24)}`);
-		const last = entries.at(-1);
+		const last = reboundEntries.at(-1);
 		this.value.ref = {
 			...this.value.ref,
 			revision: this.value.revision,

@@ -6,7 +6,7 @@ import { DESKTOP_CATALOG_COMMANDS, type DurableEntry, hostId, projectId, session
 import { completeAttachOutput, prepareAttachOutput } from "../src/attach-output.ts";
 import { IdempotencyStore } from "../src/idempotency.ts";
 import { ensureSecureSocketDirectory } from "../src/ownership.ts";
-import { FileSessionDiscovery, realFs } from "../src/discovery.ts";
+import { FileSessionDiscovery, realFs, stableProjectId } from "../src/discovery.ts";
 import { SessionProjection } from "../src/projection.ts";
 import { appserverSupportedCapabilities, appserverSupportedFeatures, createAppserver } from "../src/server.ts";
 import { SubagentProjection } from "../src/subagent-projection.ts";
@@ -336,6 +336,190 @@ describe("appserver lifecycle", () => {
 		await appserver.stop();
 		await expect(stat(socketPath)).rejects.toThrow();
 		for (const child of factory.children) expect(child.killed).toBe(true);
+	});
+	test("starts a writer before returning a session created through T4", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-created-session-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const created = {
+			...record("created-session"),
+			path: join(root, "created-session.jsonl"),
+			cwd: root,
+			projectId: stableProjectId(root),
+		};
+		const factory = new FakeFactory();
+		const sessionAuthority = {
+			create: async () => created,
+			list: async () => [created],
+			archive: async () => {},
+			restore: async () => {},
+			delete: async () => {},
+		};
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "created-session-test",
+			socketPath,
+			discovery: sessionAuthority,
+			sessionAuthority,
+			projectRootForProject: () => root,
+			childFactory: factory,
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "create-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: [],
+				capabilities: { client: ["sessions.manage"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "create-session",
+				commandId: "create-session-command",
+				hostId: host,
+				command: "session.create",
+				args: { projectId: created.projectId },
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type !== "response" || frame.requestId !== "create-session") continue;
+				expect(frame).toMatchObject({ ok: true });
+				break;
+			}
+			expect(factory.children).toHaveLength(1);
+			expect(factory.children[0]?.killed).toBe(false);
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("hydrates a T4-created session without replacing its writer projection", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-created-session-hydration-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sid = sessionId("created-session-hydration");
+		const created = {
+			...record(sid),
+			path: join(root, "created-session-hydration.jsonl"),
+			cwd: root,
+			projectId: stableProjectId(root),
+		};
+		const hydratedEntry = {
+			...entry("hydrated-entry"),
+			hostId: hostId("upstream-host"),
+			sessionId: sessionId("upstream-session"),
+		};
+		let visible = false;
+		const sessionAuthority = {
+			create: async () => {
+				visible = true;
+				return created;
+			},
+			list: async () =>
+				visible
+					? [{ ...created, updatedAt: new Date(1).toISOString(), entries: [], entriesLoaded: false }]
+					: [],
+			load: async () => ({
+				...created,
+				updatedAt: new Date(1).toISOString(),
+				entries: [hydratedEntry],
+			}),
+			archive: async () => {},
+			restore: async () => {},
+			delete: async () => {},
+		};
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "created-session-hydration-test",
+			socketPath,
+			discovery: sessionAuthority,
+			sessionAuthority,
+			projectRootForProject: () => root,
+			childFactory: new FakeFactory(),
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "hydration-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: [],
+				capabilities: { client: ["sessions.manage", "sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "create-hydration",
+				commandId: "create-hydration-command",
+				hostId: host,
+				command: "session.create",
+				args: { projectId: created.projectId },
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "create-hydration") break;
+			}
+			const writerProjection = appserver.snapshot(sid);
+			expect(writerProjection).toBeDefined();
+
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "list-hydration",
+				commandId: "list-hydration-command",
+				hostId: host,
+				command: "session.list",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "list-hydration") break;
+			}
+
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "attach-hydration",
+				commandId: "attach-hydration-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.attach",
+				args: {},
+			});
+			let attachResponse;
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "attach-hydration") {
+					attachResponse = frame;
+					break;
+				}
+			}
+
+			expect(appserver.snapshot(sid)).toBe(writerProjection);
+			expect(appserver.snapshot(sid)?.entries).toEqual([{ ...hydratedEntry, hostId: host, sessionId: sid }]);
+			expect(attachResponse).toMatchObject({
+				ok: true,
+				result: { attached: true, cursor: { epoch: "created-session-hydration-test", seq: 1 } },
+			});
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
 	});
 	test("rejects shared system socket roots before changing their modes", async () => {
 		if (process.platform === "win32") return;

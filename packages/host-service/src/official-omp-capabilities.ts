@@ -106,33 +106,55 @@ function slashName(value: unknown, path: string): string {
   return name;
 }
 
+function inlineMetadata(value: unknown, path: string, maxBytes: number): string {
+  return controlFree(
+    typeof value === "string" ? value.replace(/[\t\n\r]+/gu, " ") : value,
+    path,
+    maxBytes,
+  );
+}
+
+function decodeHeadlessCommand(value: unknown, index: number): HeadlessCommand {
+  const path = `available_commands_update.commands[${index}]`;
+  const item = boundedMap(value, path, 16);
+  const name = slashName(item.name, `${path}.name`);
+  const aliases = boundedArray(item.aliases ?? [], `${path}.aliases`, MAX_COMMAND_ALIASES).map(
+    (alias, aliasIndex) => slashName(alias, `${path}.aliases[${aliasIndex}]`),
+  );
+  const description =
+    item.description === undefined
+      ? undefined
+      : inlineMetadata(item.description, `${path}.description`, MAX_COMMAND_DESCRIPTION_BYTES);
+  const input = item.input === undefined ? undefined : boundedMap(item.input, `${path}.input`, 4);
+  const inputHint =
+    input?.hint === undefined
+      ? undefined
+      : inlineMetadata(input.hint, `${path}.input.hint`, MAX_COMMAND_INPUT_HINT_BYTES);
+  const source = controlFree(item.source, `${path}.source`, MAX_COMMAND_SOURCE_BYTES);
+  return Object.freeze({ name, aliases: Object.freeze(aliases), description, inputHint, source });
+}
+
 function decodeHeadlessCommands(value: unknown): readonly HeadlessCommand[] {
   const items = boundedArray(value, "available_commands_update.commands", MAX_AVAILABLE_COMMANDS);
   const commands: HeadlessCommand[] = [];
   const names = new Set<string>();
+  let rejected = 0;
   for (let index = 0; index < items.length; index++) {
-    const path = `available_commands_update.commands[${index}]`;
-    const item = boundedMap(items[index], path, 16);
-    const name = slashName(item.name, `${path}.name`);
-    if (names.has(name)) throw new Error(`duplicate available command: ${name}`);
-    names.add(name);
-    const aliases = boundedArray(item.aliases ?? [], `${path}.aliases`, MAX_COMMAND_ALIASES).map(
-      (alias, aliasIndex) => slashName(alias, `${path}.aliases[${aliasIndex}]`),
-    );
-    const description =
-      item.description === undefined
-        ? undefined
-        : controlFree(item.description, `${path}.description`, MAX_COMMAND_DESCRIPTION_BYTES);
-    const input = item.input === undefined ? undefined : boundedMap(item.input, `${path}.input`, 4);
-    const inputHint =
-      input?.hint === undefined
-        ? undefined
-        : controlFree(input.hint, `${path}.input.hint`, MAX_COMMAND_INPUT_HINT_BYTES);
-    const source = controlFree(item.source, `${path}.source`, MAX_COMMAND_SOURCE_BYTES);
-    commands.push(
-      Object.freeze({ name, aliases: Object.freeze(aliases), description, inputHint, source }),
-    );
+    let command: HeadlessCommand;
+    try {
+      command = decodeHeadlessCommand(items[index], index);
+    } catch {
+      // One non-addressable extension or skill must not suppress the bounded
+      // catalog for every valid command in the same authoritative update.
+      rejected += 1;
+      continue;
+    }
+    if (names.has(command.name)) throw new Error(`duplicate available command: ${command.name}`);
+    names.add(command.name);
+    commands.push(command);
   }
+  if (items.length > 0 && commands.length === 0 && rejected > 0)
+    throw new Error("available commands contain no valid entries");
   return Object.freeze(commands);
 }
 
@@ -158,7 +180,12 @@ export class OfficialOmpCapabilityAdapter {
 
   consume(frame: Readonly<Record<string, unknown>>): boolean {
     if (frame.type !== "available_commands_update") return false;
-    this.update(frame.commands);
+    try {
+      this.update(frame.commands);
+    } catch {
+      // Live capability metadata is advisory. Preserve the last bounded catalog
+      // when one update is malformed instead of terminating prompt transport.
+    }
     return true;
   }
 

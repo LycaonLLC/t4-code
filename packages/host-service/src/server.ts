@@ -2760,7 +2760,9 @@ export class LocalAppserver implements AppserverHandle {
 	}
 	private async handleCreate(command: CommandFrame): Promise<CommandOutcome> {
 		const created = await this.createSession(command.args);
-		const projection = this.#projections.get(created.sessionId as SessionId)!;
+		const createdSessionId = created.sessionId as SessionId;
+		const projection = this.#projections.get(createdSessionId)!;
+		if (!this.#externalRuntimes.has(createdSessionId)) await this.ensureSupervisor(createdSessionId);
 		await this.broadcastIndex(projection.indexUpsert());
 		return {
 			frame: response(this.hostId, command, true, {
@@ -4213,10 +4215,26 @@ export class LocalAppserver implements AppserverHandle {
 		if (loaded.sessionId !== record.sessionId || loaded.path !== record.path)
 			throw new Error("session identity changed while loading transcript");
 		this.#records.set(loaded.sessionId, loaded);
-		const projection = new SessionProjection(this.hostId, loaded, this.epoch, this.#ringSize);
-		const outcome = this.#attentionOutcomes?.get(loaded.sessionId);
-		if (outcome) projection.setLatestOutcome(outcome);
-		this.#projections.set(loaded.sessionId, projection);
+		const projection = this.#projections.get(loaded.sessionId);
+		if (!projection) {
+			const inserted = new SessionProjection(this.hostId, loaded, this.epoch, this.#ringSize);
+			const outcome = this.#attentionOutcomes?.get(loaded.sessionId);
+			if (outcome) inserted.setLatestOutcome(outcome);
+			this.#projections.set(loaded.sessionId, inserted);
+			return;
+		}
+		// A running RPC supervisor closes over this projection. Replacing it after
+		// sparse discovery hydration would split cursor authority: streamed frames
+		// would advance the old object while later attaches read a new seq-0 object.
+		// Rebase in place so the writer, replay ring, and attach baseline stay one
+		// monotonic timeline.
+		const transcriptFrames = projection.rebaseEntries(loaded.entries);
+		for (const frame of transcriptFrames) this.broadcast(loaded.sessionId, frame);
+		const metadata = projection.value.ref.liveState?.sessionControl
+			? projection.reconcileObserverRecord(loaded)
+			: projection.reconcileRecord(loaded);
+		if (metadata) await this.broadcastIndex(metadata);
+		else if (transcriptFrames.length > 0) await this.broadcastIndex(projection.indexUpsert());
 	}
 	private async refreshTranscriptSearch(): Promise<void> {
 		if (!this.#transcriptSearch) return;
