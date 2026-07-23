@@ -20,8 +20,8 @@ import {
 import { COMMAND_DESCRIPTORS, type ProjectId, type SessionId } from "@t4-code/protocol";
 
 export const T4_HOST_VERSION = "0.1.31";
-export const OFFICIAL_OMP_VERSION = "17.0.6";
-export const OFFICIAL_OMP_BUILD = "89d6a8f6d14286f32f09ec9c8aa8af7b3451d2d6";
+export const OFFICIAL_OMP_VERSION = "17.0.9";
+export const OFFICIAL_OMP_BUILD = "639bac596d94b5993349f3f6696176cb2bf9b5d3";
 const PROFILE = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
 const ORIGIN_LIMIT = 32;
 const VERSION_OUTPUT_BYTES = 4 * 1024;
@@ -355,7 +355,7 @@ export async function runHostDaemon(
       ...(transcriptImageRoot ? { transcriptImageRoot } : {}),
       rpcChildInvocation: { executable: config.ompExecutable, prefixArgv: [] },
       rpcChildEnvironment: { OMP_PROFILE: config.profileId },
-      ...(config.authorityMode === "official" ? { rpcDialect: "official-17.0.6" as const } : {}),
+      ...(config.authorityMode === "official" ? { rpcDialect: "official-17.0.9" as const } : {}),
       ...(process.platform === "darwin"
         ? {
             projectRevealer: async (root: string): Promise<boolean> => {

@@ -1042,7 +1042,7 @@ export class LocalAppserver implements AppserverHandle {
 		if (command.command === "session.compact") return { type, customInstructions: command.args.instructions };
 		if (command.command === "session.rename") return { type, name: command.args.name };
 		if (command.command === "session.model.set") {
-			if (this.#rpcDialect === "official-17.0.6") {
+			if (this.#rpcDialect === "official-17.0.9") {
 				if (
 					command.args.persistence !== "session" ||
 					typeof command.args.selector !== "string" ||
@@ -3615,6 +3615,22 @@ export class LocalAppserver implements AppserverHandle {
 					if (frame.type === "agent_end") this.scheduleStateRefresh(sessionId, supervisor, "agent-end");
 					if (frame.type === "thinking_level_changed")
 						this.scheduleStateRefresh(sessionId, supervisor, "thinking-level-changed");
+				},
+				transcriptRecordOmitted: offset => {
+					const omission: DurableEntry = {
+						id: entryId(`oversized-transcript-record-${offset}`),
+						parentId: projection.value.entries.at(-1)?.id ?? null,
+						hostId: this.hostId,
+						sessionId,
+						kind: "compaction",
+						timestamp: this.#clock.now().toISOString(),
+						data: {
+							summary: "One transcript record was omitted because it exceeded the 1 MiB safety limit.",
+							oversizedRecordOmission: true,
+						},
+					};
+					const output = projection.appendEntry(omission);
+					if (output) this.broadcast(sessionId, output);
 				},
 				crashed: () => {
 					this.markSupervisorCrashed(sessionId, supervisor);

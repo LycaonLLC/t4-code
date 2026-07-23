@@ -261,7 +261,7 @@ export interface AppserverOptions {
 	/** Bounded profile environment applied only to per-session OMP children. */
 	rpcChildEnvironment?: Readonly<Record<string, string>>;
 	/** Exact child RPC command dialect; official OMP intentionally exposes a narrower command set. */
-	rpcDialect?: "fork" | "official-17.0.6";
+	rpcDialect?: "fork" | "official-17.0.9";
 	appserverVersion?: string;
 	appserverBuild?: string;
 	supportedFeatures?: readonly string[];
