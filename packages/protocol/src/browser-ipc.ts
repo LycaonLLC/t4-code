@@ -598,7 +598,8 @@ const MAX_ELEMENTS = 512;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const SURFACE_PATTERN = /^surface:([1-9][0-9]{0,8})$/u;
 const ELEMENT_PATTERN = /^@e([1-9][0-9]{0,8})$/u;
-const OWNER_SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const MAX_OWNER_SESSION_ID_BYTES = 512;
+const OWNER_SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~!%*'()/:+-]{0,511}$/u;
 
 export class BrowserProtocolError extends Error {
   readonly code: BrowserErrorCode = "invalid_params";
@@ -705,9 +706,14 @@ function surfaceId(value: unknown, path = "surfaceId"): SurfaceId {
   return text as SurfaceId;
 }
 function ownerSessionId(value: unknown, path = "ownerSessionId"): OwnerSessionId {
-  const text = boundedString(value, path, 128);
-  if (!OWNER_SESSION_ID_PATTERN.test(text)) fail(`${path} must be a bounded session identifier`);
+  const text = boundedString(value, path, MAX_OWNER_SESSION_ID_BYTES);
+  if (!isBrowserOwnerSessionId(text)) fail(`${path} must be a bounded session identifier`);
   return text as OwnerSessionId;
+}
+export function isBrowserOwnerSessionId(value: unknown): value is OwnerSessionId {
+  return typeof value === "string" &&
+    utf8ByteLength(value) <= MAX_OWNER_SESSION_ID_BYTES &&
+    OWNER_SESSION_ID_PATTERN.test(value);
 }
 function handle(value: unknown, path = "handle"): SurfaceHandle {
   const text = boundedString(value, path, 32);

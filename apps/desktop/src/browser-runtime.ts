@@ -1,17 +1,18 @@
 import { randomUUID } from "node:crypto";
 import type { BrowserWindow, Session, WebContents } from "electron";
-import type {
-  BrowserCall,
-  BrowserCallResult,
-  BrowserErrorCode,
-  BrowserEvent,
-  BrowserJsonValue,
-  BrowserMethod,
-  BrowserProfile,
-  BrowserSurfaceState,
-  OwnerSessionId,
-  SurfaceHandle,
-  SurfaceId,
+import {
+  isBrowserOwnerSessionId,
+  type BrowserCall,
+  type BrowserCallResult,
+  type BrowserErrorCode,
+  type BrowserEvent,
+  type BrowserJsonValue,
+  type BrowserMethod,
+  type BrowserProfile,
+  type BrowserSurfaceState,
+  type OwnerSessionId,
+  type SurfaceHandle,
+  type SurfaceId,
 } from "@t4-code/protocol/browser-ipc";
 import type { BrowserSessionMetadata } from "./browser-session-store.ts";
 import { BrowserProfileRegistry, type BrowserProfileCreateOptions } from "./browser-profiles.ts";
@@ -144,10 +145,10 @@ function requestRecord(request: unknown): Record<string, unknown> {
 }
 
 function ownerSessionIdFromCall(call: BrowserCall, method: BrowserMethod): OwnerSessionId {
-  if (typeof call.ownerSessionId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(call.ownerSessionId)) {
+  if (!isBrowserOwnerSessionId(call.ownerSessionId)) {
     throw new BrowserRuntimeError("invalid_params", "ownerSessionId is required", method);
   }
-  return call.ownerSessionId as OwnerSessionId;
+  return call.ownerSessionId;
 }
 
 /** Coordinates native surfaces so React chrome always has at most one attached tab. */

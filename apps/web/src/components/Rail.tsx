@@ -1585,6 +1585,9 @@ export function Rail({
     [allGroups],
   );
   const matchCount = flatEntries.length;
+  const matchCountTruncated = allGroups.some(
+    (group) => group.host.sessionInventoryTruncated === true,
+  );
 
   const moveProject = (projectId: string, direction: -1 | 1) => {
     const visibleIds = groups.map((group) => group.project.id);
@@ -1673,7 +1676,17 @@ export function Rail({
       <div className="px-1.5 pb-1.5">
         <div className="flex h-8 items-center gap-1">
           <h2 className="font-medium text-foreground text-xs">Sessions</h2>
-          <span className="ml-auto text-[10px] text-muted-foreground">{matchCount} matches</span>
+          <span
+            className="ml-auto text-[10px] text-muted-foreground"
+            title={
+              matchCountTruncated
+                ? "The host has more sessions than this bounded view currently shows."
+                : undefined
+            }
+          >
+            {matchCount}
+            {matchCountTruncated ? "+" : ""} matches
+          </span>
           <RailOptionsMenu
             hiddenGroups={allGroups.filter((group) => hiddenProjectIds.has(group.project.id))}
             organization={organization}

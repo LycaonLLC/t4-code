@@ -234,8 +234,12 @@ describe("resolveLiveProjectCreateTargets", () => {
 });
 
 describe("createLiveSession", () => {
-  it("correlates synchronous response, bounds unrelated frames, then waits for list projection", async () => {
+  it("creates from a partial inventory, correlates responses, then waits for list projection", async () => {
     const c = controller();
+    c.snapshot.projection.sessionIndexMetadata.set(address.hostId, {
+      truncated: true,
+      totalCount: 1001,
+    });
     const result = createLiveSession(c.fake, address, undefined, 1000);
     for (let i = 0; i < 80; i++) c.emit({ requestId: `noise-${i}`, command: "noise", ok: true });
     c.emit(sessionFrame("req-1"));

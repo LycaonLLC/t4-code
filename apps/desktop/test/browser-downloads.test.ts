@@ -70,8 +70,20 @@ class FakeDownloadItem {
     return this.url;
   }
 
-  public getSuggestedFilename(): string {
+  public getFilename(): string {
     return this.filename;
+  }
+
+  public getMimeType(): string {
+    return "text/plain";
+  }
+
+  public getTotalBytes(): number {
+    return 0;
+  }
+
+  public getReceivedBytes(): number {
+    return 0;
   }
 
   public setSavePath(path: string): void {
@@ -116,12 +128,18 @@ describe("BrowserDownloadController session routing", () => {
       expect(rejected.defaultPrevented).toBe(true);
       expect(emitted).toEqual([]);
 
-      const first = firstSession.emitWillDownload(new FakeDownloadItem("https://example.test/first", "first.txt"), firstContents);
-      const second = firstSession.emitWillDownload(new FakeDownloadItem("https://example.test/second", "second.txt"), secondContents);
-      const third = secondSession.emitWillDownload(new FakeDownloadItem("https://example.test/third", "third.txt"), thirdContents);
-      expect(first.defaultPrevented).toBe(true);
-      expect(second.defaultPrevented).toBe(true);
-      expect(third.defaultPrevented).toBe(true);
+      const firstItem = new FakeDownloadItem("https://example.test/first", "first.txt");
+      const secondItem = new FakeDownloadItem("https://example.test/second", "second.txt");
+      const thirdItem = new FakeDownloadItem("https://example.test/third", "third.txt");
+      const first = firstSession.emitWillDownload(firstItem, firstContents);
+      const second = firstSession.emitWillDownload(secondItem, secondContents);
+      const third = secondSession.emitWillDownload(thirdItem, thirdContents);
+      expect(first.defaultPrevented).toBe(false);
+      expect(second.defaultPrevented).toBe(false);
+      expect(third.defaultPrevented).toBe(false);
+      expect(firstItem.savePath).toMatch(/^.+\/[.]t4-download-.+[.]part$/u);
+      expect(secondItem.savePath).toMatch(/^.+\/[.]t4-download-.+[.]part$/u);
+      expect(thirdItem.savePath).toMatch(/^.+\/[.]t4-download-.+[.]part$/u);
       expect(emitted.map((event) => event.type === "download" ? event.download.surfaceId : undefined)).toEqual([
         "surface:first",
         "surface:second",

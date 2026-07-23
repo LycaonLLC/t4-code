@@ -199,10 +199,12 @@ class LivePtySession implements PtySession {
       return;
     }
     const args: Record<string, unknown> = {
-      cwd: request.cwd ?? ".",
       cols: clampCols(request.cols),
       rows: clampRows(request.rows),
     };
+    // A null cwd means the project root. Omit it on the wire: "." is not a
+    // safeRelativePath segment and the host correctly rejects it.
+    if (request.cwd !== null) args.cwd = request.cwd;
     if (this.context.shellAdvertisedNow() && request.shell !== "") {
       args.shell = request.shell;
     }
@@ -684,6 +686,67 @@ export function createLivePtySessionFactory(
       live.clear();
       owned.clear();
       clearBuffer();
+    },
+  };
+}
+
+/**
+ * A drawer can be restored from local storage before the desktop has rebound
+ * its cached session to a live target. Keep that drawer useful: resolve the
+ * address again on each open instead of permanently capturing an unavailable
+ * placeholder during the initial Offline → Connected sync.
+ */
+export function createResolvingLivePtySessionFactory(
+  controller: DesktopRuntimeController,
+  snapshotAccessor: () => DesktopRuntimeSnapshot,
+  resolveAddress: () => LiveSessionAddress | null,
+  options: LivePtyBridgeOptions = {},
+): LivePtyBridge {
+  let active:
+    | {
+        readonly key: string;
+        readonly bridge: LivePtyBridge;
+      }
+    | null = null;
+  let disposed = false;
+
+  const current = (): LivePtyBridge | null => {
+    if (disposed) return null;
+    const address = resolveAddress();
+    if (address === null) return null;
+    const key = `${address.targetId}\u0000${address.hostId}\u0000${address.sessionId}`;
+    if (active?.key === key) return active.bridge;
+    active?.bridge.dispose();
+    const bridge = createLivePtySessionFactory(
+      controller,
+      snapshotAccessor,
+      address,
+      options,
+    );
+    active = { key, bridge };
+    return bridge;
+  };
+
+  return {
+    kind: "desktop",
+    availability: () =>
+      current()?.availability() ?? {
+        available: false,
+        kind: "transport",
+        reason: MESSAGES.syncing,
+      },
+    open(request) {
+      const bridge = current();
+      if (bridge === null) {
+        throw new Error("This session is not bound to a live host yet.");
+      }
+      return bridge.open(request);
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      active?.bridge.dispose();
+      active = null;
     },
   };
 }

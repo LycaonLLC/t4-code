@@ -5,6 +5,8 @@ import { chmod, stat as fsStat, lstat, open, readlink, realpath, rename, symlink
 import { dirname, isAbsolute, join } from "node:path";
 import {
 	type AttentionOutcome,
+	type CatalogItem,
+	catalogId,
 	COMMAND_DESCRIPTORS,
 	type CommandFrame,
 	type ConfirmationChallenge,
@@ -187,6 +189,7 @@ const OBSERVER_READ_COMMANDS = new Set([
 ]);
 const SUBAGENT_TRANSCRIPT_RPC_BYTES = 384 * 1024;
 const REMOTE_OUTBOUND_TRANSFORM_TIMEOUT_MS = 10_000;
+const CATALOG_OPERATION_REFRESH_TIMEOUT_MS = 750;
 const DEFAULT_USAGE_READ_TIMEOUT_MS = 15_000;
 const PENDING_PROMPT_TEXT_BYTES = 8 * 1024;
 // cleanText removes most controls, but retained newlines, quotes, and
@@ -304,6 +307,30 @@ async function boundedRemoteTransform<T>(operation: Promise<T> | T): Promise<T> 
 		return await Promise.race([Promise.resolve(operation), timeout]);
 	} finally {
 		if (timer) clearTimeout(timer);
+	}
+}
+
+async function boundedOperationCapabilityRefresh(
+	supervisor: RpcChildSupervisor,
+	requestId: string,
+	signal: AbortSignal,
+): Promise<readonly OperationCapability[] | undefined> {
+	const controller = new AbortController();
+	const onAbort = (): void => controller.abort();
+	signal.addEventListener("abort", onAbort, { once: true });
+	const timer = setTimeout(() => {
+		controller.abort();
+	}, CATALOG_OPERATION_REFRESH_TIMEOUT_MS);
+	try {
+		return await supervisor.refreshOperationCapabilities(requestId, controller.signal);
+	} catch (error) {
+		if (signal.aborted) throw error;
+		// Runtime command discovery enriches the pinned catalog, but must never
+		// prevent the base command list (including terminal access) from loading.
+		return undefined;
+	} finally {
+		clearTimeout(timer);
+		signal.removeEventListener("abort", onAbort);
 	}
 }
 
@@ -825,6 +852,7 @@ export class LocalAppserver implements AppserverHandle {
 	#sessionLoads = new Map<SessionId, Promise<void>>();
 	#inventoryGeneration = 0;
 	#inventoryLoaded = false;
+	#inventoryTotalCount = 0;
 	#discoveryMisses = new Map<SessionId, number>();
 	#agentTranscripts = new Map<SessionId, AgentTranscriptProjection>();
 	#startPromises = new Map<SessionId, Promise<RpcChildSupervisor>>();
@@ -1072,6 +1100,7 @@ export class LocalAppserver implements AppserverHandle {
 		if (this.#started) return;
 		this.#inventoryGeneration += 1;
 		this.#inventoryLoaded = false;
+		this.#inventoryTotalCount = 0;
 		this.#stopping = false;
 		this.#draining = false;
 		this.#closedSessions.clear();
@@ -1545,7 +1574,7 @@ export class LocalAppserver implements AppserverHandle {
 		}
 		const projection = command.sessionId ? this.#projections.get(command.sessionId) : undefined;
 		// Attach output is connection-scoped and rebuilt on every delivery. A
-		if (this.observerBarrierBlocks(command)) return this.observerBarrierOutcome(command);
+		if (await this.observerBarrierBlocks(command)) return this.observerBarrierOutcome(command);
 		// cached success cannot attach a session that has since been deleted.
 		if (command.command === "session.attach" && !projection)
 			return {
@@ -2182,11 +2211,14 @@ export class LocalAppserver implements AppserverHandle {
 					if (attachedSessions?.size === 1) {
 						const attachedSessionId = attachedSessions.values().next().value;
 						const supervisor = attachedSessionId ? this.#supervisors.get(attachedSessionId) : undefined;
-						if (supervisor)
-							runtimeOperations = await supervisor.refreshOperationCapabilities(
+						if (supervisor) {
+							const refreshed = await boundedOperationCapabilityRefresh(
+								supervisor,
 								`catalog:${command.requestId}`,
 								controller.signal,
 							);
+							if (refreshed) runtimeOperations = refreshed;
+						}
 					}
 					const operationsById = new Map<string, OperationCapability>();
 					for (const capability of catalog.operations ?? [])
@@ -2195,14 +2227,34 @@ export class LocalAppserver implements AppserverHandle {
 					const operations = [...operationsById.values()];
 					if (operations.length > MAX_ARRAY_ITEMS)
 						throw Object.assign(new Error("catalog operation limit exceeded"), { code: "BOUNDS" });
+					const terminalAvailable =
+						this.#supportedFeatures.has("terminal.io") &&
+						this.#supportedCapabilities.has("term.open") &&
+						this.#supportedCapabilities.has("term.input") &&
+						this.#supportedCapabilities.has("term.resize");
+					const authorityItems = catalog.items as readonly CatalogItem[];
+					const items = terminalAvailable
+						? [
+								{
+									id: catalogId("cmd-term-open"),
+									kind: "command" as const,
+									name: "term.open",
+									capabilities: ["term.open"],
+									supported: true,
+								},
+								...authorityItems.filter(item => item.id !== "cmd-term-open" && item.name !== "term.open"),
+							].slice(0, MAX_ARRAY_ITEMS)
+						: authorityItems;
 					const revisionHash = createHash("sha256")
 						.update(catalog.revision)
 						.update(JSON.stringify(operations))
+						.update(JSON.stringify(items))
 						.digest("hex");
 					outcome = {
 						frame: response(this.hostId, command, true, {
 							...catalog,
 							revision: wireRevision(`capabilities-${revisionHash}`),
+							items,
 							operations,
 						}),
 					};
@@ -2891,9 +2943,23 @@ export class LocalAppserver implements AppserverHandle {
 			this.#records.get(sessionId)?.archivedAt || this.#projections.get(sessionId)?.value.ref.archivedAt,
 		);
 	}
-	private observerBarrierBlocks(command: CommandFrame): boolean {
+	private async observerBarrierBlocks(command: CommandFrame): Promise<boolean> {
 		if (!command.sessionId) return false;
 		if (this.#externalRuntimes.has(command.sessionId)) return false;
+		if (command.command === "session.restore" && this.sessionArchived(command.sessionId)) {
+			const record = this.#records.get(command.sessionId);
+			if (!record) return true;
+			try {
+				const status = await this.#lockStatus(record);
+				// A stale lock is the same safe takeover boundary used by
+				// observer promotion. A live, suspect, or malformed lock keeps
+				// restore read-only until authority can be established.
+				if (status === "missing" || status === "stale") return false;
+			} catch {
+				// Lock inspection failures fail closed.
+			}
+			return true;
+		}
 		if (command.command !== "session.state.get" && OBSERVER_READ_COMMANDS.has(command.command)) return false;
 		return (
 			this.#observers.has(command.sessionId) ||
@@ -3816,7 +3882,7 @@ export class LocalAppserver implements AppserverHandle {
 				return;
 			}
 			const descriptor = COMMAND_DESCRIPTORS[frame.command];
-			if (this.observerBarrierBlocks(frame)) {
+			if (await this.observerBarrierBlocks(frame)) {
 				await this.#sendFrame(ws, this.observerBarrierOutcome(frame).frame);
 				return;
 			}
@@ -4152,6 +4218,15 @@ export class LocalAppserver implements AppserverHandle {
 	private async refreshSessionsOnce(generation: number): Promise<void> {
 		const discovered = await this.#discovery.list();
 		if (generation !== this.#inventoryGeneration || this.#stopping || !this.#started) return;
+		const inventoryComplete = this.#discovery.inventoryComplete?.() ?? true;
+		const reportedTotal = this.#discovery.inventoryTotalCount?.() ?? discovered.length;
+		if (
+			!Number.isSafeInteger(reportedTotal) ||
+			reportedTotal < discovered.length ||
+			(inventoryComplete && reportedTotal !== discovered.length)
+		)
+			throw new Error("session inventory completeness metadata is invalid");
+		this.#inventoryTotalCount = reportedTotal;
 		const publishChanges = this.#inventoryLoaded;
 		const discoveredIds = new Set<SessionId>();
 		for (const record of discovered) {
@@ -4188,6 +4263,15 @@ export class LocalAppserver implements AppserverHandle {
 					: projection.reconcileRecord(record);
 				if (output && publishChanges) await this.broadcastIndex(output);
 			}
+		}
+		if (!inventoryComplete) {
+			// Absence from a partial inventory is not deletion evidence. Reset
+			// miss counters so eviction still requires two later complete
+			// inventories that both omit the same session.
+			this.#discoveryMisses.clear();
+			this.#inventoryLoaded = true;
+			this.scheduleTranscriptSearchReconcile();
+			return;
 		}
 		for (const [sessionId, pending] of this.#createdPending) {
 			if (discoveredIds.has(sessionId)) {
@@ -4566,6 +4650,21 @@ export class LocalAppserver implements AppserverHandle {
 			return;
 		}
 		if (this.#supervisors.get(sessionId) !== supervisor) return;
+		try {
+			await this.#sessionOwnership?.add(sessionId, record.path);
+		} catch {
+			await this.discardPromotionSupervisor(sessionId, supervisor);
+			this.#promotionFailures.set(sessionId, this.promotionFingerprint(record, projection, final));
+			return;
+		}
+		if (!this.observerIsCurrent(sessionId, observer, record, projection)) {
+			if (this.#supervisors.get(sessionId) === supervisor) {
+				await this.#sessionOwnership?.delete(sessionId).catch(() => undefined);
+				await this.discardPromotionSupervisor(sessionId, supervisor);
+			}
+			return;
+		}
+		if (this.#supervisors.get(sessionId) !== supervisor) return;
 		const control = projection.setSessionControl();
 		if (control) await this.broadcastIndex(control);
 		this.cleanupObserverState(sessionId);
@@ -4587,7 +4686,7 @@ export class LocalAppserver implements AppserverHandle {
 			if (a.sessionId > b.sessionId) return 1;
 			return 0;
 		});
-		const totalCount = allSessions.length;
+		const totalCount = Math.max(allSessions.length, this.#inventoryTotalCount);
 		const pendingBudget: SessionListBudget = {
 			pendingBytes: 0,
 			pendingEntries: 0,

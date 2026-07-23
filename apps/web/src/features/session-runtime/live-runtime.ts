@@ -808,6 +808,19 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
       }
     }
     if (!hasAttachAuthority) return;
+    if (
+      attached &&
+      !attaching &&
+      runtime.projection.sessions.get(projectionKey)?.freshness !== "fresh"
+    ) {
+      // A replacement host can publish its welcome before the renderer sees
+      // the transient disconnected state. The welcome correctly invalidates
+      // the old live projection; treat that loss of freshness as a new attach
+      // boundary instead of leaving the composer cached forever.
+      attached = false;
+      transcriptImagesAttached = false;
+      syncTranscriptImageAvailability(runtime);
+    }
     if (attached) return;
     if (attaching) {
       retryAfterAttach = true;

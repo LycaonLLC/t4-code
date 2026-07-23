@@ -135,6 +135,62 @@ describe("phone setup", () => {
     expect(calls.some((call) => call.args?.[0] === "serve" && call.args?.[1] === "--bg")).toBe(false);
   });
 
+  it("upgrades a stale gateway before requiring Tailscale", async () => {
+    const resourcesPath = await mkdtemp(join(tmpdir(), "t4-phone-setup-stale-upgrade-"));
+    await mkdir(join(resourcesPath, "runtime"));
+    await writeFile(join(resourcesPath, "runtime", "manifest.json"), '{"tag":"synthetic"}\n');
+    const calls: ProcessSpec[] = [];
+    const runner: ProcessRunner = {
+      spawn: async (spec) => {
+        calls.push(spec);
+        const isGatewayStatus = spec.command.includes("T4 Code") && spec.args?.[1] === "status";
+        const isGatewayInstall = spec.command.includes("T4 Code") && spec.args?.[1] === "install";
+        return {
+          kill: () => {},
+          result: Promise.resolve(isGatewayStatus
+            ? {
+                exitCode: 1,
+                signal: null,
+                stdout: [
+                  "definition: current",
+                  "supervisor: running",
+                  "health: healthy",
+                  "allowed origin: https://work-mac.example.ts.net:8445",
+                  "deployment identity: stale",
+                ].join("\n"),
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              }
+            : {
+                exitCode: isGatewayInstall ? 0 : 1,
+                signal: null,
+                stdout: "",
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              }),
+        };
+      },
+    };
+    const service = new PhoneSetupService({
+      platform: "darwin",
+      arch: "arm64",
+      resourcesPath,
+      electronExecutable: "/Applications/T4 Code.app/Contents/MacOS/T4 Code",
+      runner,
+      discoverTailscale: async () => { throw new Error("Tailscale is offline."); },
+    });
+
+    expect(await service.restore()).toEqual({
+      phase: "tailscale-required",
+      message: "Tailscale is offline.",
+    });
+    const install = calls.find((call) => call.args?.[1] === "install");
+    expect(install?.args).toContain("https://work-mac.example.ts.net:8445");
+    expect(install?.args).toContain("--electron-run-as-node");
+  });
+
   it("does not call phone access ready while the local OMP runtime is unreachable", async () => {
     const resourcesPath = await mkdtemp(join(tmpdir(), "t4-phone-setup-offline-"));
     await mkdir(join(resourcesPath, "runtime"));

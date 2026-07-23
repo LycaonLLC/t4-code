@@ -2838,6 +2838,25 @@ describe("session lifecycle", () => {
     expect(shell.commandCount("session.attach")).toBe(2);
   });
 
+  it("reattaches after a new host welcome even when the disconnected notification was missed", async () => {
+    const { shell, controller } = await startedController();
+    const cache = new Map<string, SessionRuntime>();
+    obtainLiveRuntime(controller, sessionViewId(HOST, SESSION), cache);
+    await settle();
+    expect(shell.commandCount("session.attach")).toBe(1);
+
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        ...makeWelcome(HOST, ["sessions.prompt"]),
+        epoch: "epoch-2",
+      },
+    });
+    await settle();
+
+    expect(shell.commandCount("session.attach")).toBe(2);
+  });
+
   it("retries an attach rejected by the host on a later controller notification", async () => {
     const { shell, controller } = await startedController();
     const cache = new Map<string, SessionRuntime>();

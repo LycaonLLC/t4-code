@@ -786,6 +786,100 @@ describe("appserver lifecycle", () => {
 			await rm(root, { recursive: true, force: true });
 		}
 	});
+	test("persists ownership after safely promoting an external session", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-promoted-session-restart-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		const transcriptPath = join(root, "promoted-session.jsonl");
+		const sid = sessionId("promoted-session-restart");
+		const timestamp = "2026-07-23T00:00:00.000Z";
+		await writeFile(
+			transcriptPath,
+			`${JSON.stringify({ type: "session", version: 3, id: sid, cwd: root, timestamp, title: "Promoted session" })}\n`,
+		);
+		let lockStatus: "live" | "missing" = "live";
+		const factory = new DeferredPromptFactory();
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "promoted-session-restart-test",
+			socketPath,
+			sessionOwnershipPath,
+			discovery: new FileSessionDiscovery(root, realFs, host, true),
+			childFactory: factory,
+			lockStatus: () => lockStatus,
+			lockCheck: async () => {
+				if (lockStatus !== "missing") throw new Error("session lock is still live");
+			},
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "promoted-restart-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: ["session.observer"],
+				capabilities: { client: ["sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "attach-promoted",
+				commandId: "attach-promoted-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.attach",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "attach-promoted") {
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
+			await Promise.race([
+				(async () => {
+					while (appserver.snapshot(sid)?.ref.liveState?.sessionControl?.mode !== "observer") {
+						await Bun.sleep(10);
+					}
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("external session did not enter observer mode");
+				}),
+			]);
+
+			lockStatus = "missing";
+			await Promise.race([
+				(async () => {
+					while (factory.children.length === 0) await Bun.sleep(10);
+					while (appserver.snapshot(sid)?.ref.liveState?.sessionControl !== undefined) await Bun.sleep(10);
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error(
+						`external session was not promoted: ${JSON.stringify({
+							children: factory.children.length,
+							killed: factory.children.map(child => child.killed),
+							control: appserver.snapshot(sid)?.ref.liveState?.sessionControl,
+						})}`,
+					);
+				}),
+			]);
+
+			const ownership = new SessionOwnershipStore(sessionOwnershipPath);
+			await ownership.load();
+			expect(ownership.owns(sid, transcriptPath)).toBe(true);
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
 	test("hydrates a T4-created session without replacing its writer projection", async () => {
 		const root = await mkdtemp(join(tmpdir(), "t4-created-session-hydration-"));
 		const socketPath = join(root, "run", "appserver.sock");
@@ -899,6 +993,262 @@ describe("appserver lifecycle", () => {
 				ok: true,
 				result: { attached: true, cursor: { epoch: "created-session-hydration-test", seq: 1 } },
 			});
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("restores an archived observed session after a fresh missing-lock check", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-archived-restore-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sid = sessionId("archived-observer-session");
+		let current: SessionRecord = {
+			...record(sid),
+			path: join(root, "archived-observer-session.jsonl"),
+			cwd: root,
+			projectId: stableProjectId(root),
+			archivedAt: "2026-07-23T00:00:00.000Z",
+		};
+		const authority = {
+			create: async () => {
+				throw new Error("not used");
+			},
+			list: async () => [current],
+			archive: async () => {},
+			restore: async () => {
+				const next = { ...current };
+				delete next.archivedAt;
+				current = next;
+			},
+			delete: async () => {},
+		};
+		let lockStatus: "live" | "missing" = "live";
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "archived-restore-test",
+			socketPath,
+			discovery: authority,
+			sessionAuthority: authority,
+			childFactory: new FakeFactory(),
+			lockStatus: () => lockStatus,
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "archived-restore-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: ["session.observer"],
+				capabilities: { client: ["sessions.manage", "sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "attach-archived-observer",
+				commandId: "attach-archived-observer-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.attach",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "attach-archived-observer") {
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
+			expect(appserver.snapshot(sid)?.ref.liveState?.sessionControl).toBeDefined();
+			lockStatus = "missing";
+			const expectedRevision = appserver.snapshot(sid)?.revision;
+			if (expectedRevision === undefined) throw new Error("missing archived session revision");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "restore-archived-observer",
+				commandId: "restore-archived-observer-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.restore",
+				expectedRevision,
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "restore-archived-observer") {
+					expect(frame).toMatchObject({ ok: true, result: { restored: true } });
+					break;
+				}
+			}
+			expect(current.archivedAt).toBeUndefined();
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("keeps an archived observed session read-only while its authority lock is live", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-archived-restore-live-lock-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sid = sessionId("archived-live-lock-session");
+		let current: SessionRecord = {
+			...record(sid),
+			path: join(root, "archived-live-lock-session.jsonl"),
+			cwd: root,
+			projectId: stableProjectId(root),
+			archivedAt: "2026-07-23T00:00:00.000Z",
+		};
+		const authority = {
+			create: async () => {
+				throw new Error("not used");
+			},
+			list: async () => [current],
+			archive: async () => {},
+			restore: async () => {
+				const next = { ...current };
+				delete next.archivedAt;
+				current = next;
+			},
+			delete: async () => {},
+		};
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "archived-live-lock-test",
+			socketPath,
+			discovery: authority,
+			sessionAuthority: authority,
+			childFactory: new FakeFactory(),
+			lockStatus: () => "live",
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "archived-live-lock-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: ["session.observer"],
+				capabilities: { client: ["sessions.manage", "sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "attach-archived-live-lock",
+				commandId: "attach-archived-live-lock-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.attach",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "attach-archived-live-lock") {
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
+			const expectedRevision = appserver.snapshot(sid)?.revision;
+			if (expectedRevision === undefined) throw new Error("missing archived session revision");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "restore-archived-live-lock",
+				commandId: "restore-archived-live-lock-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.restore",
+				expectedRevision,
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "restore-archived-live-lock") {
+					expect(frame).toMatchObject({
+						ok: false,
+						error: { code: "session_locked" },
+					});
+					break;
+				}
+			}
+			expect(current.archivedAt).toBe("2026-07-23T00:00:00.000Z");
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("never evicts omitted sessions from a partial authority inventory", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-partial-inventory-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const retained = record("partial-retained");
+		const omitted = record("partial-omitted");
+		let records = [retained, omitted];
+		let complete = true;
+		let totalCount = 2;
+		const discovery: SessionDiscovery = {
+			list: async () => records,
+			inventoryComplete: () => complete,
+			inventoryTotalCount: () => totalCount,
+		};
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "partial-inventory-test",
+			socketPath,
+			discovery,
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "partial-inventory-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: [],
+				capabilities: { client: ["sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect(await client.nextServer()).toMatchObject({ type: "sessions", totalCount: 2, truncated: false });
+			records = [retained];
+			complete = false;
+			totalCount = 3;
+			for (let attempt = 0; attempt < 2; attempt += 1) {
+				const requestId = `partial-list-${attempt}`;
+				client.sendJson({
+					v: "omp-app/1",
+					type: "command",
+					requestId,
+					commandId: `${requestId}-command`,
+					hostId: host,
+					command: "session.list",
+					args: {},
+				});
+				for (;;) {
+					const frame = await client.nextServer();
+					if (frame.type === "response" && frame.requestId === requestId) {
+						expect(frame).toMatchObject({
+							ok: true,
+							result: { totalCount: 3, truncated: true },
+						});
+						break;
+					}
+				}
+			}
+			expect(appserver.snapshot(omitted.sessionId)).toBeDefined();
 		} finally {
 			client.destroy();
 			await client.closed();

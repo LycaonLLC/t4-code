@@ -1,4 +1,4 @@
-import type { ProjectId, SessionId, UsageReadResult } from "@t4-code/host-wire";
+import { MAX_ARRAY_ITEMS, type ProjectId, type SessionId, type UsageReadResult } from "@t4-code/host-wire";
 import { isAbsolute } from "node:path";
 import {
 	decodeOmpAuthorityBridgeServerFrame,
@@ -88,14 +88,61 @@ function sessionReference(session: SessionRecord): SessionRecord {
 function sparseSessionListResponse(value: unknown): unknown {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return value;
 	const frame = value as Record<string, unknown>;
-	if (frame.type !== "response" || frame.ok !== true || !Array.isArray(frame.result)) return value;
+	if (frame.type !== "response" || frame.ok !== true) return value;
+	const result =
+		Array.isArray(frame.result)
+			? frame.result
+			: frame.result && typeof frame.result === "object" && !Array.isArray(frame.result)
+				? (frame.result as Record<string, unknown>).sessions
+				: undefined;
+	if (!Array.isArray(result)) return value;
+	const sparse = result.map(session =>
+		session && typeof session === "object" && !Array.isArray(session)
+			? { ...(session as Record<string, unknown>), entriesLoaded: false, entries: [] }
+			: session,
+	);
+	if (Array.isArray(frame.result)) return { ...frame, result: sparse };
 	return {
 		...frame,
-		result: frame.result.map(session =>
-			session && typeof session === "object" && !Array.isArray(session)
-				? { ...(session as Record<string, unknown>), entriesLoaded: false, entries: [] }
-				: session,
-		),
+		result: { ...(frame.result as Record<string, unknown>), sessions: sparse },
+	};
+}
+
+function sessionListPage(value: unknown): {
+	readonly sessions: readonly SessionRecord[];
+	readonly nextCursor?: string;
+	readonly complete: boolean;
+	readonly totalCount: number;
+} {
+	if (Array.isArray(value))
+		return { sessions: value as SessionRecord[], complete: true, totalCount: value.length };
+	const page = asRecord(value, "session inventory page");
+	const keys = Object.keys(page).sort();
+	const expected = [
+		"sessions",
+		"complete",
+		"totalCount",
+		...(page.nextCursor === undefined ? [] : ["nextCursor"]),
+	].sort();
+	if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index]))
+		throw new Error("session inventory page is invalid");
+	if (!Array.isArray(page.sessions) || page.sessions.length > MAX_ARRAY_ITEMS)
+		throw new Error("session inventory page is invalid");
+	if (
+		typeof page.complete !== "boolean" ||
+		!Number.isSafeInteger(page.totalCount) ||
+		(page.totalCount as number) < page.sessions.length
+	)
+		throw new Error("session inventory page is invalid");
+	const nextCursor =
+		page.nextCursor === undefined ? undefined : asString(page.nextCursor, "session inventory cursor");
+	if (nextCursor !== undefined && page.sessions.length === 0)
+		throw new Error("session inventory page made no progress");
+	return {
+		sessions: page.sessions as SessionRecord[],
+		...(nextCursor === undefined ? {} : { nextCursor }),
+		complete: page.complete,
+		totalCount: page.totalCount as number,
 	};
 }
 
@@ -152,6 +199,8 @@ export class OmpAuthorityBridgeClient {
 	#counter = 0;
 	#closed = false;
 	#stderr = "";
+	#sessionInventoryComplete = true;
+	#sessionInventoryTotalCount = 0;
 
 	constructor(
 		private readonly invocation: OmpAuthorityBridgeInvocation,
@@ -197,13 +246,48 @@ export class OmpAuthorityBridgeClient {
 			emitTerminalOutput?: (frame: unknown) => void) => this.#request(method, params, signal, emitTerminalOutput);
 		const sessionAuthority: SessionAuthority = {
 			create: async (cwd, title) => call("session.create", { cwd, ...(title === undefined ? {} : { title }) }) as never,
-			list: async () => call("session.list", {}) as never,
+			list: async () => {
+				const sessions: SessionRecord[] = [];
+				const seenCursors = new Set<string>();
+				let complete: boolean | undefined;
+				let totalCount: number | undefined;
+				let cursor: string | undefined;
+				for (;;) {
+					const page = sessionListPage(
+						await call("session.list", cursor === undefined ? {} : { cursor }),
+					);
+					if (sessions.length + page.sessions.length > MAX_ARRAY_ITEMS)
+						throw new Error("session inventory exceeds the bridge item limit");
+					if (
+						(complete !== undefined && page.complete !== complete) ||
+						(totalCount !== undefined && page.totalCount !== totalCount)
+					)
+						throw new Error("session inventory snapshot metadata changed between pages");
+					complete = page.complete;
+					totalCount = page.totalCount;
+					sessions.push(...page.sessions);
+					if (page.nextCursor === undefined) {
+						if (page.complete && page.totalCount !== sessions.length)
+							throw new Error("complete session inventory count is inconsistent");
+						if (!page.complete && page.totalCount <= sessions.length)
+							throw new Error("partial session inventory count is inconsistent");
+						this.#sessionInventoryComplete = page.complete;
+						this.#sessionInventoryTotalCount = page.totalCount;
+						return sessions;
+					}
+					if (seenCursors.has(page.nextCursor)) throw new Error("session inventory cursor repeated");
+					seenCursors.add(page.nextCursor);
+					cursor = page.nextCursor;
+				}
+			},
 			archive: async (session, archivedAt) => { await call("session.archive", { session: sessionReference(session), archivedAt }); },
 			restore: async session => { await call("session.restore", { session: sessionReference(session) }); },
 			delete: async session => { await call("session.delete", { session: sessionReference(session) }); },
 		};
 		const discovery: SessionDiscovery = {
 			list: () => sessionAuthority.list(),
+			inventoryComplete: () => this.#sessionInventoryComplete,
+			inventoryTotalCount: () => this.#sessionInventoryTotalCount,
 			...(this.#methods.has("discovery.load")
 				? { load: async (session: SessionRecord) => call("discovery.load", { session: sessionReference(session) }) as Promise<SessionRecord> }
 				: {}),
