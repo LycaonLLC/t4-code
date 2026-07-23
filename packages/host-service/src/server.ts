@@ -32,6 +32,7 @@ import {
 	parseBounded,
 	type OperationCapability,
 	projectId,
+	type ProjectId,
 	type ResultFrame,
 	requiredCapability,
 	revision as wireRevision,
@@ -852,6 +853,7 @@ export class LocalAppserver implements AppserverHandle {
 	#sessionLoads = new Map<SessionId, Promise<void>>();
 	#inventoryGeneration = 0;
 	#inventoryLoaded = false;
+	#inventoryComplete = false;
 	#inventoryTotalCount = 0;
 	#discoveryMisses = new Map<SessionId, number>();
 	#agentTranscripts = new Map<SessionId, AgentTranscriptProjection>();
@@ -1100,6 +1102,7 @@ export class LocalAppserver implements AppserverHandle {
 		if (this.#started) return;
 		this.#inventoryGeneration += 1;
 		this.#inventoryLoaded = false;
+		this.#inventoryComplete = false;
 		this.#inventoryTotalCount = 0;
 		this.#stopping = false;
 		this.#draining = false;
@@ -2737,19 +2740,40 @@ export class LocalAppserver implements AppserverHandle {
 		if (!this.#projectRootForProject) throw new Error("project resolver is unavailable");
 		if (typeof value !== "string") throw new Error("projectId is invalid");
 		const requestedProject = projectId(value);
+		const indexed = [...this.#records.values()].filter(
+			record => record.runtime === undefined && record.projectId === requestedProject,
+		);
+		for (const record of indexed) {
+			const canonical = await this.canonicalProjectRoot(record.cwd, requestedProject);
+			if (canonical !== undefined) return canonical;
+		}
 		const requestedCwd = await this.#projectRootForProject(requestedProject);
 		if (typeof requestedCwd !== "string" || !requestedCwd.startsWith("/"))
 			throw new Error("project resolver returned an invalid local root");
-		let canonical: string;
-		try {
-			canonical = await realpath(requestedCwd);
-			if (!(await fsStat(canonical)).isDirectory()) throw new Error("not a directory");
-		} catch {
+		const canonical = await this.canonicalProjectRoot(requestedCwd, requestedProject);
+		if (canonical === undefined) {
+			let available = false;
+			try {
+				available = (await fsStat(await realpath(requestedCwd))).isDirectory();
+			} catch {}
+			if (available)
+				throw new Error("project resolver returned a mismatched local root");
 			throw new Error("project resolver returned an unavailable local root");
 		}
-		if (stableProjectId(canonical) !== requestedProject)
-			throw new Error("project resolver returned a mismatched local root");
 		return canonical;
+	}
+	private async canonicalProjectRoot(
+		candidate: string,
+		requestedProject: ProjectId,
+	): Promise<string | undefined> {
+		if (!candidate.startsWith("/")) return undefined;
+		try {
+			const canonical = await realpath(candidate);
+			if (!(await fsStat(canonical)).isDirectory()) return undefined;
+			return stableProjectId(canonical) === requestedProject ? canonical : undefined;
+		} catch {
+			return undefined;
+		}
 	}
 	private workspaceProjection(record: WorkspaceRecord): Record<string, unknown> {
 		return {
@@ -4242,6 +4266,7 @@ export class LocalAppserver implements AppserverHandle {
 			(inventoryComplete && reportedTotal !== discovered.length)
 		)
 			throw new Error("session inventory completeness metadata is invalid");
+		this.#inventoryComplete = inventoryComplete;
 		this.#inventoryTotalCount = reportedTotal;
 		const publishChanges = this.#inventoryLoaded;
 		const discoveredIds = new Set<SessionId>();
@@ -4427,7 +4452,13 @@ export class LocalAppserver implements AppserverHandle {
 		}
 		const authority = this.#transcriptSearch;
 		const records = [...this.#records.values()];
-		const reconcile = authority.reconcile(records);
+		const pruneMissing = this.#inventoryComplete;
+		// Search maintenance is deliberately a later task. Reconciliation may do
+		// synchronous SQLite work before its first await; starting it inline would
+		// delay the authoritative sessions frame after Welcome.
+		const reconcile = new Promise<void>(resolve => setTimeout(resolve, 0)).then(() =>
+			authority.reconcile(records, { pruneMissing }),
+		);
 		this.#transcriptSearchReconcile = reconcile;
 		void reconcile
 			.catch(() => undefined)

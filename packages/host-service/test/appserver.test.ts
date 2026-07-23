@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { appendFile, mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DESKTOP_CATALOG_COMMANDS, type DurableEntry, hostId, projectId, sessionId } from "@t4-code/host-wire";
@@ -406,10 +406,16 @@ describe("appserver lifecycle", () => {
 		await expect(stat(socketPath)).rejects.toThrow();
 		for (const child of factory.children) expect(child.killed).toBe(true);
 	});
-	test("starts a writer before returning a session created through T4", async () => {
+	test("starts a writer from an indexed project before returning a session created through T4", async () => {
 		const root = await mkdtemp(join(tmpdir(), "t4-created-session-"));
 		const socketPath = join(root, "run", "appserver.sock");
 		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		const existing = {
+			...record("existing-session"),
+			path: join(root, "existing-session.jsonl"),
+			cwd: root,
+			projectId: stableProjectId(root),
+		};
 		const created = {
 			...record("created-session"),
 			path: join(root, "created-session.jsonl"),
@@ -418,12 +424,14 @@ describe("appserver lifecycle", () => {
 		};
 		const factory = new FakeFactory();
 		let visible = false;
+		let createdCwd: string | undefined;
 		const sessionAuthority = {
-			create: async () => {
+			create: async (cwd: string) => {
+				createdCwd = cwd;
 				visible = true;
 				return created;
 			},
-			list: async () => visible ? [created] : [],
+			list: async () => visible ? [created, existing] : [existing],
 			archive: async () => {},
 			restore: async () => {},
 			delete: async () => {},
@@ -435,7 +443,9 @@ describe("appserver lifecycle", () => {
 			discovery: sessionAuthority,
 			sessionAuthority,
 			sessionOwnershipPath,
-			projectRootForProject: () => root,
+			projectRootForProject: () => {
+				throw new Error("partial authority inventory cannot resolve project roots");
+			},
 			childFactory: factory,
 		});
 		await appserver.start();
@@ -469,6 +479,7 @@ describe("appserver lifecycle", () => {
 			}
 			expect(factory.children).toHaveLength(1);
 			expect(factory.children[0]?.killed).toBe(false);
+			expect(createdCwd).toBe(await realpath(root));
 			const ownership = new SessionOwnershipStore(sessionOwnershipPath);
 			await ownership.load();
 			expect(ownership.owns(created.sessionId, created.path)).toBe(true);
@@ -497,6 +508,87 @@ describe("appserver lifecycle", () => {
 			const pruned = new SessionOwnershipStore(sessionOwnershipPath);
 			await pruned.load();
 			expect(pruned.owns(created.sessionId, created.path)).toBe(false);
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("ignores external runtime records when resolving a native session project", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-created-session-external-record-"));
+		const worktree = join(root, "external-worktree");
+		await mkdir(worktree);
+		const socketPath = join(root, "run", "appserver.sock");
+		const requestedProject = stableProjectId(root);
+		const external = {
+			...record("external-session"),
+			path: worktree,
+			cwd: worktree,
+			projectId: requestedProject,
+			runtime: { id: "external-runtime", workspaceInstanceId: "external-worktree" },
+		};
+		const created = {
+			...record("native-created-session"),
+			path: join(root, "native-created-session.jsonl"),
+			cwd: root,
+			projectId: requestedProject,
+		};
+		let createdCwd: string | undefined;
+		let resolverCalls = 0;
+		const sessionAuthority = {
+			create: async (cwd: string) => {
+				createdCwd = cwd;
+				return created;
+			},
+			list: async () => [external],
+			archive: async () => {},
+			restore: async () => {},
+			delete: async () => {},
+		};
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "external-record-project-test",
+			socketPath,
+			discovery: sessionAuthority,
+			sessionAuthority,
+			projectRootForProject: () => {
+				resolverCalls += 1;
+				return root;
+			},
+			childFactory: new FakeFactory(),
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "external-record-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: [],
+				capabilities: { client: ["sessions.manage", "sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "create-native-session",
+				commandId: "create-native-session-command",
+				hostId: host,
+				command: "session.create",
+				args: { projectId: requestedProject },
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type !== "response" || frame.requestId !== "create-native-session") continue;
+				expect(frame).toMatchObject({ ok: true });
+				break;
+			}
+			expect(resolverCalls).toBe(1);
+			expect(createdCwd).toBe(await realpath(root));
 		} finally {
 			client.destroy();
 			await client.closed();
