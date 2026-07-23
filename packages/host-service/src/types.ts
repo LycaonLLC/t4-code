@@ -227,6 +227,8 @@ export interface AppserverOptions {
 	hostIdPath?: string;
 	/** Private latest-outcome ledger path. Defaults beside the persistent host identity unless hostId is explicit. */
 	attentionOutcomePath?: string;
+	/** Private profile-local ledger of exact sessions created through T4. */
+	sessionOwnershipPath?: string;
 	epoch?: string;
 	clock?: Clock;
 	discovery?: SessionDiscovery;

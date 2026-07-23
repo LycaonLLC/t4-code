@@ -76,6 +76,7 @@ import {
 	unixSocketActive,
 } from "./identity.ts";
 import { ImageUploadError, ImageUploadStore } from "./image-upload-store.ts";
+import { SessionOwnershipStore } from "./session-ownership-store.ts";
 import {
 	commandFeature,
 	DesktopOperationDispatcher,
@@ -821,6 +822,7 @@ export class LocalAppserver implements AppserverHandle {
 	#hostProvided: boolean;
 	#hostIdPath?: string;
 	#attentionOutcomes?: AttentionOutcomeStore;
+	#sessionOwnership?: SessionOwnershipStore;
 	#ownerLock = false;
 	#ownerPaths?: OwnerPaths;
 	#ownerHandle?: FileHandle;
@@ -864,6 +866,7 @@ export class LocalAppserver implements AppserverHandle {
 				options.attentionOutcomePath ?? join(dirname(hostIdPath), "attention-outcomes.json"),
 			);
 		}
+		if (options.sessionOwnershipPath) this.#sessionOwnership = new SessionOwnershipStore(options.sessionOwnershipPath);
 		this.epoch = createEpoch(options.epoch);
 		this.socketPath = options.socketPath ?? defaultSocketPath();
 		this.#remotePolicy = options.remotePolicy;
@@ -1035,6 +1038,7 @@ export class LocalAppserver implements AppserverHandle {
 		this.#closedSessions.clear();
 		if (!this.#hostProvided) this.hostId = await loadPersistentHostId(this.#hostIdPath);
 		await this.#attentionOutcomes?.load();
+		await this.#sessionOwnership?.load();
 		try {
 			await this.#transcriptSearch?.initialize();
 			this.#records.clear();
@@ -1242,6 +1246,7 @@ export class LocalAppserver implements AppserverHandle {
 			this.#transcriptSearchReconcile = undefined;
 			this.#transcriptSearchRerun = false;
 			await this.#attentionOutcomes?.flush().catch(() => undefined);
+			await this.#sessionOwnership?.flush().catch(() => undefined);
 			this.#started = false;
 			const identity = this.#runIdentity;
 			if (identity) await this.cleanupOwned(identity);
@@ -2276,6 +2281,12 @@ export class LocalAppserver implements AppserverHandle {
 			status: "idle",
 			entries: created.entries,
 		};
+		try {
+			await this.#sessionOwnership?.add(record.sessionId, record.path);
+		} catch (error) {
+			await this.#authority.delete(record).catch(() => undefined);
+			throw error;
+		}
 		this.#records.set(record.sessionId, record);
 		this.#projections.set(record.sessionId, new SessionProjection(this.hostId, record, this.epoch, this.#ringSize));
 		this.#createdPending.set(record.sessionId, { record, refreshesRemaining: 1 });
@@ -3146,6 +3157,7 @@ export class LocalAppserver implements AppserverHandle {
 			this.#records.delete(sessionId);
 			this.#projections.delete(sessionId);
 			await this.#attentionOutcomes?.delete(sessionId);
+			await this.#sessionOwnership?.delete(sessionId);
 			this.#closedSessions.delete(sessionId);
 			this.#releaseAllMessageLifecycles(sessionId, "completed-without-entry");
 			this.#stateRefreshGenerations.delete(sessionId);
@@ -4392,8 +4404,9 @@ export class LocalAppserver implements AppserverHandle {
 		}
 		let observer = this.#observers.get(sessionId);
 		if (!observer) {
+			const owned = this.#sessionOwnership?.owns(sessionId, record.path) === true;
 			const lockless =
-				!this.#claimLocklessSessions && status === "missing" && !projection.value.ref.liveState?.sessionControl;
+				!this.#claimLocklessSessions && !owned && status === "missing" && !projection.value.ref.liveState?.sessionControl;
 			observer = new SessionTranscriptObserver(record.path, this.hostId);
 			this.#observers.set(sessionId, observer);
 			if (lockless) this.#locklessObservers.add(observer);

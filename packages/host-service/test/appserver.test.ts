@@ -8,6 +8,7 @@ import { IdempotencyStore } from "../src/idempotency.ts";
 import { ensureSecureSocketDirectory } from "../src/ownership.ts";
 import { FileSessionDiscovery, realFs, stableProjectId } from "../src/discovery.ts";
 import { SessionProjection } from "../src/projection.ts";
+import { SessionOwnershipStore } from "../src/session-ownership-store.ts";
 import { appserverSupportedCapabilities, appserverSupportedFeatures, createAppserver } from "../src/server.ts";
 import { SubagentProjection } from "../src/subagent-projection.ts";
 import type { ChildHandle, RpcChildFactory, SessionDiscovery, SessionRecord } from "../src/types.ts";
@@ -340,6 +341,7 @@ describe("appserver lifecycle", () => {
 	test("starts a writer before returning a session created through T4", async () => {
 		const root = await mkdtemp(join(tmpdir(), "t4-created-session-"));
 		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
 		const created = {
 			...record("created-session"),
 			path: join(root, "created-session.jsonl"),
@@ -360,6 +362,7 @@ describe("appserver lifecycle", () => {
 			socketPath,
 			discovery: sessionAuthority,
 			sessionAuthority,
+			sessionOwnershipPath,
 			projectRootForProject: () => root,
 			childFactory: factory,
 		});
@@ -394,6 +397,80 @@ describe("appserver lifecycle", () => {
 			}
 			expect(factory.children).toHaveLength(1);
 			expect(factory.children[0]?.killed).toBe(false);
+			const ownership = new SessionOwnershipStore(sessionOwnershipPath);
+			await ownership.load();
+			expect(ownership.owns(created.sessionId, created.path)).toBe(true);
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("reclaims only an exact T4-owned lockless session after host restart", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-owned-session-restart-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		const transcriptPath = join(root, "owned-session.jsonl");
+		const sid = sessionId("owned-session-restart");
+		const timestamp = "2026-07-22T00:00:00.000Z";
+		await writeFile(
+			transcriptPath,
+			`${JSON.stringify({ type: "session", version: 3, id: sid, cwd: root, timestamp, title: "Owned session" })}\n`,
+		);
+		const ownership = new SessionOwnershipStore(sessionOwnershipPath);
+		await ownership.add(sid, transcriptPath);
+		const factory = new FakeFactory();
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "owned-session-restart-test",
+			socketPath,
+			sessionOwnershipPath,
+			discovery: new FileSessionDiscovery(root, realFs, host, true),
+			childFactory: factory,
+			lockStatus: () => "missing",
+			lockCheck: async () => {},
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "owned-restart-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: ["session.observer"],
+				capabilities: { client: ["sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "attach-owned",
+				commandId: "attach-owned-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.attach",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "attach-owned") {
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
+			await Promise.race([
+				(async () => {
+					while (factory.children.length === 0) await Bun.sleep(20);
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("owned session was not reclaimed");
+				}),
+			]);
+			expect(factory.children).toHaveLength(1);
 		} finally {
 			client.destroy();
 			await client.closed();

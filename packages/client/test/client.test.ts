@@ -1274,6 +1274,59 @@ describe("OmpClient protocol state machine", () => {
     expect(client.state).toBe("ready");
     await client.close();
   });
+
+  it("coalesces an old-epoch renderer attach with the transport reconnect recovery", async () => {
+    const clock = new FakeClock();
+    const first = new FakeTransport({
+      welcome: welcome(),
+      onSend: (frame, transport) => {
+        if (frame.type === "command") transport.emit(responseFor(frame));
+      },
+    });
+    let recoveryCommand: CommandFrame | undefined;
+    const second = new FakeTransport({
+      welcome: welcome({ epoch: "epoch-b" }),
+      onSend: (frame) => {
+        if (frame.type === "command" && frame.command === "session.attach") recoveryCommand = frame;
+      },
+    });
+    const transports = [first, second];
+    const client = new OmpClient({
+      transport: () => transports.shift() ?? second,
+      hostId: HOST,
+      timers: clock,
+      clock,
+      random: () => 0,
+      reconnect: { baseMs: 2, maxMs: 2 },
+    });
+
+    await client.connect();
+    await client.attach(HOST, SESSION);
+    first.drop();
+    clock.advanceBy(1);
+    await flushMicrotasks();
+    expect(client.state).toBe("ready");
+    expect(recoveryCommand).toBeDefined();
+
+    const rendererAttach = client.command({
+      hostId: HOST,
+      sessionId: SESSION,
+      command: "session.attach",
+      args: { cursor: { epoch: "epoch-a", seq: 0 } },
+    });
+    expect(
+      second.sent
+        .map((raw) => decodeClientFrame(raw))
+        .filter((frame) => frame.type === "command" && frame.command === "session.attach"),
+    ).toHaveLength(1);
+
+    second.emit(responseFor(recoveryCommand!, { cursor: { epoch: "epoch-b", seq: 0 } }));
+    second.emit(snapshot(0, "epoch-b"));
+    const result = await rendererAttach;
+    expect(result.requestId).toBe(recoveryCommand!.requestId);
+    expect(client.snapshot().cursor).toEqual({ epoch: "epoch-b", seq: 0 });
+    await client.close();
+  });
 });
 
 describe("OmpClient live fixture websocket", () => {

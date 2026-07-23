@@ -173,6 +173,10 @@ export class OmpClient {
   private readonly inboundDispatcher: OmpClientEventDispatcher;
   private readonly events = new OmpClientEvents();
   private readonly attached = new Map<string, { hostId: HostId; sessionId: SessionId }>();
+  private readonly attachmentRecoveries = new Map<
+    string,
+    { readonly generation: number; readonly promise: Promise<OmpResponse>; readonly awaitsSnapshot: boolean }
+  >();
   private readonly previewCaptures: PreviewCaptureResource;
   readonly previewLeaseManager: PreviewLeaseManager;
   private handshakeTimer: ClientTimer | undefined;
@@ -426,7 +430,18 @@ export class OmpClient {
   }
   async command(intent: CommandIntent, options: CommandOptions = {}): Promise<OmpResponse> {
     const generation = this.generation;
-    const response = await this.sendCommand(intent, options);
+    const attachmentKey =
+      intent.command === "session.attach" && intent.hostId !== undefined && intent.sessionId !== undefined
+        ? sessionKey(intent.hostId, intent.sessionId)
+        : undefined;
+    const recovery = attachmentKey === undefined ? undefined : this.attachmentRecoveries.get(attachmentKey);
+    // The transport owns reattachment across reconnects. A renderer can observe
+    // the ready state before the new welcome/snapshot reaches its projection and
+    // otherwise race that recovery with an old-epoch attach of its own.
+    const response =
+      recovery !== undefined && recovery.generation === generation
+        ? await recovery.promise
+        : await this.sendCommand(intent, options);
     if (
       response.ok &&
       intent.command === "session.attach" &&
@@ -998,6 +1013,10 @@ export class OmpClient {
   private acceptSnapshot(event: PublicEvent<"snapshot">): void {
     const frame = event.payload;
     const currentKey = sessionKey(String(frame.hostId), String(frame.sessionId));
+    const recovery = this.attachmentRecoveries.get(currentKey);
+    if (recovery?.generation === this.generation && recovery.awaitsSnapshot) {
+      this.attachmentRecoveries.delete(currentKey);
+    }
     // Inbound dispatch is generation-scoped and ordered, so a snapshot from the
     // current transport is authoritative even when its cursor is equal to or
     // below the durable journal. The journal can outlive renderer state, and a
@@ -1200,10 +1219,9 @@ export class OmpClient {
   private reattachSessions(): void {
     const generation = this.generation;
     for (const record of this.attached.values()) {
-      const cursor = this.cursorJournal.records.get(
-        `${String(record.hostId)}\u0000${String(record.sessionId)}`,
-      )?.cursor;
-      this.sendCommand(
+      const key = sessionKey(String(record.hostId), String(record.sessionId));
+      const cursor = this.cursorJournal.records.get(key)?.cursor;
+      const recovery = this.sendCommand(
         {
           hostId: String(record.hostId),
           sessionId: String(record.sessionId),
@@ -1211,12 +1229,26 @@ export class OmpClient {
           args: cursor === undefined ? {} : { cursor },
         },
         { timeoutMs: this.options.commandTimeoutMs ?? 30_000 },
-      )
-        .then((response) => {
-          if (response.ok) this.requestPreviewState(record, generation);
-          else this.emitRecoveryFailure("session.attach");
-        })
-        .catch((error: unknown) => this.emitRecoveryError(error));
+      );
+      const state = { generation, promise: recovery, awaitsSnapshot: cursor === undefined };
+      this.attachmentRecoveries.set(key, state);
+      void recovery.then(
+        (response) => {
+          if (response.ok) {
+            this.requestPreviewState(record, generation);
+            if (!state.awaitsSnapshot && this.attachmentRecoveries.get(key) === state) {
+              this.attachmentRecoveries.delete(key);
+            }
+          } else {
+            if (this.attachmentRecoveries.get(key) === state) this.attachmentRecoveries.delete(key);
+            this.emitRecoveryFailure("session.attach");
+          }
+        },
+        (error: unknown) => {
+          if (this.attachmentRecoveries.get(key) === state) this.attachmentRecoveries.delete(key);
+          this.emitRecoveryError(error);
+        },
+      );
     }
   }
 
