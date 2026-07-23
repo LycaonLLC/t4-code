@@ -388,10 +388,10 @@ test("a stalled attached capability refresh falls back to the base catalog", asy
   const appserver = createAppserver({
     hostId: host,
     socketPath,
-    ompVersion: "17.0.6",
+    ompVersion: "17.0.9",
     discovery: { list: async () => [session] },
     childFactory: factory,
-    rpcDialect: "official-17.0.6",
+    rpcDialect: "official-17.0.9",
     lockCheck: () => {},
     lockStatus: () => "missing",
     operationsAuthority: {
