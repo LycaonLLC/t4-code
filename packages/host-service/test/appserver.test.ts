@@ -61,6 +61,73 @@ class FakeFactory implements RpcChildFactory {
 		return ["omp", "--mode", "rpc", "--session", path];
 	}
 }
+class DeferredPromptChild implements ChildHandle {
+	#prompt = Promise.withResolvers<Record<string, unknown>>();
+	#state = Promise.withResolvers<Record<string, unknown>>();
+	#reply = Promise.withResolvers<void>();
+	#finish = Promise.withResolvers<void>();
+	#exited = Promise.withResolvers<number>();
+	killed = false;
+	promptReceived = this.#prompt.promise;
+	stdin = {
+		write: (data: string) => {
+			const frame = JSON.parse(data) as Record<string, unknown>;
+			if (frame.type === "prompt") this.#prompt.resolve(frame);
+			else if (frame.type === "get_state") this.#state.resolve(frame);
+		},
+	};
+	stdout: AsyncIterable<string> = this.stream();
+	exited = this.#exited.promise;
+	async *stream() {
+		yield `${JSON.stringify({ type: "ready" })}\n`;
+		const prompt = await this.#prompt.promise;
+		await this.#reply.promise;
+		yield `${JSON.stringify({
+			type: "response",
+			id: prompt.id,
+			command: "prompt",
+			success: false,
+		})}\n`;
+		const state = await this.#state.promise;
+		yield `${JSON.stringify({
+			type: "response",
+			id: state.id,
+			command: "get_state",
+			success: true,
+			data: {
+				isStreaming: false,
+				isCompacting: false,
+				isPaused: false,
+				messageCount: 0,
+				queuedMessageCount: 0,
+				steeringMode: "all",
+				followUpMode: "all",
+				interruptMode: "immediate",
+			},
+		})}\n`;
+		await this.#finish.promise;
+	}
+	replyToPrompt() {
+		this.#reply.resolve();
+	}
+	kill() {
+		this.killed = true;
+		this.#reply.resolve();
+		this.#finish.resolve();
+		this.#exited.resolve(0);
+	}
+}
+class DeferredPromptFactory implements RpcChildFactory {
+	children: DeferredPromptChild[] = [];
+	spawn() {
+		const child = new DeferredPromptChild();
+		this.children.push(child);
+		return child;
+	}
+	argv(path: string) {
+		return ["omp", "--mode", "rpc", "--session", path];
+	}
+}
 class StaticDiscovery implements SessionDiscovery {
 	constructor(private readonly records: SessionRecord[]) {}
 	async list() {
@@ -515,6 +582,129 @@ describe("appserver lifecycle", () => {
 					break;
 				}
 			}
+			const pruned = new SessionOwnershipStore(sessionOwnershipPath);
+			await pruned.load();
+			expect(pruned.owns(created.sessionId, created.path)).toBe(false);
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("defers missing-created-session cleanup while its first prompt is in flight", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-created-session-busy-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		const created = {
+			...record("created-session-busy"),
+			path: join(root, "created-session-busy.jsonl"),
+			cwd: root,
+			projectId: stableProjectId(root),
+		};
+		const sessionAuthority = {
+			create: async () => created,
+			list: async () => [],
+			archive: async () => {},
+			restore: async () => {},
+			delete: async () => {},
+		};
+		const factory = new DeferredPromptFactory();
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "created-session-busy-test",
+			socketPath,
+			discovery: sessionAuthority,
+			sessionAuthority,
+			sessionOwnershipPath,
+			projectRootForProject: () => root,
+			childFactory: factory,
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		const nextResponse = async (requestId: string) => {
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === requestId) return frame;
+			}
+		};
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "busy-create-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: [],
+				capabilities: { client: ["sessions.manage", "sessions.read", "sessions.prompt"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "create-busy",
+				commandId: "create-busy-command",
+				hostId: host,
+				command: "session.create",
+				args: { projectId: created.projectId },
+			});
+			expect(await nextResponse("create-busy")).toMatchObject({ ok: true });
+			const child = factory.children[0];
+			if (!child) throw new Error("created session did not start its writer");
+
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "prompt-busy",
+				commandId: "prompt-busy-command",
+				hostId: host,
+				sessionId: created.sessionId,
+				command: "session.prompt",
+				args: { message: "keep the first prompt active" },
+			});
+			await child.promptReceived;
+
+			for (const suffix of ["once", "twice"]) {
+				client.sendJson({
+					v: "omp-app/1",
+					type: "command",
+					requestId: `list-busy-${suffix}`,
+					commandId: `list-busy-${suffix}-command`,
+					hostId: host,
+					command: "session.list",
+					args: {},
+				});
+				expect(await nextResponse(`list-busy-${suffix}`)).toMatchObject({ ok: true });
+			}
+			expect(child.killed).toBe(false);
+			expect(appserver.snapshot(created.sessionId)).toBeDefined();
+			const retained = new SessionOwnershipStore(sessionOwnershipPath);
+			await retained.load();
+			expect(retained.owns(created.sessionId, created.path)).toBe(true);
+
+			child.replyToPrompt();
+			expect(await nextResponse("prompt-busy")).toMatchObject({ ok: false });
+			await Promise.race([
+				(async () => {
+					while (appserver.snapshot(created.sessionId)?.ref.status === "active") await Bun.sleep(5);
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("prompt state did not settle");
+				}),
+			]);
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "list-busy-settled",
+				commandId: "list-busy-settled-command",
+				hostId: host,
+				command: "session.list",
+				args: {},
+			});
+			expect(await nextResponse("list-busy-settled")).toMatchObject({ ok: true });
+			expect(child.killed).toBe(true);
+			expect(appserver.snapshot(created.sessionId)).toBeUndefined();
 			const pruned = new SessionOwnershipStore(sessionOwnershipPath);
 			await pruned.load();
 			expect(pruned.owns(created.sessionId, created.path)).toBe(false);

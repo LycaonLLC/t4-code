@@ -4199,18 +4199,25 @@ export class LocalAppserver implements AppserverHandle {
 				// A create can start its writer before discovery catches up.
 				// Never discard its ownership proof while that writer may still
 				// be live; retain the pending record and retry on the next refresh.
-				if (!(await this.quiesceSessionRuntime(sessionId))) continue;
-				this.#createdPending.delete(sessionId);
-				this.#discoveryMisses.delete(sessionId);
-				const projection = this.#projections.get(sessionId);
-				if (projection) await this.broadcastIndex(projection.remove());
-				this.cleanupObserverState(sessionId);
-				await this.#imageUploads.cleanupSession(sessionId);
-				this.#records.delete(sessionId);
-				this.#projections.delete(sessionId);
-				await this.#attentionOutcomes?.delete(sessionId);
-				await this.#sessionOwnership?.delete(sessionId);
-				this.#stateRefreshGenerations.delete(sessionId);
+				if (this.#lifecycleMutations.has(sessionId)) continue;
+				this.#lifecycleMutations.add(sessionId);
+				try {
+					if (this.sessionLifecycleBusy(sessionId, true)) continue;
+					if (!(await this.quiesceSessionRuntime(sessionId))) continue;
+					this.#createdPending.delete(sessionId);
+					this.#discoveryMisses.delete(sessionId);
+					const projection = this.#projections.get(sessionId);
+					if (projection) await this.broadcastIndex(projection.remove());
+					this.cleanupObserverState(sessionId);
+					await this.#imageUploads.cleanupSession(sessionId);
+					this.#records.delete(sessionId);
+					this.#projections.delete(sessionId);
+					await this.#attentionOutcomes?.delete(sessionId);
+					await this.#sessionOwnership?.delete(sessionId);
+					this.#stateRefreshGenerations.delete(sessionId);
+				} finally {
+					this.#lifecycleMutations.delete(sessionId);
+				}
 			}
 		}
 		for (const sessionId of this.#records.keys()) {
