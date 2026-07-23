@@ -1040,7 +1040,6 @@ describe("live pane actions", () => {
       project(
         [
           responseFrame("req-1", true, {
-            path: "src/app.ts",
             content: "const value = 1;\n",
             revision: "sha-file-1",
           }),

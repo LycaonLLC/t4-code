@@ -266,7 +266,7 @@ function filePreviewFromReadResult(
   if (result === null || typeof result !== "object" || Array.isArray(result)) return null;
   const record = result as Record<string, unknown>;
   if (
-    record.path !== expectedPath ||
+    (record.path !== undefined && record.path !== expectedPath) ||
     typeof record.content !== "string" ||
     typeof record.revision !== "string" ||
     record.revision.length === 0
