@@ -1042,7 +1042,7 @@ export class LocalAppserver implements AppserverHandle {
 		if (command.command === "session.compact") return { type, customInstructions: command.args.instructions };
 		if (command.command === "session.rename") return { type, name: command.args.name };
 		if (command.command === "session.model.set") {
-			if (this.#rpcDialect === "official-17.0.6") {
+			if (this.#rpcDialect === "official-17.0.9") {
 				if (
 					command.args.persistence !== "session" ||
 					typeof command.args.selector !== "string" ||

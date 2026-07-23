@@ -438,14 +438,16 @@ async function* lines(stream: AsyncIterable<string | Uint8Array>): AsyncGenerato
 			throw new Error("invalid UTF-8 stdout");
 		}
 		pending += text;
-		if (stringBytes(pending) > MAX_LINE_BYTES) throw new Error("rpc line exceeds 1MiB");
 		let index = pending.indexOf("\n");
 		while (index >= 0) {
+			if (stringBytes(pending.slice(0, index + 1)) > MAX_LINE_BYTES)
+				throw new Error("rpc line exceeds 1MiB");
 			const line = pending.slice(0, index).replace(/\r$/, "");
 			pending = pending.slice(index + 1);
 			yield line;
 			index = pending.indexOf("\n");
 		}
+		if (stringBytes(pending) > MAX_LINE_BYTES) throw new Error("rpc line exceeds 1MiB");
 	}
 	try {
 		pending += decoder.decode();

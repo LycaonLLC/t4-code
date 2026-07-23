@@ -1020,16 +1020,18 @@ describe("child supervision", () => {
 					if (payload === undefined) expect(logical.byteLength).toBe(1024 * 1024);
 					const chunkBytes = 256 * 1024;
 					const count = Math.ceil(logical.byteLength / chunkBytes);
+					const frames: string[] = [];
 					for (let index = 0; index < count; index++) {
-						yield `${JSON.stringify({
+						frames.push(`${JSON.stringify({
 							type: "rpc_chunk",
 							chunkId,
 							index,
 							count,
 							byteLength: logical.byteLength,
 							data: logical.subarray(index * chunkBytes, (index + 1) * chunkBytes).toString("base64"),
-						})}\n`;
+						})}\n`);
 					}
+					yield frames.join("");
 				}
 				await release.promise;
 			})(),
