@@ -790,6 +790,8 @@ describe("app-wire authority", () => {
 	test("session observer control is additive, categorical, and exact", () => {
 		expect(ADDITIVE_FEATURES).toContain("session.observer");
 		expect(PROTOCOL_FEATURES).toContain("session.observer");
+		expect(ADDITIVE_FEATURES).toContain("session.unverified");
+		expect(PROTOCOL_FEATURES).toContain("session.unverified");
 		const session = {
 			hostId: "h",
 			sessionId: "s",

@@ -473,6 +473,44 @@ function safeProviderTransport(value: unknown): ProviderTransportState | undefin
 		return undefined;
 	}
 }
+const SESSION_UNVERIFIED_FEATURE = "session.unverified";
+function downgradeUnverifiedSessionControl(ref: SessionRef): SessionRef {
+	const control = ref.liveState?.sessionControl;
+	if (control?.mode !== "unverified") return ref;
+	return {
+		...ref,
+		liveState: {
+			...ref.liveState,
+			sessionControl: { mode: "reconciling", transcript: control.transcript },
+		},
+	};
+}
+function downgradeUnverifiedSessionFrame(frame: ServerFrame): ServerFrame {
+	if (frame.type === "sessions")
+		return { ...frame, sessions: frame.sessions.map(downgradeUnverifiedSessionControl) };
+	if (frame.type === "session.delta" && frame.upsert)
+		return { ...frame, upsert: downgradeUnverifiedSessionControl(frame.upsert) };
+	if (
+		frame.type === "response" &&
+		frame.ok &&
+		(frame.command === "host.list" || frame.command === "session.list") &&
+		frame.result &&
+		typeof frame.result === "object" &&
+		!Array.isArray(frame.result)
+	) {
+		const result = frame.result as Record<string, unknown>;
+		if (!Array.isArray(result.sessions)) return frame;
+		return {
+			...frame,
+			result: {
+				...result,
+				sessions: result.sessions.map(session =>
+					downgradeUnverifiedSessionControl(session as SessionRef)),
+			},
+		} as ServerFrame;
+	}
+	return frame;
+}
 function childBoolean(value: unknown, key: string): boolean {
 	const record =
 		value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
@@ -696,6 +734,7 @@ export function appserverSupportedFeatures(
 		"prompt.images",
 		"agent.transcript",
 		"session.observer",
+		SESSION_UNVERIFIED_FEATURE,
 		"artifacts.read",
 	]);
 	if (includeRemotePolicy) {
@@ -4080,14 +4119,17 @@ export class LocalAppserver implements AppserverHandle {
 		}
 	}
 	async #sendFrameNow(transport: AppWs, frame: ServerFrame): Promise<boolean> {
+		const compatibleFrame = this.#clientFeatures.get(transport)?.has(SESSION_UNVERIFIED_FEATURE)
+			? frame
+			: downgradeUnverifiedSessionFrame(frame);
 		if (transport.remote) {
 			const connection = this.#remoteConnections.get(transport);
 			if (!connection || !this.#remotePolicy) return false;
 			let transformed: ServerFrame | string | undefined;
 			try {
 				transformed = this.#remotePolicy.transformOutbound
-					? await boundedRemoteTransform(this.#remotePolicy.transformOutbound(connection, frame))
-					: frame;
+					? await boundedRemoteTransform(this.#remotePolicy.transformOutbound(connection, compatibleFrame))
+					: compatibleFrame;
 			} catch {
 				connection.socket.close(1011, "remote policy failed");
 				return false;
@@ -4095,7 +4137,7 @@ export class LocalAppserver implements AppserverHandle {
 			if (transformed === undefined) return false;
 			return transport.send(typeof transformed === "string" ? transformed : JSON.stringify(transformed));
 		}
-		return transport.send(JSON.stringify(frame));
+		return transport.send(JSON.stringify(compatibleFrame));
 	}
 	private refreshSessions(): Promise<void> {
 		if (this.#sessionRefresh) return this.#sessionRefresh;
@@ -4154,6 +4196,10 @@ export class LocalAppserver implements AppserverHandle {
 			}
 			if (pending.refreshesRemaining > 0) pending.refreshesRemaining -= 1;
 			else {
+				// A create can start its writer before discovery catches up.
+				// Never discard its ownership proof while that writer may still
+				// be live; retain the pending record and retry on the next refresh.
+				if (!(await this.quiesceSessionRuntime(sessionId))) continue;
 				this.#createdPending.delete(sessionId);
 				this.#discoveryMisses.delete(sessionId);
 				const projection = this.#projections.get(sessionId);
@@ -4163,6 +4209,7 @@ export class LocalAppserver implements AppserverHandle {
 				this.#records.delete(sessionId);
 				this.#projections.delete(sessionId);
 				await this.#attentionOutcomes?.delete(sessionId);
+				await this.#sessionOwnership?.delete(sessionId);
 				this.#stateRefreshGenerations.delete(sessionId);
 			}
 		}
@@ -4189,6 +4236,7 @@ export class LocalAppserver implements AppserverHandle {
 				await this.#transcriptSearch?.deleteSession(sessionId);
 				this.#projections.delete(sessionId);
 				await this.#attentionOutcomes?.delete(sessionId);
+				await this.#sessionOwnership?.delete(sessionId);
 				this.#closedSessions.delete(sessionId);
 				this.#releaseAllMessageLifecycles(sessionId, "completed-without-entry");
 				this.#stateRefreshGenerations.delete(sessionId);

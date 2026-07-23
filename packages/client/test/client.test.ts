@@ -734,6 +734,28 @@ describe("OmpClient protocol state machine", () => {
     expect(store.saved.map((record) => record.cursor.seq)).toEqual([6, 0]);
   });
 
+  it("persists an authoritative reset before a later durable cursor while an older save is in flight", async () => {
+    const store = new DeferredStore();
+    const transport = new FakeTransport({ welcome: welcome() });
+    const client = await readyClient(transport, { cursorStore: store });
+
+    transport.emit(snapshot(6));
+    expect(store.requests.map((record) => record.cursor.seq)).toEqual([6]);
+    transport.emit(snapshot(0));
+    transport.emit(event(1));
+
+    store.resolves.shift()?.();
+    await flushMicrotasks();
+    expect(store.requests.map((record) => record.cursor.seq)).toEqual([6, 0]);
+
+    store.resolves.shift()?.();
+    await flushMicrotasks();
+    expect(store.requests.map((record) => record.cursor.seq)).toEqual([6, 0, 1]);
+
+    store.resolves.shift()?.();
+    await client.close();
+  });
+
   it("never invokes privileged pairing sink for unsolicited, replayed, or wrong-kind pair.ok", async () => {
     let callbacks = 0;
     const unsolicitedTransport = new FakeTransport({ welcome: welcome() });

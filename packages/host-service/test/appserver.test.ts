@@ -244,6 +244,7 @@ describe("appserver lifecycle", () => {
 			"prompt.images",
 			"agent.transcript",
 			"session.observer",
+			"session.unverified",
 			"artifacts.read",
 		]);
 	});
@@ -349,9 +350,13 @@ describe("appserver lifecycle", () => {
 			projectId: stableProjectId(root),
 		};
 		const factory = new FakeFactory();
+		let visible = false;
 		const sessionAuthority = {
-			create: async () => created,
-			list: async () => [created],
+			create: async () => {
+				visible = true;
+				return created;
+			},
+			list: async () => visible ? [created] : [],
 			archive: async () => {},
 			restore: async () => {},
 			delete: async () => {},
@@ -375,7 +380,7 @@ describe("appserver lifecycle", () => {
 				protocol: { min: "omp-app/1", max: "omp-app/1" },
 				client: { name: "create-test", version: "1", build: "test", platform: "linux" },
 				requestedFeatures: [],
-				capabilities: { client: ["sessions.manage"] },
+				capabilities: { client: ["sessions.manage", "sessions.read"] },
 				savedCursors: [],
 			});
 			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
@@ -400,6 +405,119 @@ describe("appserver lifecycle", () => {
 			const ownership = new SessionOwnershipStore(sessionOwnershipPath);
 			await ownership.load();
 			expect(ownership.owns(created.sessionId, created.path)).toBe(true);
+
+			const list = async (suffix: string): Promise<void> => {
+				client.sendJson({
+					v: "omp-app/1",
+					type: "command",
+					requestId: `list-${suffix}`,
+					commandId: `list-${suffix}-command`,
+					hostId: host,
+					command: "session.list",
+					args: {},
+				});
+				for (;;) {
+					const frame = await client.nextServer();
+					if (frame.type !== "response" || frame.requestId !== `list-${suffix}`) continue;
+					expect(frame.ok).toBe(true);
+					return;
+				}
+			};
+			await list("visible");
+			visible = false;
+			await list("missing-once");
+			await list("missing-twice");
+			const pruned = new SessionOwnershipStore(sessionOwnershipPath);
+			await pruned.load();
+			expect(pruned.owns(created.sessionId, created.path)).toBe(false);
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("prunes ownership when a created session never enters discovery", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-created-session-missing-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		const created = {
+			...record("created-session-missing"),
+			path: join(root, "created-session-missing.jsonl"),
+			cwd: root,
+			projectId: stableProjectId(root),
+		};
+		const sessionAuthority = {
+			create: async () => created,
+			list: async () => [],
+			archive: async () => {},
+			restore: async () => {},
+			delete: async () => {},
+		};
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "created-session-missing-test",
+			socketPath,
+			discovery: sessionAuthority,
+			sessionAuthority,
+			sessionOwnershipPath,
+			projectRootForProject: () => root,
+			childFactory: new FakeFactory(),
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "missing-create-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: [],
+				capabilities: { client: ["sessions.manage", "sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "create-missing",
+				commandId: "create-missing-command",
+				hostId: host,
+				command: "session.create",
+				args: { projectId: created.projectId },
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "create-missing") {
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
+			const owned = new SessionOwnershipStore(sessionOwnershipPath);
+			await owned.load();
+			expect(owned.owns(created.sessionId, created.path)).toBe(true);
+
+			for (const suffix of ["once", "twice"]) {
+				client.sendJson({
+					v: "omp-app/1",
+					type: "command",
+					requestId: `list-missing-${suffix}`,
+					commandId: `list-missing-${suffix}-command`,
+					hostId: host,
+					command: "session.list",
+					args: {},
+				});
+				for (;;) {
+					const frame = await client.nextServer();
+					if (frame.type !== "response" || frame.requestId !== `list-missing-${suffix}`) continue;
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
+			const pruned = new SessionOwnershipStore(sessionOwnershipPath);
+			await pruned.load();
+			expect(pruned.owns(created.sessionId, created.path)).toBe(false);
 		} finally {
 			client.destroy();
 			await client.closed();
@@ -661,7 +779,7 @@ describe("appserver lifecycle", () => {
 				type: "hello",
 				protocol: { min: "omp-app/1", max: "omp-app/1" },
 				client: { name: "lockless-test", version: "1", build: "test", platform: "linux" },
-				requestedFeatures: ["session.observer", "transcript.page"],
+				requestedFeatures: ["session.observer", "session.unverified", "transcript.page"],
 				capabilities: { client: ["sessions.read"] },
 				savedCursors: [],
 			});
@@ -758,6 +876,59 @@ describe("appserver lifecycle", () => {
 				transcript: "live",
 			});
 			expect(factory.children).toHaveLength(0);
+
+			const legacyClient = await RawUdsWebSocket.connect(socketPath);
+			try {
+				legacyClient.sendJson({
+					v: "omp-app/1",
+					type: "hello",
+					protocol: { min: "omp-app/1", max: "omp-app/1" },
+					client: { name: "legacy-lockless-test", version: "0.5.8", build: "test", platform: "linux" },
+					requestedFeatures: ["session.observer"],
+					capabilities: { client: ["sessions.read"] },
+					savedCursors: [],
+				});
+				expect(await legacyClient.nextServer()).toMatchObject({
+					type: "welcome",
+					grantedFeatures: ["session.observer"],
+				});
+				const sessions = await legacyClient.nextServer();
+				expect(sessions).toMatchObject({
+					type: "sessions",
+					sessions: [{
+						liveState: {
+							sessionControl: { mode: "reconciling", transcript: "live" },
+						},
+					}],
+				});
+				legacyClient.sendJson({
+					v: "omp-app/1",
+					type: "command",
+					requestId: "legacy-list-lockless",
+					commandId: "legacy-list-lockless-command",
+					hostId: host,
+					command: "session.list",
+					args: {},
+				});
+				for (;;) {
+					const frame = await legacyClient.nextServer();
+					if (frame.type !== "response" || frame.requestId !== "legacy-list-lockless") continue;
+					expect(frame).toMatchObject({
+						ok: true,
+						result: {
+							sessions: [{
+								liveState: {
+									sessionControl: { mode: "reconciling", transcript: "live" },
+								},
+							}],
+						},
+					});
+					break;
+				}
+			} finally {
+				legacyClient.destroy();
+				await legacyClient.closed();
+			}
 		} finally {
 			client.destroy();
 			await client.closed();
