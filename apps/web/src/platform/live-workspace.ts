@@ -25,7 +25,7 @@ import {
   readSessionControl,
   sessionControlDisplayKind,
 } from "../features/session-runtime/session-observer.ts";
-import { hostSessionInventoryIsComplete } from "../features/session-runtime/session-inventory.ts";
+import { sessionRefIsCurrent } from "../features/session-runtime/session-inventory.ts";
 
 /** Composite route id for one live session; unambiguous and URL-safe. */
 export function sessionViewId(hostId: string, sessionId: string): string {
@@ -321,7 +321,7 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
     const connection = hostConnection(snapshot, hostId);
     const warm = warmSessionProjection(snapshot, hostId, sessionId);
     const offline = connection.state !== "connected";
-    const inventoryReady = hostSessionInventoryIsComplete(snapshot, hostId);
+    const inventoryReady = sessionRefIsCurrent(snapshot, hostId, sessionId);
     const freshness = offline
       ? "offline"
       : !inventoryReady || (warm !== undefined && warm.freshness !== "fresh")

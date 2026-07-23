@@ -208,10 +208,9 @@ export function managementCommandSupport(
   if (link === "offline") {
     return { supported: false, reason: "Connect to this host to manage the session" };
   }
-  // Mirror assertSessionWritableNow(): a truncated/incomplete host inventory
-  // or stale cached projection cannot prove this session's current state, so
-  // freshness gates before any ownership or per-command reason — exactly the
-  // order the dispatch gate rejects in.
+  // Mirror assertSessionWritableNow(): this specific ref must come from the
+  // current connection and any warm transcript must be fresh. Global list
+  // truncation does not invalidate a row the host actually returned.
   if (link === "cached") {
     return { supported: false, reason: MANAGEMENT_SYNCING_REASON };
   }

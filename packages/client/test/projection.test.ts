@@ -276,10 +276,12 @@ describe("client projections", () => {
       truncated: false,
     } as unknown as ProjectionFrame);
     expect(state.sessionIndexMetadata.has(String(HOST))).toBe(true);
+    expect(state.sessionRefArrivalOrdinals.has(sessionKey("cached"))).toBe(true);
 
     state = applyPublicFrame(state, frame("welcome"));
     expect(state.sessionIndex.has(sessionKey("cached"))).toBe(true);
     expect(state.sessionIndexMetadata.has(String(HOST))).toBe(false);
+    expect(state.sessionRefArrivalOrdinals.has(sessionKey("cached"))).toBe(false);
 
     expect(state.sessionInventoryCursors.has(String(HOST))).toBe(false);
     state = applyPublicFrame(state, {
@@ -295,6 +297,24 @@ describe("client projections", () => {
       totalCount: 1,
       truncated: false,
     });
+    expect(state.sessionRefArrivalOrdinals.has(sessionKey("cached"))).toBe(true);
+  });
+
+  it("invalidates retained ref arrivals without deleting cached rows", () => {
+    const store = new ProjectionStore();
+    store.applyPublicFrame({
+      v: V,
+      type: "sessions",
+      hostId: HOST,
+      cursor: { epoch: "e1", seq: 1 },
+      sessions: [ref(String(HOST), "cached")],
+      totalCount: 1,
+      truncated: false,
+    } as unknown as ProjectionFrame);
+
+    const invalidated = store.invalidateSessionInventory(String(HOST));
+    expect(invalidated.sessionIndex.has(sessionKey("cached"))).toBe(true);
+    expect(invalidated.sessionRefArrivalOrdinals.has(sessionKey("cached"))).toBe(false);
   });
 
   it("scopes welcome invalidation without discarding same-epoch transcript continuity", () => {

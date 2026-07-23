@@ -2202,9 +2202,8 @@ describe("session lifecycle", () => {
       canCancel: true,
     });
 
-    // The same-epoch welcome deliberately invalidates inventory completeness.
-    // Retained refs remain useful history, but cannot prove current activity or
-    // enable commands until the full sessions frame is back.
+    // The same-epoch welcome invalidates every retained ref. A ref becomes
+    // writable again only if the current connection actually returns it.
     shell.emitFrame({
       targetId: "local",
       frame: makeWelcome(HOST, ["sessions.prompt"]),
@@ -2220,13 +2219,18 @@ describe("session lifecycle", () => {
       status: null,
     });
 
+    const currentBoundedInventory = pendingPromptsSessionsFrame(
+      [{ entryId: "prompt:before-sleep", text: "keep going" }],
+      2,
+      "active",
+    );
     shell.emitFrame({
       targetId: "local",
-      frame: pendingPromptsSessionsFrame(
-        [{ entryId: "prompt:before-sleep", text: "keep going" }],
-        2,
-        "active",
-      ),
+      frame: {
+        ...currentBoundedInventory,
+        totalCount: 7_683,
+        truncated: true,
+      },
     });
     expect(runtime.getSnapshot()).toMatchObject({
       link: "live",
@@ -2392,7 +2396,7 @@ describe("session lifecycle", () => {
     );
   });
 
-  it("does not settle a turn from a truncated inventory after reconnect", async () => {
+  it("settles a returned session from a truncated inventory after reconnect", async () => {
     const { shell, runtime } = await startedRuntime();
     shell.emitFrame({ targetId: "local", frame: snapshotFrame(1, []) });
     shell.emitFrame({ targetId: "local", frame: turnStart(2) });
@@ -2432,7 +2436,9 @@ describe("session lifecycle", () => {
         truncated: true,
       },
     });
-    expect(runtime.getSnapshot().projection.turnActive).toBe(true);
+    // Truncation means absence is not authoritative. This session was present
+    // in the current response, so its idle state is authoritative.
+    expect(runtime.getSnapshot().projection.turnActive).toBe(false);
 
     shell.emitFrame({
       targetId: "local",

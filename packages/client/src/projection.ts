@@ -966,6 +966,19 @@ function mostRecentSessionKey(sessionIndex: ReadonlyMap<string, SessionRef>): st
   }
   return selected?.key;
 }
+function withoutHostRefOrdinals(
+  ordinals: ReadonlyMap<string, number>,
+  hostId: string,
+): ReadonlyMap<string, number> {
+  const prefix = `${hostId}\u0000`;
+  let next: Map<string, number> | undefined;
+  for (const sessionKey of ordinals.keys()) {
+    if (!sessionKey.startsWith(prefix)) continue;
+    next ??= new Map(ordinals);
+    next.delete(sessionKey);
+  }
+  return next === undefined ? ordinals : immutableMap(next);
+}
 function authoritativeSessionHosts(
   frame: ProjectionInput<"sessions">,
   refs: readonly SessionRef[],
@@ -1753,6 +1766,10 @@ function applyProjectionInput(
       // gone until the host sends the next authoritative sessions frame.
       const sessionIndexMetadata = mapWithout(snapshot.sessionIndexMetadata, String(frame.hostId));
       const sessionInventoryCursors = mapWithout(snapshot.sessionInventoryCursors, String(frame.hostId));
+      const sessionRefArrivalOrdinals = withoutHostRefOrdinals(
+        snapshot.sessionRefArrivalOrdinals,
+        String(frame.hostId),
+      );
       const epochChanged = snapshot.epoch !== undefined && snapshot.epoch !== frame.epoch;
       const sessions = immutableMap(
         [...snapshot.sessions.entries()].map(
@@ -1787,7 +1804,13 @@ function applyProjectionInput(
         ),
       );
       if (snapshot.epoch === undefined || snapshot.epoch === frame.epoch) {
-        return updateRoot(Object.freeze({ ...snapshot, sessionIndexMetadata, sessionInventoryCursors, sessions }), {
+        return updateRoot(Object.freeze({
+          ...snapshot,
+          sessionIndexMetadata,
+          sessionInventoryCursors,
+          sessionRefArrivalOrdinals,
+          sessions,
+        }), {
           epoch: frame.epoch,
           freshness: "fresh",
         });
@@ -1796,6 +1819,7 @@ function applyProjectionInput(
         ...snapshot,
         sessionIndexMetadata,
         sessionInventoryCursors,
+        sessionRefArrivalOrdinals,
         sessions,
         epoch: frame.epoch,
         freshness: "catching-up",
@@ -1983,12 +2007,6 @@ export class ProjectionStore {
    */
   invalidateSessionInventory(hostId?: string): ProjectionSnapshot {
     if (this.disposed) return this.current;
-    if (
-      hostId !== undefined &&
-      !this.current.sessionIndexMetadata.has(hostId) &&
-      !this.current.sessionInventoryCursors.has(hostId)
-    )
-      return this.current;
     const sessionIndexMetadata =
       hostId === undefined
         ? immutableMap<string, SessionIndexMetadata>()
@@ -1997,12 +2015,22 @@ export class ProjectionStore {
       hostId === undefined
         ? immutableMap<string, Cursor>()
         : mapWithout(this.current.sessionInventoryCursors, hostId);
+    const sessionRefArrivalOrdinals =
+      hostId === undefined
+        ? immutableMap<string, number>()
+        : withoutHostRefOrdinals(this.current.sessionRefArrivalOrdinals, hostId);
     if (
       sessionIndexMetadata === this.current.sessionIndexMetadata &&
-      sessionInventoryCursors === this.current.sessionInventoryCursors
+      sessionInventoryCursors === this.current.sessionInventoryCursors &&
+      sessionRefArrivalOrdinals === this.current.sessionRefArrivalOrdinals
     )
       return this.current;
-    const next = Object.freeze({ ...this.current, sessionIndexMetadata, sessionInventoryCursors });
+    const next = Object.freeze({
+      ...this.current,
+      sessionIndexMetadata,
+      sessionInventoryCursors,
+      sessionRefArrivalOrdinals,
+    });
     this.mutationGeneration += 1;
     this.current = next;
     this.queueCacheSave();
