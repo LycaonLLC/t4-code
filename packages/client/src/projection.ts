@@ -1165,7 +1165,11 @@ function applyProjectionInput(
       // returned refs survive and their current-arrival markers stay aligned.
       const retainedCapacity = Math.max(0, config.maxIndexedSessions - refs.length);
       const retainedCandidates = [...sessionIndex.entries()]
-        .filter(([existingKey]) => !incomingKeys.has(existingKey));
+        .filter(([existingKey]) => !incomingKeys.has(existingKey))
+        .sort(([leftKey, left], [rightKey, right]) =>
+          String(left.updatedAt).localeCompare(String(right.updatedAt)) ||
+          leftKey.localeCompare(rightKey),
+        );
       const retainedEntries = retainedCapacity === 0
         ? []
         : retainedCandidates.slice(-retainedCapacity);

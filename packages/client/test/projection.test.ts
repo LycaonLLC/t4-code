@@ -274,6 +274,42 @@ describe("client projections", () => {
     expect(state.sessionRefArrivalOrdinals.has(sessionKey("listed-1000"))).toBe(false);
   });
 
+  it("evicts the oldest retained row when another host shares the global bound", () => {
+    const otherHost = hostId("projection-host-b");
+    const options = { maxIndexedSessions: 4 };
+    let state = applyPublicFrame(createProjectionSnapshot(), {
+      v: V,
+      type: "sessions",
+      hostId: HOST,
+      cursor: { epoch: "host-a", seq: 0 },
+      sessions: [
+        ref(String(HOST), "newest", { updatedAt: "2026-07-11T00:00:04Z" }),
+        ref(String(HOST), "newer", { updatedAt: "2026-07-11T00:00:03Z" }),
+        ref(String(HOST), "older", { updatedAt: "2026-07-11T00:00:02Z" }),
+        ref(String(HOST), "oldest", { updatedAt: "2026-07-11T00:00:01Z" }),
+      ],
+      totalCount: 4,
+      truncated: false,
+    } as ProjectionFrame, options);
+    state = applyPublicFrame(state, {
+      v: V,
+      type: "sessions",
+      hostId: otherHost,
+      cursor: { epoch: "host-b", seq: 0 },
+      sessions: [ref(String(otherHost), "other", { updatedAt: "2026-07-10T00:00:00Z" })],
+      totalCount: 1,
+      truncated: false,
+    } as ProjectionFrame, options);
+
+    expect(state.sessionIndex.has(sessionKey("newest"))).toBe(true);
+    expect(state.sessionIndex.has(sessionKey("newer"))).toBe(true);
+    expect(state.sessionIndex.has(sessionKey("older"))).toBe(true);
+    expect(state.sessionIndex.has(sessionKey("oldest"))).toBe(false);
+    expect(state.sessionIndex.has(`${String(otherHost)}\u0000other`)).toBe(true);
+    expect(state.sessionRefArrivalOrdinals.has(sessionKey("newest"))).toBe(true);
+    expect(state.sessionRefArrivalOrdinals.has(`${String(otherHost)}\u0000other`)).toBe(true);
+  });
+
   it("rejects a delayed lower same-epoch session inventory without regressing the index", () => {
     const currentRef = ref(String(HOST), "ordered", { title: "Current" });
     const staleRef = ref(String(HOST), "ordered", { title: "Stale" });
