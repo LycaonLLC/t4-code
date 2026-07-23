@@ -702,6 +702,60 @@ describe("OmpClient protocol state machine", () => {
     ]);
   });
 
+  it("publishes an authoritative snapshot behind the persisted cursor so a cold projection can hydrate", async () => {
+    const store = new FakeStore([{
+      hostId: HOST,
+      sessionId: SESSION,
+      cursor: { epoch: "epoch-a", seq: 6 },
+    }]);
+    const transport = new FakeTransport({ welcome: welcome() });
+    const client = await readyClient(transport, { cursorStore: store });
+    const events: PublicOmpServerEvent[] = [];
+    client.onEvent((event) => events.push(event));
+
+    transport.emit(snapshot(0));
+
+    expect(events.map((event) => event.kind)).toEqual(["snapshot"]);
+    expect(client.snapshot().cursor).toEqual({ epoch: "epoch-a", seq: 0 });
+    await client.close();
+  });
+
+  it("persists an authoritative snapshot that resets a cursor in the current transport generation", async () => {
+    const store = new FakeStore();
+    const transport = new FakeTransport({ welcome: welcome() });
+    const client = await readyClient(transport, { cursorStore: store });
+
+    transport.emit(snapshot(6));
+    await Promise.resolve();
+    await Promise.resolve();
+    transport.emit(snapshot(0));
+    await client.close();
+
+    expect(store.saved.map((record) => record.cursor.seq)).toEqual([6, 0]);
+  });
+
+  it("persists an authoritative reset before a later durable cursor while an older save is in flight", async () => {
+    const store = new DeferredStore();
+    const transport = new FakeTransport({ welcome: welcome() });
+    const client = await readyClient(transport, { cursorStore: store });
+
+    transport.emit(snapshot(6));
+    expect(store.requests.map((record) => record.cursor.seq)).toEqual([6]);
+    transport.emit(snapshot(0));
+    transport.emit(event(1));
+
+    store.resolves.shift()?.();
+    await flushMicrotasks();
+    expect(store.requests.map((record) => record.cursor.seq)).toEqual([6, 0]);
+
+    store.resolves.shift()?.();
+    await flushMicrotasks();
+    expect(store.requests.map((record) => record.cursor.seq)).toEqual([6, 0, 1]);
+
+    store.resolves.shift()?.();
+    await client.close();
+  });
+
   it("never invokes privileged pairing sink for unsolicited, replayed, or wrong-kind pair.ok", async () => {
     let callbacks = 0;
     const unsolicitedTransport = new FakeTransport({ welcome: welcome() });
@@ -1240,6 +1294,59 @@ describe("OmpClient protocol state machine", () => {
     await Promise.all([firstConnect, secondConnect]);
     expect(factoryCalls).toBe(2);
     expect(client.state).toBe("ready");
+    await client.close();
+  });
+
+  it("coalesces an old-epoch renderer attach with the transport reconnect recovery", async () => {
+    const clock = new FakeClock();
+    const first = new FakeTransport({
+      welcome: welcome(),
+      onSend: (frame, transport) => {
+        if (frame.type === "command") transport.emit(responseFor(frame));
+      },
+    });
+    let recoveryCommand: CommandFrame | undefined;
+    const second = new FakeTransport({
+      welcome: welcome({ epoch: "epoch-b" }),
+      onSend: (frame) => {
+        if (frame.type === "command" && frame.command === "session.attach") recoveryCommand = frame;
+      },
+    });
+    const transports = [first, second];
+    const client = new OmpClient({
+      transport: () => transports.shift() ?? second,
+      hostId: HOST,
+      timers: clock,
+      clock,
+      random: () => 0,
+      reconnect: { baseMs: 2, maxMs: 2 },
+    });
+
+    await client.connect();
+    await client.attach(HOST, SESSION);
+    first.drop();
+    clock.advanceBy(1);
+    await flushMicrotasks();
+    expect(client.state).toBe("ready");
+    expect(recoveryCommand).toBeDefined();
+
+    const rendererAttach = client.command({
+      hostId: HOST,
+      sessionId: SESSION,
+      command: "session.attach",
+      args: { cursor: { epoch: "epoch-a", seq: 0 } },
+    });
+    expect(
+      second.sent
+        .map((raw) => decodeClientFrame(raw))
+        .filter((frame) => frame.type === "command" && frame.command === "session.attach"),
+    ).toHaveLength(1);
+
+    second.emit(responseFor(recoveryCommand!, { cursor: { epoch: "epoch-b", seq: 0 } }));
+    second.emit(snapshot(0, "epoch-b"));
+    const result = await rendererAttach;
+    expect(result.requestId).toBe(recoveryCommand!.requestId);
+    expect(client.snapshot().cursor).toEqual({ epoch: "epoch-b", seq: 0 });
     await client.close();
   });
 });

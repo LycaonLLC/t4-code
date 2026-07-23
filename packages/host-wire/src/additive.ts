@@ -57,6 +57,7 @@ export const ADDITIVE_FEATURES = [
 	"session.state",
 	"session.delta",
 	"session.observer",
+	"session.unverified",
 	"controller.lease",
 	"prompt.lease",
 	"prompt.images",

@@ -118,20 +118,53 @@ describe("official OMP capability adapter", () => {
   test("rejects ambiguous and malformed capability updates", () => {
     const adapter = new OfficialOmpCapabilityAdapter();
     expect(() =>
-      adapter.consume({
-        type: "available_commands_update",
-        commands: [
-          { name: "compact", source: "builtin" },
-          { name: "compact", source: "extension" },
-        ],
-      }),
+      adapter.update([
+        { name: "compact", source: "builtin" },
+        { name: "compact", source: "extension" },
+      ]),
     ).toThrow("duplicate available command");
     expect(() =>
+      adapter.update([{ name: "bad/name", source: "builtin" }]),
+    ).toThrow("no valid entries");
+    adapter.update([
+      { name: "skill:Video Processor", source: "skill" },
+      { name: "compact", source: "builtin" },
+    ]);
+    expect(adapter.operations().some((item) => item.operationId === "slash.skill:Video Processor"))
+      .toBe(false);
+    expect(adapter.assertOperationSupported("slash.compact")).toMatchObject({ supported: true });
+  });
+
+  test("ignores malformed live capability metadata without terminating prompt support", () => {
+    const adapter = new OfficialOmpCapabilityAdapter();
+    adapter.update([{ name: "compact", description: "Compact context", source: "builtin" }]);
+    expect(
       adapter.consume({
         type: "available_commands_update",
-        commands: [{ name: "bad/name", source: "builtin" }],
+        commands: [{ name: "skill:test", description: "Line one\0Line two", source: "skill" }],
       }),
-    ).toThrow("must be a slash command name");
+    ).toBe(true);
+    expect(adapter.assertPromptSupported("/compact now")).toMatchObject({
+      operationId: "slash.compact",
+      supported: true,
+    });
+  });
+
+  test("normalizes multiline command metadata into bounded inline catalog text", () => {
+    const adapter = new OfficialOmpCapabilityAdapter();
+    adapter.update([
+      {
+        name: "skill:test",
+        description: "Line one\nLine two\tDetail",
+        input: { hint: "first\r\nsecond" },
+        source: "skill",
+      },
+    ]);
+    expect(adapter.assertOperationSupported("slash.skill:test")).toMatchObject({
+      operationId: "slash.skill:test",
+      description: "Line one Line two Detail",
+      metadata: { inlineHint: "first second" },
+    });
   });
 
   test("supervisor queries discovery and blocks terminal-only text before stdin dispatch", async () => {
@@ -149,6 +182,10 @@ describe("official OMP capability adapter", () => {
       },
       stdout: (async function* () {
         yield `${JSON.stringify({ type: "ready" })}\n`;
+        yield `${JSON.stringify({
+          type: "available_commands_update",
+          commands: [{ name: "skill:test", description: "Line one\nLine two", source: "skill" }],
+        })}\n`;
         const request = await capabilityRequest.promise;
         yield `${JSON.stringify({
           type: "response",

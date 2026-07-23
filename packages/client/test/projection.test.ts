@@ -234,6 +234,82 @@ describe("client projections", () => {
     });
   });
 
+  it("keeps every returned ref current when a full bounded page rolls forward", () => {
+    const oldPage = Array.from(
+      { length: MAX_INDEXED_SESSION_REFS },
+      (_, index) => ref(String(HOST), `listed-${index + 2}`),
+    );
+    const currentPage = Array.from(
+      { length: MAX_INDEXED_SESSION_REFS },
+      (_, index) => ref(String(HOST), `listed-${index}`),
+    );
+    let state = applyPublicFrame(createProjectionSnapshot(), {
+      v: V,
+      type: "sessions",
+      hostId: HOST,
+      cursor: { epoch: "rolling", seq: 0 },
+      sessions: oldPage,
+      totalCount: MAX_INDEXED_SESSION_REFS + 2,
+      truncated: true,
+    } as ProjectionFrame);
+    state = applyPublicFrame(state, frame("welcome"));
+    state = applyPublicFrame(state, {
+      v: V,
+      type: "sessions",
+      hostId: HOST,
+      cursor: { epoch: "rolling", seq: 1 },
+      sessions: currentPage,
+      totalCount: MAX_INDEXED_SESSION_REFS + 2,
+      truncated: true,
+    } as ProjectionFrame);
+
+    expect(state.sessionIndex.size).toBe(MAX_INDEXED_SESSION_REFS);
+    expect(state.sessionRefArrivalOrdinals.size).toBe(MAX_INDEXED_SESSION_REFS);
+    for (const listed of currentPage) {
+      const listedKey = sessionKey(String(listed.sessionId));
+      expect(state.sessionIndex.has(listedKey)).toBe(true);
+      expect(state.sessionRefArrivalOrdinals.has(listedKey)).toBe(true);
+    }
+    expect(state.sessionIndex.has(sessionKey("listed-1000"))).toBe(false);
+    expect(state.sessionRefArrivalOrdinals.has(sessionKey("listed-1000"))).toBe(false);
+  });
+
+  it("evicts the oldest retained row when another host shares the global bound", () => {
+    const otherHost = hostId("projection-host-b");
+    const options = { maxIndexedSessions: 4 };
+    let state = applyPublicFrame(createProjectionSnapshot(), {
+      v: V,
+      type: "sessions",
+      hostId: HOST,
+      cursor: { epoch: "host-a", seq: 0 },
+      sessions: [
+        ref(String(HOST), "newest", { updatedAt: "2026-07-11T00:00:04Z" }),
+        ref(String(HOST), "newer", { updatedAt: "2026-07-11T00:00:03Z" }),
+        ref(String(HOST), "older", { updatedAt: "2026-07-11T00:00:02Z" }),
+        ref(String(HOST), "oldest", { updatedAt: "2026-07-11T00:00:01Z" }),
+      ],
+      totalCount: 4,
+      truncated: false,
+    } as ProjectionFrame, options);
+    state = applyPublicFrame(state, {
+      v: V,
+      type: "sessions",
+      hostId: otherHost,
+      cursor: { epoch: "host-b", seq: 0 },
+      sessions: [ref(String(otherHost), "other", { updatedAt: "2026-07-10T00:00:00Z" })],
+      totalCount: 1,
+      truncated: false,
+    } as ProjectionFrame, options);
+
+    expect(state.sessionIndex.has(sessionKey("newest"))).toBe(true);
+    expect(state.sessionIndex.has(sessionKey("newer"))).toBe(true);
+    expect(state.sessionIndex.has(sessionKey("older"))).toBe(true);
+    expect(state.sessionIndex.has(sessionKey("oldest"))).toBe(false);
+    expect(state.sessionIndex.has(`${String(otherHost)}\u0000other`)).toBe(true);
+    expect(state.sessionRefArrivalOrdinals.has(sessionKey("newest"))).toBe(true);
+    expect(state.sessionRefArrivalOrdinals.has(`${String(otherHost)}\u0000other`)).toBe(true);
+  });
+
   it("rejects a delayed lower same-epoch session inventory without regressing the index", () => {
     const currentRef = ref(String(HOST), "ordered", { title: "Current" });
     const staleRef = ref(String(HOST), "ordered", { title: "Stale" });
@@ -276,10 +352,12 @@ describe("client projections", () => {
       truncated: false,
     } as unknown as ProjectionFrame);
     expect(state.sessionIndexMetadata.has(String(HOST))).toBe(true);
+    expect(state.sessionRefArrivalOrdinals.has(sessionKey("cached"))).toBe(true);
 
     state = applyPublicFrame(state, frame("welcome"));
     expect(state.sessionIndex.has(sessionKey("cached"))).toBe(true);
     expect(state.sessionIndexMetadata.has(String(HOST))).toBe(false);
+    expect(state.sessionRefArrivalOrdinals.has(sessionKey("cached"))).toBe(false);
 
     expect(state.sessionInventoryCursors.has(String(HOST))).toBe(false);
     state = applyPublicFrame(state, {
@@ -295,6 +373,45 @@ describe("client projections", () => {
       totalCount: 1,
       truncated: false,
     });
+    expect(state.sessionRefArrivalOrdinals.has(sessionKey("cached"))).toBe(true);
+  });
+
+  it("invalidates retained ref arrivals without deleting cached rows", () => {
+    const store = new ProjectionStore();
+    store.applyPublicFrame({
+      v: V,
+      type: "sessions",
+      hostId: HOST,
+      cursor: { epoch: "e1", seq: 1 },
+      sessions: [ref(String(HOST), "cached")],
+      totalCount: 1,
+      truncated: false,
+    } as unknown as ProjectionFrame);
+
+    const invalidated = store.invalidateSessionInventory(String(HOST));
+    expect(invalidated.sessionIndex.has(sessionKey("cached"))).toBe(true);
+    expect(invalidated.sessionRefArrivalOrdinals.has(sessionKey("cached"))).toBe(false);
+  });
+
+  it("scopes welcome invalidation without discarding same-epoch transcript continuity", () => {
+    const hostB = hostId("projection-host-b");
+    let state = applyPublicFrame(createProjectionSnapshot(), frame("snapshot", "session-a"));
+    state = applyPublicFrame(state, {
+      ...frame("snapshot", "session-b"),
+      hostId: hostB,
+      cursor: { epoch: "host-b-epoch", seq: 0 },
+    } as ProjectionFrame);
+    expect(state.sessions.get(sessionKey("session-a"))?.freshness).toBe("fresh");
+    expect(state.sessions.get(`${String(hostB)}\u0000session-b`)?.freshness).toBe("fresh");
+
+    state = applyPublicFrame(state, {
+      ...frame("welcome"),
+      hostId: hostB,
+      epoch: "host-b-epoch",
+    } as ProjectionFrame);
+
+    expect(state.sessions.get(sessionKey("session-a"))?.freshness).toBe("fresh");
+    expect(state.sessions.get(`${String(hostB)}\u0000session-b`)?.freshness).toBe("fresh");
   });
 
   it("reconciles authoritative session lists per host without retaining stale subagent rows", () => {

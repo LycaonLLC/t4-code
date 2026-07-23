@@ -479,9 +479,16 @@ function HostsRoute() {
         onBack={() => void navigate({ to: "/settings" })}
         profilesAvailable={localProfiles !== undefined}
         {...(shell?.inspectPhoneSetup && shell.configurePhoneSetup ? {
-          phoneSetup: {
+        phoneSetup: {
             inspect: shell.inspectPhoneSetup,
             configure: shell.configurePhoneSetup,
+          },
+        } : {})}
+        {...(shell?.inspectT4OmpLauncher && shell.installT4OmpLauncher && shell.removeT4OmpLauncher ? {
+          t4OmpLauncher: {
+            inspect: shell.inspectT4OmpLauncher,
+            install: shell.installT4OmpLauncher,
+            remove: shell.removeT4OmpLauncher,
           },
         } : {})}
         serviceAvailable={shell?.serviceInspect !== undefined}

@@ -48,6 +48,7 @@ import {
   FreshnessBadge,
   SessionLifecycleBadge,
   SessionMain,
+  SessionConnectionBadge,
   SessionOwnershipBadge,
 } from "../features/transcript/SessionMain.tsx";
 import { RIGHT_PANE_DOCK_QUERY, useMediaQuery } from "../hooks/useMediaQuery.ts";
@@ -373,6 +374,10 @@ export function SessionScreen({
   const runtimeSnapshot = useDesktopRuntimeSnapshot();
   const previewAddress =
     runtimeSnapshot === null ? null : resolveLiveSession(runtimeSnapshot, sessionId);
+  const connectionState =
+    runtimeSnapshot === null || previewAddress === null
+      ? null
+      : (runtimeSnapshot.connections.get(previewAddress.targetId) ?? null);
   const previewCount = rendererPlatform.demo
     ? 1
     : previewAddress === null
@@ -433,8 +438,11 @@ export function SessionScreen({
             <StatusPill className="shrink-0 sm:hidden" labelHidden status={session.status} />
           </>
         )}
-        <span className="shrink-0">
-          <FreshnessBadge session={session} />
+        <span className="flex shrink-0 items-center gap-1">
+          {connectionState !== null && <SessionConnectionBadge state={connectionState} />}
+          {(connectionState === null || session.freshness === "cached") && (
+            <FreshnessBadge session={session} />
+          )}
           <SessionLifecycleBadge session={session} />
           <SessionOwnershipBadge session={session} />
         </span>

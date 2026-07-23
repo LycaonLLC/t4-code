@@ -42,6 +42,7 @@ import { LocalProfileRegistry } from "./local-profiles.ts";
 import { LocalProfileRuntime } from "./profile-runtime.ts";
 import { installBundledOmpRuntime } from "./bundled-runtime.ts";
 import { PhoneSetupService } from "./phone-setup.ts";
+import { T4OmpLauncher } from "./t4-omp-launcher.ts";
 
 type ProjectionCacheRuntime = NonNullable<IpcRuntime["projectionCache"]>;
 
@@ -145,6 +146,7 @@ export class DesktopLifecycle {
   private readonly serviceAvailabilityIssues = new Map<string, ServiceAvailabilityIssue>();
   private updateController: DesktopUpdateController | undefined;
   private phoneSetup: PhoneSetupService | undefined;
+  private t4OmpLauncher: T4OmpLauncher | undefined;
   private pendingUpdateOpen = false;
   private rendererLoaded = false;
   private updateRendererReady = false;
@@ -259,6 +261,14 @@ export class DesktopLifecycle {
       ingest(value);
     });
     await this.electronApp.whenReady();
+    const applicationSupportPath = this.electronApp.getPath("userData");
+    this.t4OmpLauncher = new T4OmpLauncher({
+      supported:
+        this.electronApp.isPackaged && process.platform === "darwin" && process.arch === "arm64",
+      homeDirectory: homedir(),
+      runtimeRoot: join(applicationSupportPath, "runtime"),
+      resolveRuntime: () => this.discoverServiceExecutable(),
+    });
     this.projectionCache = this.projectionCacheFactory();
     if (process.platform === "darwin") this.electronApp.setAsDefaultProtocolClient("t4-code");
     this.updateController = this.updateControllerFactory();
@@ -346,6 +356,7 @@ export class DesktopLifecycle {
     this.updateController?.dispose();
     this.updateController = undefined;
     this.phoneSetup = undefined;
+    this.t4OmpLauncher = undefined;
     this.projectionCache = undefined;
     const manager = this.manager;
     this.manager = undefined;
@@ -697,6 +708,7 @@ export class DesktopLifecycle {
       drainPendingUpdateOpen: () => this.markUpdateRendererReady(),
       ...(this.updateController === undefined ? {} : { updateController: this.updateController }),
       ...(this.phoneSetup === undefined ? {} : { phoneSetup: this.phoneSetup }),
+      ...(this.t4OmpLauncher === undefined ? {} : { t4OmpLauncher: this.t4OmpLauncher }),
     });
     this.ipc.install();
   }

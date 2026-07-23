@@ -62,6 +62,14 @@ describe("readSessionControl", () => {
     }
   });
 
+  it("parses both unverified terminal-session shapes", () => {
+    for (const transcript of ["live", "snapshot"] as const) {
+      expect(
+        readSessionControl(refWith({ sessionControl: { mode: "unverified", transcript } })),
+      ).toEqual({ mode: "unverified", transcript });
+    }
+  });
+
   it("reads extra keys on a known mode as unknown (exact shapes only)", () => {
     expect(
       readSessionControl(
@@ -73,6 +81,11 @@ describe("readSessionControl", () => {
     expect(
       readSessionControl(
         refWith({ sessionControl: { mode: "reconciling", transcript: "live", extra: true } }),
+      ),
+    ).toEqual({ mode: "unknown" });
+    expect(
+      readSessionControl(
+        refWith({ sessionControl: { mode: "unverified", transcript: "live", owner: "secret" } }),
       ),
     ).toEqual({ mode: "unknown" });
   });
@@ -93,6 +106,8 @@ describe("readSessionControl", () => {
       { mode: "observer", lockStatus: "live", transcript: "durable" },
       { mode: "reconciling" },
       { mode: "reconciling", transcript: "partial" },
+      { mode: "unverified" },
+      { mode: "unverified", transcript: "partial" },
     ];
     for (const sessionControl of malformed) {
       expect(readSessionControl(refWith({ sessionControl }))).toEqual({ mode: "unknown" });
@@ -123,6 +138,8 @@ const EVERY_STATE: readonly SessionControlState[] = [
   { mode: "observer", lockStatus: "malformed", transcript: "snapshot" },
   { mode: "reconciling", transcript: "live" },
   { mode: "reconciling", transcript: "snapshot" },
+  { mode: "unverified", transcript: "live" },
+  { mode: "unverified", transcript: "snapshot" },
   { mode: "unknown" },
 ];
 
@@ -148,7 +165,9 @@ describe("presentSessionControl", () => {
       expect(presentation.railLabel === "Active elsewhere", JSON.stringify(state)).toBe(
         state.mode === "observer" && state.lockStatus === "live",
       );
-      expect(presentation.bannerDetail).not.toMatch(/TUI|terminal|CLI|lock|watermark|promot/i);
+      if (state.mode !== "unverified") {
+        expect(presentation.bannerDetail).not.toMatch(/TUI|terminal|CLI|lock|watermark|promot/i);
+      }
     }
   });
 
@@ -231,6 +250,14 @@ describe("presentSessionControl", () => {
       expect(presentation.composerReason.toLowerCase()).toContain("input returns");
     }
   });
+
+  it("keeps unverified sessions calmly read-only and points future work to t4-omp", () => {
+    const presentation = presentSessionControl({ mode: "unverified", transcript: "live" });
+    expect(presentation.bannerBusy).toBe(false);
+    expect(presentation.railLabel).toContain("Read-only");
+    expect(presentation.bannerDetail).toContain("t4-omp");
+    expect(presentation.bannerDetail).not.toContain("Taking over");
+  });
 });
 
 describe("sessionControlDisplayKind", () => {
@@ -251,6 +278,7 @@ describe("sessionControlDisplayKind", () => {
         sessionControlDisplayKind({ mode: "observer", lockStatus: "malformed", transcript }),
       ).toBe("unclear");
       expect(sessionControlDisplayKind({ mode: "reconciling", transcript })).toBe("reconciling");
+      expect(sessionControlDisplayKind({ mode: "unverified", transcript })).toBe("unverified");
     }
     expect(sessionControlDisplayKind({ mode: "unknown" })).toBe("unclear");
   });
@@ -258,7 +286,7 @@ describe("sessionControlDisplayKind", () => {
 
 describe("presentSessionControlKind", () => {
   it("says another app is active only for the observer kind", () => {
-    const kinds = ["observer", "suspect", "reconciling", "unclear"] as const;
+    const kinds = ["observer", "suspect", "reconciling", "unverified", "unclear"] as const;
     for (const kind of kinds) {
       const presentation = presentSessionControlKind(kind);
       expect(presentation.railLabel === "Active elsewhere", kind).toBe(kind === "observer");

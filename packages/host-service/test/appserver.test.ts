@@ -6,8 +6,9 @@ import { DESKTOP_CATALOG_COMMANDS, type DurableEntry, hostId, projectId, session
 import { completeAttachOutput, prepareAttachOutput } from "../src/attach-output.ts";
 import { IdempotencyStore } from "../src/idempotency.ts";
 import { ensureSecureSocketDirectory } from "../src/ownership.ts";
-import { FileSessionDiscovery, realFs } from "../src/discovery.ts";
+import { FileSessionDiscovery, realFs, stableProjectId } from "../src/discovery.ts";
 import { SessionProjection } from "../src/projection.ts";
+import { SessionOwnershipStore } from "../src/session-ownership-store.ts";
 import { appserverSupportedCapabilities, appserverSupportedFeatures, createAppserver } from "../src/server.ts";
 import { SubagentProjection } from "../src/subagent-projection.ts";
 import type { ChildHandle, RpcChildFactory, SessionDiscovery, SessionRecord } from "../src/types.ts";
@@ -53,6 +54,73 @@ class FakeFactory implements RpcChildFactory {
 	children: FakeChild[] = [];
 	spawn() {
 		const child = new FakeChild();
+		this.children.push(child);
+		return child;
+	}
+	argv(path: string) {
+		return ["omp", "--mode", "rpc", "--session", path];
+	}
+}
+class DeferredPromptChild implements ChildHandle {
+	#prompt = Promise.withResolvers<Record<string, unknown>>();
+	#state = Promise.withResolvers<Record<string, unknown>>();
+	#reply = Promise.withResolvers<void>();
+	#finish = Promise.withResolvers<void>();
+	#exited = Promise.withResolvers<number>();
+	killed = false;
+	promptReceived = this.#prompt.promise;
+	stdin = {
+		write: (data: string) => {
+			const frame = JSON.parse(data) as Record<string, unknown>;
+			if (frame.type === "prompt") this.#prompt.resolve(frame);
+			else if (frame.type === "get_state") this.#state.resolve(frame);
+		},
+	};
+	stdout: AsyncIterable<string> = this.stream();
+	exited = this.#exited.promise;
+	async *stream() {
+		yield `${JSON.stringify({ type: "ready" })}\n`;
+		const prompt = await this.#prompt.promise;
+		await this.#reply.promise;
+		yield `${JSON.stringify({
+			type: "response",
+			id: prompt.id,
+			command: "prompt",
+			success: false,
+		})}\n`;
+		const state = await this.#state.promise;
+		yield `${JSON.stringify({
+			type: "response",
+			id: state.id,
+			command: "get_state",
+			success: true,
+			data: {
+				isStreaming: false,
+				isCompacting: false,
+				isPaused: false,
+				messageCount: 0,
+				queuedMessageCount: 0,
+				steeringMode: "all",
+				followUpMode: "all",
+				interruptMode: "immediate",
+			},
+		})}\n`;
+		await this.#finish.promise;
+	}
+	replyToPrompt() {
+		this.#reply.resolve();
+	}
+	kill() {
+		this.killed = true;
+		this.#reply.resolve();
+		this.#finish.resolve();
+		this.#exited.resolve(0);
+	}
+}
+class DeferredPromptFactory implements RpcChildFactory {
+	children: DeferredPromptChild[] = [];
+	spawn() {
+		const child = new DeferredPromptChild();
 		this.children.push(child);
 		return child;
 	}
@@ -243,6 +311,7 @@ describe("appserver lifecycle", () => {
 			"prompt.images",
 			"agent.transcript",
 			"session.observer",
+			"session.unverified",
 			"artifacts.read",
 		]);
 	});
@@ -337,6 +406,506 @@ describe("appserver lifecycle", () => {
 		await expect(stat(socketPath)).rejects.toThrow();
 		for (const child of factory.children) expect(child.killed).toBe(true);
 	});
+	test("starts a writer before returning a session created through T4", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-created-session-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		const created = {
+			...record("created-session"),
+			path: join(root, "created-session.jsonl"),
+			cwd: root,
+			projectId: stableProjectId(root),
+		};
+		const factory = new FakeFactory();
+		let visible = false;
+		const sessionAuthority = {
+			create: async () => {
+				visible = true;
+				return created;
+			},
+			list: async () => visible ? [created] : [],
+			archive: async () => {},
+			restore: async () => {},
+			delete: async () => {},
+		};
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "created-session-test",
+			socketPath,
+			discovery: sessionAuthority,
+			sessionAuthority,
+			sessionOwnershipPath,
+			projectRootForProject: () => root,
+			childFactory: factory,
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "create-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: [],
+				capabilities: { client: ["sessions.manage", "sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "create-session",
+				commandId: "create-session-command",
+				hostId: host,
+				command: "session.create",
+				args: { projectId: created.projectId },
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type !== "response" || frame.requestId !== "create-session") continue;
+				expect(frame).toMatchObject({ ok: true });
+				break;
+			}
+			expect(factory.children).toHaveLength(1);
+			expect(factory.children[0]?.killed).toBe(false);
+			const ownership = new SessionOwnershipStore(sessionOwnershipPath);
+			await ownership.load();
+			expect(ownership.owns(created.sessionId, created.path)).toBe(true);
+
+			const list = async (suffix: string): Promise<void> => {
+				client.sendJson({
+					v: "omp-app/1",
+					type: "command",
+					requestId: `list-${suffix}`,
+					commandId: `list-${suffix}-command`,
+					hostId: host,
+					command: "session.list",
+					args: {},
+				});
+				for (;;) {
+					const frame = await client.nextServer();
+					if (frame.type !== "response" || frame.requestId !== `list-${suffix}`) continue;
+					expect(frame.ok).toBe(true);
+					return;
+				}
+			};
+			await list("visible");
+			visible = false;
+			await list("missing-once");
+			await list("missing-twice");
+			const pruned = new SessionOwnershipStore(sessionOwnershipPath);
+			await pruned.load();
+			expect(pruned.owns(created.sessionId, created.path)).toBe(false);
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("prunes ownership when a created session never enters discovery", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-created-session-missing-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		const created = {
+			...record("created-session-missing"),
+			path: join(root, "created-session-missing.jsonl"),
+			cwd: root,
+			projectId: stableProjectId(root),
+		};
+		const sessionAuthority = {
+			create: async () => created,
+			list: async () => [],
+			archive: async () => {},
+			restore: async () => {},
+			delete: async () => {},
+		};
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "created-session-missing-test",
+			socketPath,
+			discovery: sessionAuthority,
+			sessionAuthority,
+			sessionOwnershipPath,
+			projectRootForProject: () => root,
+			childFactory: new FakeFactory(),
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "missing-create-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: [],
+				capabilities: { client: ["sessions.manage", "sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "create-missing",
+				commandId: "create-missing-command",
+				hostId: host,
+				command: "session.create",
+				args: { projectId: created.projectId },
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "create-missing") {
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
+			const owned = new SessionOwnershipStore(sessionOwnershipPath);
+			await owned.load();
+			expect(owned.owns(created.sessionId, created.path)).toBe(true);
+
+			for (const suffix of ["once", "twice"]) {
+				client.sendJson({
+					v: "omp-app/1",
+					type: "command",
+					requestId: `list-missing-${suffix}`,
+					commandId: `list-missing-${suffix}-command`,
+					hostId: host,
+					command: "session.list",
+					args: {},
+				});
+				for (;;) {
+					const frame = await client.nextServer();
+					if (frame.type !== "response" || frame.requestId !== `list-missing-${suffix}`) continue;
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
+			const pruned = new SessionOwnershipStore(sessionOwnershipPath);
+			await pruned.load();
+			expect(pruned.owns(created.sessionId, created.path)).toBe(false);
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("defers missing-created-session cleanup while its first prompt is in flight", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-created-session-busy-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		const created = {
+			...record("created-session-busy"),
+			path: join(root, "created-session-busy.jsonl"),
+			cwd: root,
+			projectId: stableProjectId(root),
+		};
+		const sessionAuthority = {
+			create: async () => created,
+			list: async () => [],
+			archive: async () => {},
+			restore: async () => {},
+			delete: async () => {},
+		};
+		const factory = new DeferredPromptFactory();
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "created-session-busy-test",
+			socketPath,
+			discovery: sessionAuthority,
+			sessionAuthority,
+			sessionOwnershipPath,
+			projectRootForProject: () => root,
+			childFactory: factory,
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		const nextResponse = async (requestId: string) => {
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === requestId) return frame;
+			}
+		};
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "busy-create-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: [],
+				capabilities: { client: ["sessions.manage", "sessions.read", "sessions.prompt"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "create-busy",
+				commandId: "create-busy-command",
+				hostId: host,
+				command: "session.create",
+				args: { projectId: created.projectId },
+			});
+			expect(await nextResponse("create-busy")).toMatchObject({ ok: true });
+			const child = factory.children[0];
+			if (!child) throw new Error("created session did not start its writer");
+
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "prompt-busy",
+				commandId: "prompt-busy-command",
+				hostId: host,
+				sessionId: created.sessionId,
+				command: "session.prompt",
+				args: { message: "keep the first prompt active" },
+			});
+			await child.promptReceived;
+
+			for (const suffix of ["once", "twice"]) {
+				client.sendJson({
+					v: "omp-app/1",
+					type: "command",
+					requestId: `list-busy-${suffix}`,
+					commandId: `list-busy-${suffix}-command`,
+					hostId: host,
+					command: "session.list",
+					args: {},
+				});
+				expect(await nextResponse(`list-busy-${suffix}`)).toMatchObject({ ok: true });
+			}
+			expect(child.killed).toBe(false);
+			expect(appserver.snapshot(created.sessionId)).toBeDefined();
+			const retained = new SessionOwnershipStore(sessionOwnershipPath);
+			await retained.load();
+			expect(retained.owns(created.sessionId, created.path)).toBe(true);
+
+			child.replyToPrompt();
+			expect(await nextResponse("prompt-busy")).toMatchObject({ ok: false });
+			await Promise.race([
+				(async () => {
+					while (appserver.snapshot(created.sessionId)?.ref.status === "active") await Bun.sleep(5);
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("prompt state did not settle");
+				}),
+			]);
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "list-busy-settled",
+				commandId: "list-busy-settled-command",
+				hostId: host,
+				command: "session.list",
+				args: {},
+			});
+			expect(await nextResponse("list-busy-settled")).toMatchObject({ ok: true });
+			expect(child.killed).toBe(true);
+			expect(appserver.snapshot(created.sessionId)).toBeUndefined();
+			const pruned = new SessionOwnershipStore(sessionOwnershipPath);
+			await pruned.load();
+			expect(pruned.owns(created.sessionId, created.path)).toBe(false);
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("reclaims only an exact T4-owned lockless session after host restart", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-owned-session-restart-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sessionOwnershipPath = join(root, "profile", "owned-sessions.json");
+		const transcriptPath = join(root, "owned-session.jsonl");
+		const sid = sessionId("owned-session-restart");
+		const timestamp = "2026-07-22T00:00:00.000Z";
+		await writeFile(
+			transcriptPath,
+			`${JSON.stringify({ type: "session", version: 3, id: sid, cwd: root, timestamp, title: "Owned session" })}\n`,
+		);
+		const ownership = new SessionOwnershipStore(sessionOwnershipPath);
+		await ownership.add(sid, transcriptPath);
+		const factory = new FakeFactory();
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "owned-session-restart-test",
+			socketPath,
+			sessionOwnershipPath,
+			discovery: new FileSessionDiscovery(root, realFs, host, true),
+			childFactory: factory,
+			lockStatus: () => "missing",
+			lockCheck: async () => {},
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "owned-restart-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: ["session.observer"],
+				capabilities: { client: ["sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "attach-owned",
+				commandId: "attach-owned-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.attach",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "attach-owned") {
+					expect(frame.ok).toBe(true);
+					break;
+				}
+			}
+			await Promise.race([
+				(async () => {
+					while (factory.children.length === 0) await Bun.sleep(20);
+				})(),
+				Bun.sleep(1_000).then(() => {
+					throw new Error("owned session was not reclaimed");
+				}),
+			]);
+			expect(factory.children).toHaveLength(1);
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	test("hydrates a T4-created session without replacing its writer projection", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-created-session-hydration-"));
+		const socketPath = join(root, "run", "appserver.sock");
+		const sid = sessionId("created-session-hydration");
+		const created = {
+			...record(sid),
+			path: join(root, "created-session-hydration.jsonl"),
+			cwd: root,
+			projectId: stableProjectId(root),
+		};
+		const hydratedEntry = {
+			...entry("hydrated-entry"),
+			hostId: hostId("upstream-host"),
+			sessionId: sessionId("upstream-session"),
+		};
+		let visible = false;
+		const sessionAuthority = {
+			create: async () => {
+				visible = true;
+				return created;
+			},
+			list: async () =>
+				visible
+					? [{ ...created, updatedAt: new Date(1).toISOString(), entries: [], entriesLoaded: false }]
+					: [],
+			load: async () => ({
+				...created,
+				updatedAt: new Date(1).toISOString(),
+				entries: [hydratedEntry],
+			}),
+			archive: async () => {},
+			restore: async () => {},
+			delete: async () => {},
+		};
+		const appserver = createAppserver({
+			hostId: host,
+			epoch: "created-session-hydration-test",
+			socketPath,
+			discovery: sessionAuthority,
+			sessionAuthority,
+			projectRootForProject: () => root,
+			childFactory: new FakeFactory(),
+		});
+		await appserver.start();
+		const client = await RawUdsWebSocket.connect(socketPath);
+		try {
+			client.sendJson({
+				v: "omp-app/1",
+				type: "hello",
+				protocol: { min: "omp-app/1", max: "omp-app/1" },
+				client: { name: "hydration-test", version: "1", build: "test", platform: "linux" },
+				requestedFeatures: [],
+				capabilities: { client: ["sessions.manage", "sessions.read"] },
+				savedCursors: [],
+			});
+			expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+			expect((await client.nextServer()).type).toBe("sessions");
+
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "create-hydration",
+				commandId: "create-hydration-command",
+				hostId: host,
+				command: "session.create",
+				args: { projectId: created.projectId },
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "create-hydration") break;
+			}
+			const writerProjection = appserver.snapshot(sid);
+			expect(writerProjection).toBeDefined();
+
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "list-hydration",
+				commandId: "list-hydration-command",
+				hostId: host,
+				command: "session.list",
+				args: {},
+			});
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "list-hydration") break;
+			}
+
+			client.sendJson({
+				v: "omp-app/1",
+				type: "command",
+				requestId: "attach-hydration",
+				commandId: "attach-hydration-command",
+				hostId: host,
+				sessionId: sid,
+				command: "session.attach",
+				args: {},
+			});
+			let attachResponse;
+			for (;;) {
+				const frame = await client.nextServer();
+				if (frame.type === "response" && frame.requestId === "attach-hydration") {
+					attachResponse = frame;
+					break;
+				}
+			}
+
+			expect(appserver.snapshot(sid)).toBe(writerProjection);
+			expect(appserver.snapshot(sid)?.entries).toEqual([{ ...hydratedEntry, hostId: host, sessionId: sid }]);
+			expect(attachResponse).toMatchObject({
+				ok: true,
+				result: { attached: true, cursor: { epoch: "created-session-hydration-test", seq: 1 } },
+			});
+		} finally {
+			client.destroy();
+			await client.closed();
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
 	test("rejects shared system socket roots before changing their modes", async () => {
 		if (process.platform === "win32") return;
 		for (const directory of ["/", "/tmp", "/var", "/private/tmp", "/private/var"]) {
@@ -400,7 +969,7 @@ describe("appserver lifecycle", () => {
 				type: "hello",
 				protocol: { min: "omp-app/1", max: "omp-app/1" },
 				client: { name: "lockless-test", version: "1", build: "test", platform: "linux" },
-				requestedFeatures: ["session.observer", "transcript.page"],
+				requestedFeatures: ["session.observer", "session.unverified", "transcript.page"],
 				capabilities: { client: ["sessions.read"] },
 				savedCursors: [],
 			});
@@ -493,10 +1062,63 @@ describe("appserver lifecycle", () => {
 			}
 			expect(appserver.snapshot(sid)?.entries.at(-1)?.data.text).toBe("second");
 			expect(appserver.snapshot(sid)?.ref.liveState?.sessionControl).toEqual({
-				mode: "reconciling",
+				mode: "unverified",
 				transcript: "live",
 			});
 			expect(factory.children).toHaveLength(0);
+
+			const legacyClient = await RawUdsWebSocket.connect(socketPath);
+			try {
+				legacyClient.sendJson({
+					v: "omp-app/1",
+					type: "hello",
+					protocol: { min: "omp-app/1", max: "omp-app/1" },
+					client: { name: "legacy-lockless-test", version: "0.5.8", build: "test", platform: "linux" },
+					requestedFeatures: ["session.observer"],
+					capabilities: { client: ["sessions.read"] },
+					savedCursors: [],
+				});
+				expect(await legacyClient.nextServer()).toMatchObject({
+					type: "welcome",
+					grantedFeatures: ["session.observer"],
+				});
+				const sessions = await legacyClient.nextServer();
+				expect(sessions).toMatchObject({
+					type: "sessions",
+					sessions: [{
+						liveState: {
+							sessionControl: { mode: "reconciling", transcript: "live" },
+						},
+					}],
+				});
+				legacyClient.sendJson({
+					v: "omp-app/1",
+					type: "command",
+					requestId: "legacy-list-lockless",
+					commandId: "legacy-list-lockless-command",
+					hostId: host,
+					command: "session.list",
+					args: {},
+				});
+				for (;;) {
+					const frame = await legacyClient.nextServer();
+					if (frame.type !== "response" || frame.requestId !== "legacy-list-lockless") continue;
+					expect(frame).toMatchObject({
+						ok: true,
+						result: {
+							sessions: [{
+								liveState: {
+									sessionControl: { mode: "reconciling", transcript: "live" },
+								},
+							}],
+						},
+					});
+					break;
+				}
+			} finally {
+				legacyClient.destroy();
+				await legacyClient.closed();
+			}
 		} finally {
 			client.destroy();
 			await client.closed();

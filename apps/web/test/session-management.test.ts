@@ -192,7 +192,9 @@ class FakeManagementController {
             { truncated: this.inventoryTruncated, totalCount: this.sessionIndex.size },
           ],
         ]) as DesktopRuntimeSnapshot["projection"]["sessionIndexMetadata"],
-        sessionRefArrivalOrdinals: new Map(),
+        sessionRefArrivalOrdinals: new Map(
+          [...this.sessionIndex.keys()].map((sessionKey) => [sessionKey, 1]),
+        ),
         sessionDeltaCursors: new Map(),
         sessionInventoryCursors: new Map(),
         workspaces: new Map(),
@@ -649,18 +651,18 @@ describe("session management authority helpers", () => {
     "session.delete",
   ] as const;
 
-  it("disables management honestly while the host inventory is truncated or incomplete", () => {
-    // Truncated inventory: the host said the list is cut short.
+  it("keeps a returned session manageable when the host inventory is bounded", () => {
+    // Truncation limits absence proof, not the current row the host returned.
     const truncated = new FakeManagementController();
     truncated.inventoryTruncated = true;
     for (const command of ALL_COMMANDS) {
       expect(managementCommandSupport(truncated.getSnapshot(), ADDRESS, command)).toEqual({
-        supported: false,
-        reason: SYNCING_REASON,
+        supported: true,
+        reason: null,
       });
     }
 
-    // Incomplete inventory: the host claims more sessions than we indexed.
+    // The same applies when the host reports more sessions than this bounded page.
     const base = new FakeManagementController().getSnapshot();
     const incomplete = {
       ...base,
@@ -671,8 +673,8 @@ describe("session management authority helpers", () => {
     } as DesktopRuntimeSnapshot;
     for (const command of ALL_COMMANDS) {
       expect(managementCommandSupport(incomplete, ADDRESS, command)).toEqual({
-        supported: false,
-        reason: SYNCING_REASON,
+        supported: true,
+        reason: null,
       });
     }
 
@@ -712,7 +714,7 @@ describe("session management authority helpers", () => {
     });
   });
 
-  it("lets the syncing reason outrank the observer reason, matching the dispatch gate", () => {
+  it("keeps current ownership truth visible on a bounded inventory", () => {
     const observed = new FakeManagementController({
       ...ref(),
       liveState: {
@@ -721,11 +723,12 @@ describe("session management authority helpers", () => {
       },
     } as SessionRef);
     observed.inventoryTruncated = true;
-    // assertSessionWritableNow() rejects cached before it reads ownership;
-    // the support gate promises the same order.
+    // This row came from the current response, so ownership—not global list
+    // truncation—is the reason it remains read-only.
     expect(managementCommandSupport(observed.getSnapshot(), ADDRESS, "session.close")).toEqual({
       supported: false,
-      reason: SYNCING_REASON,
+      reason: presentSessionControl({ mode: "observer", lockStatus: "live", transcript: "live" })
+        .managementReason,
     });
   });
 

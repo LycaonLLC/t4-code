@@ -70,6 +70,7 @@ export interface HostDaemonPaths {
   readonly profileStateRoot: string;
   readonly hostIdPath: string;
   readonly attentionOutcomePath: string;
+  readonly sessionOwnershipPath: string;
   readonly transcriptSearchPath: string;
   readonly officialMetadataPath: string;
   readonly remoteStateRoot: string;
@@ -186,6 +187,7 @@ export function hostDaemonPaths(
     profileStateRoot,
     hostIdPath: join(profileStateRoot, "host-id"),
     attentionOutcomePath: join(profileStateRoot, "attention-outcomes.json"),
+    sessionOwnershipPath: join(profileStateRoot, "owned-sessions.json"),
     transcriptSearchPath: join(profileStateRoot, "transcript-search.sqlite"),
     officialMetadataPath: join(profileStateRoot, "official-omp-sessions.json"),
     remoteStateRoot: join(profileStateRoot, "remote"),
@@ -337,6 +339,7 @@ export async function runHostDaemon(
       socketPath: paths.socketPath,
       hostIdPath: paths.hostIdPath,
       attentionOutcomePath: paths.attentionOutcomePath,
+      sessionOwnershipPath: paths.sessionOwnershipPath,
       sessionAuthority,
       discovery,
       operationsAuthority: {

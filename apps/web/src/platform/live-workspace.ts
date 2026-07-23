@@ -25,7 +25,7 @@ import {
   readSessionControl,
   sessionControlDisplayKind,
 } from "../features/session-runtime/session-observer.ts";
-import { hostSessionInventoryIsComplete } from "../features/session-runtime/session-inventory.ts";
+import { sessionRefIsCurrent } from "../features/session-runtime/session-inventory.ts";
 
 /** Composite route id for one live session; unambiguous and URL-safe. */
 export function sessionViewId(hostId: string, sessionId: string): string {
@@ -321,7 +321,7 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
     const connection = hostConnection(snapshot, hostId);
     const warm = warmSessionProjection(snapshot, hostId, sessionId);
     const offline = connection.state !== "connected";
-    const inventoryReady = hostSessionInventoryIsComplete(snapshot, hostId);
+    const inventoryReady = sessionRefIsCurrent(snapshot, hostId, sessionId);
     const freshness = offline
       ? "offline"
       : !inventoryReady || (warm !== undefined && warm.freshness !== "fresh")
@@ -351,11 +351,22 @@ export function deriveWorkspaceData(snapshot: DesktopRuntimeSnapshot): Workspace
     else if (ref.status === "closed") lifecycle = "closed";
     let status: SessionStatus | null = null;
     if (connection.state === "connecting") status = "connecting";
-    else if (freshness === "live" && controlKind === undefined) {
-      if (pendingApprovals > 0) status = "pendingApproval";
-      else if (ref.pendingUserInput === true) status = "awaitingInput";
-      else if (ref.proposedPlan !== undefined && ref.proposedPlan !== "") status = "planReady";
-      else if (displayWorking) status = "working";
+    else if (freshness === "live") {
+      if (controlKind === undefined) {
+        if (pendingApprovals > 0) status = "pendingApproval";
+        else if (ref.pendingUserInput === true) status = "awaitingInput";
+        else if (ref.proposedPlan !== undefined && ref.proposedPlan !== "") status = "planReady";
+      }
+      // Ownership answers who may write; activity answers whether a turn is
+      // progressing. Keep both when a live owner or takeover has confirmed
+      // work instead of replacing the only running signal with ownership copy.
+      if (
+        status === null &&
+        displayWorking &&
+        (controlKind === undefined || controlKind === "observer" || controlKind === "reconciling")
+      ) {
+        status = "working";
+      }
     }
     sessions.push({
       id: sessionViewId(hostId, sessionId),

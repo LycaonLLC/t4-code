@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Distinguish lockless sessions with no compatible handoff signal as `sessionControl.mode: "unverified"` instead of reporting a takeover that cannot complete.
+- Negotiate `session.unverified` separately and down-convert that mode to the
+  existing read-only `reconciling` state for older clients.
+
 ### Added
 
 - Add negotiated, bounded `transcript.page` backward pagination for attached session history.

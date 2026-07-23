@@ -790,6 +790,8 @@ describe("app-wire authority", () => {
 	test("session observer control is additive, categorical, and exact", () => {
 		expect(ADDITIVE_FEATURES).toContain("session.observer");
 		expect(PROTOCOL_FEATURES).toContain("session.observer");
+		expect(ADDITIVE_FEATURES).toContain("session.unverified");
+		expect(PROTOCOL_FEATURES).toContain("session.unverified");
 		const session = {
 			hostId: "h",
 			sessionId: "s",
@@ -808,6 +810,7 @@ describe("app-wire authority", () => {
 		for (const lockStatus of ["live", "suspect", "malformed"])
 			expect(() => decodeServerFrame(frame({ mode: "observer", lockStatus, transcript: "live" }))).not.toThrow();
 		expect(() => decodeServerFrame(frame({ mode: "reconciling", transcript: "snapshot" }))).not.toThrow();
+		expect(() => decodeServerFrame(frame({ mode: "unverified", transcript: "live" }))).not.toThrow();
 		for (const invalid of [
 			null,
 			{ mode: "observer", transcript: "live" },
@@ -815,6 +818,8 @@ describe("app-wire authority", () => {
 			{ mode: "future", transcript: "live" },
 			{ mode: "reconciling", transcript: "future" },
 			{ mode: "reconciling", transcript: "live", path: "/secret" },
+			{ mode: "unverified", transcript: "future" },
+			{ mode: "unverified", transcript: "live", owner: "secret" },
 		])
 			expect(() => decodeServerFrame(frame(invalid))).toThrow(AppWireError);
 	});

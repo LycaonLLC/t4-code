@@ -2202,9 +2202,8 @@ describe("session lifecycle", () => {
       canCancel: true,
     });
 
-    // The same-epoch welcome deliberately invalidates inventory completeness.
-    // Retained refs remain useful history, but cannot prove current activity or
-    // enable commands until the full sessions frame is back.
+    // The same-epoch welcome invalidates every retained ref. A ref becomes
+    // writable again only if the current connection actually returns it.
     shell.emitFrame({
       targetId: "local",
       frame: makeWelcome(HOST, ["sessions.prompt"]),
@@ -2220,13 +2219,18 @@ describe("session lifecycle", () => {
       status: null,
     });
 
+    const currentBoundedInventory = pendingPromptsSessionsFrame(
+      [{ entryId: "prompt:before-sleep", text: "keep going" }],
+      2,
+      "active",
+    );
     shell.emitFrame({
       targetId: "local",
-      frame: pendingPromptsSessionsFrame(
-        [{ entryId: "prompt:before-sleep", text: "keep going" }],
-        2,
-        "active",
-      ),
+      frame: {
+        ...currentBoundedInventory,
+        totalCount: 7_683,
+        truncated: true,
+      },
     });
     expect(runtime.getSnapshot()).toMatchObject({
       link: "live",
@@ -2392,7 +2396,7 @@ describe("session lifecycle", () => {
     );
   });
 
-  it("does not settle a turn from a truncated inventory after reconnect", async () => {
+  it("settles a returned session from a truncated inventory after reconnect", async () => {
     const { shell, runtime } = await startedRuntime();
     shell.emitFrame({ targetId: "local", frame: snapshotFrame(1, []) });
     shell.emitFrame({ targetId: "local", frame: turnStart(2) });
@@ -2432,7 +2436,9 @@ describe("session lifecycle", () => {
         truncated: true,
       },
     });
-    expect(runtime.getSnapshot().projection.turnActive).toBe(true);
+    // Truncation means absence is not authoritative. This session was present
+    // in the current response, so its idle state is authoritative.
+    expect(runtime.getSnapshot().projection.turnActive).toBe(false);
 
     shell.emitFrame({
       targetId: "local",
@@ -2458,6 +2464,33 @@ describe("session lifecycle", () => {
     expect(again).toBe(first);
     await Promise.resolve();
     expect(shell.commandCount("session.attach")).toBe(1);
+  });
+
+  it("replaces a startup fallback runtime when a named target binds the restored host", async () => {
+    const shell = new FakeShell();
+    const controller = createDesktopRuntimeController({ shell });
+    await controller.start();
+    const cache = new Map<string, SessionRuntime>();
+    const viewId = sessionViewId(HOST, SESSION);
+
+    const fallback = obtainLiveRuntime(controller, viewId, cache);
+    expect(shell.commandCount("session.attach")).toBe(0);
+
+    shell.emitState({ targetId: "local:candidate", state: "connected" });
+    shell.emitFrame({
+      targetId: "local:candidate",
+      frame: makeWelcome(HOST, ["sessions.read", "sessions.prompt"]),
+    });
+    const rebound = obtainLiveRuntime(controller, viewId, cache);
+
+    expect(rebound).not.toBe(fallback);
+    await Promise.resolve();
+    expect(shell.commands.find((request) => request.intent.command === "session.attach")?.targetId)
+      .toBe("local:candidate");
+
+    fallback.dispose();
+    rebound.dispose();
+    await controller.stop();
   });
 
   it("paints a bounded cold tail before starting the full live attach", async () => {

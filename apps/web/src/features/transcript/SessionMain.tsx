@@ -104,10 +104,63 @@ export function FreshnessBadge({ session }: { readonly session: WorkspaceSession
   return null;
 }
 
+export function SessionConnectionBadge({
+  state,
+}: {
+  readonly state:
+    | "connected"
+    | "connecting"
+    | "disconnected"
+    | "pairing-required"
+    | "error";
+}) {
+  if (state === "connecting") return <StatusPill status="connecting" />;
+  const connected = state === "connected";
+  const label = connected
+    ? "Connected"
+    : state === "pairing-required"
+      ? "Pairing required"
+      : state === "error"
+        ? "Connection error"
+        : "Offline";
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Badge className="gap-1.5" variant="outline">
+            <span
+              aria-hidden="true"
+              className={cn(
+                "size-1.5 rounded-full",
+                connected
+                  ? "bg-success"
+                  : state === "error"
+                    ? "bg-status-error-dot"
+                    : state === "pairing-required"
+                      ? "bg-warning"
+                      : "bg-muted-foreground",
+              )}
+            />
+            {label}
+          </Badge>
+        }
+      />
+      <TooltipPopup side="bottom">
+        {connected
+          ? "Connected to the host. New session state and transcript updates can arrive live."
+          : state === "pairing-required"
+            ? "Pair this device before live session updates can resume."
+            : state === "error"
+              ? "The host connection failed. Open Hosts for diagnostics."
+              : "The session host is unreachable. Showing the last state received."}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
 /** Plain lifecycle badge for sessions that have no richer live status pill. */
 export function SessionLifecycleBadge({ session }: { readonly session: WorkspaceSession }) {
-  if (session.freshness !== "live" || session.status !== null || session.control !== undefined)
-    return null;
+  if (session.freshness !== "live" || session.status !== null) return null;
 
   const label =
     session.lifecycle === "idle"
@@ -175,7 +228,25 @@ function useStableTranscriptRows(rows: ReturnType<typeof deriveTranscriptRows>) 
   }, [rows]);
 }
 
-type SessionActivity = "compacting" | "working" | null;
+export type SessionActivity = "compacting" | "working" | null;
+
+export function resolveSessionActivity(input: {
+  readonly archived: boolean;
+  readonly catchingUp: boolean;
+  readonly contextMaintenance: boolean;
+  readonly link: "live" | "cached" | "offline";
+  readonly sessionActive: boolean;
+}): SessionActivity {
+  if (
+    input.archived ||
+    input.link !== "live" ||
+    input.catchingUp ||
+    !input.sessionActive
+  ) {
+    return null;
+  }
+  return input.contextMaintenance ? "compacting" : "working";
+}
 
 function activityLabel(activity: SessionActivity): string {
   if (activity === "compacting") return "Compacting context";
@@ -583,16 +654,13 @@ export function SessionMain({
     sessionControl?.mode === "observer",
     projection.entries,
   );
-  const sessionActivity: SessionActivity =
-    !archived &&
-    sessionControl === null &&
-    snapshot.link === "live" &&
-    !catchingUp &&
-    snapshot.sessionActive
-      ? projection.contextMaintenance === null
-        ? "working"
-        : "compacting"
-      : null;
+  const sessionActivity = resolveSessionActivity({
+    archived,
+    catchingUp,
+    contextMaintenance: projection.contextMaintenance !== null,
+    link: snapshot.link,
+    sessionActive: snapshot.sessionActive,
+  });
   const showAttention = shouldShowAttention(
     attention,
     revisingPlanId,

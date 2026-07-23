@@ -3,6 +3,7 @@ import type { CursorRecord, CursorStore, OmpClientError } from "./omp-client-con
 import { MAX_SAVED, sessionKey } from "./omp-client-contracts.ts";
 
 interface SaveQueue {
+  barrier: CursorRecord | undefined;
   latest: CursorRecord | undefined;
   running: boolean;
 }
@@ -35,7 +36,7 @@ export class CursorJournal {
       this.saved.delete(key);
     }
   }
-  remember(record: CursorRecord): void {
+  remember(record: CursorRecord, authoritative = false): void {
     let cursor: Cursor;
     try {
       cursor = decodeCursor(record.cursor);
@@ -60,8 +61,16 @@ export class CursorJournal {
       }
     }
     if (this.store === undefined) return;
-    const queue = this.queues.get(key) ?? { latest: undefined, running: false };
-    queue.latest = normalized;
+    const queue = this.queues.get(key) ?? { barrier: undefined, latest: undefined, running: false };
+    if (authoritative) {
+      // An authoritative snapshot is a persistence barrier. A later durable
+      // cursor may coalesce with other later cursors, but it cannot replace
+      // this reset while an older save is still in flight.
+      queue.barrier = normalized;
+      queue.latest = undefined;
+    } else {
+      queue.latest = normalized;
+    }
     this.queues.set(key, queue);
     if (!queue.running) this.drain(key, queue);
   }
@@ -101,11 +110,21 @@ export class CursorJournal {
     let drain!: Promise<void>;
     drain = (async () => {
       try {
-        while (queue.latest !== undefined) {
-          const record = queue.latest;
-          queue.latest = undefined;
+        while (queue.barrier !== undefined || queue.latest !== undefined) {
+          const authoritative = queue.barrier !== undefined;
+          const record = queue.barrier ?? queue.latest!;
+          if (authoritative) {
+            queue.barrier = undefined;
+            // Once a reset reaches the head of the serialized queue, an older
+            // saved sequence must not suppress later cursors even if the reset
+            // write itself fails.
+            this.saved.delete(key);
+          } else {
+            queue.latest = undefined;
+          }
           const saved = this.saved.get(key);
           if (
+            !authoritative &&
             saved !== undefined &&
             saved.epoch === record.cursor.epoch &&
             saved.seq >= record.cursor.seq
@@ -121,7 +140,7 @@ export class CursorJournal {
       } finally {
         queue.running = false;
         this.drains.delete(drain);
-        if (queue.latest === undefined) this.queues.delete(key);
+        if (queue.barrier === undefined && queue.latest === undefined) this.queues.delete(key);
         else this.drain(key, queue);
       }
     })();

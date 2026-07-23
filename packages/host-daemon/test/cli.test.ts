@@ -26,6 +26,7 @@ describe("T4 host daemon CLI", () => {
     expect(hostDaemonPaths(config)).toMatchObject({
       profileStateRoot: expect.stringContaining("/home/test/.t4-code/host/profiles/"),
       hostIdPath: expect.stringContaining("/host-id"),
+      sessionOwnershipPath: expect.stringContaining("/owned-sessions.json"),
       transcriptSearchPath: expect.stringContaining("/transcript-search.sqlite"),
     });
   });
@@ -175,6 +176,7 @@ describe("T4 host daemon CLI", () => {
       ompBuild: OFFICIAL_OMP_BUILD,
       rpcDialect: "official-17.0.6",
       claimLocklessSessions: true,
+      sessionOwnershipPath: expect.stringContaining("/owned-sessions.json"),
     });
     const operations = captured?.operationsAuthority as {
       catalogGet?: () => Promise<Record<string, unknown>>;
