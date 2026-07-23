@@ -895,6 +895,155 @@ describe("child supervision", () => {
 		supervisor.stop();
 	});
 
+	test("skips an oversized live JSONL record and resumes reconciliation", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-oversized-live-jsonl-"));
+		const path = join(root, "session.jsonl");
+		await writeFile(
+			path,
+			`${JSON.stringify({ type: "session", version: 3, id: "session", timestamp: stamp, cwd: root })}\n`,
+		);
+		const append = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const exited = Promise.withResolvers<number>();
+		const child: ChildHandle = {
+			stdin: { write: () => {} },
+			stdout: (async function* () {
+				yield `${JSON.stringify({ type: "ready" })}\n`;
+				await append.promise;
+				yield `${JSON.stringify({ type: "message_end", message: { role: "assistant" } })}\n`;
+				await release.promise;
+			})(),
+			stderr: (async function* () {})(),
+			exited: exited.promise,
+			kill: () => {
+				release.resolve();
+				exited.resolve(0);
+			},
+		};
+		const entry = Promise.withResolvers<RpcSessionEntryFrame>();
+		const omittedOffsets: number[] = [];
+		const crashed: Error[] = [];
+		const supervisor = new RpcChildSupervisor(
+			{
+				spawn: () => child,
+				argv: sessionPath => ["omp", "--mode", "rpc", "--session", sessionPath],
+			},
+			{ ...record("oversized-live-jsonl"), path, cwd: root },
+			{
+				entry: entry.resolve,
+				event: () => {},
+				transcriptRecordOmitted: offset => omittedOffsets.push(offset),
+				crashed: error => crashed.push(error),
+			},
+		);
+
+		await supervisor.start();
+		const oversizedOffset = (await stat(path)).size;
+		await appendFile(path, `${"x".repeat(1024 * 1024 + 1)}\n`);
+		await appendFile(
+			path,
+			`${JSON.stringify({
+				type: "message",
+				id: "after-oversized",
+				message: { role: "assistant", content: "still live" },
+			})}\n`,
+		);
+		append.resolve();
+
+		expect((await entry.promise).entry).toMatchObject({
+			id: "after-oversized",
+			message: { role: "assistant", content: "still live" },
+		});
+		expect(omittedOffsets).toEqual([oversizedOffset]);
+		expect(crashed).toEqual([]);
+		expect(supervisor.loadedWatermark()).toEqual({ lastEntryId: "after-oversized", entryCount: 1 });
+		supervisor.stop();
+	});
+
+	test("negotiates RPC v2 and reassembles an oversized response losslessly", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-rpc-v2-"));
+		const path = join(root, "session.jsonl");
+		await writeFile(
+			path,
+			`${JSON.stringify({ type: "session", version: 3, id: "session", timestamp: stamp, cwd: root })}\n`,
+		);
+		const negotiate = Promise.withResolvers<Record<string, unknown>>();
+		const request = Promise.withResolvers<Record<string, unknown>>();
+		const release = Promise.withResolvers<void>();
+		const exited = Promise.withResolvers<number>();
+		const payload = "😀".repeat(400_000);
+		const child: ChildHandle = {
+			stdin: {
+				write: line => {
+					const command = JSON.parse(String(line)) as Record<string, unknown>;
+					if (command.type === "negotiate_protocol") negotiate.resolve(command);
+					else request.resolve(command);
+				},
+			},
+			stdout: (async function* () {
+				yield `${JSON.stringify({
+					type: "ready",
+					protocolVersion: 1,
+					supportedProtocolVersions: [1, 2],
+					maxFrameBytes: 1024 * 1024,
+					maxReassembledFrameBytes: 64 * 1024 * 1024,
+				})}\n`;
+				const negotiation = await negotiate.promise;
+				yield `${JSON.stringify({
+					type: "response",
+					id: negotiation.id,
+					command: "negotiate_protocol",
+					success: true,
+					data: { protocolVersion: 2 },
+				})}\n`;
+				const command = await request.promise;
+				const logical = Buffer.from(
+					JSON.stringify({
+						type: "response",
+						id: command.id,
+						command: command.type,
+						success: true,
+						data: { payload },
+					}),
+					"utf8",
+				);
+				const chunkBytes = 256 * 1024;
+				const count = Math.ceil(logical.byteLength / chunkBytes);
+				for (let index = 0; index < count; index++) {
+					yield `${JSON.stringify({
+						type: "rpc_chunk",
+						chunkId: "response-1",
+						index,
+						count,
+						byteLength: logical.byteLength,
+						data: logical.subarray(index * chunkBytes, (index + 1) * chunkBytes).toString("base64"),
+					})}\n`;
+				}
+				await release.promise;
+			})(),
+			stderr: (async function* () {})(),
+			exited: exited.promise,
+			kill: () => {
+				release.resolve();
+				exited.resolve(0);
+			},
+		};
+		const supervisor = new RpcChildSupervisor(
+			{
+				spawn: () => child,
+				argv: sessionPath => ["omp", "--mode", "rpc", "--session", sessionPath],
+			},
+			{ ...record("rpc-v2"), path, cwd: root },
+			{ entry: () => {}, event: () => {}, crashed: error => expect.unreachable(error.message) },
+		);
+
+		await supervisor.start();
+		expect(await negotiate.promise).toMatchObject({ type: "negotiate_protocol", protocolVersion: 2 });
+		const response = await supervisor.call({ type: "get_messages" }, "large-response");
+		expect(response).toMatchObject({ success: true, data: { payload } });
+		supervisor.stop();
+	});
+
 	test("daemon entrypoints resolve RPC children in source and installed layouts", () => {
 		const cases = [
 			["/checkout/packages/coding-agent/src/cli/ompd.ts", "/checkout/packages/coding-agent/src/cli.ts"],

@@ -3616,6 +3616,22 @@ export class LocalAppserver implements AppserverHandle {
 					if (frame.type === "thinking_level_changed")
 						this.scheduleStateRefresh(sessionId, supervisor, "thinking-level-changed");
 				},
+				transcriptRecordOmitted: offset => {
+					const omission: DurableEntry = {
+						id: entryId(`oversized-transcript-record-${offset}`),
+						parentId: projection.value.entries.at(-1)?.id ?? null,
+						hostId: this.hostId,
+						sessionId,
+						kind: "compaction",
+						timestamp: this.#clock.now().toISOString(),
+						data: {
+							summary: "One transcript record was omitted because it exceeded the 1 MiB safety limit.",
+							oversizedRecordOmission: true,
+						},
+					};
+					const output = projection.appendEntry(omission);
+					if (output) this.broadcast(sessionId, output);
+				},
 				crashed: () => {
 					this.markSupervisorCrashed(sessionId, supervisor);
 				},
