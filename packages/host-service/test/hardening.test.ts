@@ -960,6 +960,104 @@ describe("child supervision", () => {
 		supervisor.stop();
 	});
 
+	test("invalidates stale prompt correlations after an oversized JSONL record", async () => {
+		const root = await mkdtemp(join(tmpdir(), "t4-oversized-correlation-jsonl-"));
+		const path = join(root, "session.jsonl");
+		await writeFile(
+			path,
+			`${JSON.stringify({ type: "session", version: 3, id: "session", timestamp: stamp, cwd: root })}\n`,
+		);
+		const firstCommand = Promise.withResolvers<Record<string, unknown>>();
+		const secondCommand = Promise.withResolvers<Record<string, unknown>>();
+		const firstReconcile = Promise.withResolvers<void>();
+		const secondReconcile = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const exited = Promise.withResolvers<number>();
+		let writes = 0;
+		const child: ChildHandle = {
+			stdin: {
+				write: line => {
+					const command = JSON.parse(String(line)) as Record<string, unknown>;
+					const target = writes === 0 ? firstCommand : secondCommand;
+					writes += 1;
+					target.resolve(command);
+				},
+			},
+			stdout: (async function* () {
+				yield `${JSON.stringify({ type: "ready" })}\n`;
+				const first = await firstCommand.promise;
+				yield `${JSON.stringify({
+					type: "response",
+					id: first.id,
+					command: first.type,
+					success: true,
+				})}\n`;
+				await firstReconcile.promise;
+				yield `${JSON.stringify({ type: "notice", message: "first reconciliation" })}\n`;
+				const second = await secondCommand.promise;
+				yield `${JSON.stringify({
+					type: "response",
+					id: second.id,
+					command: second.type,
+					success: true,
+				})}\n`;
+				await secondReconcile.promise;
+				yield `${JSON.stringify({ type: "notice", message: "second reconciliation" })}\n`;
+				await release.promise;
+			})(),
+			stderr: (async function* () {})(),
+			exited: exited.promise,
+			kill: () => {
+				release.resolve();
+				exited.resolve(0);
+			},
+		};
+		const omitted = Promise.withResolvers<number>();
+		const entry = Promise.withResolvers<RpcSessionEntryFrame>();
+		const supervisor = new RpcChildSupervisor(
+			{ spawn: () => child, argv: sessionPath => ["omp", "--mode", "rpc", "--session", sessionPath] },
+			{ ...record("oversized-correlation-jsonl"), path, cwd: root },
+			{
+				entry: entry.resolve,
+				event: () => {},
+				transcriptRecordOmitted: omitted.resolve,
+				crashed: error => expect.unreachable(error.message),
+			},
+		);
+
+		await supervisor.start();
+		await supervisor.call({ type: "prompt", message: "omitted prompt" }, "omitted-prompt");
+		await appendFile(
+			path,
+			`${JSON.stringify({
+				type: "message",
+				id: "oversized-user",
+				message: { role: "user", content: "x".repeat(1024 * 1024) },
+			})}\n`,
+		);
+		firstReconcile.resolve();
+		await omitted.promise;
+
+		const second = supervisor.call({ type: "prompt", message: "visible prompt" }, "visible-prompt");
+		const secondInternalId = String((await secondCommand.promise).id);
+		await second;
+		await appendFile(
+			path,
+			`${JSON.stringify({
+				type: "message",
+				id: "visible-user",
+				message: { role: "user", content: "visible prompt" },
+			})}\n`,
+		);
+		secondReconcile.resolve();
+		expect((await entry.promise).entry).toMatchObject({
+			id: "visible-user",
+			message: { role: "user", content: "visible prompt", clientCorrelationId: secondInternalId },
+		});
+		supervisor.stop();
+		await child.exited;
+	});
+
 	test("negotiates RPC v2 and reassembles exact-boundary and oversized responses losslessly", async () => {
 		const root = await mkdtemp(join(tmpdir(), "t4-rpc-v2-"));
 		const path = join(root, "session.jsonl");
@@ -1106,6 +1204,59 @@ describe("child supervision", () => {
 		});
 		expect(commands.map(command => command.type)).toEqual(["get_state"]);
 		supervisor.stop();
+	});
+
+	test("bounds protocol v2 negotiation during startup", async () => {
+		const negotiation = Promise.withResolvers<Record<string, unknown>>();
+		const release = Promise.withResolvers<void>();
+		const exited = Promise.withResolvers<number>();
+		let killed = false;
+		const child: ChildHandle = {
+			stdin: {
+				write: line => negotiation.resolve(JSON.parse(String(line)) as Record<string, unknown>),
+			},
+			stdout: (async function* () {
+				yield `${JSON.stringify({
+					type: "ready",
+					protocolVersion: 1,
+					supportedProtocolVersions: [1, 2],
+					maxFrameBytes: 1024 * 1024,
+					maxReassembledFrameBytes: 64 * 1024 * 1024,
+				})}\n`;
+				await release.promise;
+			})(),
+			stderr: (async function* () {})(),
+			exited: exited.promise,
+			kill: () => {
+				killed = true;
+				release.resolve();
+				exited.resolve(0);
+			},
+		};
+		const supervisor = new RpcChildSupervisor(
+			{ spawn: () => child, argv: sessionPath => ["omp", "--mode", "rpc", "--session", sessionPath] },
+			record("rpc-v2-negotiation-timeout"),
+			{ entry: () => {}, event: () => {}, crashed: () => {} },
+			undefined,
+			undefined,
+			undefined,
+			10,
+		);
+
+		const startup = supervisor.start();
+		expect(await negotiation.promise).toMatchObject({ type: "negotiate_protocol", protocolVersion: 2 });
+		const outcome = await Promise.race([
+			startup.then(
+				() => ({ kind: "resolved" as const }),
+				error => ({ kind: "rejected" as const, error }),
+			),
+			Bun.sleep(100).then(() => ({ kind: "pending" as const })),
+		]);
+		expect(outcome.kind).toBe("rejected");
+		if (outcome.kind === "rejected")
+			expect(outcome.error).toHaveProperty("message", "rpc protocol v2 negotiation timed out");
+		expect(killed).toBe(true);
+		await child.exited;
 	});
 
 	test("fails closed when a protocol v2 chunk sequence is interrupted", async () => {

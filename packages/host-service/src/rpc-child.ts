@@ -11,6 +11,7 @@ const MAX_RPC_REASSEMBLED_BYTES = 64 * 1024 * 1024;
 const RPC_CHUNK_PAYLOAD_BYTES = 256 * 1024;
 const STDERR_BYTES = 64 * 1024;
 const FAILURE_STOP_GRACE_MS = 2_000;
+const PROTOCOL_NEGOTIATION_TIMEOUT_MS = 10_000;
 const TRANSCRIPT_READ_BYTES = 64 * 1024;
 const MAX_PENDING_DURABLE_CORRELATIONS = 64;
 
@@ -253,7 +254,7 @@ class DurableJsonlReconciler {
 					if (this.#skippingOversizedLine) {
 						if (newline < 0) break;
 						this.#skippingOversizedLine = false;
-						if (publish) this.transcriptRecordOmitted?.(this.#oversizedLineStart);
+						this.#omitOversizedRecord(publish);
 						pendingStart = chunkStart + newline + 1;
 					} else if (pending.byteLength + segment.byteLength > MAX_LINE_BYTES) {
 						this.#oversizedLineStart = pendingStart;
@@ -262,7 +263,7 @@ class DurableJsonlReconciler {
 							this.#skippingOversizedLine = true;
 							break;
 						}
-						if (publish) this.transcriptRecordOmitted?.(this.#oversizedLineStart);
+						this.#omitOversizedRecord(publish);
 						pendingStart = chunkStart + newline + 1;
 					} else if (newline < 0) {
 						pending = pending.byteLength === 0 ? Buffer.from(segment) : Buffer.concat([pending, segment]);
@@ -281,6 +282,14 @@ class DurableJsonlReconciler {
 			await handle.close();
 		}
 		this.#offset = this.#skippingOversizedLine ? position : position - pending.byteLength;
+	}
+
+	#omitOversizedRecord(publish: boolean): void {
+		// The skipped record could be the durable user entry at the head of the
+		// correlation queue. Its identity is unknowable without parsing it, so
+		// retain no correlation across this gap.
+		this.#pendingCorrelations.length = 0;
+		if (publish) this.transcriptRecordOmitted?.(this.#oversizedLineStart);
 	}
 
 	#observeLine(line: string, publish: boolean): void {
@@ -483,6 +492,7 @@ export class RpcChildSupervisor {
 		private readonly argv = ["omp", "--mode", "rpc"],
 		private readonly failureStopGraceMs = FAILURE_STOP_GRACE_MS,
 		private readonly runtimeVersion?: string,
+		private readonly protocolNegotiationTimeoutMs = PROTOCOL_NEGOTIATION_TIMEOUT_MS,
 	) {
 		this.#operationCapabilities = new OfficialOmpCapabilityAdapter(runtimeVersion);
 		this.#transcript = new DurableJsonlReconciler(
@@ -492,6 +502,12 @@ export class RpcChildSupervisor {
 		);
 		if (!Number.isSafeInteger(failureStopGraceMs) || failureStopGraceMs <= 0 || failureStopGraceMs > 60_000)
 			throw new Error("failureStopGraceMs must be between 1 and 60000");
+		if (
+			!Number.isSafeInteger(protocolNegotiationTimeoutMs) ||
+			protocolNegotiationTimeoutMs <= 0 ||
+			protocolNegotiationTimeoutMs > 60_000
+		)
+			throw new Error("protocolNegotiationTimeoutMs must be between 1 and 60000");
 	}
 	hasPendingCalls(): boolean {
 		return this.#pending.size > 0;
@@ -511,13 +527,24 @@ export class RpcChildSupervisor {
 			await ready.promise;
 			if (this.#supportsProtocolV2) {
 				this.#protocolV2 = true;
-				const negotiated = await this.call(
-					{ type: "negotiate_protocol", protocolVersion: 2 },
-					"rpc-protocol",
-					undefined,
-					undefined,
-					false,
-				);
+				const abort = new AbortController();
+				const negotiationTimer = setTimeout(() => abort.abort(), this.protocolNegotiationTimeoutMs);
+				let negotiated: RpcResponse;
+				try {
+					negotiated = await this.call(
+						{ type: "negotiate_protocol", protocolVersion: 2 },
+						"rpc-protocol",
+						abort.signal,
+						undefined,
+						false,
+					);
+				} catch (error) {
+					if (abort.signal.aborted)
+						throw new Error("rpc protocol v2 negotiation timed out", { cause: error });
+					throw error;
+				} finally {
+					clearTimeout(negotiationTimer);
+				}
 				if (
 					!negotiated.success ||
 					!negotiated.data ||

@@ -16,6 +16,7 @@ const MAX_FRAMES_PER_TURN = 1_000;
 const MAX_SESSION_ENTRIES = 10_000;
 const LARGE_RPC_PROBE = "T4 large RPC payload probe";
 const LARGE_RPC_RESPONSE_BYTES = 2 * 1024 * 1024;
+const LARGE_RPC_RESPONSE_SHA256 = "6932fd31e5daf4739b9fa78ff777b2831b0995cc1d0b0093cac80601902013bc";
 
 type JsonMap = Record<string, unknown>;
 
@@ -568,7 +569,7 @@ async function runLargeRpcPayloadScenario(input: {
   readonly root: string;
   readonly workspace: string;
   readonly profile: string;
-}): Promise<{ responseBytes: number }> {
+}): Promise<{ responseBytes: number; responseSha256: string }> {
   const path = join(input.root, "large-rpc-payload.jsonl");
   const record: SessionRecord = {
     sessionId: sessionId("official-large-rpc-payload"),
@@ -662,9 +663,14 @@ async function runLargeRpcPayloadScenario(input: {
     const responseBytes = Buffer.byteLength(messageText(response), "utf8");
     if (responseBytes !== LARGE_RPC_RESPONSE_BYTES)
       throw new Error(`large RPC response has ${responseBytes} bytes`);
-    return { responseBytes };
+    const responseSha256 = createHash("sha256").update(messageText(response), "utf8").digest("hex");
+    if (responseSha256 !== LARGE_RPC_RESPONSE_SHA256)
+      throw new Error(`large RPC response digest is ${responseSha256}`);
+    return { responseBytes, responseSha256 };
   } finally {
+    const child = supervisor.child();
     supervisor.stop();
+    await child?.exited.catch(() => undefined);
   }
 }
 
