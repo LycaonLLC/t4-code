@@ -53,10 +53,10 @@ class RpcChunkDecoder {
 			!Number.isSafeInteger(byteLength) ||
 			index < 0 ||
 			count < 2 ||
+			count > Math.ceil(MAX_RPC_REASSEMBLED_BYTES / RPC_CHUNK_PAYLOAD_BYTES) ||
 			index >= count ||
-			byteLength <= MAX_LINE_BYTES ||
+			byteLength < MAX_LINE_BYTES ||
 			byteLength > MAX_RPC_REASSEMBLED_BYTES ||
-			count !== Math.ceil(byteLength / RPC_CHUNK_PAYLOAD_BYTES) ||
 			data.length === 0 ||
 			!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)
 		)
@@ -77,14 +77,11 @@ class RpcChunkDecoder {
 			pending.nextIndex !== index
 		)
 			throw new Error("rpc chunk sequence mismatch");
-		const final = index === count - 1;
-		if ((!final && bytes.byteLength !== RPC_CHUNK_PAYLOAD_BYTES) || (final && bytes.byteLength === 0))
-			throw new Error("malformed rpc chunk size");
 		pending.chunks.push(bytes);
 		pending.receivedBytes += bytes.byteLength;
 		pending.nextIndex++;
 		if (pending.receivedBytes > pending.byteLength) throw new Error("rpc chunk sequence exceeds declared length");
-		if (!final) return undefined;
+		if (pending.nextIndex < pending.count) return undefined;
 		if (pending.receivedBytes !== pending.byteLength) throw new Error("rpc chunk sequence length mismatch");
 
 		this.#pending = undefined;
@@ -677,14 +674,8 @@ export class RpcChildSupervisor {
 					this.#supportsProtocolV2 =
 						Array.isArray(versions) &&
 						versions.includes(2) &&
-						typeof maxFrameBytes === "number" &&
-						Number.isSafeInteger(maxFrameBytes) &&
-						maxFrameBytes > 0 &&
-						maxFrameBytes <= MAX_LINE_BYTES &&
-						typeof maxReassembledFrameBytes === "number" &&
-						Number.isSafeInteger(maxReassembledFrameBytes) &&
-						maxReassembledFrameBytes > MAX_LINE_BYTES &&
-						maxReassembledFrameBytes <= MAX_RPC_REASSEMBLED_BYTES;
+						maxFrameBytes === MAX_LINE_BYTES &&
+						maxReassembledFrameBytes === MAX_RPC_REASSEMBLED_BYTES;
 					const watermark = frame.transcriptWatermark;
 					if (watermark && typeof watermark === "object" && !Array.isArray(watermark)) {
 						const candidate = watermark as Record<string, unknown>;

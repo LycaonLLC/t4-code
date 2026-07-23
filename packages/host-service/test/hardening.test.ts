@@ -960,7 +960,7 @@ describe("child supervision", () => {
 		supervisor.stop();
 	});
 
-	test("negotiates RPC v2 and reassembles an oversized response losslessly", async () => {
+	test("negotiates RPC v2 and reassembles exact-boundary and oversized responses losslessly", async () => {
 		const root = await mkdtemp(join(tmpdir(), "t4-rpc-v2-"));
 		const path = join(root, "session.jsonl");
 		await writeFile(
@@ -968,10 +968,150 @@ describe("child supervision", () => {
 			`${JSON.stringify({ type: "session", version: 3, id: "session", timestamp: stamp, cwd: root })}\n`,
 		);
 		const negotiate = Promise.withResolvers<Record<string, unknown>>();
+		const exactBoundaryRequest = Promise.withResolvers<Record<string, unknown>>();
+		const oversizedRequest = Promise.withResolvers<Record<string, unknown>>();
+		const release = Promise.withResolvers<void>();
+		const exited = Promise.withResolvers<number>();
+		let requestCount = 0;
+		const oversizedPayload = "😀".repeat(400_000);
+		const child: ChildHandle = {
+			stdin: {
+				write: line => {
+					const command = JSON.parse(String(line)) as Record<string, unknown>;
+					if (command.type === "negotiate_protocol") negotiate.resolve(command);
+					else if (requestCount++ === 0) exactBoundaryRequest.resolve(command);
+					else oversizedRequest.resolve(command);
+				},
+			},
+			stdout: (async function* () {
+				yield `${JSON.stringify({
+					type: "ready",
+					protocolVersion: 1,
+					supportedProtocolVersions: [1, 2],
+					maxFrameBytes: 1024 * 1024,
+					maxReassembledFrameBytes: 64 * 1024 * 1024,
+				})}\n`;
+				const negotiation = await negotiate.promise;
+				yield `${JSON.stringify({
+					type: "response",
+					id: negotiation.id,
+					command: "negotiate_protocol",
+					success: true,
+					data: { protocolVersion: 2 },
+				})}\n`;
+				for (let responseIndex = 0; responseIndex < 2; responseIndex++) {
+					const command = await (responseIndex === 0
+						? exactBoundaryRequest.promise
+						: oversizedRequest.promise);
+					const payload = responseIndex === 0 ? undefined : oversizedPayload;
+					const chunkId = responseIndex === 0 ? "response-boundary" : "response-oversized";
+					const response = {
+						type: "response",
+						id: command.id,
+						command: command.type,
+						success: true,
+						data: { payload: payload ?? "" },
+					};
+					if (payload === undefined) {
+						const emptyBytes = Buffer.byteLength(JSON.stringify(response), "utf8");
+						response.data.payload = "x".repeat(1024 * 1024 - emptyBytes);
+					}
+					const logical = Buffer.from(JSON.stringify(response), "utf8");
+					if (payload === undefined) expect(logical.byteLength).toBe(1024 * 1024);
+					const chunkBytes = 256 * 1024;
+					const count = Math.ceil(logical.byteLength / chunkBytes);
+					for (let index = 0; index < count; index++) {
+						yield `${JSON.stringify({
+							type: "rpc_chunk",
+							chunkId,
+							index,
+							count,
+							byteLength: logical.byteLength,
+							data: logical.subarray(index * chunkBytes, (index + 1) * chunkBytes).toString("base64"),
+						})}\n`;
+					}
+				}
+				await release.promise;
+			})(),
+			stderr: (async function* () {})(),
+			exited: exited.promise,
+			kill: () => {
+				release.resolve();
+				exited.resolve(0);
+			},
+		};
+		const supervisor = new RpcChildSupervisor(
+			{
+				spawn: () => child,
+				argv: sessionPath => ["omp", "--mode", "rpc", "--session", sessionPath],
+			},
+			{ ...record("rpc-v2"), path, cwd: root },
+			{ entry: () => {}, event: () => {}, crashed: error => expect.unreachable(error.message) },
+		);
+
+		await supervisor.start();
+		expect(await negotiate.promise).toMatchObject({ type: "negotiate_protocol", protocolVersion: 2 });
+		const exactBoundary = await supervisor.call({ type: "get_state" }, "boundary-response");
+		expect(exactBoundary).toMatchObject({ success: true });
+		expect(Buffer.byteLength(JSON.stringify(exactBoundary), "utf8")).toBe(1024 * 1024);
+		const oversized = await supervisor.call({ type: "get_messages" }, "large-response");
+		expect(oversized).toMatchObject({ success: true, data: { payload: oversizedPayload } });
+		supervisor.stop();
+	});
+
+	test("keeps the legacy v1 path when ready does not advertise protocol v2", async () => {
 		const request = Promise.withResolvers<Record<string, unknown>>();
 		const release = Promise.withResolvers<void>();
 		const exited = Promise.withResolvers<number>();
-		const payload = "😀".repeat(400_000);
+		const commands: Record<string, unknown>[] = [];
+		const child: ChildHandle = {
+			stdin: {
+				write: line => {
+					const command = JSON.parse(String(line)) as Record<string, unknown>;
+					commands.push(command);
+					request.resolve(command);
+				},
+			},
+			stdout: (async function* () {
+				yield `${JSON.stringify({ type: "ready", protocolVersion: 1 })}\n`;
+				const command = await request.promise;
+				yield `${JSON.stringify({
+					type: "response",
+					id: command.id,
+					command: command.type,
+					success: true,
+					data: { legacy: true },
+				})}\n`;
+				await release.promise;
+			})(),
+			stderr: (async function* () {})(),
+			exited: exited.promise,
+			kill: () => {
+				release.resolve();
+				exited.resolve(0);
+			},
+		};
+		const supervisor = new RpcChildSupervisor(
+			{ spawn: () => child, argv: sessionPath => ["omp", "--mode", "rpc", "--session", sessionPath] },
+			record("rpc-v1"),
+			{ entry: () => {}, event: () => {}, crashed: error => expect.unreachable(error.message) },
+		);
+
+		await supervisor.start();
+		expect(await supervisor.call({ type: "get_state" }, "legacy-response")).toMatchObject({
+			success: true,
+			data: { legacy: true },
+		});
+		expect(commands.map(command => command.type)).toEqual(["get_state"]);
+		supervisor.stop();
+	});
+
+	test("fails closed when a protocol v2 chunk sequence is interrupted", async () => {
+		const negotiate = Promise.withResolvers<Record<string, unknown>>();
+		const request = Promise.withResolvers<Record<string, unknown>>();
+		const release = Promise.withResolvers<void>();
+		const exited = Promise.withResolvers<number>();
+		const crashed = Promise.withResolvers<Error>();
 		const child: ChildHandle = {
 			stdin: {
 				write: line => {
@@ -996,52 +1136,36 @@ describe("child supervision", () => {
 					success: true,
 					data: { protocolVersion: 2 },
 				})}\n`;
-				const command = await request.promise;
-				const logical = Buffer.from(
-					JSON.stringify({
-						type: "response",
-						id: command.id,
-						command: command.type,
-						success: true,
-						data: { payload },
-					}),
-					"utf8",
-				);
-				const chunkBytes = 256 * 1024;
-				const count = Math.ceil(logical.byteLength / chunkBytes);
-				for (let index = 0; index < count; index++) {
-					yield `${JSON.stringify({
-						type: "rpc_chunk",
-						chunkId: "response-1",
-						index,
-						count,
-						byteLength: logical.byteLength,
-						data: logical.subarray(index * chunkBytes, (index + 1) * chunkBytes).toString("base64"),
-					})}\n`;
-				}
+				await request.promise;
+				yield `${JSON.stringify({
+					type: "rpc_chunk",
+					chunkId: "interrupted-response",
+					index: 0,
+					count: 2,
+					byteLength: 1024 * 1024,
+					data: Buffer.from("{").toString("base64"),
+				})}\n`;
+				yield `${JSON.stringify({ type: "notice", message: "interleaved" })}\n`;
 				await release.promise;
 			})(),
 			stderr: (async function* () {})(),
 			exited: exited.promise,
 			kill: () => {
 				release.resolve();
-				exited.resolve(0);
+				exited.resolve(1);
 			},
 		};
 		const supervisor = new RpcChildSupervisor(
-			{
-				spawn: () => child,
-				argv: sessionPath => ["omp", "--mode", "rpc", "--session", sessionPath],
-			},
-			{ ...record("rpc-v2"), path, cwd: root },
-			{ entry: () => {}, event: () => {}, crashed: error => expect.unreachable(error.message) },
+			{ spawn: () => child, argv: sessionPath => ["omp", "--mode", "rpc", "--session", sessionPath] },
+			record("rpc-v2-interrupted"),
+			{ entry: () => {}, event: () => {}, crashed: crashed.resolve },
 		);
 
 		await supervisor.start();
-		expect(await negotiate.promise).toMatchObject({ type: "negotiate_protocol", protocolVersion: 2 });
-		const response = await supervisor.call({ type: "get_messages" }, "large-response");
-		expect(response).toMatchObject({ success: true, data: { payload } });
-		supervisor.stop();
+		await expect(supervisor.call({ type: "get_state" }, "interrupted-response")).rejects.toThrow(
+			"rpc chunk sequence interrupted",
+		);
+		expect((await crashed.promise).message).toBe("rpc chunk sequence interrupted");
 	});
 
 	test("daemon entrypoints resolve RPC children in source and installed layouts", () => {
