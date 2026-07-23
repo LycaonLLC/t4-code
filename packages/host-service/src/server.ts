@@ -4424,11 +4424,18 @@ export class LocalAppserver implements AppserverHandle {
 		if (pollRecordMatches && (!lockless || establishingLocklessBaseline || poll.changed))
 			await this.applyObserverPoll(sessionId, projection, poll);
 		if (!this.observerIsCurrent(sessionId, observer, record, projection)) return;
-		const reconciling = projection.setSessionControl({
-			mode: "reconciling",
-			transcript: pollRecordMatches ? poll.transcript : "snapshot",
-		});
-		if (reconciling) await this.broadcastIndex(reconciling);
+		const sessionControl = projection.setSessionControl(
+			lockless
+				? {
+						mode: "unverified",
+						transcript: pollRecordMatches ? poll.transcript : "snapshot",
+					}
+				: {
+						mode: "reconciling",
+						transcript: pollRecordMatches ? poll.transcript : "snapshot",
+					},
+		);
+		if (sessionControl) await this.broadcastIndex(sessionControl);
 		if (!this.observerIsCurrent(sessionId, observer, record, projection)) return;
 		if (lockless) return;
 		if (!this.hasAttachedClient(sessionId)) return;

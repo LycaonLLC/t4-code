@@ -754,7 +754,7 @@ describe("appserver lifecycle", () => {
 			}
 			expect(appserver.snapshot(sid)?.entries.at(-1)?.data.text).toBe("second");
 			expect(appserver.snapshot(sid)?.ref.liveState?.sessionControl).toEqual({
-				mode: "reconciling",
+				mode: "unverified",
 				transcript: "live",
 			});
 			expect(factory.children).toHaveLength(0);

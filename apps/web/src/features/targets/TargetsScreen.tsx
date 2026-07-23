@@ -4,8 +4,8 @@
 // runtime snapshot or a completed desktop call — connection words are the
 // runtime's words, and removing a host says exactly what it does: it
 // deletes the credential stored on this computer, nothing more.
-import type { DesktopRuntimeController, DesktopRuntimeSnapshot } from "@t4-code/client";
-import type { LocalProfile, PhoneSetupState, ServiceInspection } from "@t4-code/protocol/desktop-ipc";
+import { redactedMessage, type DesktopRuntimeController, type DesktopRuntimeSnapshot } from "@t4-code/client";
+import type { LocalProfile, PhoneSetupState, ServiceInspection, T4OmpLauncherState } from "@t4-code/protocol/desktop-ipc";
 import {
   Badge,
   Button,
@@ -183,6 +183,101 @@ function ServiceCard({ api }: { readonly api: TargetsStoreApi }) {
 interface PhoneSetupApi {
   readonly inspect: () => Promise<PhoneSetupState>;
   readonly configure: () => Promise<PhoneSetupState>;
+}
+
+interface T4OmpLauncherApi {
+  readonly inspect: () => Promise<T4OmpLauncherState>;
+  readonly install: () => Promise<T4OmpLauncherState>;
+  readonly remove: () => Promise<T4OmpLauncherState>;
+}
+
+function T4OmpLauncherCard({ api }: { readonly api: T4OmpLauncherApi }) {
+  const [state, setState] = useState<T4OmpLauncherState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inspect = api.inspect;
+  const refresh = async (): Promise<void> => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setState(await api.inspect());
+    } catch {
+      setError("Could not inspect the t4-omp terminal launcher.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  useEffect(() => {
+    let active = true;
+    void inspect().then(
+      (next) => { if (active) setState(next); },
+      () => { if (active) setError("Could not inspect the t4-omp terminal launcher."); },
+    );
+    return () => { active = false; };
+  }, [inspect]);
+  const run = async (action: "install" | "remove"): Promise<void> => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setState(await api[action]());
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? redactedMessage(cause.message).slice(0, 300)
+          : `Could not ${action} t4-omp.`,
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  const tone = state?.phase === "installed"
+    ? "success"
+    : state?.phase === "conflict"
+      ? "error"
+      : state?.phase === "update-available"
+        ? "working"
+        : "muted";
+  const label = state?.phase === "installed"
+    ? "Installed"
+    : state?.phase === "update-available"
+      ? "Update available"
+      : state?.phase === "conflict"
+        ? "Conflict"
+        : state?.phase === "unsupported"
+          ? "Unavailable"
+          : "Not installed";
+  return (
+    <section aria-labelledby="t4-omp-heading" className="flex flex-col gap-1.5 rounded-lg border border-border bg-card px-4 py-3">
+      <div className="flex min-w-0 items-center gap-2">
+        <h2 className="min-w-0 flex-1 truncate font-medium text-sm" id="t4-omp-heading">Terminal integration</h2>
+        <ToneBadge label={busy ? "Working" : label} live={busy} tone={busy ? "working" : tone} />
+      </div>
+      <p className="text-muted-foreground text-xs">
+        {state?.message ?? "Checking whether t4-omp is available…"}
+      </p>
+      {state !== null && state.phase !== "unsupported" && (
+        <p className="text-muted-foreground text-xs">
+          Run <code className="rounded bg-secondary px-1 py-0.5">t4-omp</code> in Terminal or CMUX. Your existing <code className="rounded bg-secondary px-1 py-0.5">omp</code> command stays unchanged.
+        </p>
+      )}
+      {error !== null && <p className="text-destructive-foreground text-xs" role="alert">{error}</p>}
+      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+        {(state?.phase === "not-installed" || state?.phase === "update-available") && (
+          <Button disabled={busy} onClick={() => void run("install")} size="xs" variant="outline">
+            {busy && <Spinner />}{state.phase === "update-available" ? "Update t4-omp" : "Install t4-omp"}
+          </Button>
+        )}
+        {state?.phase === "installed" && (
+          <Button disabled={busy} onClick={() => void run("remove")} size="xs" variant="ghost">
+            {busy && <Spinner />}Remove
+          </Button>
+        )}
+        <Button disabled={busy} onClick={() => void refresh()} size="xs" variant="ghost">Check again</Button>
+      </div>
+    </section>
+  );
 }
 
 function PhoneSetupCard({ api }: { readonly api: PhoneSetupApi }) {
@@ -968,6 +1063,7 @@ export function TargetsScreen({
   serviceAvailable,
   profilesAvailable,
   phoneSetup,
+  t4OmpLauncher,
   onBack,
 }: {
   readonly api: TargetsStoreApi;
@@ -980,6 +1076,7 @@ export function TargetsScreen({
   /** Whether this desktop build exposes isolated named-profile management. */
   readonly profilesAvailable: boolean;
   readonly phoneSetup?: PhoneSetupApi;
+  readonly t4OmpLauncher?: T4OmpLauncherApi;
   readonly onBack: () => void;
 }) {
   const announcement = useTargets(api, (state) => state.announcement);
@@ -1014,6 +1111,7 @@ export function TargetsScreen({
           ) : serviceAvailable ? (
             <ServiceCard api={api} />
           ) : null}
+          {t4OmpLauncher !== undefined && <T4OmpLauncherCard api={t4OmpLauncher} />}
           {phoneSetup !== undefined && <PhoneSetupCard api={phoneSetup} />}
           <section aria-labelledby="hosts-heading" className="flex flex-col gap-2">
             <h2 className="font-heading font-semibold text-foreground text-sm" id="hosts-heading">

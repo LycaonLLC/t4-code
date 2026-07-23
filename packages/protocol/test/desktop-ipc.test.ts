@@ -9,6 +9,7 @@ import {
   decodeProjectionCacheSaveRequestValue,
   decodeProjectionCacheSaveResult,
   decodePhoneSetupState,
+  decodeT4OmpLauncherState,
   decodeSpeechText,
   MAX_PROJECTION_CACHE_BYTES,
   MAX_SPEECH_TEXT_BYTES,
@@ -16,6 +17,29 @@ import {
 } from "../src/desktop-ipc.ts";
 
 describe("desktop IPC boundary", () => {
+  it("strictly bounds t4-omp launcher state and actions", () => {
+    expect(decodeT4OmpLauncherState({
+      phase: "installed",
+      command: "t4-omp",
+      location: "~/.local/bin/t4-omp",
+      message: "Ready",
+    })).toEqual({
+      phase: "installed",
+      command: "t4-omp",
+      location: "~/.local/bin/t4-omp",
+      message: "Ready",
+    });
+    for (const channel of ["app:t4-omp:inspect", "app:t4-omp:install", "app:t4-omp:remove"] as const) {
+      expect(decodeDesktopInvokeRequest({ channel, payload: {} })).toEqual({ channel, payload: {} });
+      expect(() => decodeDesktopInvokeRequest({ channel, payload: { path: "/tmp/omp" } })).toThrow();
+    }
+    expect(() => decodeT4OmpLauncherState({
+      phase: "installed",
+      command: "omp",
+      location: "/tmp/omp",
+      message: "Ready",
+    })).toThrow();
+  });
   it("accepts only private root Tailnet URLs for phone setup", () => {
     expect(decodePhoneSetupState({
       phase: "ready",

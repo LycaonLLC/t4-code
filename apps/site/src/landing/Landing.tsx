@@ -175,7 +175,7 @@ export function Landing() {
             <h2 id="handoff-title">Start in the terminal, continue in T4</h2>
             <p className="section-lede">
               {renderInline(
-                `New in v${RELEASE_VERSION}: a session running as a plain \`omp\` TUI on the host shows up in T4 Code read-only, following along as complete transcript records land on disk. Run \`/continue-in-t4\` in the terminal (or just exit it) and T4 takes over. Input returns only once the transcript is confirmed complete; a live owner is never displaced, and unclear ownership stays read-only instead of guessing.`,
+                `A session started with the optional \`t4-omp\` terminal command shows up in T4 Code read-only while the terminal owns it, following along as complete transcript records land on disk. Run \`/continue-in-t4\` there (or just exit it) and T4 takes over. Your existing \`omp\` command stays untouched; sessions without the compatible handoff signal remain safely read-only.`,
               )}
             </p>
             <figure className="shot">

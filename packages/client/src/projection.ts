@@ -1753,6 +1753,7 @@ function applyProjectionInput(
       // gone until the host sends the next authoritative sessions frame.
       const sessionIndexMetadata = mapWithout(snapshot.sessionIndexMetadata, String(frame.hostId));
       const sessionInventoryCursors = mapWithout(snapshot.sessionInventoryCursors, String(frame.hostId));
+      const epochChanged = snapshot.epoch !== undefined && snapshot.epoch !== frame.epoch;
       const sessions = immutableMap(
         [...snapshot.sessions.entries()].map(
           ([sessionKey, session]) => {
@@ -1761,9 +1762,16 @@ function applyProjectionInput(
               sessionKey,
               Object.freeze({
                 ...session,
-                freshness: "catching-up" as const,
-                transcriptEventArrivalOrdinal: 0,
-                contextMaintenanceEventArrivalOrdinal: 0,
+                ...(epochChanged
+                  ? {
+                      freshness: "catching-up" as const,
+                      transcriptEventArrivalOrdinal: 0,
+                      contextMaintenanceEventArrivalOrdinal: 0,
+                    }
+                  : {}),
+                // Preview cursors describe one live browser connection rather
+                // than durable transcript history. They always need a fresh
+                // baseline after the host reconnects, even in the same epoch.
                 previews: immutableMap(
                   [...session.previews.entries()].map(
                     ([previewMapKey, preview]) =>

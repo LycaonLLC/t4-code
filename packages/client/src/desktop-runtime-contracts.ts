@@ -27,6 +27,7 @@ import type {
   RuntimeErrorEvent,
   ServiceActionResult,
   ServiceInspection,
+  T4OmpLauncherState,
   TargetAddRequest,
   TargetAddResult,
   TargetListResult,
@@ -70,6 +71,9 @@ export interface DesktopShellPort {
   readonly serviceStop?: () => Promise<ServiceActionResult>;
   readonly serviceRestart?: () => Promise<ServiceActionResult>;
   readonly serviceUninstall?: () => Promise<ServiceActionResult>;
+  readonly inspectT4OmpLauncher?: () => Promise<T4OmpLauncherState>;
+  readonly installT4OmpLauncher?: () => Promise<T4OmpLauncherState>;
+  readonly removeT4OmpLauncher?: () => Promise<T4OmpLauncherState>;
   readonly listProfiles?: () => Promise<LocalProfileListResult>;
   readonly addProfile?: (request: LocalProfileAddRequest) => Promise<LocalProfileResult>;
   readonly updateProfile?: (request: LocalProfileUpdateRequest) => Promise<LocalProfileResult>;

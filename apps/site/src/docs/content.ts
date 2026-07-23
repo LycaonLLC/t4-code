@@ -109,11 +109,11 @@ const install: DocTopic = {
     { kind: "h2", id: "install-requirements", text: "Requirements" },
     {
       kind: "p",
-      text: `T4 Code is a client for [Oh My Pi](${OMP_URL}). You need an \`omp\` build with desktop appserver support installed on the machine that runs your sessions, either this one or a remote host you pair with.`,
+      text: `T4 Code is a client for [Oh My Pi](${OMP_URL}). The installed Apple Silicon Mac app brings its matching OMP runtime. Source builds, Linux hosts, and remote hosts need the verified integration build listed below.`,
     },
     {
       kind: "p",
-      text: `T4 Code v${RELEASE_VERSION} was verified with OMP ${OMP_RUNTIME_VERSION} integration tag [\`${OMP_RUNTIME_TAG}\`](${OMP_RUNTIME_URL}), commit \`${OMP_RUNTIME_COMMIT}\`. That public integration is based on the [official upstream v${OMP_RUNTIME_VERSION} tag](${OMP_UPSTREAM_URL}) at commit [\`${OMP_UPSTREAM_COMMIT.slice(0, 8)}\`](${OMP_URL}/commit/${OMP_UPSTREAM_COMMIT}). The build lets T4 Code follow sessions an \`omp\` TUI is running, reconciles the complete transcript before any takeover, and hands sessions over with \`/continue-in-t4\`, on top of profile-scoped app servers, host-scoped \`usage.read\` and \`broker.status\` queries with redacted results, and each model's real thinking levels and fast support. T4 Code vendors \`@oh-my-pi/app-wire\` ${APP_WIRE_VERSION}.`,
+      text: `T4 Code v${RELEASE_VERSION} was verified with OMP ${OMP_RUNTIME_VERSION} integration tag [\`${OMP_RUNTIME_TAG}\`](${OMP_RUNTIME_URL}), commit \`${OMP_RUNTIME_COMMIT}\`. That public integration is based on the [official upstream v${OMP_RUNTIME_VERSION} tag](${OMP_UPSTREAM_URL}) at commit [\`${OMP_UPSTREAM_COMMIT.slice(0, 8)}\`](${OMP_URL}/commit/${OMP_UPSTREAM_COMMIT}). The build lets T4 Code follow compatible terminal sessions, reconciles the complete transcript before any takeover, and hands sessions over with \`/continue-in-t4\`, on top of profile-scoped app servers, host-scoped \`usage.read\` and \`broker.status\` queries with redacted results, and each model's real thinking levels and fast support. T4 Code vendors \`@oh-my-pi/app-wire\` ${APP_WIRE_VERSION}.`,
     },
     {
       kind: "note",
@@ -129,25 +129,21 @@ const firstRun: DocTopic = {
   blocks: [
     {
       kind: "note",
-      text: "On an Apple Silicon Mac, T4 Code installs its pinned backend inside its own Application Support folder. It does not replace the `omp` command you may already use in Terminal.",
+      text: "On an Apple Silicon Mac, T4 Code installs its pinned backend inside its own Application Support folder. It does not replace the `omp` command you may already use in Terminal. To start compatible terminal sessions, open **Settings → Hosts** and choose **Install t4-omp**.",
     },
-    { kind: "h2", id: "first-run-discovery", text: "How desktop T4 finds omp" },
-    { kind: "p", text: "T4 Code checks these places, in order, and uses the first match:" },
+    { kind: "h2", id: "first-run-discovery", text: "Terminal integration" },
+    { kind: "p", text: "The installed Mac app uses its bundled runtime. The optional `t4-omp` command points to that exact runtime while leaving your existing `omp` command untouched. T4 installs it at `~/.local/bin/t4-omp`." },
     {
-      kind: "ol",
+      kind: "ul",
       items: [
-        "The `OMP_EXECUTABLE` environment variable",
-        "Directories on your `PATH`",
-        "`~/.local/bin/omp`",
-        "`~/bin/omp`",
-        "`/usr/local/bin/omp`",
-        "`/usr/bin/omp`",
-        "`/opt/omp/bin/omp`",
+        "Use `t4-omp` for terminal or CMUX sessions you may want to move into T4 Code.",
+        "Run `/continue-in-t4` in that terminal session to hand it over safely.",
+        "Continue using your existing `omp` command when you specifically want the other installation; T4 never overwrites it.",
       ],
     },
     {
       kind: "p",
-      text: "Before trusting a match, T4 runs `omp appserver status --json` and checks the answer. A build that cannot answer is skipped.",
+      text: "For source development and non-Mac hosts, T4 still validates `OMP_EXECUTABLE`, `PATH`, and the documented common installation locations before starting its host.",
     },
     { kind: "h2", id: "first-run-phone", text: "Use your phone" },
     {
@@ -251,7 +247,7 @@ const localSessions: DocTopic = {
     { kind: "h2", id: "local-sessions-terminal", text: "Sessions started in the terminal" },
     {
       kind: "p",
-      text: "A session running as a plain `omp` TUI on the host appears in T4 Code marked **Active elsewhere**. While the TUI owns it, T4 follows the session's durable transcript: complete records, including saved images, appear as they land on disk. Every write control is disabled with the reason. To continue in T4, run `/continue-in-t4` in the TUI, or just exit it.",
+      text: "A session started with `t4-omp` appears in T4 Code marked **Active elsewhere** while its terminal owns it. T4 follows the durable transcript, and `/continue-in-t4` hands it over safely. A session started by an OMP build without the compatible handoff signal remains readable but is marked **Read-only · use t4-omp** instead of pretending a takeover is in progress.",
     },
     {
       kind: "p",
@@ -259,7 +255,7 @@ const localSessions: DocTopic = {
     },
     {
       kind: "note",
-      text: "Ownership copy never guesses. Only a confirmed live lock is called active in another app. A lock that has gone quiet reads as waiting to take over, and a malformed or unrecognized lock keeps the session read-only as ownership unclear. Following a terminal session needs the verified OMP integration build; see [Requirements](#install-requirements).",
+      text: "Ownership copy never guesses. Only a confirmed live lock is called active in another app. A lock that has gone quiet reads as waiting to take over. A malformed, unrecognized, or lockless session stays read-only. Start new terminal sessions with `t4-omp`; adopting historical lockless sessions is not yet supported.",
     },
     { kind: "h2", id: "local-sessions-disconnects", text: "Disconnects" },
     {

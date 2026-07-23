@@ -41,6 +41,7 @@ import {
   type ServiceActionResult,
   type ServiceAvailabilityIssue,
   type ServiceInspection,
+  type T4OmpLauncherState,
   type TargetAddRequest,
   type TargetListResult,
   type TargetRemoveResult,
@@ -97,6 +98,11 @@ export interface IpcRuntime {
   readonly phoneSetup?: {
     readonly inspect: () => Promise<PhoneSetupState>;
     readonly configure: () => Promise<PhoneSetupState>;
+  };
+  readonly t4OmpLauncher?: {
+    readonly inspect: () => Promise<T4OmpLauncherState>;
+    readonly install: () => Promise<T4OmpLauncherState>;
+    readonly remove: () => Promise<T4OmpLauncherState>;
   };
 }
 export class RemotePairingUnavailableError extends Error {
@@ -315,6 +321,15 @@ export class DesktopIpcRegistry {
         return { completed: true };
       });
     }
+    for (const action of ["inspect", "install", "remove"] as const) {
+      this.ipc.handle(`app:t4-omp:${action}`, async (event, payload: unknown): Promise<T4OmpLauncherState> => {
+        this.assertSender(event);
+        decodeRequest(`app:t4-omp:${action}`, payload);
+        const launcher = this.runtime.t4OmpLauncher;
+        if (launcher === undefined) throw new Error("The t4-omp terminal launcher is unavailable in this build.");
+        return launcher[action]();
+      });
+    }
     this.ipc.handle("app:update:get-state", (event, payload: unknown): DesktopUpdateState => {
       this.assertSender(event);
       decodeRequest("app:update:get-state", payload);
@@ -387,6 +402,7 @@ export class DesktopIpcRegistry {
       "omp:profiles:status", "omp:profiles:start", "omp:profiles:stop", "omp:profiles:restart",
       "omp:service:inspect", "omp:service:install", "omp:service:start", "omp:service:stop",
       "omp:service:restart", "omp:service:uninstall",
+      "app:t4-omp:inspect", "app:t4-omp:install", "app:t4-omp:remove",
       "app:update:get-state", "app:update:check", "app:update:download", "app:update:restart",
       "app:update:renderer-ready",
       "app:projection-cache:load", "app:projection-cache:save",

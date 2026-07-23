@@ -66,6 +66,9 @@ export const DESKTOP_IPC_CHANNELS = [
   "omp:service:stop",
   "omp:service:restart",
   "omp:service:uninstall",
+  "app:t4-omp:inspect",
+  "app:t4-omp:install",
+  "app:t4-omp:remove",
   "app:update:get-state",
   "app:update:check",
   "app:update:download",
@@ -112,6 +115,37 @@ export type ServiceAction = "install" | "start" | "stop" | "restart" | "uninstal
 export interface ServiceActionRequest {}
 export interface ServiceActionResult {
   completed: true;
+}
+export type T4OmpLauncherPhase =
+  | "unsupported"
+  | "not-installed"
+  | "installed"
+  | "update-available"
+  | "conflict";
+export interface T4OmpLauncherState {
+  readonly phase: T4OmpLauncherPhase;
+  readonly command: "t4-omp";
+  readonly location: "~/.local/bin/t4-omp";
+  readonly message: string;
+}
+export interface T4OmpLauncherRequest {}
+export function decodeT4OmpLauncherState(value: unknown): T4OmpLauncherState {
+  const item = object(value, "t4-omp launcher state");
+  exact(item, ["phase", "command", "location", "message"]);
+  if (
+    !["unsupported", "not-installed", "installed", "update-available", "conflict"].includes(
+      item.phase as string,
+    )
+  ) throw new Error("invalid t4-omp launcher phase");
+  if (item.command !== "t4-omp" || item.location !== "~/.local/bin/t4-omp") {
+    throw new Error("invalid t4-omp launcher identity");
+  }
+  return Object.freeze({
+    phase: item.phase as T4OmpLauncherPhase,
+    command: "t4-omp",
+    location: "~/.local/bin/t4-omp",
+    message: controlFree(item.message, "t4-omp launcher message", 512),
+  });
 }
 export type PhoneSetupPhase = "unsupported" | "tailscale-required" | "not-configured" | "ready" | "error";
 export interface PhoneSetupState {
@@ -499,6 +533,9 @@ export interface DesktopInvokeRequestMap {
   "omp:service:stop": ServiceActionRequest;
   "omp:service:restart": ServiceActionRequest;
   "omp:service:uninstall": ServiceActionRequest;
+  "app:t4-omp:inspect": T4OmpLauncherRequest;
+  "app:t4-omp:install": T4OmpLauncherRequest;
+  "app:t4-omp:remove": T4OmpLauncherRequest;
   "app:update:get-state": DesktopUpdateRequest;
   "app:update:check": DesktopUpdateRequest;
   "app:update:download": DesktopUpdateRequest;
@@ -537,6 +574,9 @@ export interface DesktopInvokeResponseMap {
   "omp:service:stop": ServiceActionResult;
   "omp:service:restart": ServiceActionResult;
   "omp:service:uninstall": ServiceActionResult;
+  "app:t4-omp:inspect": T4OmpLauncherState;
+  "app:t4-omp:install": T4OmpLauncherState;
+  "app:t4-omp:remove": T4OmpLauncherState;
   "omp:speech:speak": SpeechResult;
   "omp:speech:stop": SpeechResult;
   "app:update:get-state": DesktopUpdateState;
@@ -931,6 +971,9 @@ export function decodeDesktopInvokeRequest(input: unknown): DesktopInvokeRequest
     case "omp:service:stop":
     case "omp:service:restart":
     case "omp:service:uninstall":
+    case "app:t4-omp:inspect":
+    case "app:t4-omp:install":
+    case "app:t4-omp:remove":
     case "app:update:get-state":
     case "app:update:check":
     case "app:update:download":

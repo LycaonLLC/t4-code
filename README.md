@@ -8,7 +8,7 @@ T4 Code is a free, open-source (MIT) desktop app for [Oh My Pi](https://github.c
 
 ## Requirements
 
-T4 Code v0.1.31 packages its own standalone `t4-host` and needs the matching OMP build with the smaller authority bridge.
+The installed Apple Silicon Mac app packages its own standalone `t4-host` and matching OMP authority runtime. Source builds, Linux hosts, and remote hosts need the matching OMP build with the smaller authority bridge.
 
 T4 Code v0.1.31 was verified with OMP 17.0.5 built from [`8476f445`](https://github.com/wolfiesch/oh-my-pi/commit/8476f4451ed95c5d5401785d279a93d3c659fac4), tagged [`t4code-17.0.5-appserver-10`](https://github.com/wolfiesch/oh-my-pi/tree/t4code-17.0.5-appserver-10). That integration is based on the official upstream [`v17.0.5`](https://github.com/can1357/oh-my-pi/tree/v17.0.5) tag at [`9fd6e971`](https://github.com/can1357/oh-my-pi/commit/9fd6e97113f5ed3a847e66d346970efdf8afcad9). It exposes the bounded `t4-omp-authority/1` bridge used by T4's standalone host and removes the old public OMP appserver launchers. It also includes bounded newest-first transcript paging, stale-owner recovery, privacy-safe project reveal, fast lazy session indexing, cross-session attention and transcript search, the negotiated browser-preview command surface, redacted Codex transport diagnostics, the versioned Agent View lifecycle contract, session-owned cancellation, lock-aware session observation, complete transcript reconciliation, the cooperative `/continue-in-t4` handoff, and deterministic session ordering. Fork CI verifies the exact upstream base, ancestry, release gates, and published binaries. The official upstream v17.0.5 tag has no `appserver` command, so it cannot host T4 Code. It also does not include the authority bridge needed by T4's standalone host. T4 Code vendors `@oh-my-pi/app-wire` 0.7.0 from integration commit [`796bb7dc`](https://github.com/lyc-aon/oh-my-pi/commit/796bb7dca45027bd4b7b94017cdf41ef214a11f2), source tree `0c195a01ba0bb98fbf4d4863aee59bf23a6e81b7`.
 
@@ -81,6 +81,7 @@ chmod +x T4-Code-0.1.31-linux-x86_64.AppImage
 1. Download [`T4-Code-0.1.31-mac-arm64.dmg`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.31/T4-Code-0.1.31-mac-arm64.dmg) (or [`T4-Code-0.1.31-mac-arm64.zip`](https://github.com/LycaonLLC/t4-code/releases/download/v0.1.31/T4-Code-0.1.31-mac-arm64.zip)).
 2. Drag `T4 Code.app` into `/Applications`.
 3. Open T4 Code normally. The release workflow verifies the pinned publisher, hardened runtime, secure timestamp, Apple notarization, stapled ticket, and Gatekeeper acceptance before publication.
+4. To start terminal or CMUX sessions that can hand off to T4 Code, open **Settings → Hosts** and choose **Install t4-omp**. This adds `~/.local/bin/t4-omp` and leaves any existing `omp` command unchanged.
 
 ## What the app does
 
@@ -98,7 +99,7 @@ Some actions depend on what the host supports. When a host can't do something (s
 
 ## Local and paired hosts
 
-**Local.** T4 Code looks for the `omp` executable via `$OMP_EXECUTABLE`, your `PATH`, and common install locations (`~/.local/bin`, `/usr/local/bin`, `/opt/omp/bin`, ...). It then manages one T4 host per OMP profile for you: a systemd user service on Linux, a launch agent on macOS. Named profiles under `~/.omp/profiles` appear as their own local hosts and can auto-start with the app. Host logs remain in the compatibility paths `~/.local/state/t4-code/appserver` (Linux) or `~/Library/Logs/T4 Code/appserver` (macOS); named profiles log under `profiles/<id>` inside those directories.
+**Local.** The installed Apple Silicon Mac app uses its bundled pinned OMP runtime. Its optional `t4-omp` terminal command points to that same runtime without replacing `omp`; sessions started with `t4-omp` support the cooperative `/continue-in-t4` handoff. Sessions from an OMP build without the compatible handoff signal remain readable but read-only. Source builds and other hosts discover OMP via `$OMP_EXECUTABLE`, `PATH`, and common install locations. T4 then manages one host per OMP profile: a systemd user service on Linux or a launch agent on macOS. Named profiles under `~/.omp/profiles` appear as their own local hosts and can auto-start with the app. Host logs remain in the compatibility paths `~/.local/state/t4-code/appserver` (Linux) or `~/Library/Logs/T4 Code/appserver` (macOS); named profiles log under `profiles/<id>` inside those directories.
 
 **Paired.** Connect to an OMP host on another machine through a `t4-code://pair/...` link generated on that host. Device credentials are encrypted with your OS keychain (Electron `safeStorage`) before they touch disk. Dropped connections reconnect automatically with backoff, and any settings you had staged stay staged until the host confirms.
 
@@ -106,9 +107,10 @@ Some actions depend on what the host supports. When a host can't do something (s
 
 ## First run
 
-1. Install and start OMP on the machine you want to work on.
-2. Launch T4 Code. On the same machine, it finds `omp` and offers to start the T4 host. For another machine, open the pairing link from that host.
-3. Pick a project, pick or create a session, and start working.
+1. Install and launch T4 Code. The Apple Silicon Mac app prepares its bundled OMP runtime and starts the local T4 host.
+2. For terminal handoff, open **Settings → Hosts**, install `t4-omp`, and use that command instead of `omp` for new terminal or CMUX sessions.
+3. For another machine, install the verified OMP integration there and open its pairing link.
+4. Pick a project, pick or create a session, and start working.
 
 ## Build from source
 

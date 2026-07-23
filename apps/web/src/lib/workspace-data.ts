@@ -60,13 +60,14 @@ export interface WorkspaceSession {
   /**
    * Ownership display state while this session is not writable here:
    * another app confirmed active (observer), waiting to take over after the
-   * other app went quiet (suspect), this app taking over (reconciling), or
+   * other app went quiet (suspect), this app taking over (reconciling), a
+   * terminal session with no compatible handoff signal (unverified), or
    * ownership unclear from a malformed/unrecognized control shape (unclear).
    * Only "observer" may say another app is active. Absent when writable,
    * and on cached/offline rows where freshness copy wins. Values mirror
    * SessionControlDisplayKind in session-observer.ts.
    */
-  readonly control?: "observer" | "suspect" | "reconciling" | "unclear";
+  readonly control?: "observer" | "suspect" | "reconciling" | "unverified" | "unclear";
   /** Cluster runtime and GUI truth, present only after local opt-in and host grant. */
   readonly cluster?: SessionClusterState;
   /** Strict CI correlation and progress from the authoritative session projection. */
