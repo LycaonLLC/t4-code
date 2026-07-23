@@ -491,8 +491,8 @@ describe("session management authority helpers", () => {
     const syncingController = new FakeManagementController();
     syncingController.inventoryTruncated = true;
     expect(sessionCreateSupport(syncingController.getSnapshot(), address)).toEqual({
-      supported: false,
-      reason: "This host's session list is still syncing. Try again in a moment.",
+      supported: true,
+      reason: null,
     });
   });
 
@@ -640,6 +640,34 @@ describe("session management authority helpers", () => {
     expect(
       managementCommandSupport(reconciling.getSnapshot(), ADDRESS, "session.archive").supported,
     ).toBe(false);
+  });
+
+  it("keeps restore available when an archived row carries stale takeover state", () => {
+    const archived = {
+      ...ref({ archived: true }),
+      liveState: {
+        phase: "idle",
+        sessionControl: { mode: "reconciling", transcript: "live" },
+      },
+    } as SessionRef;
+    const fake = new FakeManagementController(archived);
+    expect(managementCommandSupport(fake.getSnapshot(), ADDRESS, "session.restore")).toEqual({
+      supported: true,
+      reason: null,
+    });
+    expect(managementCommandSupport(fake.getSnapshot(), ADDRESS, "session.delete").supported).toBe(
+      false,
+    );
+    const liveLock = new FakeManagementController({
+      ...ref({ archived: true }),
+      liveState: {
+        phase: "idle",
+        sessionControl: { mode: "observer", lockStatus: "live", transcript: "live" },
+      },
+    } as SessionRef);
+    expect(managementCommandSupport(liveLock.getSnapshot(), ADDRESS, "session.restore").supported).toBe(
+      false,
+    );
   });
 
   const SYNCING_REASON = "This session is still syncing from the host. Try again in a moment.";
@@ -919,6 +947,35 @@ describe("dispatch-time ownership rechecks", () => {
     await expect(deleteLiveSession(controller(fake), ADDRESS)).rejects.toThrow(OBSERVED_REASON);
     expect(fake.commands).toHaveLength(0);
     expect(fake.confirms).toHaveLength(0);
+  });
+
+  it("restores an archived session without waiting on stale takeover state", async () => {
+    const archived = {
+      ...ref({ archived: true }),
+      liveState: {
+        phase: "idle",
+        sessionControl: { mode: "reconciling", transcript: "live" },
+      },
+    } as SessionRef;
+    const fake = new FakeManagementController(archived);
+    await restoreLiveSession(controller(fake), ADDRESS);
+    expect(fake.commands.map((intent) => intent.command)).toEqual([
+      "session.restore",
+      "session.list",
+    ]);
+    expect(sessionIsArchived(fake.getSnapshot().projection.sessionIndex.get(KEY))).toBe(false);
+  });
+
+  it("refuses archived restore while another app still holds a live lock", async () => {
+    const fake = new FakeManagementController({
+      ...ref({ archived: true }),
+      liveState: {
+        phase: "idle",
+        sessionControl: { mode: "observer", lockStatus: "live", transcript: "live" },
+      },
+    } as SessionRef);
+    await expect(restoreLiveSession(controller(fake), ADDRESS)).rejects.toThrow(OBSERVED_REASON);
+    expect(fake.commands).toHaveLength(0);
   });
 
   it("refuses malformed/unknown ownership with unclear copy, never another-app copy", async () => {

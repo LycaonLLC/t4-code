@@ -13,7 +13,7 @@ import type { LiveProjectAddress, LiveSessionAddress } from "../../platform/live
 import { commandSupport } from "./session-controls.ts";
 import { sessionActionRejectionReason } from "./command-errors.ts";
 import { pendingPromptsFromRef } from "./pending-prompts.ts";
-import { hostSessionInventoryIsComplete, sessionWriteLink } from "./session-inventory.ts";
+import { sessionWriteLink } from "./session-inventory.ts";
 import { presentSessionControl, readSessionControl } from "./session-observer.ts";
 
 export type SessionManagementCommand =
@@ -102,12 +102,6 @@ export function sessionCreateSupport(
   }
   if (snapshot.targetHosts.get(address.targetId) !== address.hostId) {
     return { supported: false, reason: "Project host binding is no longer available." };
-  }
-  if (!hostSessionInventoryIsComplete(snapshot, address.hostId)) {
-    return {
-      supported: false,
-      reason: "This host's session list is still syncing. Try again in a moment.",
-    };
   }
   const host = snapshot.hosts.get(address.hostId);
   const granted = host?.grantedCapabilities ?? [];
@@ -230,11 +224,13 @@ export function managementCommandSupport(
     };
   }
   const ref = sessionRefForAddress(snapshot, address);
-  // While another app owns the session (or this one is still taking it
-  // over), every lifecycle mutation — including restore — gates with the
-  // same honest reason the composer shows.
+  // A reconciling archived session is waiting on a missing/stale lock and may
+  // ask the host to re-check it. Concrete observer lock states remain blocked;
+  // the host is final authority and performs a fresh lock inspection.
   const control = readSessionControl(ref);
-  if (control !== null) {
+  const canProbeArchivedRestore =
+    command === "session.restore" && sessionIsArchived(ref) && control?.mode === "reconciling";
+  if (control !== null && !canProbeArchivedRestore) {
     return { supported: false, reason: presentSessionControl(control).managementReason };
   }
   if (command === "session.rename" && sessionIsArchived(ref)) {
@@ -343,7 +339,7 @@ function currentRevision(
  * cached both explain themselves), then the strict ownership reader; the
  * server remains final authority either way.
  */
-function assertSessionWritableNow(
+function assertSessionManagementFreshNow(
   controller: DesktopRuntimeController,
   address: LiveSessionAddress,
 ): void {
@@ -355,6 +351,14 @@ function assertSessionWritableNow(
   if (link === "cached") {
     throw new Error(MANAGEMENT_SYNCING_REASON);
   }
+}
+
+function assertSessionWritableNow(
+  controller: DesktopRuntimeController,
+  address: LiveSessionAddress,
+): void {
+  assertSessionManagementFreshNow(controller, address);
+  const snapshot = controller.getSnapshot();
   const control = readSessionControl(sessionRefForAddress(snapshot, address));
   if (control !== null) {
     throw new Error(presentSessionControl(control).managementReason);
@@ -398,7 +402,17 @@ async function runUnchallengedManagementCommand(
   address: LiveSessionAddress,
   command: "session.archive" | "session.restore",
 ): Promise<void> {
-  assertSessionWritableNow(controller, address);
+  const initialRef = sessionRefForAddress(controller.getSnapshot(), address);
+  const control = readSessionControl(initialRef);
+  if (
+    command === "session.restore" &&
+    sessionIsArchived(initialRef) &&
+    control?.mode === "reconciling"
+  ) {
+    assertSessionManagementFreshNow(controller, address);
+  } else {
+    assertSessionWritableNow(controller, address);
+  }
   const expectedRevision = currentRevision(controller, address);
   const ref = sessionRefForAddress(controller.getSnapshot(), address);
   if (command === "session.archive" && sessionIsWorking(ref)) {

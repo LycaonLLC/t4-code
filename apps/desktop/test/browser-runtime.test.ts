@@ -113,9 +113,9 @@ class FakeWindow {
 }
 
 const isolatedProfile = { kind: "isolated-session", profileId: "isolated-session" } as const;
-const OWNER_A = "workspace-session-a";
-const OWNER_B = "workspace-session-b";
-const OWNER_C = "workspace-session-c";
+const OWNER_A = "host-a/workspace-session-a";
+const OWNER_B = "host-b/workspace-session-b";
+const OWNER_C = "host-c/workspace-session-c";
 
 function browserCall(method: string, request: Record<string, unknown>, ownerSessionId = OWNER_A): never {
   return { method, request, ownerSessionId } as never;

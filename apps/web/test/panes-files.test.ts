@@ -54,10 +54,13 @@ describe("lazy file tree", () => {
   });
 
   it("a failed listing degrades to an error marker, not a crash", () => {
-    const { api } = storeWithDirs();
+    const { api, dirCalls } = storeWithDirs();
     api.getState().setFileExpanded("src", true);
     resolveDir(api, "src", "error");
     expect(api.getState().files.childrenByPath.src).toBe("error");
+    api.getState().requestDir("src");
+    expect(api.getState().files.childrenByPath.src).toBe("loading");
+    expect(dirCalls).toEqual(["src", "src"]);
   });
 
   it("does not send parent-directory requests to the controller", () => {
@@ -148,21 +151,29 @@ describe("file drafts", () => {
   it("keeps a dirty draft and marks a later host version as a conflict", () => {
     const { api } = storeWithDirs();
     api.getState().selectFile("src/app.ts");
-    resolvePreview(api, {
-      kind: "code",
-      path: "src/app.ts",
-      text: "before\n",
-      truncated: false,
-    });
+    resolvePreview(
+      api,
+      {
+        kind: "code",
+        path: "src/app.ts",
+        text: "before\n",
+        truncated: false,
+      },
+      "sha-file-1",
+    );
     api.getState().startFileEdit("src/app.ts");
     api.getState().updateFileDraft("src/app.ts", "mine\n");
 
-    resolvePreview(api, {
-      kind: "code",
-      path: "src/app.ts",
-      text: "theirs\n",
-      truncated: false,
-    });
+    resolvePreview(
+      api,
+      {
+        kind: "code",
+        path: "src/app.ts",
+        text: "theirs\n",
+        truncated: false,
+      },
+      "sha-file-2",
+    );
 
     expect(api.getState().files.draftsByPath["src/app.ts"]).toMatchObject({
       originalText: "before\n",
@@ -175,12 +186,16 @@ describe("file drafts", () => {
   it("blocks a dirty draft when a reload cannot confirm editable text", () => {
     const { api } = storeWithDirs();
     api.getState().selectFile("src/app.ts");
-    resolvePreview(api, {
-      kind: "code",
-      path: "src/app.ts",
-      text: "before\n",
-      truncated: false,
-    });
+    resolvePreview(
+      api,
+      {
+        kind: "code",
+        path: "src/app.ts",
+        text: "before\n",
+        truncated: false,
+      },
+      "sha-file-1",
+    );
     api.getState().startFileEdit("src/app.ts");
     api.getState().updateFileDraft("src/app.ts", "mine\n");
 

@@ -633,8 +633,8 @@ describe("live projection populates each family", () => {
   });
 
   it("file frames build the tree and answer previews", async () => {
-    // No files.list capability: the pushed frames are the whole tree.
-    const fake = new FakeRuntime({ capabilities: ["sessions.read", "files.read"], features: [] });
+    // No files.list/read capability: pushed frames are the whole read-only tree.
+    const fake = new FakeRuntime({ capabilities: ["sessions.read"], features: [] });
     fake.setProjection(
       project([
         fileFrame("src/main.ts", "export {};\n"),
@@ -656,6 +656,9 @@ describe("live projection populates each family", () => {
       text: "# Hello\n",
       truncated: false,
     });
+    expect(store.getState().files.previewRevision).toBeNull();
+    store.getState().startFileEdit("README.md");
+    expect(store.getState().files.draftsByPath["README.md"]).toBeUndefined();
   });
 
   it("files.list answers resolve directories and drop unsafe entries", async () => {
@@ -690,6 +693,27 @@ describe("live projection populates each family", () => {
     expect(store.getState().files.childrenByPath[""]).toEqual([
       { path: "src", name: "src", kind: "dir" },
       { path: "notes.md", name: "notes.md", kind: "file" },
+    ]);
+  });
+
+  it("retries a failed directory when files.list becomes available after reconnect", async () => {
+    const fake = new FakeRuntime({ connected: false });
+    fake.setProjection(project([snapshotFrame("rev-1")]));
+    const store = createLiveInspectorStore(fake, VIEW_ID);
+    store.getState().setFileExpanded("", true);
+    expect(store.getState().files.childrenByPath[""]).toBe("error");
+    expect(fake.commands).toEqual([]);
+
+    fake.setConnection("connected");
+    expect(store.getState().files.childrenByPath[""]).toBe("loading");
+    await fake.settle();
+    expect(fake.commands).toEqual([
+      {
+        hostId: HOST,
+        sessionId: SESSION,
+        command: "files.list",
+        args: {},
+      },
     ]);
   });
 });
@@ -1003,81 +1027,115 @@ describe("live pane actions", () => {
     expect(store.getState().review.files[0]?.applyState).toBe("applied");
   });
 
-  it("file save sends revision-gated text and settles from its final command result", async () => {
+  it("file save uses the file revision returned by files.read and advances from its result", async () => {
     const fake = new FakeRuntime({ catalog: AGENT_CATALOG });
-    const base = project([
-      snapshotFrame("rev-3"),
-      fileFrame("src/app.ts", "const value = 1;\n"),
-    ]);
+    const base = project([snapshotFrame("rev-3")]);
     fake.setProjection(base);
     const store = createLiveInspectorStore(fake, VIEW_ID);
     expect(store.getState().actions.fileWrite.enabled).toBe(true);
 
     store.getState().selectFile("src/app.ts");
-    store.getState().startFileEdit("src/app.ts");
-    store.getState().updateFileDraft("src/app.ts", "const value = 2;\n");
-    store.getState().saveFile("src/app.ts");
     await fake.settle();
-
-    expect(fake.commands).toEqual([
-      {
-        hostId: HOST,
-        sessionId: SESSION,
-        command: "files.write",
-        args: { path: "src/app.ts", content: "const value = 2;\n" },
-        expectedRevision: "rev-3",
-      },
-    ]);
-    expect(store.getState().files.draftsByPath["src/app.ts"]).toBeUndefined();
-    expect(store.getState().files.preview).toBe("loading");
-
     fake.setProjection(
       project(
-        [snapshotFrame("rev-4", 1), fileFrame("src/app.ts", "const value = 2;\n")],
+        [
+          responseFrame("req-1", true, {
+            content: "const value = 1;\n",
+            revision: "sha-file-1",
+          }),
+        ],
         base,
       ),
     );
+    expect(store.getState().files.previewRevision).toBe("sha-file-1");
+
+    store.getState().startFileEdit("src/app.ts");
+    store.getState().updateFileDraft("src/app.ts", "const value = 2;\n");
+    fake.commandResult = {
+      accepted: true,
+      result: { path: "src/app.ts", revision: "sha-file-2", size: 17 },
+    };
+    store.getState().saveFile("src/app.ts");
+    await fake.settle();
+
+    expect(fake.commands[1]).toEqual({
+      hostId: HOST,
+      sessionId: SESSION,
+      command: "files.write",
+      args: { path: "src/app.ts", content: "const value = 2;\n" },
+      expectedRevision: "sha-file-1",
+    });
+    expect(store.getState().files.draftsByPath["src/app.ts"]).toBeUndefined();
     expect(store.getState().files.preview).toMatchObject({ text: "const value = 2;\n" });
+    expect(store.getState().files.previewRevision).toBe("sha-file-2");
 
     store.getState().startFileEdit("src/app.ts");
     store.getState().updateFileDraft("src/app.ts", "const value = 3;\n");
+    fake.commandResult = {
+      accepted: true,
+      result: { path: "src/app.ts", revision: "sha-file-3", size: 17 },
+    };
     store.getState().saveFile("src/app.ts");
     await fake.settle();
-    expect(fake.commands[1]?.expectedRevision).toBe("rev-4");
+    expect(fake.commands[2]?.expectedRevision).toBe("sha-file-2");
   });
 
   it("pins a file save to the revision that produced its draft", async () => {
     const fake = new FakeRuntime({ catalog: AGENT_CATALOG });
-    const base = project([
-      snapshotFrame("rev-3"),
-      fileFrame("src/app.ts", "const value = 1;\n"),
-    ]);
+    const base = project([snapshotFrame("rev-3")]);
     fake.setProjection(base);
     const store = createLiveInspectorStore(fake, VIEW_ID);
 
     store.getState().selectFile("src/app.ts");
+    await fake.settle();
+    fake.setProjection(
+      project(
+        [
+          responseFrame("req-1", true, {
+            path: "src/app.ts",
+            content: "const value = 1;\n",
+            revision: "sha-file-1",
+          }),
+        ],
+        base,
+      ),
+    );
     store.getState().startFileEdit("src/app.ts");
     store.getState().updateFileDraft("src/app.ts", "const value = 2;\n");
     fake.setProjection(project([snapshotFrame("rev-4")], base));
+    fake.commandResult = {
+      accepted: true,
+      result: { path: "src/app.ts", revision: "sha-file-2", size: 17 },
+    };
     store.getState().saveFile("src/app.ts");
     await fake.settle();
 
-    expect(fake.commands[0]?.expectedRevision).toBe("rev-3");
+    expect(fake.commands[1]?.expectedRevision).toBe("sha-file-1");
   });
 
   it("a stale file save preserves the draft as a conflict", async () => {
     const fake = new FakeRuntime({ catalog: AGENT_CATALOG });
-    const base = project([
-      snapshotFrame("rev-3"),
-      fileFrame("src/app.ts", "before\n"),
-    ]);
+    const base = project([snapshotFrame("rev-3")]);
     fake.setProjection(base);
     const store = createLiveInspectorStore(fake, VIEW_ID);
+    store.getState().selectFile("src/app.ts");
+    await fake.settle();
+    fake.setProjection(
+      project(
+        [
+          responseFrame("req-1", true, {
+            path: "src/app.ts",
+            content: "before\n",
+            revision: "sha-file-1",
+          }),
+        ],
+        base,
+      ),
+    );
     fake.commandResult = {
       accepted: false,
-      error: { code: "stale_revision", message: "revision changed" },
+      error: { code: "STALE_REVISION", message: "revision changed" },
     };
-    store.getState().selectFile("src/app.ts");
     store.getState().startFileEdit("src/app.ts");
     store.getState().updateFileDraft("src/app.ts", "mine\n");
     store.getState().saveFile("src/app.ts");
@@ -1087,7 +1145,8 @@ describe("live pane actions", () => {
       text: "mine\n",
       status: "conflict",
     });
-    expect(fake.commands).toHaveLength(1);
+    expect(fake.commands).toHaveLength(2);
+    expect(fake.commands[1]?.expectedRevision).toBe("sha-file-1");
   });
 
   it("a denied review apply keeps the row pending", async () => {

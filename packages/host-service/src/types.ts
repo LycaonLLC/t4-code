@@ -132,6 +132,10 @@ export interface SessionAuthority {
 }
 export interface SessionDiscovery {
 	list(): Promise<SessionRecord[]>;
+	/** Whether the most recent successful list proved the inventory complete. */
+	inventoryComplete?(): boolean;
+	/** Authoritative total for the most recent successful list, including omitted rows. */
+	inventoryTotalCount?(): number;
 	/** Load the bounded transcript snapshot for one lazily discovered session. */
 	load?(session: SessionRecord): Promise<SessionRecord>;
 	/** Read one bounded chronological page backward from the authoritative JSONL file. */

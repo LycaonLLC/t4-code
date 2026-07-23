@@ -24,6 +24,7 @@ class CapabilityRpcChild implements ChildHandle {
   #stderrController?: ReadableStreamDefaultController<string>;
   #closed = false;
   readonly exited = this.#exit.promise;
+  constructor(private readonly respondToCapabilityRefresh = true) {}
   readonly stdout = new ReadableStream<string>({
     start: (controller) => {
       this.#stdoutController = controller;
@@ -57,7 +58,7 @@ class CapabilityRpcChild implements ChildHandle {
             interruptMode: "immediate",
           },
         });
-      else if (command.type === "get_available_commands")
+      else if (command.type === "get_available_commands" && this.respondToCapabilityRefresh)
         this.push({
           type: "response",
           id,
@@ -99,9 +100,10 @@ class CapabilityRpcChild implements ChildHandle {
 
 class CapabilityRpcFactory implements RpcChildFactory {
   readonly children: CapabilityRpcChild[] = [];
+  constructor(private readonly respondToCapabilityRefresh = true) {}
 
   spawn(): ChildHandle {
-    const child = new CapabilityRpcChild();
+    const child = new CapabilityRpcChild(this.respondToCapabilityRefresh);
     this.children.push(child);
     return child;
   }
@@ -143,6 +145,10 @@ test("catalog.get merges normalized official OMP operation capabilities", async 
           },
         ],
       }),
+      termOpen: async () => ({ terminalId: "terminal-1" }),
+      terminalInput: async () => {},
+      terminalResize: async () => {},
+      terminalClose: async () => {},
     },
   });
   await appserver.start();
@@ -177,9 +183,14 @@ test("catalog.get merges normalized official OMP operation capabilities", async 
     if (!response.ok) throw new Error("catalog request failed");
     const result = response.result as {
       revision: string;
+      items: Array<{ name: string; capabilities?: string[]; metadata?: Record<string, unknown> }>;
       operations: Array<{ operationId: string; execution: string; supported: boolean }>;
     };
     expect(result.revision).toMatch(/^capabilities-[0-9a-f]{64}$/u);
+    expect(result.items.find((item) => item.name === "term.open")).toMatchObject({
+      capabilities: ["term.open"],
+    });
+    expect(result.items.find((item) => item.name === "term.open")?.metadata).toBeUndefined();
     expect(result.operations.find((item) => item.operationId === "session.prompt")).toMatchObject({
       execution: "typed",
       supported: true,
@@ -350,6 +361,109 @@ test("attached catalog refresh and terminal-only rejection stay on the runtime b
     });
     expect(factory.children[0]?.writes.find((command) => command.type === "set_model")).not.toHaveProperty(
       "selector",
+    );
+  } finally {
+    client.destroy();
+    await client.closed();
+    await appserver.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a stalled attached capability refresh falls back to the base catalog", async () => {
+  const root = await mkdtemp(join(tmpdir(), "t4-official-omp-stalled-catalog-"));
+  const socketPath = join(root, "run", "app.sock");
+  const host = hostId("official-omp-stalled-catalog-host");
+  const session: SessionRecord = {
+    sessionId: sessionId("official-omp-stalled-catalog-session"),
+    path: join(root, "session.jsonl"),
+    cwd: root,
+    projectId: projectId("official-omp-stalled-catalog-project"),
+    title: "Stalled capability session",
+    updatedAt: "2026-07-23T00:00:00.000Z",
+    status: "idle",
+    entries: [],
+  };
+  const factory = new CapabilityRpcFactory(false);
+  const appserver = createAppserver({
+    hostId: host,
+    socketPath,
+    ompVersion: "17.0.9",
+    discovery: { list: async () => [session] },
+    childFactory: factory,
+    rpcDialect: "official-17.0.9",
+    lockCheck: () => {},
+    lockStatus: () => "missing",
+    operationsAuthority: {
+      catalogGet: async () => ({ revision: "authority-revision", items: [] }),
+      termOpen: async () => ({ terminalId: "terminal-1" }),
+      terminalInput: async () => {},
+      terminalResize: async () => {},
+      terminalClose: async () => {},
+    },
+  });
+  await appserver.start();
+  const client = await RawUdsWebSocket.connect(socketPath);
+  try {
+    client.sendJson({
+      v: "omp-app/1",
+      type: "hello",
+      protocol: { min: "omp-app/1", max: "omp-app/1" },
+      client: { name: "stalled-catalog-test", version: "1", build: "test", platform: "linux" },
+      requestedFeatures: [],
+      capabilities: {
+        client: ["sessions.read", "sessions.control", "catalog.read"],
+      },
+      savedCursors: [],
+    });
+    expect(await client.nextServer()).toMatchObject({ type: "welcome" });
+    expect((await client.nextServer()).type).toBe("sessions");
+
+    client.sendJson({
+      v: "omp-app/1",
+      type: "command",
+      requestId: "state",
+      commandId: "state-command",
+      hostId: host,
+      sessionId: session.sessionId,
+      command: "session.state.get",
+      args: {},
+    });
+    expect(await responseFor(client, "state")).toMatchObject({ ok: true });
+    client.sendJson({
+      v: "omp-app/1",
+      type: "command",
+      requestId: "attach",
+      commandId: "attach-command",
+      hostId: host,
+      sessionId: session.sessionId,
+      command: "session.attach",
+      args: {},
+    });
+    expect(await responseFor(client, "attach")).toMatchObject({ ok: true });
+
+    client.sendJson({
+      v: "omp-app/1",
+      type: "command",
+      requestId: "catalog",
+      commandId: "catalog-command",
+      hostId: host,
+      command: "catalog.get",
+      args: {},
+    });
+    const response = await responseFor(client, "catalog");
+    expect(response.ok).toBe(true);
+    if (!response.ok) throw new Error("base catalog fallback failed");
+    const result = response.result as {
+      items: Array<{ name: string }>;
+      operations: Array<{ operationId: string; supported: boolean }>;
+    };
+    expect(result.items.find((item) => item.name === "term.open")).toBeDefined();
+    expect(result.operations.find((item) => item.operationId === "session.prompt")).toMatchObject({
+      supported: true,
+    });
+    expect(factory.children[0]?.writes.map((command) => command.type)).toContain(
+      "get_available_commands",
     );
   } finally {
     client.destroy();

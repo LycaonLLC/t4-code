@@ -58,6 +58,7 @@ import {
 } from "./turn-review.ts";
 import type {
   AgentNode,
+  FilePreview,
   FileTreeNode,
   InspectorActionAvailability,
   PaneActionAvailability,
@@ -258,6 +259,31 @@ function fileTreeNodesFromListResult(result: unknown): readonly FileTreeNode[] |
   return nodes;
 }
 
+function filePreviewFromReadResult(
+  result: unknown,
+  expectedPath: string,
+): { readonly preview: FilePreview; readonly revision: string } | null {
+  if (result === null || typeof result !== "object" || Array.isArray(result)) return null;
+  const record = result as Record<string, unknown>;
+  if (
+    (record.path !== undefined && record.path !== expectedPath) ||
+    typeof record.content !== "string" ||
+    typeof record.revision !== "string" ||
+    record.revision.length === 0
+  ) {
+    return null;
+  }
+  return {
+    preview: {
+      kind: "code",
+      path: expectedPath,
+      text: record.content,
+      truncated: record.content.length >= 8192,
+    },
+    revision: record.revision,
+  };
+}
+
 /**
  * One live inspector store for one desktop session. The store starts empty
  * (no sample data ever), fills from the warm projection, and stays
@@ -280,14 +306,13 @@ export function createLiveInspectorStore(
   /** Directory paths resolved from pushed file frames; refreshed on sync. */
   const frameDirs = new Set<string>();
   const pendingDirs = new Map<string, string>();
-  const pendingPreviews = new Map<
-    string,
-    { readonly path: string; readonly baseRevision: string | null }
-  >();
+  const dirRetryAttempts = new Map<string, number>();
+  const pendingPreviews = new Map<string, { readonly path: string }>();
   const pendingReviewApplies = new Map<string, string>();
   let reviewFiles: readonly ReviewFile[] = [];
   let reviewIdByPath: ReadonlyMap<string, string> = new Map();
   let availability: InspectorActionAvailability | null = null;
+  let filesListWasAvailable = false;
 
   const warmSession = (snapshot: DesktopRuntimeSnapshot): SessionProjection | undefined =>
     snapshot.projection.sessions.get(projectionKey);
@@ -338,6 +363,22 @@ export function createLiveInspectorStore(
       args,
       ...(revisionValue === undefined ? {} : { expectedRevision: revisionValue }),
     });
+  };
+
+  const failDirLoad = (api: InspectorStoreApi, path: string): void => {
+    resolveDir(api, path, "error");
+    const attempt = dirRetryAttempts.get(path) ?? 0;
+    if (attempt >= 3) return;
+    dirRetryAttempts.set(path, attempt + 1);
+    setTimeout(() => {
+      const snapshot = runtime.getSnapshot();
+      if (
+        snapshot.connections.get(address.targetId) === "connected" &&
+        api.getState().files.childrenByPath[path] === "error"
+      ) {
+        api.getState().requestDir(path);
+      }
+    }, 750 * 2 ** attempt);
   };
 
   const controller = (api: InspectorStoreApi): InspectorController => ({
@@ -475,10 +516,20 @@ export function createLiveInspectorStore(
       if (listable.enabled) {
         void sendCommand("files.list", path === "" ? {} : { path }, false)
           .then((result) => {
-            if (result.accepted) pendingDirs.set(result.requestId, path);
-            else resolveDir(api, path, "error");
+            if (!result.accepted) {
+              failDirLoad(api, path);
+              return;
+            }
+            const listing = fileTreeNodesFromListResult(result.result);
+            if (listing !== "error") {
+              dirRetryAttempts.delete(path);
+              listedDirs.add(path);
+              resolveDir(api, path, listing);
+              return;
+            }
+            pendingDirs.set(result.requestId, path);
           })
-          .catch(() => resolveDir(api, path, "error"));
+          .catch(() => failDirLoad(api, path));
         return;
       }
       // No listing command: the pushed file frames are the whole tree.
@@ -494,14 +545,6 @@ export function createLiveInspectorStore(
       const snapshot = runtime.getSnapshot();
       const warm = warmSession(snapshot);
       const frame = warm?.files.get(path);
-      if (frame !== undefined && frame.content !== undefined) {
-        resolvePreview(api, previewFromFileFrame(frame), warm?.revision ?? null);
-        return;
-      }
-      if (snapshot.connections.get(address.targetId) !== "connected") {
-        resolvePreview(api, { kind: "offline", path });
-        return;
-      }
       const readable = commandAvailability(
         snapshot,
         address.targetId,
@@ -509,14 +552,15 @@ export function createLiveInspectorStore(
         "files.read",
       );
       if (readable.enabled) {
-        const readRevision = expectedRevision();
         void sendCommand("files.read", { path }, false)
           .then((result) => {
             if (result.accepted) {
-              pendingPreviews.set(result.requestId, {
-                path,
-                baseRevision: readRevision === undefined ? null : String(readRevision),
-              });
+              const answer = filePreviewFromReadResult(result.result, path);
+              if (answer !== null) {
+                resolvePreview(api, answer.preview, answer.revision);
+              } else {
+                pendingPreviews.set(result.requestId, { path });
+              }
             } else {
               resolvePreview(api, {
                 kind: "diagnostic",
@@ -534,12 +578,19 @@ export function createLiveInspectorStore(
           );
         return;
       }
+      if (frame !== undefined && frame.content !== undefined) {
+        resolvePreview(api, previewFromFileFrame(frame));
+        return;
+      }
+      if (snapshot.connections.get(address.targetId) !== "connected") {
+        resolvePreview(api, { kind: "offline", path });
+        return;
+      }
       resolvePreview(
         api,
         frame !== undefined
           ? previewFromFileFrame(frame)
           : { kind: "diagnostic", path, message: "This host cannot read files from here." },
-        warm?.revision ?? null,
       );
     },
     writeFile(path, content, baseRevision) {
@@ -568,17 +619,25 @@ export function createLiveInspectorStore(
           args: { path, content },
           expectedRevision: revisionValue,
         })
-        .then((result) =>
-          resolveFileWriteOutcome(
-            api,
+        .then((result) => {
+          const errorCode = result.error?.code.toUpperCase();
+          if (!result.accepted) {
+            resolveFileWriteOutcome(
+              api,
+              path,
+              errorCode === "STALE_REVISION" ? "conflict" : "error",
+            );
+            return;
+          }
+          const answer = filePreviewFromReadResult(
+            result.result === null || typeof result.result !== "object"
+              ? result.result
+              : { ...(result.result as Record<string, unknown>), content },
             path,
-            result.accepted
-              ? "saved"
-              : result.error?.code === "stale_revision"
-                ? "conflict"
-                : "error",
-          ),
-        )
+          );
+          resolveFileWriteOutcome(api, path, "saved");
+          if (answer !== null) resolvePreview(api, answer.preview, answer.revision);
+        })
         .catch(() => resolveFileWriteOutcome(api, path, "error"));
     },
   });
@@ -618,6 +677,18 @@ export function createLiveInspectorStore(
     if (store.getState().files.offline !== offline) {
       store.setState((state) => ({ files: { ...state.files, offline } }));
     }
+    const filesListAvailable = commandAvailability(
+      snapshot,
+      address.targetId,
+      address.hostId,
+      "files.list",
+    ).enabled;
+    if (filesListAvailable && !filesListWasAvailable) {
+      for (const [path, listing] of Object.entries(store.getState().files.childrenByPath)) {
+        if (listing === "error") store.getState().requestDir(path);
+      }
+    }
+    filesListWasAvailable = filesListAvailable;
     if (warm === undefined) return;
 
     for (const frame of warm.agents.values()) {
@@ -665,30 +736,32 @@ export function createLiveInspectorStore(
       pendingDirs.delete(requestId);
       if (result.ok) {
         const listing = fileTreeNodesFromListResult(result.result);
-        resolveDir(store, path, listing);
-        if (listing !== "error") listedDirs.add(path);
+        if (listing === "error") {
+          failDirLoad(store, path);
+        } else {
+          dirRetryAttempts.delete(path);
+          listedDirs.add(path);
+          resolveDir(store, path, listing);
+        }
       } else {
-        resolveDir(store, path, "error");
+        failDirLoad(store, path);
       }
     }
     for (const [requestId, pending] of pendingPreviews) {
       const result = warm.results.get(requestId);
       if (result === undefined) continue;
       pendingPreviews.delete(requestId);
-      const content =
-        result.ok && result.result !== null && typeof result.result === "object"
-          ? (result.result as Record<string, unknown>).content
-          : undefined;
+      const answer = result.ok ? filePreviewFromReadResult(result.result, pending.path) : null;
       resolvePreview(
         store,
-        typeof content === "string"
-          ? { kind: "code", path: pending.path, text: content, truncated: content.length >= 8192 }
+        answer !== null
+          ? answer.preview
           : {
               kind: "diagnostic",
               path: pending.path,
               message: "The host could not read this file.",
             },
-        pending.baseRevision,
+        answer?.revision ?? null,
       );
     }
     for (const [requestId, path] of pendingReviewApplies) {
@@ -723,7 +796,7 @@ export function createLiveInspectorStore(
     if (selectedPath !== null && preview === "loading" && hasNewPreviewRevision) {
       const frame = warm.files.get(selectedPath);
       if (frame !== undefined && frame.content !== undefined) {
-        resolvePreview(store, previewFromFileFrame(frame), warm.revision ?? null);
+        resolvePreview(store, previewFromFileFrame(frame));
       }
     }
   };

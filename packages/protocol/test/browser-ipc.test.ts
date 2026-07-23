@@ -33,6 +33,25 @@ function surface(lifecycle: "creating" | "loading" | "ready" | "closed" | "crash
 }
 
 describe("browser IPC boundary", () => {
+  it("accepts encoded composite workspace-session owners", () => {
+    expect(
+      decodeBrowserCall({
+        version: BROWSER_IPC_VERSION,
+        method: "surface.list",
+        ownerSessionId: "host-a/session%20with%20spaces",
+        request: {},
+      }),
+    ).toMatchObject({ ownerSessionId: "host-a/session%20with%20spaces" });
+    expect(() =>
+      decodeBrowserCall({
+        version: BROWSER_IPC_VERSION,
+        method: "surface.list",
+        ownerSessionId: "host-a/session with spaces",
+        request: {},
+      }),
+    ).toThrow(BrowserProtocolError);
+  });
+
   it("keeps the design brief out of page-bound design-mode requests", () => {
     const call = decodeBrowserCall({
       version: BROWSER_IPC_VERSION,
