@@ -1207,6 +1207,20 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   ]) {
     requireText(releaseWorkflow, expected, ".github/workflows/release.yml", errors);
   }
+  if (
+    (files.get("scripts/dispatch-site-deployment.mjs") ?? "").includes(
+      "control_sha: controlCommit",
+    )
+  ) {
+    for (const expected of [
+      "Resolve trusted site-control source",
+      "git rev-parse refs/remotes/origin/main",
+      "CONTROL_SHA: ${{ steps.site-control.outputs.control_sha }}",
+      '--control-commit "$CONTROL_SHA"',
+    ]) {
+      requireText(releaseWorkflow, expected, ".github/workflows/release.yml", errors);
+    }
+  }
   const releaseVerifyStart = releaseWorkflow.indexOf("  verify:");
   const releaseAuthorityStart = releaseWorkflow.indexOf("  ci-authority:");
   if (!(releaseVerifyStart >= 0 && releaseAuthorityStart > releaseVerifyStart)) {
@@ -1395,13 +1409,18 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
         "startsWith(github.ref, 'refs/tags/')",
         '[[ "$GITHUB_REF" != "refs/tags/${expected_tag}" ]]',
         '[[ "$source_sha" != "$TRUSTED_SHA" ]]',
+        'release_tag="$expected_tag"',
       ],
       [
         "github.ref == 'refs/heads/main'",
         "release_commit:",
         "control_sha:",
+        "Resolve requested release identity",
+        'release_version="${release_tag#v}"',
+        "RELEASE_VERSION: ${{ steps.release_identity.outputs.release_version }}",
         '[[ "$GITHUB_REF" != "refs/heads/main" ]]',
         '[[ "$source_sha" != "$REQUESTED_RELEASE_COMMIT" ]]',
+        'release_tag="$RELEASE_TAG"',
         "path: .release-source",
         "working-directory: .release-source",
       ],
@@ -1412,12 +1431,6 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   requireText(
     files.get(".github/workflows/deploy-site.yml") ?? "",
     "ref: ${{ steps.immutable_source.outputs.source_sha }}",
-    ".github/workflows/deploy-site.yml",
-    errors,
-  );
-  requireText(
-    files.get(".github/workflows/deploy-site.yml") ?? "",
-    'release_tag="$expected_tag"',
     ".github/workflows/deploy-site.yml",
     errors,
   );
