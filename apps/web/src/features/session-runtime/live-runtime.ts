@@ -70,7 +70,7 @@ import {
   sessionControlForLink,
   WriteGateError,
 } from "./session-observer.ts";
-import { hostSessionInventoryIsComplete, sessionWriteLink } from "./session-inventory.ts";
+import { sessionRefIsCurrent, sessionWriteLink } from "./session-inventory.ts";
 
 export interface LiveRuntimeOptions {
   readonly controller: DesktopRuntimeController;
@@ -192,20 +192,21 @@ function sessionRefIsCompacting(ref: SessionRef | undefined): boolean {
 }
 
 /**
- * Return working truth only when this connected host has supplied a complete
- * live inventory. Cached or truncated rows may be useful to render, but they
- * cannot settle a turn after a disconnect.
+ * Return working truth only when this connected host supplied this session's
+ * ref after the latest reconnect. A bounded/truncated inventory can still be
+ * authoritative for rows it actually returned.
  */
 function authoritativeWorkingState(
   runtime: DesktopRuntimeSnapshot,
   targetId: string,
   hostId: string,
+  sessionId: string,
   projectionKey: string,
   retiredPendingPromptIds: ReadonlySet<string>,
 ): boolean | null {
   if (runtime.connections.get(targetId) !== "connected") return null;
   if (runtime.targetHosts.get(targetId) !== hostId) return null;
-  if (!hostSessionInventoryIsComplete(runtime, hostId)) return null;
+  if (!sessionRefIsCurrent(runtime, hostId, sessionId)) return null;
   const ref = runtime.projection.sessionIndex.get(projectionKey);
   if (ref === undefined) return null;
   const pendingPrompts = pendingPromptsFromRef(ref).filter(
@@ -774,6 +775,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
     controller.getSnapshot(),
     targetId,
     options.hostId,
+    options.sessionId,
     projectionKey,
     retiredPendingPromptIds,
   );
@@ -806,6 +808,19 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
       }
     }
     if (!hasAttachAuthority) return;
+    if (
+      attached &&
+      !attaching &&
+      runtime.projection.sessions.get(projectionKey)?.freshness !== "fresh"
+    ) {
+      // A replacement host can publish its welcome before the renderer sees
+      // the transient disconnected state. The welcome correctly invalidates
+      // the old live projection; treat that loss of freshness as a new attach
+      // boundary instead of leaving the composer cached forever.
+      attached = false;
+      transcriptImagesAttached = false;
+      syncTranscriptImageAvailability(runtime);
+    }
     if (attached) return;
     if (attaching) {
       retryAfterAttach = true;
@@ -875,6 +890,7 @@ export function createLiveSessionRuntime(options: LiveRuntimeOptions): SessionRu
       runtime,
       targetId,
       options.hostId,
+      options.sessionId,
       projectionKey,
       retiredPendingPromptIds,
     );

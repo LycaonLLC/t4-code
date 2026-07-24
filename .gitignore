@@ -20,7 +20,9 @@ dist-electron/
 # Test and runtime output
 /artifacts/legacy-bridge-continuity/
 /artifacts/official-omp-gate0/
+/artifacts/current-omp-bridge/
 /.continuity/
+/.current-continuity/
 /evidence/wire/
 coverage/
 playwright-report/

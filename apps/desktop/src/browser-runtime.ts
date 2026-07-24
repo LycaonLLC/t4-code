@@ -1,17 +1,18 @@
 import { randomUUID } from "node:crypto";
 import type { BrowserWindow, Session, WebContents } from "electron";
-import type {
-  BrowserCall,
-  BrowserCallResult,
-  BrowserErrorCode,
-  BrowserEvent,
-  BrowserJsonValue,
-  BrowserMethod,
-  BrowserProfile,
-  BrowserSurfaceState,
-  OwnerSessionId,
-  SurfaceHandle,
-  SurfaceId,
+import {
+  isBrowserOwnerSessionId,
+  type BrowserCall,
+  type BrowserCallResult,
+  type BrowserErrorCode,
+  type BrowserEvent,
+  type BrowserJsonValue,
+  type BrowserMethod,
+  type BrowserProfile,
+  type BrowserSurfaceState,
+  type OwnerSessionId,
+  type SurfaceHandle,
+  type SurfaceId,
 } from "@t4-code/protocol/browser-ipc";
 import type { BrowserSessionMetadata } from "./browser-session-store.ts";
 import { BrowserProfileRegistry, type BrowserProfileCreateOptions } from "./browser-profiles.ts";
@@ -101,6 +102,63 @@ function protocolError(error: unknown, method: BrowserMethod, surfaceId?: Surfac
   const errorSurfaceId = typeof candidate.surfaceId === "string" ? candidate.surfaceId as SurfaceId : surfaceId;
   return new BrowserRuntimeError(code, message, method, errorSurfaceId);
 }
+
+function listedDownloads(
+  controller: DownloadControllerLike,
+  surfaceId: SurfaceId,
+): readonly { readonly downloadId: string; readonly url?: string }[] {
+  const value = controller.list?.(surfaceId);
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (entry): entry is { readonly downloadId: string; readonly url?: string } =>
+      typeof entry === "object" &&
+      entry !== null &&
+      "downloadId" in entry &&
+      typeof entry.downloadId === "string" &&
+      (!("url" in entry) || entry.url === undefined || typeof entry.url === "string"),
+  );
+}
+
+function matchesRequestedDownload(downloadUrl: string | undefined, requestedUrl: string): boolean {
+  if (downloadUrl === undefined) return false;
+  try {
+    const download = new URL(downloadUrl);
+    const requested = new URL(requestedUrl);
+    // Electron may canonicalize or append a query before accepting the item.
+    // The origin and resource path still identify the navigation; an
+    // unrelated page-initiated download on the same surface does not.
+    return download.origin === requested.origin && download.pathname === requested.pathname;
+  } catch {
+    return false;
+  }
+}
+
+async function acceptedDownloadAfterNavigationFailure(
+  controller: DownloadControllerLike,
+  surfaceId: SurfaceId,
+  existingDownloadIds: ReadonlySet<string>,
+  requestedUrl: string,
+  timeoutMs = 250,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    if (
+      listedDownloads(controller, surfaceId).some(
+        (download) =>
+          !existingDownloadIds.has(download.downloadId) &&
+          matchesRequestedDownload(download.url, requestedUrl),
+      )
+    ) {
+      return true;
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return false;
+    await new Promise<void>((resolve) =>
+      setTimeout(resolve, Math.min(10, remaining)),
+    );
+  }
+}
+
 interface PrewarmEntry {
   readonly surface: BrowserSurface;
   readonly ownerSessionId: OwnerSessionId;
@@ -144,10 +202,10 @@ function requestRecord(request: unknown): Record<string, unknown> {
 }
 
 function ownerSessionIdFromCall(call: BrowserCall, method: BrowserMethod): OwnerSessionId {
-  if (typeof call.ownerSessionId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(call.ownerSessionId)) {
+  if (!isBrowserOwnerSessionId(call.ownerSessionId)) {
     throw new BrowserRuntimeError("invalid_params", "ownerSessionId is required", method);
   }
-  return call.ownerSessionId as OwnerSessionId;
+  return call.ownerSessionId;
 }
 
 /** Coordinates native surfaces so React chrome always has at most one attached tab. */
@@ -186,7 +244,9 @@ export class BrowserRuntime {
     this.userDataPath = options.userDataPath;
     this.profileRegistry = options.profileRegistry ?? new BrowserProfileRegistry({ userDataPath: options.userDataPath });
     this.sessionStore = options.sessionStore ?? new BrowserSessionStore({ userDataPath: options.userDataPath });
-    this.downloadController = options.downloadController ?? new BrowserDownloadController({ emit: options.emit });
+    this.downloadController =
+      options.downloadController ??
+      new BrowserDownloadController({ emit: (event) => this.emit(event) });
     this.installSecurity = options.installSecurity ?? installBrowserSurfaceSecurity;
     this.allowFileUrls = options.allowFileUrls === true;
     this.prewarmTtlMs = Math.max(1_000, options.prewarmTtlMs ?? 30_000);
@@ -717,8 +777,33 @@ export class BrowserRuntime {
       case "surface.navigate": {
         const surface = this.lookup(surfaceIdFromRequest(request), ownerSessionId, method);
         if (typeof request.url !== "string") throw new BrowserRuntimeError("invalid_params", "url is required", method, surface.surfaceId);
-        const result = await surface.navigate(request.url, booleanOption(request, "snapshotAfter"));
-        return result;
+        const previous = surface.state;
+        const existingDownloadIds = new Set(
+          listedDownloads(this.downloadController, surface.surfaceId).map(
+            (download) => download.downloadId,
+          ),
+        );
+        try {
+          return await surface.navigate(
+            request.url,
+            booleanOption(request, "snapshotAfter"),
+          );
+        } catch (error) {
+          const acceptedDownload = await acceptedDownloadAfterNavigationFailure(
+            this.downloadController,
+            surface.surfaceId,
+            existingDownloadIds,
+            request.url,
+          );
+          if (!acceptedDownload) throw error;
+          const restored = surface.restoreAfterDownloadNavigation(previous);
+          return {
+            surface: restored,
+            ...(booleanOption(request, "snapshotAfter")
+              ? { snapshot: await surface.snapshot() }
+              : {}),
+          };
+        }
       }
       case "surface.reload": return this.actionFor(ownerSessionId, method, request, (surface) => surface.reload(booleanOption(request, "snapshotAfter")));
       case "surface.goBack": return this.actionFor(ownerSessionId, method, request, (surface) => surface.goBack(booleanOption(request, "snapshotAfter")));

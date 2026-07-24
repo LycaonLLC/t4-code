@@ -87,9 +87,56 @@ test("rejects duplicate keys in JSON release contracts", () => {
 
 test("promotes the verified runtime into the product release", () => {
   const matrix = JSON.parse(files.get("compat/omp-app-matrix.json"));
-  assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.5-appserver-10");
-  assert.equal(matrix.publishedRuntime.sourceTag, "t4code-17.0.5-appserver-10");
+  assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.5-appserver-13");
+  assert.equal(matrix.publishedRuntime.sourceTag, "t4code-17.0.5-appserver-13");
   assert.deepEqual(matrix.publishedRuntime, matrix.verifiedRuntime);
+});
+
+test("freezes the legacy OMP host-migration provenance literals", () => {
+  const sourceDrift = changed("provenance/omp-host-migration.json", (text) => {
+    const provenance = JSON.parse(text);
+    provenance.sourceRepository = "https://github.com/wolfiesch/oh-my-pi";
+    return JSON.stringify(provenance);
+  });
+  assert.ok(
+    collectReleaseConsistencyErrors(sourceDrift).some((error) =>
+      error.includes("source repository must remain"),
+    ),
+  );
+
+  for (const field of [
+    "t4codeBase",
+    "operationsContinuity",
+    "artifactAndTurnReview",
+    "runtimeAndWorkspaceAdapters",
+  ]) {
+    const inputDrift = changed("provenance/omp-host-migration.json", (text) => {
+      const provenance = JSON.parse(text);
+      provenance.inputs[field] = "0".repeat(40);
+      return JSON.stringify(provenance);
+    });
+    assert.ok(
+      collectReleaseConsistencyErrors(inputDrift).some((error) =>
+        error.includes("migration inputs must remain"),
+      ),
+      field,
+    );
+  }
+});
+
+test("rejects the retired OMP fork in the active Woodpecker workflow", () => {
+  const staleWorkflow = changed(".woodpecker.yml", (text) =>
+    replaceRequired(
+      text,
+      "https://github.com/wolfiesch/oh-my-pi.git",
+      "https://github.com/lyc-aon/oh-my-pi.git",
+    ),
+  );
+  assert.ok(
+    collectReleaseConsistencyErrors(staleWorkflow).some((error) =>
+      error.includes("retired Lycaon OMP integration fork"),
+    ),
+  );
 });
 
 test("pins official OMP artifacts and the Gate 0 proof contract", () => {
@@ -120,7 +167,7 @@ test("pins official OMP artifacts and the Gate 0 proof contract", () => {
 test("rejects a tag that differs from the package version", () => {
   assert.ok(
     collectReleaseConsistencyErrors(files, "v9.9.9").some((error) =>
-      error.includes("release tag v9.9.9 does not match v0.1.30"),
+      error.includes("release tag v9.9.9 does not match v0.1.31"),
     ),
   );
 });
@@ -149,7 +196,7 @@ test("tagged releases reject published provenance drift", () => {
   for (const [field, mutate] of appWireCases) {
     const drifted = changedRuntime("publishedAppWire", mutate);
     assert.ok(
-      collectReleaseConsistencyErrors(drifted, "v0.1.30").some((error) =>
+      collectReleaseConsistencyErrors(drifted, "v0.1.31").some((error) =>
         error.includes(
           `published app-wire ${field} must match current app-wire for tagged releases`,
         ),
@@ -192,7 +239,7 @@ test("tagged releases reject published provenance drift", () => {
   for (const [field, mutate] of runtimeCases) {
     const drifted = changedRuntime("publishedRuntime", mutate);
     assert.ok(
-      collectReleaseConsistencyErrors(drifted, "v0.1.30").some((error) =>
+      collectReleaseConsistencyErrors(drifted, "v0.1.31").some((error) =>
         error.includes(
           `published runtime ${field} must match current verified runtime for tagged releases`,
         ),
@@ -204,7 +251,7 @@ test("tagged releases reject published provenance drift", () => {
     runtime.artifactSha256 = "0".repeat(64);
   });
   assert.ok(
-    collectReleaseConsistencyErrors(extended, "v0.1.30").some((error) =>
+    collectReleaseConsistencyErrors(extended, "v0.1.31").some((error) =>
       error.includes(
         "published runtime must exactly match current verified runtime for tagged releases",
       ),
@@ -214,15 +261,15 @@ test("tagged releases reject published provenance drift", () => {
 
 test("rejects workspace, site, README, and runtime version drift", () => {
   const cases = [
-    ["apps/web/package.json", (text) => text.replace('"version": "0.1.30"', '"version": "0.1.3"')],
+    ["apps/web/package.json", (text) => text.replace('"version": "0.1.31"', '"version": "0.1.3"')],
     [
       "apps/site/src/release.ts",
-      (text) => text.replace('RELEASE_TAG = "v0.1.30"', 'RELEASE_TAG = "v0.1.3"'),
+      (text) => text.replace('RELEASE_TAG = "v0.1.31"', 'RELEASE_TAG = "v0.1.3"'),
     ],
-    ["README.md", (text) => text.replace("Download v0.1.30", "Download v0.1.3")],
+    ["README.md", (text) => text.replace("Download v0.1.31", "Download v0.1.3")],
     [
       "apps/desktop/src/target-manager.ts",
-      (text) => text.replace('version: "0.1.30"', 'version: "0.1.3"'),
+      (text) => text.replace('version: "0.1.31"', 'version: "0.1.3"'),
     ],
     [
       "apps/site/src/docs/content.ts",
@@ -275,7 +322,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug, flutter, flutter-android, flutter-apple]",
+          "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
           "needs: [changes, core, tooling, android-debug]",
         ),
     ],
@@ -292,7 +339,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       (text) =>
         replaceRequired(
           text,
-          'test "$source_repository" = "https://github.com/lyc-aon/oh-my-pi"',
+          'test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"',
           'test "$source_repository" = "https://github.com/example/other"',
         ),
     ],
@@ -519,7 +566,7 @@ test("rejects stale README release URLs while allowing historical prose", () => 
   const staleLink = changed("README.md", (text) => `${text}\n[Old release](${oldReleaseUrl})\n`);
   assert.ok(
     collectReleaseConsistencyErrors(staleLink).some((error) =>
-      error.includes("release URL for v0.1.3; expected v0.1.30"),
+      error.includes("release URL for v0.1.3; expected v0.1.31"),
     ),
   );
   assert.deepEqual(collectReleaseConsistencyErrors(files), []);
@@ -533,25 +580,36 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("android-debug:"));
   assert.ok(ciWorkflow.includes("core:"));
   assert.ok(ciWorkflow.includes("legacy-bridge-continuity:"));
+  assert.ok(ciWorkflow.includes("current-bridge-continuity:"));
   assert.ok(ciWorkflow.includes("ref: ${{ github.event.pull_request.head.sha || github.sha }}"));
   assert.ok(
     ciWorkflow.includes(
-      `source_repository="$(jq -er '.sourceRepository' provenance/omp-host-migration.json)"`,
+      `source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
     ),
   );
   assert.ok(
-    ciWorkflow.includes('test "$source_repository" = "https://github.com/lyc-aon/oh-my-pi"'),
+    ciWorkflow.includes('test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"'),
   );
   assert.ok(
     ciWorkflow.includes("sha=\"$(jq -er '.inputs.operationsContinuity' provenance/omp-host-migration.json)\""),
   );
   assert.ok(ciWorkflow.includes('[[ "$sha" =~ ^[0-9a-f]{40}$ ]]'));
-  assert.ok(ciWorkflow.includes('echo "repository=lyc-aon/oh-my-pi" >> "$GITHUB_OUTPUT"'));
+  assert.ok(ciWorkflow.includes('echo "repository=wolfiesch/oh-my-pi" >> "$GITHUB_OUTPUT"'));
   assert.ok(ciWorkflow.includes("repository: ${{ steps.authority.outputs.repository }}"));
   assert.ok(ciWorkflow.includes("ref: ${{ steps.authority.outputs.sha }}"));
   assert.ok(ciWorkflow.includes("T4_OMP_SOURCE_DIR: ${{ github.workspace }}/.continuity/omp"));
   assert.ok(ciWorkflow.includes("run: pnpm test:legacy-bridge-continuity"));
   assert.ok(ciWorkflow.includes("path: artifacts/legacy-bridge-continuity/"));
+  assert.ok(
+    ciWorkflow.includes("sha=\"$(jq -er '.verifiedRuntime.sourceCommit' compat/omp-app-matrix.json)\""),
+  );
+  assert.ok(
+    ciWorkflow.includes("T4_CURRENT_OMP_SOURCE_DIR: ${{ github.workspace }}/.current-continuity/omp"),
+  );
+  assert.ok(
+    ciWorkflow.includes("run: pnpm --filter @t4-code/host-service verify:current-omp-bridge"),
+  );
+  assert.ok(ciWorkflow.includes("path: artifacts/current-omp-bridge/"));
   assert.ok(ciWorkflow.includes("if-no-files-found: error"));
   assert.ok(ciWorkflow.includes("tooling:"));
   assert.ok(ciWorkflow.includes("cluster:"));
@@ -559,32 +617,20 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("run: pnpm test:cluster:ci"));
   assert.ok(ciWorkflow.includes("run: go test ./..."));
   assert.ok(ciWorkflow.includes("run: helm lint deploy/charts/t4-cluster"));
-  assert.ok(ciWorkflow.includes("flutter:"));
-  assert.ok(ciWorkflow.includes("flutter-android:"));
-  assert.ok(ciWorkflow.includes("flutter-apple:"));
-  assert.ok(ciWorkflow.includes("Run Flutter iOS launch smoke test"));
-  assert.ok(
-    ciWorkflow.includes(
-      'xcrun simctl install "$DEVICE_ID" build/ios/iphonesimulator/Runner.app',
-    ),
-  );
-  assert.ok(ciWorkflow.includes('kill -0 "$app_pid"'));
-  assert.ok(ciWorkflow.includes("Build standalone T4 host for Flutter macOS"));
-  assert.ok(ciWorkflow.includes("Verify bundled Flutter macOS host"));
-  assert.ok(
-    ciWorkflow.includes(
-      "test -x apps/flutter/build/macos/Build/Products/Debug/t4code.app/Contents/Resources/runtime/t4-host",
-    ),
-  );
   assert.ok(ciWorkflow.includes("name: verify"));
   assert.ok(ciWorkflow.includes("if: ${{ always() }}"));
   assert.ok(
     ciWorkflow.includes(
-      "needs: [changes, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug, flutter, flutter-android, flutter-apple]",
+      "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
     ),
   );
   assert.ok(ciWorkflow.includes('test "$CHANGES_RESULT" = success'));
+  assert.ok(ciWorkflow.includes('test "$T4_API_GENERATION_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$CORE_RESULT" = success'));
+  assert.ok(
+    ciWorkflow.includes("CURRENT_CONTINUITY_RESULT: ${{ needs.current-bridge-continuity.result }}"),
+  );
+  assert.ok(ciWorkflow.includes('"$CURRENT_CONTINUITY_RESULT" \\'));
   assert.ok(ciWorkflow.includes("for result in \\"));
   assert.ok(ciWorkflow.includes("success|skipped) ;;"));
   assert.ok(ciWorkflow.includes("github.event_name == 'pull_request' && github.ref || github.sha"));

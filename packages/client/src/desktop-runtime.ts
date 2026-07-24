@@ -264,6 +264,29 @@ export class DesktopRuntimeController {
   }
   async attachSession(targetId: string, hostIdValue: string, sessionIdValue: string, cursor?: Cursor): Promise<CommandResult> {
     const result = await this.command(targetId, { hostId: hostId(hostIdValue), sessionId: sessionId(sessionIdValue), command: "session.attach", args: cursor === undefined ? {} : { cursor } });
+    // The IPC command result is itself validated authority. During startup the
+    // raw response event can race the final target-generation reconciliation;
+    // apply the completed attach result again after that boundary so an
+    // exact-head resume cannot remain cached forever when replay is empty.
+    if (
+      result.accepted &&
+      result.targetId === targetId &&
+      this.current.connections.get(targetId) === "connected" &&
+      this.current.targetHosts.get(targetId) === hostIdValue
+    ) {
+      this.applyProjectionEvent(targetId, Object.freeze({
+        kind: "response" as const,
+        payload: Object.freeze({
+          requestId: result.requestId,
+          commandId: result.commandId,
+          hostId: hostId(hostIdValue),
+          sessionId: sessionId(sessionIdValue),
+          ok: true as const,
+          command: "session.attach",
+          result: result.result,
+        }),
+      }) as RendererServerEvent);
+    }
     this.activateSession(hostIdValue, sessionIdValue);
     return result;
   }
@@ -1117,6 +1140,12 @@ export class DesktopRuntimeController {
     return refreshOnConnect;
   }
   private updateConnection(targetId: string, state: DesktopTarget["state"]): void {
+    if (
+      state === "connecting" &&
+      this.current.connections.get(targetId) === state
+    ) {
+      return;
+    }
     const refreshOnConnect = this.prepareConnectionTransition(targetId, state);
     const connections = new Map(this.current.connections).set(targetId, state);
     const existing = this.current.targets.get(targetId);

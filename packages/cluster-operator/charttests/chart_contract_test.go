@@ -545,7 +545,25 @@ func TestCRDsRemainExplicitAcrossUpgradeAndUninstall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"helm upgrade", "helm rollback", "helm uninstall", "kubectl apply --server-side -f deploy/charts/t4-cluster/crds/", "condition=Established", "Do not rely on `helm upgrade` to change CRDs", "Retain", "Delete", "CRDs are not removed"} {
+	for _, required := range []string{
+		"scripts/cluster-ci/crd-lifecycle.sh upgrade",
+		"helm upgrade",
+		"--skip-crds",
+		"helm rollback",
+		"helm uninstall",
+		"kubectl patch \"crd/$resource\" --type=merge --dry-run=server",
+		"metadata.resourceVersion",
+		"crd-preflight compatible",
+		"crd-preflight patch",
+		"--request-timeout=10s",
+		"condition=Established",
+		"status.storedVersions",
+		"Do not rely on `helm upgrade` to change CRDs",
+		"Future `v1beta1` conversion and storage procedure",
+		"Retain",
+		"Delete",
+		"CRDs are not removed",
+	} {
 		if !strings.Contains(string(docs), required) {
 			t.Fatalf("operator guide lacks upgrade/uninstall contract %q", required)
 		}
@@ -612,8 +630,8 @@ func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 		}
 	}
 	assertContains(t, session,
-		"8476f4451ed95c5d5401785d279a93d3c659fac4",
-		"t4code-17.0.5-appserver-10",
+		"fc0c391334c08ab260057756aa84bd2b07741ee7",
+		"t4code-17.0.5-appserver-13",
 		"t4-omp-authority/1",
 		"session-entrypoint.sh",
 		"chromium",
@@ -630,8 +648,8 @@ func TestImageContractsArePinnedAndAuthorityCompatible(t *testing.T) {
 		t.Fatal("session runtime permits overriding a labeled runtime pin")
 	}
 	assertContains(t, session,
-		"refs/tags/t4code-17.0.5-appserver-10",
-		"git checkout --detach \"8476f4451ed95c5d5401785d279a93d3c659fac4\"",
+		"refs/tags/t4code-17.0.5-appserver-13",
+		"git checkout --detach \"fc0c391334c08ab260057756aa84bd2b07741ee7\"",
 		"snapshot.debian.org/archive/debian/20250721T000000Z",
 	)
 	assertContains(t, server, "snapshot.debian.org/archive/debian/20250721T000000Z")

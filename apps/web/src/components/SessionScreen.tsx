@@ -9,7 +9,6 @@ import {
   ScrollArea,
   Sheet,
   SheetPopup,
-  StatusPill,
   Tooltip,
   TooltipPopup,
   TooltipTrigger,
@@ -45,10 +44,9 @@ import {
   type ExportMeta,
 } from "../features/transcript/export.ts";
 import {
-  FreshnessBadge,
-  SessionLifecycleBadge,
   SessionMain,
-  SessionOwnershipBadge,
+  SessionConnectionBadge,
+  SessionStateBadge,
 } from "../features/transcript/SessionMain.tsx";
 import { RIGHT_PANE_DOCK_QUERY, useMediaQuery } from "../hooks/useMediaQuery.ts";
 import { rendererPlatform, useWorkspace, workspaceStore } from "../state/store-instance.ts";
@@ -373,6 +371,10 @@ export function SessionScreen({
   const runtimeSnapshot = useDesktopRuntimeSnapshot();
   const previewAddress =
     runtimeSnapshot === null ? null : resolveLiveSession(runtimeSnapshot, sessionId);
+  const connectionState =
+    runtimeSnapshot === null || previewAddress === null
+      ? null
+      : (runtimeSnapshot.connections.get(previewAddress.targetId) ?? null);
   const previewCount = rendererPlatform.demo
     ? 1
     : previewAddress === null
@@ -426,17 +428,22 @@ export function SessionScreen({
             />
           </span>
         </div>
-        {archived && <Badge variant="outline">Archived · read-only</Badge>}
-        {session.status !== null && (
-          <>
-            <StatusPill className="hidden shrink-0 sm:inline-flex" status={session.status} />
-            <StatusPill className="shrink-0 sm:hidden" labelHidden status={session.status} />
-          </>
-        )}
-        <span className="shrink-0">
-          <FreshnessBadge session={session} />
-          <SessionLifecycleBadge session={session} />
-          <SessionOwnershipBadge session={session} />
+        <span className="flex shrink-0 items-center gap-1">
+          {connectionState !== null && <SessionConnectionBadge state={connectionState} />}
+          {!archived &&
+            (connectionState === null || connectionState === "connected") && (
+              <SessionStateBadge session={session} />
+            )}
+          {archived && (
+            <Badge
+              aria-label="Archived · read-only"
+              className="w-20 justify-center px-2 sm:w-32"
+              variant="outline"
+            >
+              <span className="sm:hidden">Archived</span>
+              <span className="hidden sm:inline">Archived · read-only</span>
+            </Badge>
+          )}
         </span>
         {previewCount > 0 && (
           <Link

@@ -16,13 +16,26 @@ export function hostSessionInventoryIsComplete(
 
 export type SessionWriteLink = "live" | "cached" | "offline";
 
+/** True only when this process received the ref after the latest reconnect boundary. */
+export function sessionRefIsCurrent(
+  snapshot: DesktopRuntimeSnapshot,
+  hostId: string,
+  sessionId: string,
+): boolean {
+  const key = `${hostId}\u0000${sessionId}`;
+  return (
+    snapshot.projection.sessionIndex.has(key) &&
+    snapshot.projection.sessionRefArrivalOrdinals.has(key)
+  );
+}
+
 /**
  * Dispatch-time freshness for one session, stricter than the render link:
  * offline when the target is not connected; live ONLY when the target is
- * bound to this host, the host's session inventory is complete, THIS
- * session is present in the index, and any warm projection is fresh. A
- * missing indexed ref cannot prove the session's current state, so it
- * stays cached/read-only for writes.
+ * bound to this host, THIS session has a ref from the current connection,
+ * and any warm projection is fresh. A truncated host inventory is safe for
+ * a ref it actually returned; retained refs that were not returned after a
+ * reconnect stay cached/read-only.
  */
 export function sessionWriteLink(
   snapshot: DesktopRuntimeSnapshot,
@@ -35,8 +48,7 @@ export function sessionWriteLink(
   const warm = snapshot.projection.sessions.get(key);
   const inventoryReady =
     snapshot.targetHosts.get(targetId) === hostId &&
-    hostSessionInventoryIsComplete(snapshot, hostId) &&
-    snapshot.projection.sessionIndex.get(key) !== undefined;
+    sessionRefIsCurrent(snapshot, hostId, sessionId);
   return !inventoryReady || (warm !== undefined && warm.freshness !== "fresh")
     ? "cached"
     : "live";

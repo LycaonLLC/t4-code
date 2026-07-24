@@ -6,7 +6,7 @@ on:
     branches: [main, master]
     paths:
       - "apps/site/**"
-      - "apps/flutter/**"
+      - "apps/web/**"
       - "packages/**"
       - "scripts/check-release-publication.mjs"
       - "scripts/build-demo.mjs"
@@ -65,44 +65,25 @@ jobs:
         with:
           node-version: 24.13.1
 
-      - name: Install Flutter
-        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
-        with:
-          flutter-version: 3.44.6
-          channel: stable
-          cache: true
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Authenticate to AWS with GitHub OIDC
+        if: ${{ vars.AWS_ROLE_ARN != '' }}
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: us-east-1
 
-      - name: Check whether the live demo permits the Flutter renderer
-        id: demo_csp
-        shell: bash
-        run: |
-          set -euo pipefail
-          headers=$(curl --fail --silent --show-error --head https://t4code.net/demo)
-          if printf '%s\n' "$headers" \
-            | tr -d '\r' \
-            | grep -i '^content-security-policy:' \
-            | grep -Fq "'wasm-unsafe-eval'"; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Flutter demo deployment is deferred until the demo CloudFront CSP permits wasm-unsafe-eval."
-          fi
+      - name: Authenticate to AWS with deployment credentials
+        if: ${{ vars.AWS_ROLE_ARN == '' }}
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
 
-      - name: Defer Flutter demo until its response policy is active
-        if: ${{ steps.demo_csp.outputs.ready != 'true' }}
-        run: echo "Apply infra/site/cloudformation.yml, then rerun this workflow from a main push."
-
-      - name: Build and deploy current Flutter demo
-        if: ${{ steps.demo_csp.outputs.ready == 'true' }}
+      - name: Build and deploy current React demo
         env:
           T4_SITE_BUCKET: ${{ vars.T4_SITE_BUCKET }}
           T4_CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.T4_CLOUDFRONT_DISTRIBUTION_ID }}
@@ -229,10 +210,18 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Authenticate to AWS with GitHub OIDC
-        if: ${{ steps.published_release.outcome == 'success' || steps.existing_release.outcome == 'success' }}
+        if: ${{ (steps.published_release.outcome == 'success' || steps.existing_release.outcome == 'success') && vars.AWS_ROLE_ARN != '' }}
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Authenticate to AWS with deployment credentials
+        if: ${{ (steps.published_release.outcome == 'success' || steps.existing_release.outcome == 'success') && vars.AWS_ROLE_ARN == '' }}
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
       - name: Build and deploy immutable release site

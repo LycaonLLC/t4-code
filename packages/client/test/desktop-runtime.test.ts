@@ -169,14 +169,17 @@ class FakeShell implements DesktopShellPort {
   sessionListResultMissing = false;
   sessionListGate: Promise<void> | undefined;
   workspaceListGate: Promise<void> | undefined;
+  attachGate: Promise<void> | undefined;
   catalogResult: unknown = { revision: "catalog-1", items: [] };
   settingsResult: unknown = { revision: "settings-1", settings: {} };
   workspaceListResult: unknown = {
     cursor: { epoch: "workspace-epoch", seq: 1 },
     workspaces: [workspaceInfrastructure()],
   };
+  attachResult: unknown;
   private sessionListGateResolve: (() => void) | undefined;
   private workspaceListGateResolve: (() => void) | undefined;
+  private attachGateResolve: (() => void) | undefined;
   deferNextSessionList(): void {
     this.sessionListGate = new Promise<void>((resolve) => { this.sessionListGateResolve = resolve; });
   }
@@ -191,6 +194,14 @@ class FakeShell implements DesktopShellPort {
   resolveWorkspaceList(): void {
     const resolve = this.workspaceListGateResolve;
     this.workspaceListGateResolve = undefined;
+    resolve?.();
+  }
+  deferNextAttach(): void {
+    this.attachGate = new Promise<void>((resolve) => { this.attachGateResolve = resolve; });
+  }
+  resolveAttach(): void {
+    const resolve = this.attachGateResolve;
+    this.attachGateResolve = undefined;
     resolve?.();
   }
   async bootstrap(): Promise<BootstrapResult> { this.bootstrapCalls += 1; if (this.emitWelcomeOnBootstrap !== undefined) this.emitFrame(this.emitWelcomeOnBootstrap); return { platform: "linux", version: "omp-app/1", connected: false }; }
@@ -243,6 +254,12 @@ class FakeShell implements DesktopShellPort {
       this.workspaceListGate = undefined;
       if (gate !== undefined) await gate;
       return { ...base, result: this.workspaceListResult };
+    }
+    if (request.intent.command === "session.attach") {
+      const gate = this.attachGate;
+      this.attachGate = undefined;
+      if (gate !== undefined) await gate;
+      return { ...base, ...(this.attachResult === undefined ? {} : { result: this.attachResult }) };
     }
     return base;
   }
@@ -421,6 +438,49 @@ describe("desktop runtime projection", () => {
       intent: { hostId: hostId("host-a"), command: "host.watch", args: { cursor: { epoch: "epoch-1", seq: 7 } } },
     });
     expect(runtime.getSnapshot().targetHosts.get("local")).toBe("host-a");
+  });
+  it("applies an exact-head attach result even when no replay response event arrives", async () => {
+    const shell = new FakeShell();
+    const runtime = createDesktopRuntimeController({ shell });
+    await runtime.start();
+    shell.emitFrame({ targetId: "local", frame: welcome("host-a", ["sessions.read"], []) });
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: "omp-app/1",
+        type: "snapshot",
+        hostId: hostId("host-a"),
+        sessionId: sessionId("session-a"),
+        cursor: { epoch: "epoch-1", seq: 2 },
+        revision: revision("revision-a"),
+        entries: [],
+      },
+    });
+    shell.emitFrame({
+      targetId: "local",
+      frame: {
+        v: "omp-app/1",
+        type: "gap",
+        hostId: hostId("host-a"),
+        sessionId: sessionId("session-a"),
+        from: { epoch: "epoch-1", seq: 3 },
+        to: { epoch: "epoch-1", seq: 3 },
+        reason: "ring_evicted",
+      },
+    });
+    expect(runtime.getSnapshot().projection.sessions.get("host-a\u0000session-a")?.freshness).toBe("catching-up");
+    shell.attachResult = { attached: true, cursor: { epoch: "epoch-1", seq: 2 } };
+    shell.deferNextAttach();
+
+    const attached = runtime.attachSession("local", "host-a", "session-a", { epoch: "epoch-1", seq: 2 });
+    await Promise.resolve();
+    shell.emitState({ targetId: "local", state: "connecting" });
+    shell.emitState({ targetId: "local", state: "connected" });
+    shell.emitFrame({ targetId: "local", frame: welcome("host-a", ["sessions.read"], []) });
+    shell.resolveAttach();
+    await attached;
+
+    expect(runtime.getSnapshot().projection.sessions.get("host-a\u0000session-a")?.freshness).toBe("fresh");
   });
   it.each([
     { authority: "the feature is default-off and unnegotiated", enabled: false, capabilities: [], features: [], granted: false },
@@ -1237,6 +1297,22 @@ describe("desktop runtime projection", () => {
     shell.emitError({ code: "transport", message: "https://endpoint.invalid /tmp/token token=secret" });
     expect(calls).toBe(beforeStop);
     expect(runtime.getSnapshot().startState).toBe("stopped");
+  });
+  it("does not publish a new snapshot for a duplicate connection state", async () => {
+    const shell = new FakeShell();
+    const runtime = createDesktopRuntimeController({ shell });
+    await runtime.start();
+    let calls = 0;
+    runtime.subscribe(() => {
+      calls += 1;
+    });
+
+    shell.emitState({ targetId: "local", state: "connecting" });
+    const afterTransition = calls;
+    shell.emitState({ targetId: "local", state: "connecting" });
+
+    expect(afterTransition).toBeGreaterThan(0);
+    expect(calls).toBe(afterTransition);
   });
   it("activates sessions without exposing mutable maps", async () => {
     const shell = new FakeShell();

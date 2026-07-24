@@ -73,6 +73,7 @@ function catalog(): CatalogFrame {
     hostId: hostId(ADDRESS.hostId),
     revision: revision("catalog-1"),
     items: [
+      ...[
       "session.create",
       "project.reveal",
       "session.rename",
@@ -87,6 +88,13 @@ function catalog(): CatalogFrame {
       supported: true,
       capabilities: ["sessions.manage"],
     })),
+      {
+        id: "model-default" as never,
+        kind: "model",
+        name: "Default model",
+        supported: true,
+      },
+    ],
   };
 }
 
@@ -192,7 +200,9 @@ class FakeManagementController {
             { truncated: this.inventoryTruncated, totalCount: this.sessionIndex.size },
           ],
         ]) as DesktopRuntimeSnapshot["projection"]["sessionIndexMetadata"],
-        sessionRefArrivalOrdinals: new Map(),
+        sessionRefArrivalOrdinals: new Map(
+          [...this.sessionIndex.keys()].map((sessionKey) => [sessionKey, 1]),
+        ),
         sessionDeltaCursors: new Map(),
         sessionInventoryCursors: new Map(),
         workspaces: new Map(),
@@ -477,6 +487,52 @@ describe("session management authority helpers", () => {
       reason: "This host does not offer session creation yet",
     });
 
+    const withoutUsableModel = catalog();
+    const unavailable = {
+      ...snapshot,
+      catalogs: new Map([
+        [
+          ADDRESS.hostId,
+          {
+            ...withoutUsableModel,
+            items: withoutUsableModel.items.map((item) =>
+              item.kind === "model"
+                ? {
+                    ...item,
+                    id: "availability:models" as never,
+                    name: "availability:models",
+                    supported: false,
+                    reason: "model registry unavailable or no available models",
+                  }
+                : item,
+            ),
+          },
+        ],
+      ]),
+    } as DesktopRuntimeSnapshot;
+    expect(sessionCreateSupport(unavailable, address)).toEqual({
+      supported: false,
+      reason: "Configure a model for this OMP profile before creating a session",
+    });
+
+    const commandOnlyCatalog = catalog();
+    const officialAuthority = {
+      ...snapshot,
+      catalogs: new Map([
+        [
+          ADDRESS.hostId,
+          {
+            ...commandOnlyCatalog,
+            items: commandOnlyCatalog.items.filter((item) => item.kind !== "model"),
+          },
+        ],
+      ]),
+    } as DesktopRuntimeSnapshot;
+    expect(sessionCreateSupport(officialAuthority, address)).toEqual({
+      supported: true,
+      reason: null,
+    });
+
     const unbound = {
       ...snapshot,
       targetHosts: new Map(),
@@ -489,8 +545,8 @@ describe("session management authority helpers", () => {
     const syncingController = new FakeManagementController();
     syncingController.inventoryTruncated = true;
     expect(sessionCreateSupport(syncingController.getSnapshot(), address)).toEqual({
-      supported: false,
-      reason: "This host's session list is still syncing. Try again in a moment.",
+      supported: true,
+      reason: null,
     });
   });
 
@@ -640,6 +696,34 @@ describe("session management authority helpers", () => {
     ).toBe(false);
   });
 
+  it("keeps restore available when an archived row carries stale takeover state", () => {
+    const archived = {
+      ...ref({ archived: true }),
+      liveState: {
+        phase: "idle",
+        sessionControl: { mode: "reconciling", transcript: "live" },
+      },
+    } as SessionRef;
+    const fake = new FakeManagementController(archived);
+    expect(managementCommandSupport(fake.getSnapshot(), ADDRESS, "session.restore")).toEqual({
+      supported: true,
+      reason: null,
+    });
+    expect(managementCommandSupport(fake.getSnapshot(), ADDRESS, "session.delete").supported).toBe(
+      false,
+    );
+    const liveLock = new FakeManagementController({
+      ...ref({ archived: true }),
+      liveState: {
+        phase: "idle",
+        sessionControl: { mode: "observer", lockStatus: "live", transcript: "live" },
+      },
+    } as SessionRef);
+    expect(managementCommandSupport(liveLock.getSnapshot(), ADDRESS, "session.restore").supported).toBe(
+      false,
+    );
+  });
+
   const SYNCING_REASON = "This session is still syncing from the host. Try again in a moment.";
   const ALL_COMMANDS = [
     "session.rename",
@@ -649,18 +733,18 @@ describe("session management authority helpers", () => {
     "session.delete",
   ] as const;
 
-  it("disables management honestly while the host inventory is truncated or incomplete", () => {
-    // Truncated inventory: the host said the list is cut short.
+  it("keeps a returned session manageable when the host inventory is bounded", () => {
+    // Truncation limits absence proof, not the current row the host returned.
     const truncated = new FakeManagementController();
     truncated.inventoryTruncated = true;
     for (const command of ALL_COMMANDS) {
       expect(managementCommandSupport(truncated.getSnapshot(), ADDRESS, command)).toEqual({
-        supported: false,
-        reason: SYNCING_REASON,
+        supported: true,
+        reason: null,
       });
     }
 
-    // Incomplete inventory: the host claims more sessions than we indexed.
+    // The same applies when the host reports more sessions than this bounded page.
     const base = new FakeManagementController().getSnapshot();
     const incomplete = {
       ...base,
@@ -671,8 +755,8 @@ describe("session management authority helpers", () => {
     } as DesktopRuntimeSnapshot;
     for (const command of ALL_COMMANDS) {
       expect(managementCommandSupport(incomplete, ADDRESS, command)).toEqual({
-        supported: false,
-        reason: SYNCING_REASON,
+        supported: true,
+        reason: null,
       });
     }
 
@@ -712,7 +796,7 @@ describe("session management authority helpers", () => {
     });
   });
 
-  it("lets the syncing reason outrank the observer reason, matching the dispatch gate", () => {
+  it("keeps current ownership truth visible on a bounded inventory", () => {
     const observed = new FakeManagementController({
       ...ref(),
       liveState: {
@@ -721,11 +805,12 @@ describe("session management authority helpers", () => {
       },
     } as SessionRef);
     observed.inventoryTruncated = true;
-    // assertSessionWritableNow() rejects cached before it reads ownership;
-    // the support gate promises the same order.
+    // This row came from the current response, so ownership—not global list
+    // truncation—is the reason it remains read-only.
     expect(managementCommandSupport(observed.getSnapshot(), ADDRESS, "session.close")).toEqual({
       supported: false,
-      reason: SYNCING_REASON,
+      reason: presentSessionControl({ mode: "observer", lockStatus: "live", transcript: "live" })
+        .managementReason,
     });
   });
 
@@ -916,6 +1001,35 @@ describe("dispatch-time ownership rechecks", () => {
     await expect(deleteLiveSession(controller(fake), ADDRESS)).rejects.toThrow(OBSERVED_REASON);
     expect(fake.commands).toHaveLength(0);
     expect(fake.confirms).toHaveLength(0);
+  });
+
+  it("restores an archived session without waiting on stale takeover state", async () => {
+    const archived = {
+      ...ref({ archived: true }),
+      liveState: {
+        phase: "idle",
+        sessionControl: { mode: "reconciling", transcript: "live" },
+      },
+    } as SessionRef;
+    const fake = new FakeManagementController(archived);
+    await restoreLiveSession(controller(fake), ADDRESS);
+    expect(fake.commands.map((intent) => intent.command)).toEqual([
+      "session.restore",
+      "session.list",
+    ]);
+    expect(sessionIsArchived(fake.getSnapshot().projection.sessionIndex.get(KEY))).toBe(false);
+  });
+
+  it("refuses archived restore while another app still holds a live lock", async () => {
+    const fake = new FakeManagementController({
+      ...ref({ archived: true }),
+      liveState: {
+        phase: "idle",
+        sessionControl: { mode: "observer", lockStatus: "live", transcript: "live" },
+      },
+    } as SessionRef);
+    await expect(restoreLiveSession(controller(fake), ADDRESS)).rejects.toThrow(OBSERVED_REASON);
+    expect(fake.commands).toHaveLength(0);
   });
 
   it("refuses malformed/unknown ownership with unclear copy, never another-app copy", async () => {

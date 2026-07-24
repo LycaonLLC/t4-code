@@ -55,6 +55,35 @@ describe("fixture invariants", () => {
 });
 
 describe("buildProjectGroups", () => {
+  it("collapses large-inventory defaults while keeping the routed project discoverable", () => {
+    const activeSessionId = "sess-pagination";
+    const groups = buildProjectGroups(SHELL_FIXTURE, {}, {}, "current", {}, {
+      activeSessionId,
+      defaultExpanded: false,
+    });
+    const active = groups.find((group) =>
+      group.sessions.some((row) => row.session.id === activeSessionId),
+    );
+    expect(active?.expanded).toBe(true);
+    expect(
+      groups
+        .filter((group) => group.project.id !== active?.project.id)
+        .every((group) => !group.expanded),
+    ).toBe(true);
+
+    const explicitlyCollapsed = buildProjectGroups(
+      SHELL_FIXTURE,
+      { [active!.project.id]: false },
+      {},
+      "current",
+      {},
+      { activeSessionId, defaultExpanded: false },
+    );
+    expect(
+      explicitlyCollapsed.find((group) => group.project.id === active?.project.id)?.expanded,
+    ).toBe(false);
+  });
+
   it("filters by title, project, runtime state, unread state, and errors", () => {
     const byText = buildProjectGroups(
       SHELL_FIXTURE,
@@ -88,6 +117,20 @@ describe("buildProjectGroups", () => {
     expect(errors.flatMap((group) => group.sessions.map((row) => row.session.id))).toEqual([
       "sess-resize",
     ]);
+  });
+
+  it("does not treat a host reconnect as per-session work or priority", () => {
+    const session = SHELL_FIXTURE.sessions[0]!;
+    const reconnecting = {
+      ...SHELL_FIXTURE,
+      sessions: [{ ...session, status: "connecting" as const }],
+    };
+
+    const running = buildProjectGroups(reconnecting, {}, {}, "current", {}, {
+      filter: "running",
+    });
+    expect(running).toEqual([]);
+    expect(sessionPriority({ session: reconnecting.sessions[0]!, unread: false })).toBe(0);
   });
 
   it("matches uppercase ASCII queries under a Turkish locale", () => {

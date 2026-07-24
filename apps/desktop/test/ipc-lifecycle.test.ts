@@ -23,6 +23,31 @@ function makeRuntime(serviceManager?: ServiceManager, serviceAvailabilityIssue?:
 const request = (channel: string, payload: unknown = {}): unknown => ({ channel, payload });
 
 describe("desktop IPC lifecycle proof", () => {
+  it("routes t4-omp inspect, install, and remove through the trusted desktop service", async () => {
+    const ipc = new FakeIpc();
+    const { runtime: baseRuntime } = makeRuntime();
+    const calls: string[] = [];
+    const launcherState = (phase: "not-installed" | "installed") => ({
+      phase,
+      command: "t4-omp" as const,
+      location: "~/.local/bin/t4-omp" as const,
+      message: phase === "installed" ? "Ready" : "Not installed",
+    });
+    const runtime: IpcRuntime = {
+      ...baseRuntime,
+      t4OmpLauncher: {
+        inspect: async () => { calls.push("inspect"); return launcherState("not-installed"); },
+        install: async () => { calls.push("install"); return launcherState("installed"); },
+        remove: async () => { calls.push("remove"); return launcherState("not-installed"); },
+      },
+    };
+    new DesktopIpcRegistry(runtime, ipc).install();
+    const event = { sender: runtime.window.webContents, senderFrame: runtime.window.webContents.mainFrame };
+    for (const action of ["inspect", "install", "remove"] as const) {
+      await ipc.handlers.get(`app:t4-omp:${action}`)!(event, request(`app:t4-omp:${action}`));
+    }
+    expect(calls).toEqual(["inspect", "install", "remove"]);
+  });
   it("exposes strict profile lifecycle handlers and bounds their service diagnostics", async () => {
     const ipc = new FakeIpc();
     const { runtime: baseRuntime } = makeRuntime();

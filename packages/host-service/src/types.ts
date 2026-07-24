@@ -132,6 +132,10 @@ export interface SessionAuthority {
 }
 export interface SessionDiscovery {
 	list(): Promise<SessionRecord[]>;
+	/** Whether the most recent successful list proved the inventory complete. */
+	inventoryComplete?(): boolean;
+	/** Authoritative total for the most recent successful list, including omitted rows. */
+	inventoryTotalCount?(): number;
 	/** Load the bounded transcript snapshot for one lazily discovered session. */
 	load?(session: SessionRecord): Promise<SessionRecord>;
 	/** Read one bounded chronological page backward from the authoritative JSONL file. */
@@ -174,7 +178,10 @@ export interface AppserverUsageAuthority {
 }
 export interface AppserverTranscriptSearchAuthority {
 	initialize(): Promise<void>;
-	reconcile(records: readonly SessionRecord[]): Promise<TranscriptSearchIndexStatus>;
+	reconcile(
+		records: readonly SessionRecord[],
+		options?: { readonly pruneMissing?: boolean },
+	): Promise<TranscriptSearchIndexStatus>;
 	search(
 		args: TranscriptSearchArguments,
 		signal: AbortSignal,
@@ -227,6 +234,8 @@ export interface AppserverOptions {
 	hostIdPath?: string;
 	/** Private latest-outcome ledger path. Defaults beside the persistent host identity unless hostId is explicit. */
 	attentionOutcomePath?: string;
+	/** Private profile-local ledger of exact sessions created through T4. */
+	sessionOwnershipPath?: string;
 	epoch?: string;
 	clock?: Clock;
 	discovery?: SessionDiscovery;
@@ -259,7 +268,7 @@ export interface AppserverOptions {
 	/** Bounded profile environment applied only to per-session OMP children. */
 	rpcChildEnvironment?: Readonly<Record<string, string>>;
 	/** Exact child RPC command dialect; official OMP intentionally exposes a narrower command set. */
-	rpcDialect?: "fork" | "official-17.0.6";
+	rpcDialect?: "fork" | "official-17.0.9";
 	appserverVersion?: string;
 	appserverBuild?: string;
 	supportedFeatures?: readonly string[];

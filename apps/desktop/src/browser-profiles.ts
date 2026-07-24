@@ -1,7 +1,7 @@
 import ElectronStore from "electron-store";
 import { createHash } from "node:crypto";
 import { session as electronSession, type Session } from "electron";
-import type { BrowserProfile } from "@t4-code/protocol/browser-ipc";
+import { isBrowserOwnerSessionId, type BrowserProfile } from "@t4-code/protocol/browser-ipc";
 
 export const BROWSER_ISOLATED_PROFILE_ID = "isolated-session" as const;
 export const BROWSER_ISOLATED_PARTITION = "browser-isolated-session" as const;
@@ -107,7 +107,7 @@ function profilePartition(profileId: string): string {
 }
 
 function isolatedPartition(ownerSessionId: string): string {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(ownerSessionId)) {
+  if (!isBrowserOwnerSessionId(ownerSessionId)) {
     throw new Error("an owning OMP session is required for isolated browser state");
   }
   // Partition names are observable in Electron diagnostics. Hash the durable

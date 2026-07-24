@@ -16,6 +16,7 @@ import type { SessionDiscovery, SessionRecord } from "../src/types.ts";
 import { RawUdsWebSocket } from "./raw-uds-client.ts";
 
 const host = hostId("transcript-page-server-test");
+const authorityHost = hostId("transcript-page-authority");
 const session = sessionId("cold-session");
 const stamp = "2026-07-20T00:00:00.000Z";
 
@@ -47,7 +48,7 @@ class PagedDiscovery implements SessionDiscovery {
 				{
 					id: entryId("tail-entry"),
 					parentId: null,
-					hostId: host,
+					hostId: authorityHost,
 					sessionId: session,
 					kind: "message",
 					timestamp: stamp,
@@ -101,6 +102,7 @@ test("advertises and routes cold transcript pages before whole-file loading", as
 		});
 		const response = (await responseFor(client, "page-1")) as Extract<ServerFrame, { type: "response" }>;
 		expect(response).toMatchObject({ ok: true, result: { hasMore: false, generation: "generation-1" } });
+		expect((response.result as TranscriptPageResult).entries[0]).toMatchObject({ hostId: host, sessionId: session });
 		expect(discovery.pageCalls).toEqual([{ limit: 17, maxBytes: 4096 }]);
 		expect(discovery.loadCalls).toBe(0);
 	} finally {

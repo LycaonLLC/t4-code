@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { hostId, sessionId } from "@t4-code/host-wire";
+import { entryId, hostId, projectId, sessionId } from "@t4-code/host-wire";
 import { OmpAuthorityBridgeClient, type OmpAuthorityBridgeChild } from "../src/omp-authority-bridge-client.ts";
 import {
 	decodeOmpAuthorityBridgeClientFrame,
@@ -7,6 +7,7 @@ import {
 	OMP_AUTHORITY_BRIDGE_MAX_LINE_BYTES,
 	OMP_AUTHORITY_BRIDGE_PROTOCOL,
 } from "../src/omp-authority-bridge-contract.ts";
+import type { SessionRecord } from "../src/types.ts";
 
 class AsyncQueue implements AsyncIterable<string> {
 	readonly #values: string[] = [];
@@ -63,6 +64,19 @@ const ready = {
 	ompBuild: "bridge-test",
 };
 
+function listedSession(id: string): SessionRecord {
+	return {
+		sessionId: sessionId(id),
+		path: `/tmp/${id}.jsonl`,
+		cwd: "/tmp",
+		projectId: projectId("listed-project"),
+		title: id,
+		updatedAt: "2026-07-23T00:00:00.000Z",
+		status: "idle",
+		entries: [],
+	};
+}
+
 describe("OMP authority bridge client", () => {
 	test("waits for ready, exposes only advertised authorities, and routes responses", async () => {
 		const child = new FakeBridgeChild();
@@ -80,6 +94,133 @@ describe("OMP authority bridge client", () => {
 		expect(request).toMatchObject({ type: "request", method: "session.list", params: {} });
 		child.server({ v: OMP_AUTHORITY_BRIDGE_PROTOCOL, type: "response", id: request.id, ok: true, result: [] });
 		expect(await listed).toEqual([]);
+		await client.stop();
+	});
+
+	test("assembles every bounded page from one bridge inventory snapshot", async () => {
+		const child = new FakeBridgeChild();
+		const client = new OmpAuthorityBridgeClient({ executable: "/opt/omp" }, () => child);
+		const started = client.start();
+		child.server(ready);
+		await started;
+		const authorities = client.createAuthorities();
+		const listed = authorities.sessionAuthority.list();
+		await Bun.sleep(0);
+		const first = child.request(0);
+		expect(first).toMatchObject({ type: "request", method: "session.list", params: {} });
+		child.server({
+			v: OMP_AUTHORITY_BRIDGE_PROTOCOL,
+			type: "response",
+			id: first.id,
+			ok: true,
+			result: {
+				sessions: [listedSession("first")],
+				nextCursor: "snapshot-cursor-1",
+				complete: true,
+				totalCount: 3,
+			},
+		});
+		await Bun.sleep(0);
+		const second = child.request(1);
+		expect(second).toMatchObject({
+			type: "request",
+			method: "session.list",
+			params: { cursor: "snapshot-cursor-1" },
+		});
+		child.server({
+			v: OMP_AUTHORITY_BRIDGE_PROTOCOL,
+			type: "response",
+			id: second.id,
+			ok: true,
+			result: {
+				sessions: [listedSession("second")],
+				nextCursor: "snapshot-cursor-2",
+				complete: true,
+				totalCount: 3,
+			},
+		});
+		await Bun.sleep(0);
+		const third = child.request(2);
+		expect(third).toMatchObject({
+			type: "request",
+			method: "session.list",
+			params: { cursor: "snapshot-cursor-2" },
+		});
+		child.server({
+			v: OMP_AUTHORITY_BRIDGE_PROTOCOL,
+			type: "response",
+			id: third.id,
+			ok: true,
+			result: { sessions: [listedSession("third")], complete: true, totalCount: 3 },
+		});
+		expect((await listed).map(record => String(record.sessionId))).toEqual(["first", "second", "third"]);
+		expect(authorities.discovery.inventoryComplete?.()).toBe(true);
+		expect(authorities.discovery.inventoryTotalCount?.()).toBe(3);
+		await client.stop();
+	});
+
+	test("preserves partial-inventory metadata for safe host reconciliation", async () => {
+		const child = new FakeBridgeChild();
+		const client = new OmpAuthorityBridgeClient({ executable: "/opt/omp" }, () => child);
+		const started = client.start();
+		child.server(ready);
+		await started;
+		const authorities = client.createAuthorities();
+		const listed = authorities.sessionAuthority.list();
+		await Bun.sleep(0);
+		const request = child.request();
+		child.server({
+			v: OMP_AUTHORITY_BRIDGE_PROTOCOL,
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: {
+				sessions: [listedSession("visible")],
+				complete: false,
+				totalCount: 2,
+			},
+		});
+		expect((await listed).map(record => String(record.sessionId))).toEqual(["visible"]);
+		expect(authorities.discovery.inventoryComplete?.()).toBe(false);
+		expect(authorities.discovery.inventoryTotalCount?.()).toBe(2);
+		await client.stop();
+	});
+
+	test("keeps session inventory sparse when the bridge cache contains loaded transcripts", async () => {
+		const child = new FakeBridgeChild();
+		const client = new OmpAuthorityBridgeClient({ executable: "/opt/omp" }, () => child);
+		const started = client.start();
+		child.server(ready);
+		await started;
+		const listed = client.createAuthorities().sessionAuthority.list();
+		await Bun.sleep(0);
+		const request = child.request();
+		const session: SessionRecord = {
+			sessionId: sessionId("loaded-session"),
+			path: "/tmp/loaded-session.jsonl",
+			cwd: "/tmp",
+			projectId: projectId("loaded-project"),
+			title: "Loaded session",
+			updatedAt: "2026-07-22T00:00:00.000Z",
+			status: "idle",
+			entries: [{
+				id: entryId("loaded-entry"),
+				parentId: null,
+				hostId: hostId("host-test"),
+				sessionId: sessionId("loaded-session"),
+				kind: "message",
+				timestamp: "2026-07-22T00:00:00.000Z",
+				data: { text: "x".repeat(600_000) },
+			}],
+		};
+		child.server({
+			v: OMP_AUTHORITY_BRIDGE_PROTOCOL,
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: [session],
+		});
+		expect(await listed).toEqual([{ ...session, entriesLoaded: false, entries: [] }]);
 		await client.stop();
 	});
 
@@ -133,6 +274,71 @@ describe("OMP authority bridge client", () => {
 		controller.abort();
 		await expect(pending).rejects.toMatchObject({ code: "ABORTED", message: "operation was cancelled" });
 		expect(child.request(1)).toEqual({ v: OMP_AUTHORITY_BRIDGE_PROTOCOL, type: "cancel", id: request.id });
+		await client.stop();
+	});
+
+	test("sends sparse session references to authority methods after a transcript is loaded", async () => {
+		const child = new FakeBridgeChild();
+		const client = new OmpAuthorityBridgeClient({ executable: "/opt/omp" }, () => child);
+		const started = client.start();
+		child.server({
+			...ready,
+			methods: [
+				...ready.methods,
+				"session.archive",
+				"session.restore",
+				"session.delete",
+				"discovery.load",
+				"discovery.page",
+				"lock.check",
+			],
+		});
+		await started;
+		const authorities = client.createAuthorities();
+		const session: SessionRecord = {
+			sessionId: sessionId("large-session"),
+			path: "/tmp/large-session.jsonl",
+			cwd: "/tmp",
+			projectId: projectId("large-project"),
+			title: "Large session",
+			updatedAt: "2026-07-22T00:00:00.000Z",
+			status: "idle",
+			entries: [{
+				id: entryId("large-entry"),
+				parentId: null,
+				hostId: hostId("host-test"),
+				sessionId: sessionId("large-session"),
+				kind: "message",
+				timestamp: "2026-07-22T00:00:00.000Z",
+				data: { text: "x".repeat(300_000) },
+			}],
+		};
+		const calls = [
+			{ method: "lock.status", pending: authorities.lockStatus(session), result: "missing" },
+			{ method: "lock.check", pending: Promise.resolve(authorities.lockCheck(session)), result: null },
+			{ method: "session.archive", pending: authorities.sessionAuthority.archive(session, "2026-07-22T00:00:00.000Z"), result: null },
+			{ method: "session.restore", pending: authorities.sessionAuthority.restore(session), result: null },
+			{ method: "session.delete", pending: authorities.sessionAuthority.delete(session), result: null },
+			{ method: "discovery.load", pending: authorities.discovery.load!(session), result: session },
+			{ method: "discovery.page", pending: authorities.discovery.page!(session, { limit: 10 }), result: { entries: [], hasMore: false } },
+		] as const;
+		for (let index = 0; index < calls.length; index += 1) {
+			await Bun.sleep(0);
+			const request = child.request(index);
+			expect(request).toMatchObject({
+				type: "request",
+				method: calls[index]!.method,
+				params: { session: { entries: [], entriesLoaded: false } },
+			});
+			child.server({
+				v: OMP_AUTHORITY_BRIDGE_PROTOCOL,
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: calls[index]!.result,
+			});
+			await calls[index]!.pending;
+		}
 		await client.stop();
 	});
 

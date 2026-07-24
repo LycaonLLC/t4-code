@@ -1,6 +1,6 @@
 {
   "name": "@t4-code/client",
-  "version": "0.1.30",
+  "version": "0.1.31",
   "private": true,
   "type": "module",
   "exports": {
@@ -17,6 +17,7 @@
   "devDependencies": {
     "@t4-code/fixture-server": "workspace:*",
     "@t4-code/host-wire": "workspace:*",
+    "@t4-code/t4-api-client": "workspace:*",
     "@types/node": "catalog:",
     "@types/ws": "8.5.13",
     "vite-plus": "catalog:",

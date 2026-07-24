@@ -26,6 +26,7 @@ describe("T4 host daemon CLI", () => {
     expect(hostDaemonPaths(config)).toMatchObject({
       profileStateRoot: expect.stringContaining("/home/test/.t4-code/host/profiles/"),
       hostIdPath: expect.stringContaining("/host-id"),
+      sessionOwnershipPath: expect.stringContaining("/owned-sessions.json"),
       transcriptSearchPath: expect.stringContaining("/transcript-search.sqlite"),
     });
   });
@@ -173,8 +174,9 @@ describe("T4 host daemon CLI", () => {
     expect(captured).toMatchObject({
       ompVersion: OFFICIAL_OMP_VERSION,
       ompBuild: OFFICIAL_OMP_BUILD,
-      rpcDialect: "official-17.0.6",
+      rpcDialect: "official-17.0.9",
       claimLocklessSessions: true,
+      sessionOwnershipPath: expect.stringContaining("/owned-sessions.json"),
     });
     const operations = captured?.operationsAuthority as {
       catalogGet?: () => Promise<Record<string, unknown>>;
@@ -184,7 +186,9 @@ describe("T4 host daemon CLI", () => {
     });
     const catalog = await operations.catalogGet?.();
     if (!catalog) throw new Error("official catalog missing");
-    const commandNames = (catalog.items as Array<{ name: string }>).map(item => item.name);
+    const officialItems = catalog.items as Array<{ kind: string; name: string }>;
+    const commandNames = officialItems.map(item => item.name);
+    expect(officialItems.every(item => item.kind === "command")).toBe(true);
     expect(commandNames).toContain("session.model.set");
     expect(commandNames).not.toContain("session.fast.set");
     expect(commandNames).not.toContain("session.retry");

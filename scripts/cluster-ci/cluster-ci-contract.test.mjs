@@ -253,21 +253,13 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   assert.deepEqual(coreCommands, [
     'export PATH="$PWD/.ci:$PATH"',
     "corepack enable",
-    "pnpm check:release && pnpm check:provenance && pnpm lint && pnpm --filter '!@t4-code/flutter' -r typecheck",
-    "VP_RUN_CONCURRENCY_LIMIT=1 pnpm --filter '!@t4-code/flutter' -r test",
-    "pnpm --filter '!@t4-code/flutter' -r build",
+    "pnpm check",
+    "VP_RUN_CONCURRENCY_LIMIT=1 pnpm test",
+    "pnpm build",
     "pnpm exec playwright install --with-deps chromium",
     "pnpm test:e2e",
     "pnpm test:packaging",
   ]);
-  const unfilteredSdkCommand = /(?:^|\s)pnpm(?:\s+-r)?\s+(?:check|typecheck|test|build)(?:\s|$)/u;
-  for (const command of coreCommands) {
-    assert.doesNotMatch(
-      command,
-      unfilteredSdkCommand,
-      `pipeline 38:64 reproduced unfiltered core workspace traversal as "Failed to find executable flutter": ${command}`,
-    );
-  }
   assert.deepEqual(steps["legacy-authority-build"].depends_on, [
     "legacy-authority-source",
     "bun-runtime",
@@ -305,14 +297,44 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   assert.deepEqual(steps["legacy-bridge-continuity"].depends_on, ["legacy-authority-build"]);
   assert.ok(steps["legacy-bridge-continuity"].commands.includes("pnpm test:legacy-bridge-continuity"));
   assert.equal(steps["legacy-bridge-continuity"].environment.T4_OMP_SOURCE_DIR, ".continuity/omp");
+  assert.deepEqual(steps["current-authority-build"].depends_on, [
+    "current-authority-source",
+    "bun-runtime",
+  ]);
+  assert.equal(
+    steps["current-authority-build"].environment.CARGO_TARGET_DIR,
+    "/tmp/t4-current-authority-target",
+  );
+  assert.ok(
+    steps["current-authority-build"].commands.includes(
+      "(cd .current-continuity/omp && bun test packages/coding-agent/test/appserver-bridge.test.ts packages/coding-agent/test/appserver-session-lifecycle.test.ts)",
+    ),
+  );
+  assert.deepEqual(steps["current-bridge-continuity"].depends_on, [
+    "current-authority-build",
+  ]);
+  assert.equal(
+    steps["current-bridge-continuity"].environment.T4_CURRENT_OMP_SOURCE_DIR,
+    ".current-continuity/omp",
+  );
+  assert.ok(
+    steps["current-bridge-continuity"].commands.includes(
+      "pnpm --filter @t4-code/host-service verify:current-omp-bridge",
+    ),
+  );
+  assert.equal(steps["current-bridge-continuity"].commands[0], 'export PATH="$PWD/.ci:$PATH"');
+  assert.deepEqual(steps["android-debug"].depends_on, [
+    "legacy-bridge-continuity",
+    "current-bridge-continuity",
+  ]);
   assert.ok(
     steps["android-debug"].commands.includes("pnpm --filter @t4-code/mobile check:android:debug"),
   );
   assert.ok(steps["cluster-ci-contracts"].commands.includes("pnpm test:cluster:ci"));
   assert.deepEqual(steps["cluster-operator-tests"].commands, [
-    "GOMAXPROCS=1 GOFLAGS=-p=1 go test ./api/... ./controllers/... ./cmd/...",
+    "GOMAXPROCS=1 GOFLAGS='-mod=readonly -p=1' go test ./api/... ./controllers/... ./cmd/...",
     "mkdir -p ../../artifacts/cluster-proof",
-    "CGO_ENABLED=0 GOMAXPROCS=1 GOFLAGS=-p=1 go test -c ./charttests -o ../../artifacts/cluster-proof/chart-contract.test",
+    "CGO_ENABLED=0 GOMAXPROCS=1 GOFLAGS='-mod=readonly -p=1' go test -c ./charttests -o ../../artifacts/cluster-proof/chart-contract.test",
   ]);
   assert.equal(
     steps["cluster-operator-tests"].backend_options.kubernetes.resources.limits.memory,

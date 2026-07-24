@@ -26,6 +26,7 @@ export type SessionControlState =
       readonly transcript: ObserverTranscript;
     }
   | { readonly mode: "reconciling"; readonly transcript: ObserverTranscript }
+  | { readonly mode: "unverified"; readonly transcript: ObserverTranscript }
   | { readonly mode: "unknown" };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -34,6 +35,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const OBSERVER_KEYS: Record<string, true> = { mode: true, lockStatus: true, transcript: true };
 const RECONCILING_KEYS: Record<string, true> = { mode: true, transcript: true };
+const UNVERIFIED_KEYS: Record<string, true> = { mode: true, transcript: true };
 
 /**
  * Strict reader for `liveState.sessionControl`. Only a truly absent
@@ -67,6 +69,14 @@ export function readSessionControl(ref: SessionRef | undefined): SessionControlS
     const { transcript } = raw;
     if (transcript !== "live" && transcript !== "snapshot") return { mode: "unknown" };
     return { mode: "reconciling", transcript };
+  }
+  if (raw.mode === "unverified") {
+    if (Object.keys(raw).some((key) => UNVERIFIED_KEYS[key] !== true)) {
+      return { mode: "unknown" };
+    }
+    const { transcript } = raw;
+    if (transcript !== "live" && transcript !== "snapshot") return { mode: "unknown" };
+    return { mode: "unverified", transcript };
   }
   return { mode: "unknown" };
 }
@@ -204,6 +214,23 @@ export function presentSessionControl(state: SessionControlState): SessionContro
       announcement: "Taking over this session. Input returns in a moment.",
     };
   }
+  if (state.mode === "unverified") {
+    return {
+      railLabel: "Read-only · use t4-omp",
+      bannerTitle: "Read-only terminal session",
+      bannerDetail:
+        "This session did not publish a T4-compatible handoff signal. Keep using it in the terminal if it is still running. Start future terminal sessions with t4-omp to move them safely into T4 Code.",
+      bannerBusy: false,
+      composerReason:
+        "This session has no T4-compatible handoff signal. Start future terminal sessions with t4-omp.",
+      cancelReason: "Only the terminal process that started this session can stop it.",
+      controlReason: "This session is read-only because T4 cannot verify its writer.",
+      slashReason: "Read-only terminal session",
+      managementReason:
+        "T4 cannot safely manage this session because its terminal writer did not publish a compatible handoff signal.",
+      announcement: "Read-only terminal session. Use t4-omp for future terminal handoff.",
+    };
+  }
   return {
     ...UNCLEAR_PRESENTATION,
     bannerDetail: UNCLEAR_DETAIL,
@@ -218,10 +245,11 @@ export function presentSessionControl(state: SessionControlState): SessionContro
  * quiet lock reads as waiting, and a malformed lock or an unrecognized
  * shape stays an unclear read-only state that never names an owner.
  */
-export type SessionControlDisplayKind = "observer" | "suspect" | "reconciling" | "unclear";
+export type SessionControlDisplayKind = "observer" | "suspect" | "reconciling" | "unverified" | "unclear";
 
 export function sessionControlDisplayKind(state: SessionControlState): SessionControlDisplayKind {
   if (state.mode === "reconciling") return "reconciling";
+  if (state.mode === "unverified") return "unverified";
   if (state.mode === "observer") {
     if (state.lockStatus === "live") return "observer";
     if (state.lockStatus === "suspect") return "suspect";
@@ -236,6 +264,7 @@ const DISPLAY_KIND_STATE: Record<SessionControlDisplayKind, SessionControlState>
   observer: { mode: "observer", lockStatus: "live", transcript: "live" },
   suspect: { mode: "observer", lockStatus: "suspect", transcript: "live" },
   reconciling: { mode: "reconciling", transcript: "live" },
+  unverified: { mode: "unverified", transcript: "live" },
   unclear: { mode: "unknown" },
 };
 

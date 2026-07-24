@@ -83,8 +83,8 @@ import {
   terminateLiveSession,
 } from "../features/session-runtime/session-management.ts";
 import { resolveSessionManagementNavigation } from "../features/session-runtime/session-navigation.ts";
-import { presentSessionControlKind } from "../features/session-runtime/session-observer.ts";
-import { desktopRuntime, useDesktopRuntimeSnapshot } from "../platform/desktop-runtime.ts";
+import { presentSessionState } from "../features/session-runtime/session-state.ts";
+import { desktopRuntime } from "../platform/desktop-runtime.ts";
 import {
   deriveWorkspaceData,
   requiresProfileChoiceForCreate,
@@ -92,19 +92,12 @@ import {
   resolveLiveProjectCreateTargets,
   resolveLiveSession,
 } from "../platform/live-workspace.ts";
+import { useWorkspaceRuntimeSnapshot } from "../state/shell-data.ts";
 import { useWorkspace, workspaceStore } from "../state/store-instance.ts";
 import { SessionListTabs } from "./SessionListTabs.tsx";
 
 export function describeSessionState(session: WorkspaceSession): string {
-  if (session.freshness === "offline") return "Offline";
-  if (session.freshness === "cached") return "Cached";
-  // Owner kind is never proven across the wire, so labels stay generic —
-  // and only a confirmed live lock reads "Active elsewhere".
-  if (session.control !== undefined) return presentSessionControlKind(session.control).railLabel;
-  if (session.status !== null) return "";
-  if (session.lifecycle === "idle") return "Idle";
-  if (session.lifecycle === "closed") return "Stopped";
-  return "Status unknown";
+  return presentSessionState(session).label;
 }
 
 type SessionDialog = "rename" | "terminate" | "delete" | null;
@@ -115,6 +108,7 @@ function SessionRowItem({
   active,
   index,
   nowMs,
+  runtimeSnapshot,
   onAnnounce,
   contextLabel,
   manual,
@@ -127,6 +121,7 @@ function SessionRowItem({
   active: boolean;
   index: number;
   nowMs: number;
+  runtimeSnapshot: ReturnType<typeof useWorkspaceRuntimeSnapshot>;
   onAnnounce: (message: string) => void;
   contextLabel?: string;
   manual?: boolean;
@@ -136,12 +131,12 @@ function SessionRowItem({
   onDrop?: (sourceId: string) => void;
 }) {
   const navigate = useNavigate();
-  const snapshot = useDesktopRuntimeSnapshot();
   const controller = desktopRuntime();
   const { session } = row;
   const pinned = useWorkspace((state) => state.pinnedSessionIds[session.id] === true);
-  const stateLabel = describeSessionState(session);
-  const ariaState = stateLabel !== "" ? stateLabel : (session.status ?? "Status unknown");
+  const statePresentation = presentSessionState(session);
+  const stateLabel = statePresentation.label;
+  const ariaState = stateLabel;
   const [menuOpen, setMenuOpen] = useState(false);
   const [dialog, setDialog] = useState<SessionDialog>(null);
   const [renameValue, setRenameValue] = useState(session.title);
@@ -149,7 +144,8 @@ function SessionRowItem({
   const [pending, setPending] = useState<SessionAction | null>(null);
   const pendingRef = useRef<SessionAction | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const address = snapshot === null ? null : resolveLiveSession(snapshot, session.id);
+  const address =
+    runtimeSnapshot === null ? null : resolveLiveSession(runtimeSnapshot, session.id);
   const archived = session.archivedAt !== undefined;
 
   const support = (
@@ -160,9 +156,9 @@ function SessionRowItem({
       | "session.restore"
       | "session.delete",
   ) =>
-    snapshot === null || address === null
+    runtimeSnapshot === null || address === null
       ? { supported: false, reason: "Connect to this host to manage the session" }
-      : managementCommandSupport(snapshot, address, command);
+      : managementCommandSupport(runtimeSnapshot, address, command);
   const renameSupport = support("session.rename");
   const terminateSupport = support("session.close");
   const archiveSupport = support("session.archive");
@@ -358,11 +354,13 @@ function SessionRowItem({
                   )}
                   <span className="shrink-0">{formatRelativeTime(session.updatedAt, nowMs)}</span>
                   <span className="min-w-0 flex-1" />
-                  {session.status !== null ? (
-                    <StatusPill className="shrink-0 gap-1" status={session.status} />
-                  ) : (
-                    stateLabel !== "" && <span className="shrink-0">{stateLabel}</span>
-                  )}
+                  <span className="flex w-28 shrink-0 justify-end overflow-hidden">
+                    {statePresentation.status !== null ? (
+                      <StatusPill className="gap-1" status={statePresentation.status} />
+                    ) : (
+                      <span className="truncate">{stateLabel}</span>
+                    )}
+                  </span>
                 </span>
               </button>
             }
@@ -752,6 +750,7 @@ function ProjectHeaderRow({
   onDrop,
   onPin,
   onAnnounce,
+  runtimeSnapshot,
   view,
 }: {
   group: ProjectGroup;
@@ -768,10 +767,10 @@ function ProjectHeaderRow({
   onDrop: (sourceId: string) => void;
   onPin: () => void;
   onAnnounce: (message: string) => void;
+  runtimeSnapshot: ReturnType<typeof useWorkspaceRuntimeSnapshot>;
   view: SessionListView;
 }) {
   const navigate = useNavigate();
-  const snapshot = useDesktopRuntimeSnapshot();
   const controller = desktopRuntime();
   const [pending, setPending] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
@@ -781,6 +780,7 @@ function ProjectHeaderRow({
   const [error, setError] = useState<string | null>(null);
   const disclosureRef = useRef<HTMLButtonElement | null>(null);
 
+  const snapshot = runtimeSnapshot;
   const address = snapshot !== null ? resolveLiveProject(snapshot, group.project.id) : null;
   const createTargets =
     snapshot === null
@@ -1535,6 +1535,7 @@ export function Rail({
   attentionCount: number;
 }) {
   const navigate = useNavigate();
+  const runtimeSnapshot = useWorkspaceRuntimeSnapshot();
   const activeSessionId = useWorkspace((state) => state.activeSessionId);
   const organization = useWorkspace((state) => state.railOrganization);
   const sort = useWorkspace((state) => state.railSort);
@@ -1579,6 +1580,9 @@ export function Rail({
     [allGroups],
   );
   const matchCount = flatEntries.length;
+  const matchCountTruncated = allGroups.some(
+    (group) => group.host.sessionInventoryTruncated === true,
+  );
 
   const moveProject = (projectId: string, direction: -1 | 1) => {
     const visibleIds = groups.map((group) => group.project.id);
@@ -1667,7 +1671,17 @@ export function Rail({
       <div className="px-1.5 pb-1.5">
         <div className="flex h-8 items-center gap-1">
           <h2 className="font-medium text-foreground text-xs">Sessions</h2>
-          <span className="ml-auto text-[10px] text-muted-foreground">{matchCount} matches</span>
+          <span
+            className="ml-auto text-[10px] text-muted-foreground"
+            title={
+              matchCountTruncated
+                ? "The host has more sessions than this bounded view currently shows."
+                : undefined
+            }
+          >
+            {matchCount}
+            {matchCountTruncated ? "+" : ""} matches
+          </span>
           <RailOptionsMenu
             hiddenGroups={allGroups.filter((group) => hiddenProjectIds.has(group.project.id))}
             organization={organization}
@@ -1797,6 +1811,7 @@ export function Rail({
                 nowMs={nowMs}
                 onAnnounce={setAnnouncement}
                 row={row}
+                runtimeSnapshot={runtimeSnapshot}
               />
             ))}
           </div>
@@ -1837,6 +1852,7 @@ export function Rail({
                   )
                 }
                 row={row}
+                runtimeSnapshot={runtimeSnapshot}
               />
             ))}
           </div>
@@ -1885,6 +1901,7 @@ export function Rail({
                   );
                 }}
                 pinned={pinnedProjectIds[group.project.id] === true}
+                runtimeSnapshot={runtimeSnapshot}
                 shortcutHidden={hiddenProjectIds.has(group.project.id)}
                 view={view}
               />
@@ -1907,6 +1924,7 @@ export function Rail({
                         dropSession(group.project.id, sessionIds, sourceId, row.session.id)
                       }
                       row={row}
+                      runtimeSnapshot={runtimeSnapshot}
                     />
                   ))}
                   {group.sessions.length > limit && (

@@ -18,7 +18,10 @@ import { handoffTranscriptSearchQuery } from "../features/transcript-search/inde
 import { composerStore } from "../features/composer/composer-store.ts";
 import { TRANSCRIPT_SEARCH_ROUTE } from "../features/transcript-search/route.ts";
 import { getInspectorStore } from "../features/panes/inspector-store.ts";
-import { startDesktopRuntime, useDesktopRuntimeSnapshot } from "../platform/desktop-runtime.ts";
+import {
+  startDesktopRuntime,
+  useDesktopRuntimeSelector,
+} from "../platform/desktop-runtime.ts";
 import {
   ATTENTION_INBOX_FIXTURES,
   buildAttentionInboxViewModel,
@@ -34,6 +37,8 @@ import { CollapsedRail, Rail } from "./Rail.tsx";
 import { ResizeHandle } from "./ResizeHandle.tsx";
 import { Titlebar } from "./Titlebar.tsx";
 import { resolveRailTogglePresentation } from "./rail-toggle.ts";
+
+const EXPANDED_RAIL_SESSION_LIMIT = 100;
 
 export function AppShell() {
   const navigate = useNavigate();
@@ -53,6 +58,7 @@ export function AppShell() {
   const projectExpandedById = useWorkspace((state) => state.projectExpandedById);
   const hiddenProjectIds = useWorkspace((state) => state.hiddenProjectIds);
   const projectAliasById = useWorkspace((state) => state.projectAliasById);
+  const activeSessionId = useWorkspace((state) => state.activeSessionId);
   const lastVisitedAtBySessionId = useWorkspace((state) => state.lastVisitedAtBySessionId);
   const lastSeenAttentionOutcomeBySessionKey = useWorkspace(
     (state) => state.lastSeenAttentionOutcomeBySessionKey,
@@ -61,7 +67,7 @@ export function AppShell() {
   const [nowMs] = useState(() => Date.now());
 
   const shellData = useShellData();
-  const runtimeSnapshot = useDesktopRuntimeSnapshot();
+  const defaultProjectsExpanded = shellData.sessions.length < EXPANDED_RAIL_SESSION_LIMIT;
   const currentGroups = useMemo(
     () =>
       buildProjectGroups(
@@ -74,6 +80,8 @@ export function AppShell() {
           filter: railFilter,
           query: railQuery,
           sort: railSort,
+          defaultExpanded: defaultProjectsExpanded,
+          activeSessionId,
           projectManualOrder,
           sessionManualOrderByProjectId,
           projectAliasById,
@@ -82,6 +90,8 @@ export function AppShell() {
     [
       shellData,
       projectExpandedById,
+      activeSessionId,
+      defaultProjectsExpanded,
       lastVisitedAtBySessionId,
       hiddenProjectIds,
       projectAliasById,
@@ -104,6 +114,8 @@ export function AppShell() {
           filter: railFilter,
           query: railQuery,
           sort: railSort,
+          defaultExpanded: defaultProjectsExpanded,
+          activeSessionId,
           projectManualOrder,
           sessionManualOrderByProjectId,
           projectAliasById,
@@ -112,6 +124,8 @@ export function AppShell() {
     [
       shellData,
       projectExpandedById,
+      activeSessionId,
+      defaultProjectsExpanded,
       lastVisitedAtBySessionId,
       railFilter,
       railQuery,
@@ -129,11 +143,20 @@ export function AppShell() {
         lastVisitedAtBySessionId,
         "current",
         {},
-        { sort: railSort, projectManualOrder, sessionManualOrderByProjectId, projectAliasById },
+        {
+          sort: railSort,
+          defaultExpanded: defaultProjectsExpanded,
+          activeSessionId,
+          projectManualOrder,
+          sessionManualOrderByProjectId,
+          projectAliasById,
+        },
       ),
     [
       shellData,
       projectExpandedById,
+      activeSessionId,
+      defaultProjectsExpanded,
       lastVisitedAtBySessionId,
       projectAliasById,
       railSort,
@@ -149,11 +172,20 @@ export function AppShell() {
         lastVisitedAtBySessionId,
         "archived",
         {},
-        { sort: railSort, projectManualOrder, sessionManualOrderByProjectId, projectAliasById },
+        {
+          sort: railSort,
+          defaultExpanded: defaultProjectsExpanded,
+          activeSessionId,
+          projectManualOrder,
+          sessionManualOrderByProjectId,
+          projectAliasById,
+        },
       ),
     [
       shellData,
       projectExpandedById,
+      activeSessionId,
+      defaultProjectsExpanded,
       lastVisitedAtBySessionId,
       railSort,
       projectManualOrder,
@@ -170,15 +202,15 @@ export function AppShell() {
     (session) => session.archivedAt === undefined,
   ).length;
   const archivedCount = shellData.sessions.length - currentCount;
-  const attentionCount = useMemo(
-    () =>
-      runtimeSnapshot === null
-        ? buildAttentionInboxViewModel(ATTENTION_INBOX_FIXTURES.sample.items).urgentCount
-        : deriveAttentionInbox(runtimeSnapshot, {
-            seenOutcomeIdsBySessionKey: lastSeenAttentionOutcomeBySessionKey,
-          }).urgentCount,
-    [lastSeenAttentionOutcomeBySessionKey, runtimeSnapshot],
+  const liveAttentionCount = useDesktopRuntimeSelector(
+    (snapshot) =>
+      deriveAttentionInbox(snapshot, {
+        seenOutcomeIdsBySessionKey: lastSeenAttentionOutcomeBySessionKey,
+      }).urgentCount,
   );
+  const attentionCount =
+    liveAttentionCount ??
+    buildAttentionInboxViewModel(ATTENTION_INBOX_FIXTURES.sample.items).urgentCount;
   const hiddenProjectIdSet = useMemo(
     () => new Set(Object.keys(hiddenProjectIds).filter((id) => hiddenProjectIds[id] === true)),
     [hiddenProjectIds],
@@ -202,6 +234,9 @@ export function AppShell() {
               state.sessionListView,
               state.hiddenProjectIds,
               {
+                activeSessionId: state.activeSessionId,
+                defaultExpanded:
+                  getShellData().sessions.length < EXPANDED_RAIL_SESSION_LIMIT,
                 filter: state.railFilter,
                 query: state.railQuery,
                 sort: state.railSort,

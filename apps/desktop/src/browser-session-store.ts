@@ -1,18 +1,21 @@
 import ElectronStore from "electron-store";
-import type { BrowserProfile, SurfaceHandle, SurfaceId } from "@t4-code/protocol/browser-ipc";
+import {
+  isBrowserOwnerSessionId,
+  type BrowserProfile,
+  type SurfaceHandle,
+  type SurfaceId,
+} from "@t4-code/protocol/browser-ipc";
 
 export const BROWSER_SESSION_STORE_VERSION = 2 as const;
 export const MAX_BROWSER_SESSIONS = 64;
 const MAX_SURFACE_ID_BYTES = 64;
 const MAX_SURFACE_HANDLE_BYTES = 32;
-const MAX_SESSION_ID_BYTES = 128;
 const MAX_URL_BYTES = 8_192;
 const MAX_ORDER = 100_000;
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 5;
 const SURFACE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const SURFACE_HANDLE_PATTERN = /^surface:[1-9][0-9]{0,8}$/u;
-const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const SENSITIVE_QUERY_KEY = /(?:token|secret|password|passwd|credential|authorization|auth|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|session|cookie|code)/iu;
 
 export interface BrowserSessionMetadata {
@@ -96,8 +99,7 @@ function safeSurfaceHandle(value: unknown): SurfaceHandle | undefined {
 }
 
 function safeOwnerSessionId(value: unknown): string | undefined {
-  const result = boundedString(value, MAX_SESSION_ID_BYTES);
-  return result !== undefined && SESSION_ID_PATTERN.test(result) ? result : undefined;
+  return isBrowserOwnerSessionId(value) ? value : undefined;
 }
 
 function safeProfile(value: unknown): BrowserProfile | undefined {

@@ -1,5 +1,5 @@
 import { app, type DownloadItem, type Session, type WebContents } from "electron";
-import { mkdir, link, readdir, unlink } from "node:fs/promises";
+import { link, readdir, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { BrowserDownload, BrowserEvent, SurfaceId } from "@t4-code/protocol/browser-ipc";
 
@@ -11,18 +11,6 @@ export interface BrowserDownloadControllerOptions {
   readonly emit: (event: BrowserEvent) => void;
   /** Override Electron's Downloads directory in tests or an embedding host. */
   readonly downloadsPath?: string;
-}
-
-interface DownloadItemLike {
-  getURL(): string;
-  getSuggestedFilename(): string;
-  getMimeType?(): string;
-  getTotalBytes?(): number;
-  getReceivedBytes?(): number;
-  setSavePath(path: string): void;
-  cancel?(): void;
-  on(event: "updated", listener: (event: unknown, state: string) => void): this;
-  once(event: "done", listener: (event: unknown, state: string) => void): this;
 }
 
 interface Waiter {
@@ -150,7 +138,7 @@ export class BrowserDownloadController {
   private readonly surfaces = new Map<WebContents, AttachedSurface>();
   private readonly sessionListeners = new Map<Session, DownloadListener>();
   private readonly records = new Map<string, BrowserDownload>();
-  private readonly items = new Map<string, DownloadItemLike>();
+  private readonly items = new Map<string, DownloadItem>();
   private readonly waiters = new Map<string, Set<Waiter>>();
   private disposed = false;
 
@@ -197,7 +185,7 @@ export class BrowserDownloadController {
     const item = this.items.get(downloadId);
     if (item === undefined) return false;
     try {
-      item.cancel?.();
+      item.cancel();
     } catch {
       // The terminal done event still performs cleanup and records failure.
     }
@@ -238,37 +226,37 @@ export class BrowserDownloadController {
       event.preventDefault();
       return;
     }
-    event.preventDefault();
-    void this.startDownload(item as unknown as DownloadItemLike, attached.surfaceId);
+    this.startDownload(item, attached.surfaceId);
   }
 
-  private async startDownload(item: DownloadItemLike, surfaceId: SurfaceId): Promise<void> {
+  private startDownload(item: DownloadItem, surfaceId: SurfaceId): void {
     const downloadId = crypto.randomUUID();
     const url = item.getURL();
-    const mimeType = item.getMimeType?.() || undefined;
-    const filename = safeDownloadFilename(item.getSuggestedFilename(), mimeType, url);
-    const totalBytes = boundedBytes(item.getTotalBytes?.());
+    const mimeType = item.getMimeType() || undefined;
+    const filename = safeDownloadFilename(item.getFilename(), mimeType, url);
+    const totalBytes = boundedBytes(item.getTotalBytes());
     const started: BrowserDownload = Object.freeze({ downloadId, surfaceId, state: "started", url, filename, ...(mimeType === undefined ? {} : { mimeType }), ...(totalBytes === undefined ? {} : { totalBytes }), receivedBytes: 0 });
     this.records.set(downloadId, started);
     this.items.set(downloadId, item);
-    this.publish(started);
     try {
-      const downloadsPath = await this.resolveDownloadsPath();
-      await mkdir(downloadsPath, { recursive: true });
+      const downloadsPath = this.resolveDownloadsPath();
       const temporaryPath = join(downloadsPath, `.t4-download-${downloadId}.part`);
+      // Electron only permits setSavePath from inside the synchronous
+      // will-download callback. Calling preventDefault cancels the item.
       item.setSavePath(temporaryPath);
       item.on("updated", (_event, state) => this.onUpdated(downloadId, state));
       item.once("done", (_event, state) => void this.onDone(downloadId, state, temporaryPath));
+      this.publish(started);
       if (this.disposed) this.cancel(downloadId);
     } catch (error) {
-      await this.failDownload(downloadId, error);
+      void this.failDownload(downloadId, error);
     }
   }
 
   private onUpdated(downloadId: string, _state: string): void {
     const current = this.records.get(downloadId);
     if (this.disposed || current === undefined || TERMINAL_STATES.has(current.state)) return;
-    const receivedBytes = boundedBytes(this.items.get(downloadId)?.getReceivedBytes?.(), current.receivedBytes ?? 0);
+    const receivedBytes = boundedBytes(this.items.get(downloadId)?.getReceivedBytes(), current.receivedBytes ?? 0);
     const next: BrowserDownload = Object.freeze({ ...current, state: "progress", ...(receivedBytes === undefined ? {} : { receivedBytes }) });
     this.records.set(downloadId, next);
     this.publish(next);
@@ -282,7 +270,7 @@ export class BrowserDownloadController {
     }
     const current = this.records.get(downloadId);
     if (current === undefined || TERMINAL_STATES.has(current.state)) return;
-    const receivedBytes = boundedBytes(this.items.get(downloadId)?.getReceivedBytes?.(), current.receivedBytes ?? 0);
+    const receivedBytes = boundedBytes(this.items.get(downloadId)?.getReceivedBytes(), current.receivedBytes ?? 0);
     if (state === "completed") {
       try {
         const savePath = await this.commitTemporaryFile(temporaryPath, current.filename);
@@ -336,7 +324,7 @@ export class BrowserDownloadController {
     }
   }
 
-  private async resolveDownloadsPath(): Promise<string> {
+  private resolveDownloadsPath(): string {
     if (this.downloadsPath !== undefined) return this.downloadsPath;
     try {
       return app.getPath("downloads");
@@ -373,7 +361,7 @@ export class BrowserDownloadController {
   }
 
   private async removeTemporaryFile(downloadId: string): Promise<void> {
-    const directory = await this.resolveDownloadsPath();
+    const directory = this.resolveDownloadsPath();
     const prefix = `.t4-download-${downloadId}.part`;
     try {
       const names = await readdir(directory);

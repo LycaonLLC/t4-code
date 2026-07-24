@@ -2,36 +2,36 @@
   "appProtocol": "omp-app/1",
   "officialRuntime": {
     "package": "omp",
-    "version": "17.0.6",
+    "version": "17.0.9",
     "sourceRepository": "https://github.com/can1357/oh-my-pi",
-    "sourceCommit": "89d6a8f6d14286f32f09ec9c8aa8af7b3451d2d6",
-    "sourceUrl": "https://github.com/can1357/oh-my-pi/commit/89d6a8f6d14286f32f09ec9c8aa8af7b3451d2d6",
-    "sourceTag": "v17.0.6",
+    "sourceCommit": "639bac596d94b5993349f3f6696176cb2bf9b5d3",
+    "sourceUrl": "https://github.com/can1357/oh-my-pi/commit/639bac596d94b5993349f3f6696176cb2bf9b5d3",
+    "sourceTag": "v17.0.9",
     "artifacts": {
       "darwin-arm64": {
         "name": "omp-darwin-arm64",
-        "size": 119425152,
-        "sha256": "d747470bcff0412e5bde7860f5dead7de15aad6b973a4b46c34f8527d9d6a4b9"
+        "size": 121901952,
+        "sha256": "dd1430ba4809a55f4d6f2f646211cee51535f9619eb6670f1bfcf7484c23b931"
       },
       "darwin-x64": {
         "name": "omp-darwin-x64",
-        "size": 124901872,
-        "sha256": "9e5b4560b61fc4373f604cba9e2cc3bdab04549e830f3d5ecd80b1f7facc86bc"
+        "size": 127378672,
+        "sha256": "b3fb6ea340d5eec33adcdae8e1e9923925599c1068c83a51fa5b3a02dd4f2c32"
       },
       "linux-arm64": {
         "name": "omp-linux-arm64",
-        "size": 149072016,
-        "sha256": "4d2f3e9948f81f4c3813b5c89e5eda4bdcd42ef22285d40cf48402ebfa15436d"
+        "size": 151496848,
+        "sha256": "c29907233107fc57ae18f81e91877431f69252ba071936b5c6672592d84cc984"
       },
       "linux-x64": {
         "name": "omp-linux-x64",
-        "size": 173901952,
-        "sha256": "27fec143aa646cae5eae9b3a0677c54d43465fc49a79b161bac739dbba244c8c"
+        "size": 176400512,
+        "sha256": "485cc301d6fdff26bab5d3ab45ab137634a73b71b2ed7a91c6c8545842ff4c09"
       },
       "win32-x64": {
         "name": "omp-windows-x64.exe",
-        "size": 152957440,
-        "sha256": "b5c7a5b008ae2342664161ed5615337501ae833a7ce825dbbf0918281dafb2d6"
+        "size": 155415040,
+        "sha256": "feeb48925791b267dc35912e26e95af4fab66e213ad8dfcfc73ff82ab2c8e84d"
       }
     }
   },
@@ -55,27 +55,27 @@
   "publishedRuntime": {
     "package": "omp",
     "version": "17.0.5",
-    "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "8476f4451ed95c5d5401785d279a93d3c659fac4",
-    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/8476f4451ed95c5d5401785d279a93d3c659fac4",
-    "sourceTag": "t4code-17.0.5-appserver-10",
+    "sourceRepository": "https://github.com/wolfiesch/oh-my-pi",
+    "sourceCommit": "fc0c391334c08ab260057756aa84bd2b07741ee7",
+    "sourceUrl": "https://github.com/wolfiesch/oh-my-pi/commit/fc0c391334c08ab260057756aa84bd2b07741ee7",
+    "sourceTag": "t4code-17.0.5-appserver-13",
     "artifacts": {
       "darwin-arm64": {
         "name": "omp-darwin-arm64",
         "size": 120893008,
-        "sha256": "f7d4438e163aabc4ca624468bf5bd4a243b5e1ab5360e84cef52abe93683ea55",
+        "sha256": "60ce5193eadc2884a4313289ff1166b6a1daae97f3a3ec66dc260ea5c5713756",
         "releaseCodeSignature": "adhoc",
         "distributionSigningBoundary": "t4-product-package"
       },
       "linux-arm64": {
         "name": "omp-linux-arm64",
         "size": 150513808,
-        "sha256": "968a939fc26329590ba53b11c9cb0eccc0e849e8988c8da9fc58c7c2fcfe8ef5"
+        "sha256": "46d29f223a7481d42b3f7219e71afe389604c2b61f7d309369397a8932837770"
       },
       "linux-x64": {
         "name": "omp-linux-x64",
-        "size": 175372416,
-        "sha256": "deb7dae793a2191746681980305ab8b5ed0480410950ca7d5e555257f4f3fb04"
+        "size": 175376512,
+        "sha256": "ef66a95a45185c35a19ed997b68f62f86de5497414f6a9b939c4f228a52471b8"
       }
     },
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
@@ -149,34 +149,39 @@
       "bounded-transcript-tail-paging",
       "thin-omp-authority-bridge",
       "bounded-authority-bridge-streams",
-      "legacy-appserver-launcher-removal"
+      "legacy-appserver-launcher-removal",
+      "sparse-authority-session-lists",
+      "atomic-xdev-mount-publication",
+      "snapshot-consistent-authority-session-paging",
+      "explicit-partial-authority-inventory",
+      "stale-session-lock-lifecycle-recovery"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },
   "verifiedRuntime": {
     "package": "omp",
     "version": "17.0.5",
-    "sourceRepository": "https://github.com/lyc-aon/oh-my-pi",
-    "sourceCommit": "8476f4451ed95c5d5401785d279a93d3c659fac4",
-    "sourceUrl": "https://github.com/lyc-aon/oh-my-pi/commit/8476f4451ed95c5d5401785d279a93d3c659fac4",
-    "sourceTag": "t4code-17.0.5-appserver-10",
+    "sourceRepository": "https://github.com/wolfiesch/oh-my-pi",
+    "sourceCommit": "fc0c391334c08ab260057756aa84bd2b07741ee7",
+    "sourceUrl": "https://github.com/wolfiesch/oh-my-pi/commit/fc0c391334c08ab260057756aa84bd2b07741ee7",
+    "sourceTag": "t4code-17.0.5-appserver-13",
     "artifacts": {
       "darwin-arm64": {
         "name": "omp-darwin-arm64",
         "size": 120893008,
-        "sha256": "f7d4438e163aabc4ca624468bf5bd4a243b5e1ab5360e84cef52abe93683ea55",
+        "sha256": "60ce5193eadc2884a4313289ff1166b6a1daae97f3a3ec66dc260ea5c5713756",
         "releaseCodeSignature": "adhoc",
         "distributionSigningBoundary": "t4-product-package"
       },
       "linux-arm64": {
         "name": "omp-linux-arm64",
         "size": 150513808,
-        "sha256": "968a939fc26329590ba53b11c9cb0eccc0e849e8988c8da9fc58c7c2fcfe8ef5"
+        "sha256": "46d29f223a7481d42b3f7219e71afe389604c2b61f7d309369397a8932837770"
       },
       "linux-x64": {
         "name": "omp-linux-x64",
-        "size": 175372416,
-        "sha256": "deb7dae793a2191746681980305ab8b5ed0480410950ca7d5e555257f4f3fb04"
+        "size": 175376512,
+        "sha256": "ef66a95a45185c35a19ed997b68f62f86de5497414f6a9b939c4f228a52471b8"
       }
     },
     "upstreamRepository": "https://github.com/can1357/oh-my-pi",
@@ -250,18 +255,23 @@
       "bounded-transcript-tail-paging",
       "thin-omp-authority-bridge",
       "bounded-authority-bridge-streams",
-      "legacy-appserver-launcher-removal"
+      "legacy-appserver-launcher-removal",
+      "sparse-authority-session-lists",
+      "atomic-xdev-mount-publication",
+      "snapshot-consistent-authority-session-paging",
+      "explicit-partial-authority-inventory",
+      "stale-session-lock-lifecycle-recovery"
     ],
     "upstreamTagContainsIntegrationPatches": false
   },
   "t4Host": {
     "wirePackage": "@t4-code/host-wire",
-    "wirePackageVersion": "0.1.30",
+    "wirePackageVersion": "0.1.31",
     "wireSchemaVersion": "0.7.0",
     "servicePackage": "@t4-code/host-service",
-    "servicePackageVersion": "0.1.30",
+    "servicePackageVersion": "0.1.31",
     "daemonPackage": "@t4-code/host-daemon",
-    "daemonPackageVersion": "0.1.30",
+    "daemonPackageVersion": "0.1.31",
     "protocol": "omp-app/1",
     "authorityBridgeProtocol": "t4-omp-authority/1",
     "sourcePaths": [
@@ -281,6 +291,6 @@
   },
   "desktop": {
     "package": "@t4-code/protocol",
-    "version": "0.1.30"
+    "version": "0.1.31"
   }
 }

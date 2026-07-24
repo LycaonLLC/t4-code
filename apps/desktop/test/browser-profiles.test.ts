@@ -78,9 +78,9 @@ describe("BrowserProfileRegistry isolated sessions", () => {
     const profiles = registry();
     const isolated = { kind: "isolated-session", profileId: "isolated-session" } as const;
 
-    const first = profiles.getSession(isolated, "workspace-session-a");
-    const sameOwner = profiles.getSession(isolated, "workspace-session-a");
-    const second = profiles.getSession(isolated, "workspace-session-b");
+    const first = profiles.getSession(isolated, "host-a/workspace-session-a");
+    const sameOwner = profiles.getSession(isolated, "host-a/workspace-session-a");
+    const second = profiles.getSession(isolated, "host-b/workspace-session-b");
 
     expect(first).toBe(sameOwner);
     expect(first).not.toBe(second);

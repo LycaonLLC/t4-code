@@ -11,12 +11,17 @@ const FORCE_ALL = [
 
 const GROUP_PATTERNS = Object.freeze({
   continuity: [
+    /^\.github\/workflows\/ci\.yml$/u,
+    /^\.woodpecker\.yml$/u,
+    /^compat\/omp-app-matrix\.json$/u,
+    /^packages\/host-service\/bin\/current-omp-bridge-proof\.ts$/u,
     /^packages\/host-service\/src\//u,
     /^packages\/host-service\/package\.json$/u,
     /^packages\/host-wire\/src\//u,
     /^packages\/host-wire\/package\.json$/u,
     /^provenance\/omp-host-migration\.json$/u,
     /^scripts\/legacy-bridge-continuity(?:\.test)?\.mjs$/u,
+    /^scripts\/ci-paths(?:\.test)?\.mjs$/u,
   ],
   cluster: [
     /^\.github\/workflows\/ci\.yml$/u,
@@ -31,7 +36,7 @@ const GROUP_PATTERNS = Object.freeze({
   official_omp_gate0: [
     /^\.github\/workflows\/ci\.yml$/u,
     /^compat\/(?:official-omp-gate0|omp-app-matrix)\.json$/u,
-    /^docs\/(?:OMP_T4_CAPABILITY_AUDIT\.md|OMP_T4_CAPABILITY_TRACKER\.csv|T4_ARCHITECTURE\.html)$/u,
+    /^docs\/(?:archive\/flutter-migration\/(?:OMP_T4_CAPABILITY_AUDIT\.md|OMP_T4_CAPABILITY_TRACKER\.csv)|T4_ARCHITECTURE\.html)$/u,
     /^packages\/host-service\/(?:bin\/official-omp-gate0\.ts|package\.json)$/u,
     /^packages\/host-service\/src\/(?:official-omp-profile-authority|rpc-child|server|types)\.ts$/u,
     /^packages\/host-daemon\/(?:bin\/official-omp-packaged-proof\.ts|package\.json|src\/cli\.ts)$/u,
@@ -49,14 +54,6 @@ const GROUP_PATTERNS = Object.freeze({
     /^apps\/(?:mobile|web)\//u,
     /^packages\/(?:client|ui)\//u,
     /^packages\/host-wire\//u,
-  ],
-  flutter: [/^apps\/flutter\//u, /^packages\/host-wire\//u],
-  flutter_android: [/^apps\/flutter\//u, /^packages\/host-wire\//u],
-  flutter_apple: [
-    /^apps\/flutter\//u,
-    /^packages\/host-(?:daemon|wire)\//u,
-    /^apps\/desktop\/build\/entitlements\.omp-runtime\.plist$/u,
-    /^scripts\/(?:package-mac|stage-omp-runtime)/u,
   ],
 });
 

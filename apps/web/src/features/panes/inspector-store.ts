@@ -339,7 +339,8 @@ export function createInspectorStore(options: CreateInspectorStoreOptions): Insp
     },
     requestDir: (path) => {
       if (!isLoadableDirectoryPath(path)) return;
-      if (get().files.childrenByPath[path] !== undefined) return;
+      const current = get().files.childrenByPath[path];
+      if (current !== undefined && current !== "error") return;
       set((state) => ({
         files: {
           ...state.files,
@@ -369,7 +370,8 @@ export function createInspectorStore(options: CreateInspectorStoreOptions): Insp
           preview === "loading" ||
           preview.kind !== "code" ||
           preview.path !== path ||
-          preview.truncated
+          preview.truncated ||
+          state.files.previewRevision === null
         )
           return state;
         const draft: FileDraft = {

@@ -5,6 +5,8 @@ import { chmod, stat as fsStat, lstat, open, readlink, realpath, rename, symlink
 import { dirname, isAbsolute, join } from "node:path";
 import {
 	type AttentionOutcome,
+	type CatalogItem,
+	catalogId,
 	COMMAND_DESCRIPTORS,
 	type CommandFrame,
 	type ConfirmationChallenge,
@@ -30,6 +32,7 @@ import {
 	parseBounded,
 	type OperationCapability,
 	projectId,
+	type ProjectId,
 	type ResultFrame,
 	requiredCapability,
 	revision as wireRevision,
@@ -41,6 +44,7 @@ import {
 	sessionId,
 	type TranscriptContextArguments,
 	type TranscriptPageArguments,
+	type TranscriptPageResult,
 	type TranscriptSearchArguments,
 	type UsageReadResult,
 	utf8ByteLength,
@@ -75,6 +79,7 @@ import {
 	unixSocketActive,
 } from "./identity.ts";
 import { ImageUploadError, ImageUploadStore } from "./image-upload-store.ts";
+import { SessionOwnershipStore } from "./session-ownership-store.ts";
 import {
 	commandFeature,
 	DesktopOperationDispatcher,
@@ -185,6 +190,7 @@ const OBSERVER_READ_COMMANDS = new Set([
 ]);
 const SUBAGENT_TRANSCRIPT_RPC_BYTES = 384 * 1024;
 const REMOTE_OUTBOUND_TRANSFORM_TIMEOUT_MS = 10_000;
+const CATALOG_OPERATION_REFRESH_TIMEOUT_MS = 750;
 const DEFAULT_USAGE_READ_TIMEOUT_MS = 15_000;
 const PENDING_PROMPT_TEXT_BYTES = 8 * 1024;
 // cleanText removes most controls, but retained newlines, quotes, and
@@ -302,6 +308,30 @@ async function boundedRemoteTransform<T>(operation: Promise<T> | T): Promise<T> 
 		return await Promise.race([Promise.resolve(operation), timeout]);
 	} finally {
 		if (timer) clearTimeout(timer);
+	}
+}
+
+async function boundedOperationCapabilityRefresh(
+	supervisor: RpcChildSupervisor,
+	requestId: string,
+	signal: AbortSignal,
+): Promise<readonly OperationCapability[] | undefined> {
+	const controller = new AbortController();
+	const onAbort = (): void => controller.abort();
+	signal.addEventListener("abort", onAbort, { once: true });
+	const timer = setTimeout(() => {
+		controller.abort();
+	}, CATALOG_OPERATION_REFRESH_TIMEOUT_MS);
+	try {
+		return await supervisor.refreshOperationCapabilities(requestId, controller.signal);
+	} catch (error) {
+		if (signal.aborted) throw error;
+		// Runtime command discovery enriches the pinned catalog, but must never
+		// prevent the base command list (including terminal access) from loading.
+		return undefined;
+	} finally {
+		clearTimeout(timer);
+		signal.removeEventListener("abort", onAbort);
 	}
 }
 
@@ -470,6 +500,44 @@ function safeProviderTransport(value: unknown): ProviderTransportState | undefin
 		// the authoritative state refresh that carries session controls.
 		return undefined;
 	}
+}
+const SESSION_UNVERIFIED_FEATURE = "session.unverified";
+function downgradeUnverifiedSessionControl(ref: SessionRef): SessionRef {
+	const control = ref.liveState?.sessionControl;
+	if (control?.mode !== "unverified") return ref;
+	return {
+		...ref,
+		liveState: {
+			...ref.liveState,
+			sessionControl: { mode: "reconciling", transcript: control.transcript },
+		},
+	};
+}
+function downgradeUnverifiedSessionFrame(frame: ServerFrame): ServerFrame {
+	if (frame.type === "sessions")
+		return { ...frame, sessions: frame.sessions.map(downgradeUnverifiedSessionControl) };
+	if (frame.type === "session.delta" && frame.upsert)
+		return { ...frame, upsert: downgradeUnverifiedSessionControl(frame.upsert) };
+	if (
+		frame.type === "response" &&
+		frame.ok &&
+		(frame.command === "host.list" || frame.command === "session.list") &&
+		frame.result &&
+		typeof frame.result === "object" &&
+		!Array.isArray(frame.result)
+	) {
+		const result = frame.result as Record<string, unknown>;
+		if (!Array.isArray(result.sessions)) return frame;
+		return {
+			...frame,
+			result: {
+				...result,
+				sessions: result.sessions.map(session =>
+					downgradeUnverifiedSessionControl(session as SessionRef)),
+			},
+		} as ServerFrame;
+	}
+	return frame;
 }
 function childBoolean(value: unknown, key: string): boolean {
 	const record =
@@ -694,6 +762,7 @@ export function appserverSupportedFeatures(
 		"prompt.images",
 		"agent.transcript",
 		"session.observer",
+		SESSION_UNVERIFIED_FEATURE,
 		"artifacts.read",
 	]);
 	if (includeRemotePolicy) {
@@ -784,6 +853,8 @@ export class LocalAppserver implements AppserverHandle {
 	#sessionLoads = new Map<SessionId, Promise<void>>();
 	#inventoryGeneration = 0;
 	#inventoryLoaded = false;
+	#inventoryComplete = false;
+	#inventoryTotalCount = 0;
 	#discoveryMisses = new Map<SessionId, number>();
 	#agentTranscripts = new Map<SessionId, AgentTranscriptProjection>();
 	#startPromises = new Map<SessionId, Promise<RpcChildSupervisor>>();
@@ -820,6 +891,7 @@ export class LocalAppserver implements AppserverHandle {
 	#hostProvided: boolean;
 	#hostIdPath?: string;
 	#attentionOutcomes?: AttentionOutcomeStore;
+	#sessionOwnership?: SessionOwnershipStore;
 	#ownerLock = false;
 	#ownerPaths?: OwnerPaths;
 	#ownerHandle?: FileHandle;
@@ -863,6 +935,7 @@ export class LocalAppserver implements AppserverHandle {
 				options.attentionOutcomePath ?? join(dirname(hostIdPath), "attention-outcomes.json"),
 			);
 		}
+		if (options.sessionOwnershipPath) this.#sessionOwnership = new SessionOwnershipStore(options.sessionOwnershipPath);
 		this.epoch = createEpoch(options.epoch);
 		this.socketPath = options.socketPath ?? defaultSocketPath();
 		this.#remotePolicy = options.remotePolicy;
@@ -999,7 +1072,7 @@ export class LocalAppserver implements AppserverHandle {
 		if (command.command === "session.compact") return { type, customInstructions: command.args.instructions };
 		if (command.command === "session.rename") return { type, name: command.args.name };
 		if (command.command === "session.model.set") {
-			if (this.#rpcDialect === "official-17.0.6") {
+			if (this.#rpcDialect === "official-17.0.9") {
 				if (
 					command.args.persistence !== "session" ||
 					typeof command.args.selector !== "string" ||
@@ -1029,11 +1102,14 @@ export class LocalAppserver implements AppserverHandle {
 		if (this.#started) return;
 		this.#inventoryGeneration += 1;
 		this.#inventoryLoaded = false;
+		this.#inventoryComplete = false;
+		this.#inventoryTotalCount = 0;
 		this.#stopping = false;
 		this.#draining = false;
 		this.#closedSessions.clear();
 		if (!this.#hostProvided) this.hostId = await loadPersistentHostId(this.#hostIdPath);
 		await this.#attentionOutcomes?.load();
+		await this.#sessionOwnership?.load();
 		try {
 			await this.#transcriptSearch?.initialize();
 			this.#records.clear();
@@ -1241,6 +1317,7 @@ export class LocalAppserver implements AppserverHandle {
 			this.#transcriptSearchReconcile = undefined;
 			this.#transcriptSearchRerun = false;
 			await this.#attentionOutcomes?.flush().catch(() => undefined);
+			await this.#sessionOwnership?.flush().catch(() => undefined);
 			this.#started = false;
 			const identity = this.#runIdentity;
 			if (identity) await this.cleanupOwned(identity);
@@ -1500,7 +1577,7 @@ export class LocalAppserver implements AppserverHandle {
 		}
 		const projection = command.sessionId ? this.#projections.get(command.sessionId) : undefined;
 		// Attach output is connection-scoped and rebuilt on every delivery. A
-		if (this.observerBarrierBlocks(command)) return this.observerBarrierOutcome(command);
+		if (await this.observerBarrierBlocks(command)) return this.observerBarrierOutcome(command);
 		// cached success cannot attach a session that has since been deleted.
 		if (command.command === "session.attach" && !projection)
 			return {
@@ -1674,7 +1751,15 @@ export class LocalAppserver implements AppserverHandle {
 					) as unknown as TranscriptPageArguments;
 					const record = this.#records.get(command.sessionId!);
 					if (!record) throw new TranscriptPageError("transcript_page_unavailable");
-					const result = await this.#discovery.page(record, args);
+					const authorityResult = await this.#discovery.page(record, args);
+					const result: TranscriptPageResult = {
+						...authorityResult,
+						entries: authorityResult.entries.map(entry => ({
+							...entry,
+							hostId: this.hostId,
+							sessionId: command.sessionId!,
+						})),
+					};
 					outcome = { frame: response(this.hostId, command, true, result) };
 				}
 			} else if (command.command === "transcript.search") {
@@ -2129,11 +2214,14 @@ export class LocalAppserver implements AppserverHandle {
 					if (attachedSessions?.size === 1) {
 						const attachedSessionId = attachedSessions.values().next().value;
 						const supervisor = attachedSessionId ? this.#supervisors.get(attachedSessionId) : undefined;
-						if (supervisor)
-							runtimeOperations = await supervisor.refreshOperationCapabilities(
+						if (supervisor) {
+							const refreshed = await boundedOperationCapabilityRefresh(
+								supervisor,
 								`catalog:${command.requestId}`,
 								controller.signal,
 							);
+							if (refreshed) runtimeOperations = refreshed;
+						}
 					}
 					const operationsById = new Map<string, OperationCapability>();
 					for (const capability of catalog.operations ?? [])
@@ -2142,14 +2230,34 @@ export class LocalAppserver implements AppserverHandle {
 					const operations = [...operationsById.values()];
 					if (operations.length > MAX_ARRAY_ITEMS)
 						throw Object.assign(new Error("catalog operation limit exceeded"), { code: "BOUNDS" });
+					const terminalAvailable =
+						this.#supportedFeatures.has("terminal.io") &&
+						this.#supportedCapabilities.has("term.open") &&
+						this.#supportedCapabilities.has("term.input") &&
+						this.#supportedCapabilities.has("term.resize");
+					const authorityItems = catalog.items as readonly CatalogItem[];
+					const items = terminalAvailable
+						? [
+								{
+									id: catalogId("cmd-term-open"),
+									kind: "command" as const,
+									name: "term.open",
+									capabilities: ["term.open"],
+									supported: true,
+								},
+								...authorityItems.filter(item => item.id !== "cmd-term-open" && item.name !== "term.open"),
+							].slice(0, MAX_ARRAY_ITEMS)
+						: authorityItems;
 					const revisionHash = createHash("sha256")
 						.update(catalog.revision)
 						.update(JSON.stringify(operations))
+						.update(JSON.stringify(items))
 						.digest("hex");
 					outcome = {
 						frame: response(this.hostId, command, true, {
 							...catalog,
 							revision: wireRevision(`capabilities-${revisionHash}`),
+							items,
 							operations,
 						}),
 					};
@@ -2267,6 +2375,12 @@ export class LocalAppserver implements AppserverHandle {
 			status: "idle",
 			entries: created.entries,
 		};
+		try {
+			await this.#sessionOwnership?.add(record.sessionId, record.path);
+		} catch (error) {
+			await this.#authority.delete(record).catch(() => undefined);
+			throw error;
+		}
 		this.#records.set(record.sessionId, record);
 		this.#projections.set(record.sessionId, new SessionProjection(this.hostId, record, this.epoch, this.#ringSize));
 		this.#createdPending.set(record.sessionId, { record, refreshesRemaining: 1 });
@@ -2626,19 +2740,40 @@ export class LocalAppserver implements AppserverHandle {
 		if (!this.#projectRootForProject) throw new Error("project resolver is unavailable");
 		if (typeof value !== "string") throw new Error("projectId is invalid");
 		const requestedProject = projectId(value);
+		const indexed = [...this.#records.values()].filter(
+			record => record.runtime === undefined && record.projectId === requestedProject,
+		);
+		for (const record of indexed) {
+			const canonical = await this.canonicalProjectRoot(record.cwd, requestedProject);
+			if (canonical !== undefined) return canonical;
+		}
 		const requestedCwd = await this.#projectRootForProject(requestedProject);
 		if (typeof requestedCwd !== "string" || !requestedCwd.startsWith("/"))
 			throw new Error("project resolver returned an invalid local root");
-		let canonical: string;
-		try {
-			canonical = await realpath(requestedCwd);
-			if (!(await fsStat(canonical)).isDirectory()) throw new Error("not a directory");
-		} catch {
+		const canonical = await this.canonicalProjectRoot(requestedCwd, requestedProject);
+		if (canonical === undefined) {
+			let available = false;
+			try {
+				available = (await fsStat(await realpath(requestedCwd))).isDirectory();
+			} catch {}
+			if (available)
+				throw new Error("project resolver returned a mismatched local root");
 			throw new Error("project resolver returned an unavailable local root");
 		}
-		if (stableProjectId(canonical) !== requestedProject)
-			throw new Error("project resolver returned a mismatched local root");
 		return canonical;
+	}
+	private async canonicalProjectRoot(
+		candidate: string,
+		requestedProject: ProjectId,
+	): Promise<string | undefined> {
+		if (!candidate.startsWith("/")) return undefined;
+		try {
+			const canonical = await realpath(candidate);
+			if (!(await fsStat(canonical)).isDirectory()) return undefined;
+			return stableProjectId(canonical) === requestedProject ? canonical : undefined;
+		} catch {
+			return undefined;
+		}
 	}
 	private workspaceProjection(record: WorkspaceRecord): Record<string, unknown> {
 		return {
@@ -2751,7 +2886,9 @@ export class LocalAppserver implements AppserverHandle {
 	}
 	private async handleCreate(command: CommandFrame): Promise<CommandOutcome> {
 		const created = await this.createSession(command.args);
-		const projection = this.#projections.get(created.sessionId as SessionId)!;
+		const createdSessionId = created.sessionId as SessionId;
+		const projection = this.#projections.get(createdSessionId)!;
+		if (!this.#externalRuntimes.has(createdSessionId)) await this.ensureSupervisor(createdSessionId);
 		await this.broadcastIndex(projection.indexUpsert());
 		return {
 			frame: response(this.hostId, command, true, {
@@ -2830,9 +2967,23 @@ export class LocalAppserver implements AppserverHandle {
 			this.#records.get(sessionId)?.archivedAt || this.#projections.get(sessionId)?.value.ref.archivedAt,
 		);
 	}
-	private observerBarrierBlocks(command: CommandFrame): boolean {
+	private async observerBarrierBlocks(command: CommandFrame): Promise<boolean> {
 		if (!command.sessionId) return false;
 		if (this.#externalRuntimes.has(command.sessionId)) return false;
+		if (command.command === "session.restore" && this.sessionArchived(command.sessionId)) {
+			const record = this.#records.get(command.sessionId);
+			if (!record) return true;
+			try {
+				const status = await this.#lockStatus(record);
+				// A stale lock is the same safe takeover boundary used by
+				// observer promotion. A live, suspect, or malformed lock keeps
+				// restore read-only until authority can be established.
+				if (status === "missing" || status === "stale") return false;
+			} catch {
+				// Lock inspection failures fail closed.
+			}
+			return true;
+		}
 		if (command.command !== "session.state.get" && OBSERVER_READ_COMMANDS.has(command.command)) return false;
 		return (
 			this.#observers.has(command.sessionId) ||
@@ -3135,6 +3286,7 @@ export class LocalAppserver implements AppserverHandle {
 			this.#records.delete(sessionId);
 			this.#projections.delete(sessionId);
 			await this.#attentionOutcomes?.delete(sessionId);
+			await this.#sessionOwnership?.delete(sessionId);
 			this.#closedSessions.delete(sessionId);
 			this.#releaseAllMessageLifecycles(sessionId, "completed-without-entry");
 			this.#stateRefreshGenerations.delete(sessionId);
@@ -3554,6 +3706,22 @@ export class LocalAppserver implements AppserverHandle {
 					if (frame.type === "thinking_level_changed")
 						this.scheduleStateRefresh(sessionId, supervisor, "thinking-level-changed");
 				},
+				transcriptRecordOmitted: offset => {
+					const omission: DurableEntry = {
+						id: entryId(`oversized-transcript-record-${offset}`),
+						parentId: projection.value.entries.at(-1)?.id ?? null,
+						hostId: this.hostId,
+						sessionId,
+						kind: "compaction",
+						timestamp: this.#clock.now().toISOString(),
+						data: {
+							summary: "One transcript record was omitted because it exceeded the 1 MiB safety limit.",
+							oversizedRecordOmission: true,
+						},
+					};
+					const output = projection.appendEntry(omission);
+					if (output) this.broadcast(sessionId, output);
+				},
 				crashed: () => {
 					this.markSupervisorCrashed(sessionId, supervisor);
 				},
@@ -3754,7 +3922,7 @@ export class LocalAppserver implements AppserverHandle {
 				return;
 			}
 			const descriptor = COMMAND_DESCRIPTORS[frame.command];
-			if (this.observerBarrierBlocks(frame)) {
+			if (await this.observerBarrierBlocks(frame)) {
 				await this.#sendFrame(ws, this.observerBarrierOutcome(frame).frame);
 				return;
 			}
@@ -4057,14 +4225,17 @@ export class LocalAppserver implements AppserverHandle {
 		}
 	}
 	async #sendFrameNow(transport: AppWs, frame: ServerFrame): Promise<boolean> {
+		const compatibleFrame = this.#clientFeatures.get(transport)?.has(SESSION_UNVERIFIED_FEATURE)
+			? frame
+			: downgradeUnverifiedSessionFrame(frame);
 		if (transport.remote) {
 			const connection = this.#remoteConnections.get(transport);
 			if (!connection || !this.#remotePolicy) return false;
 			let transformed: ServerFrame | string | undefined;
 			try {
 				transformed = this.#remotePolicy.transformOutbound
-					? await boundedRemoteTransform(this.#remotePolicy.transformOutbound(connection, frame))
-					: frame;
+					? await boundedRemoteTransform(this.#remotePolicy.transformOutbound(connection, compatibleFrame))
+					: compatibleFrame;
 			} catch {
 				connection.socket.close(1011, "remote policy failed");
 				return false;
@@ -4072,7 +4243,7 @@ export class LocalAppserver implements AppserverHandle {
 			if (transformed === undefined) return false;
 			return transport.send(typeof transformed === "string" ? transformed : JSON.stringify(transformed));
 		}
-		return transport.send(JSON.stringify(frame));
+		return transport.send(JSON.stringify(compatibleFrame));
 	}
 	private refreshSessions(): Promise<void> {
 		if (this.#sessionRefresh) return this.#sessionRefresh;
@@ -4087,6 +4258,16 @@ export class LocalAppserver implements AppserverHandle {
 	private async refreshSessionsOnce(generation: number): Promise<void> {
 		const discovered = await this.#discovery.list();
 		if (generation !== this.#inventoryGeneration || this.#stopping || !this.#started) return;
+		const inventoryComplete = this.#discovery.inventoryComplete?.() ?? true;
+		const reportedTotal = this.#discovery.inventoryTotalCount?.() ?? discovered.length;
+		if (
+			!Number.isSafeInteger(reportedTotal) ||
+			reportedTotal < discovered.length ||
+			(inventoryComplete && reportedTotal !== discovered.length)
+		)
+			throw new Error("session inventory completeness metadata is invalid");
+		this.#inventoryComplete = inventoryComplete;
+		this.#inventoryTotalCount = reportedTotal;
 		const publishChanges = this.#inventoryLoaded;
 		const discoveredIds = new Set<SessionId>();
 		for (const record of discovered) {
@@ -4124,6 +4305,15 @@ export class LocalAppserver implements AppserverHandle {
 				if (output && publishChanges) await this.broadcastIndex(output);
 			}
 		}
+		if (!inventoryComplete) {
+			// Absence from a partial inventory is not deletion evidence. Reset
+			// miss counters so eviction still requires two later complete
+			// inventories that both omit the same session.
+			this.#discoveryMisses.clear();
+			this.#inventoryLoaded = true;
+			this.scheduleTranscriptSearchReconcile();
+			return;
+		}
 		for (const [sessionId, pending] of this.#createdPending) {
 			if (discoveredIds.has(sessionId)) {
 				this.#createdPending.delete(sessionId);
@@ -4131,16 +4321,28 @@ export class LocalAppserver implements AppserverHandle {
 			}
 			if (pending.refreshesRemaining > 0) pending.refreshesRemaining -= 1;
 			else {
-				this.#createdPending.delete(sessionId);
-				this.#discoveryMisses.delete(sessionId);
-				const projection = this.#projections.get(sessionId);
-				if (projection) await this.broadcastIndex(projection.remove());
-				this.cleanupObserverState(sessionId);
-				await this.#imageUploads.cleanupSession(sessionId);
-				this.#records.delete(sessionId);
-				this.#projections.delete(sessionId);
-				await this.#attentionOutcomes?.delete(sessionId);
-				this.#stateRefreshGenerations.delete(sessionId);
+				// A create can start its writer before discovery catches up.
+				// Never discard its ownership proof while that writer may still
+				// be live; retain the pending record and retry on the next refresh.
+				if (this.#lifecycleMutations.has(sessionId)) continue;
+				this.#lifecycleMutations.add(sessionId);
+				try {
+					if (this.sessionLifecycleBusy(sessionId, true)) continue;
+					if (!(await this.quiesceSessionRuntime(sessionId))) continue;
+					this.#createdPending.delete(sessionId);
+					this.#discoveryMisses.delete(sessionId);
+					const projection = this.#projections.get(sessionId);
+					if (projection) await this.broadcastIndex(projection.remove());
+					this.cleanupObserverState(sessionId);
+					await this.#imageUploads.cleanupSession(sessionId);
+					this.#records.delete(sessionId);
+					this.#projections.delete(sessionId);
+					await this.#attentionOutcomes?.delete(sessionId);
+					await this.#sessionOwnership?.delete(sessionId);
+					this.#stateRefreshGenerations.delete(sessionId);
+				} finally {
+					this.#lifecycleMutations.delete(sessionId);
+				}
 			}
 		}
 		for (const sessionId of this.#records.keys()) {
@@ -4166,6 +4368,7 @@ export class LocalAppserver implements AppserverHandle {
 				await this.#transcriptSearch?.deleteSession(sessionId);
 				this.#projections.delete(sessionId);
 				await this.#attentionOutcomes?.delete(sessionId);
+				await this.#sessionOwnership?.delete(sessionId);
 				this.#closedSessions.delete(sessionId);
 				this.#releaseAllMessageLifecycles(sessionId, "completed-without-entry");
 				this.#stateRefreshGenerations.delete(sessionId);
@@ -4204,10 +4407,26 @@ export class LocalAppserver implements AppserverHandle {
 		if (loaded.sessionId !== record.sessionId || loaded.path !== record.path)
 			throw new Error("session identity changed while loading transcript");
 		this.#records.set(loaded.sessionId, loaded);
-		const projection = new SessionProjection(this.hostId, loaded, this.epoch, this.#ringSize);
-		const outcome = this.#attentionOutcomes?.get(loaded.sessionId);
-		if (outcome) projection.setLatestOutcome(outcome);
-		this.#projections.set(loaded.sessionId, projection);
+		const projection = this.#projections.get(loaded.sessionId);
+		if (!projection) {
+			const inserted = new SessionProjection(this.hostId, loaded, this.epoch, this.#ringSize);
+			const outcome = this.#attentionOutcomes?.get(loaded.sessionId);
+			if (outcome) inserted.setLatestOutcome(outcome);
+			this.#projections.set(loaded.sessionId, inserted);
+			return;
+		}
+		// A running RPC supervisor closes over this projection. Replacing it after
+		// sparse discovery hydration would split cursor authority: streamed frames
+		// would advance the old object while later attaches read a new seq-0 object.
+		// Rebase in place so the writer, replay ring, and attach baseline stay one
+		// monotonic timeline.
+		const transcriptFrames = projection.rebaseEntries(loaded.entries);
+		for (const frame of transcriptFrames) this.broadcast(loaded.sessionId, frame);
+		const metadata = projection.value.ref.liveState?.sessionControl
+			? projection.reconcileObserverRecord(loaded)
+			: projection.reconcileRecord(loaded);
+		if (metadata) await this.broadcastIndex(metadata);
+		else if (transcriptFrames.length > 0) await this.broadcastIndex(projection.indexUpsert());
 	}
 	private async refreshTranscriptSearch(): Promise<void> {
 		if (!this.#transcriptSearch) return;
@@ -4233,7 +4452,13 @@ export class LocalAppserver implements AppserverHandle {
 		}
 		const authority = this.#transcriptSearch;
 		const records = [...this.#records.values()];
-		const reconcile = authority.reconcile(records);
+		const pruneMissing = this.#inventoryComplete;
+		// Search maintenance is deliberately a later task. Reconciliation may do
+		// synchronous SQLite work before its first await; starting it inline would
+		// delay the authoritative sessions frame after Welcome.
+		const reconcile = new Promise<void>(resolve => setTimeout(resolve, 0)).then(() =>
+			authority.reconcile(records, { pruneMissing }),
+		);
 		this.#transcriptSearchReconcile = reconcile;
 		void reconcile
 			.catch(() => undefined)
@@ -4365,8 +4590,9 @@ export class LocalAppserver implements AppserverHandle {
 		}
 		let observer = this.#observers.get(sessionId);
 		if (!observer) {
+			const owned = this.#sessionOwnership?.owns(sessionId, record.path) === true;
 			const lockless =
-				!this.#claimLocklessSessions && status === "missing" && !projection.value.ref.liveState?.sessionControl;
+				!this.#claimLocklessSessions && !owned && status === "missing" && !projection.value.ref.liveState?.sessionControl;
 			observer = new SessionTranscriptObserver(record.path, this.hostId);
 			this.#observers.set(sessionId, observer);
 			if (lockless) this.#locklessObservers.add(observer);
@@ -4384,11 +4610,18 @@ export class LocalAppserver implements AppserverHandle {
 		if (pollRecordMatches && (!lockless || establishingLocklessBaseline || poll.changed))
 			await this.applyObserverPoll(sessionId, projection, poll);
 		if (!this.observerIsCurrent(sessionId, observer, record, projection)) return;
-		const reconciling = projection.setSessionControl({
-			mode: "reconciling",
-			transcript: pollRecordMatches ? poll.transcript : "snapshot",
-		});
-		if (reconciling) await this.broadcastIndex(reconciling);
+		const sessionControl = projection.setSessionControl(
+			lockless
+				? {
+						mode: "unverified",
+						transcript: pollRecordMatches ? poll.transcript : "snapshot",
+					}
+				: {
+						mode: "reconciling",
+						transcript: pollRecordMatches ? poll.transcript : "snapshot",
+					},
+		);
+		if (sessionControl) await this.broadcastIndex(sessionControl);
 		if (!this.observerIsCurrent(sessionId, observer, record, projection)) return;
 		if (lockless) return;
 		if (!this.hasAttachedClient(sessionId)) return;
@@ -4464,6 +4697,21 @@ export class LocalAppserver implements AppserverHandle {
 			return;
 		}
 		if (this.#supervisors.get(sessionId) !== supervisor) return;
+		try {
+			await this.#sessionOwnership?.add(sessionId, record.path);
+		} catch {
+			await this.discardPromotionSupervisor(sessionId, supervisor);
+			this.#promotionFailures.set(sessionId, this.promotionFingerprint(record, projection, final));
+			return;
+		}
+		if (!this.observerIsCurrent(sessionId, observer, record, projection)) {
+			if (this.#supervisors.get(sessionId) === supervisor) {
+				await this.#sessionOwnership?.delete(sessionId).catch(() => undefined);
+				await this.discardPromotionSupervisor(sessionId, supervisor);
+			}
+			return;
+		}
+		if (this.#supervisors.get(sessionId) !== supervisor) return;
 		const control = projection.setSessionControl();
 		if (control) await this.broadcastIndex(control);
 		this.cleanupObserverState(sessionId);
@@ -4485,7 +4733,7 @@ export class LocalAppserver implements AppserverHandle {
 			if (a.sessionId > b.sessionId) return 1;
 			return 0;
 		});
-		const totalCount = allSessions.length;
+		const totalCount = Math.max(allSessions.length, this.#inventoryTotalCount);
 		const pendingBudget: SessionListBudget = {
 			pendingBytes: 0,
 			pendingEntries: 0,

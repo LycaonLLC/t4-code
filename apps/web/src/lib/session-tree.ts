@@ -25,6 +25,10 @@ export interface RailViewOptions {
   readonly filter?: RailFilter;
   readonly query?: string;
   readonly sort?: RailSort;
+  /** New projects default closed in large inventories; explicit client state always wins. */
+  readonly defaultExpanded?: boolean;
+  /** Keep the routed session discoverable when its project has no explicit disclosure state. */
+  readonly activeSessionId?: string | null;
   readonly projectManualOrder?: readonly string[];
   readonly sessionManualOrderByProjectId?: Readonly<Record<string, readonly string[]>>;
   readonly projectAliasById?: Readonly<Record<string, string>>;
@@ -55,7 +59,7 @@ function manualRank(order: readonly string[] | undefined, id: string): number {
 export function sessionPriority(row: SessionRow): number {
   if (row.session.pendingApprovals > 0 || row.session.status === "pendingApproval") return 6;
   if (row.session.status === "awaitingInput") return 5;
-  if (row.session.status === "working" || row.session.status === "connecting") return 4;
+  if (row.session.status === "working") return 4;
   if (row.unread) return 3;
   if (row.session.status === "error") return 2;
   if (row.session.status === "planReady") return 1;
@@ -74,7 +78,7 @@ function matchesFilter(row: SessionRow, filter: RailFilter): boolean {
     return row.session.pendingApprovals > 0 || row.session.status === "awaitingInput" || row.unread;
   }
   if (filter === "running") {
-    return row.session.status === "working" || row.session.status === "connecting";
+    return row.session.status === "working";
   }
   if (filter === "unread") return row.unread;
   return row.session.status === "error";
@@ -231,7 +235,11 @@ export function buildProjectGroups(
       project,
       displayName,
       host,
-      expanded: projectExpandedById[project.id] ?? true,
+      expanded:
+        projectExpandedById[project.id] ??
+        (sessions.some((row) => row.session.id === options.activeSessionId)
+          ? true
+          : (options.defaultExpanded ?? true)),
       sessions: sortSessionRows(
         sessions,
         sort,

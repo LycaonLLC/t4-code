@@ -10,7 +10,7 @@ import { rendererPlatform } from "../../state/store-instance.ts";
 import type { SessionSurfaceId } from "../../state/workspace-store.ts";
 import { installTerminalStoreFactory, createTerminalStore } from "../terminal/terminal-store.ts";
 import { createFixturePtyBridge } from "../terminal/pty.ts";
-import { createLivePtySessionFactory } from "../terminal/live-pty.ts";
+import { createResolvingLivePtySessionFactory } from "../terminal/live-pty.ts";
 import { ActivityPane } from "./ActivityPane.tsx";
 import { AgentsPane } from "./AgentsPane.tsx";
 import { AGENT_OWNED_TERMINAL_IDS, installFixtureInspector } from "./fixtures.ts";
@@ -52,18 +52,18 @@ if (rendererPlatform.mode === "browser") {
     installTerminalStoreFactory((viewId) => {
       const snapshot = controller.getSnapshot();
       const address = resolveLiveSession(snapshot, viewId);
-      if (address === null) {
-        const bridge = {
-          kind: "desktop" as const,
-          open: () => { throw new Error("Live session unavailable"); },
-        };
-        return createTerminalStore({ sessionId: viewId, bridge, cwd: null, host: { label: "Unavailable host", remote: false } });
-      }
-      const bridge = createLivePtySessionFactory(controller, () => controller.getSnapshot(), address);
-      const target = snapshot.targets.get(address.targetId);
+      const bridge = createResolvingLivePtySessionFactory(
+        controller,
+        () => controller.getSnapshot(),
+        () => resolveLiveSession(controller.getSnapshot(), viewId),
+      );
+      const target = address === null ? undefined : snapshot.targets.get(address.targetId);
       return createTerminalStore({
         sessionId: viewId,
-        host: { label: target?.label ?? address.hostId, remote: target?.kind !== "local" },
+        host: {
+          label: target?.label ?? address?.hostId ?? "Connecting host",
+          remote: target?.kind === "remote",
+        },
         bridge,
         cwd: null,
       });

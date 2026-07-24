@@ -1,5 +1,4 @@
 import { spawnSync } from "node:child_process";
-import { rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,25 +19,9 @@ export function buildDemo(
   const output = resolve(repoRoot, "apps/site/dist/demo");
   runCommand(
     "pnpm",
-    [
-      "--filter",
-      "@t4-code/flutter",
-      "exec",
-      "flutter",
-      "build",
-      "web",
-      "--base-href",
-      DEMO_BASE_HREF,
-      "--csp",
-      "--no-web-resources-cdn",
-      "--dart-define",
-      "T4_DEMO_MODE=true",
-      "--output",
-      output,
-    ],
+    ["--filter", "@t4-code/web", "exec", "vp", "build", "--mode", "demo", "--outDir", output],
     repoRoot,
   );
-  rmSync(resolve(output, "flutter_service_worker.js"), { force: true });
 }
 
 const isMain =

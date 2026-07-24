@@ -7,6 +7,7 @@
 import {
   Badge,
   cn,
+  STATUS_PILLS,
   StatusPill,
   Tooltip,
   TooltipPopup,
@@ -45,13 +46,13 @@ import {
   advanceRecordArrival,
   initialControlAnnouncerState,
   presentSessionControl,
-  presentSessionControlKind,
   recordArrivalBaseline,
   reduceControlAnnouncement,
   type ControlAnnouncerState,
   type SessionControlPresentation,
   type SessionControlState,
 } from "../session-runtime/session-observer.ts";
+import { presentSessionState } from "../session-runtime/session-state.ts";
 import { useSessionRuntime } from "../session-runtime/useSessionRuntime.ts";
 import {
   computeStableRows,
@@ -80,87 +81,115 @@ export interface SessionMainProps {
 
 const NO_FILE_CHILDREN: Readonly<Record<string, FileChildren>> = {};
 
-export function FreshnessBadge({ session }: { readonly session: WorkspaceSession }) {
-  if (session.freshness === "cached") {
-    return (
-      <Tooltip>
-        <TooltipTrigger render={<Badge variant="outline">Cached</Badge>} />
-        <TooltipPopup side="bottom">
-          Showing the last synced copy. It refreshes when the connection returns.
-        </TooltipPopup>
-      </Tooltip>
-    );
-  }
-  if (session.freshness === "offline") {
-    return (
-      <Tooltip>
-        <TooltipTrigger render={<Badge variant="outline">Offline</Badge>} />
-        <TooltipPopup side="bottom">
-          This session's host is unreachable. Its record stays put until the host returns.
-        </TooltipPopup>
-      </Tooltip>
-    );
-  }
-  return null;
-}
-
-/** Plain lifecycle badge for sessions that have no richer live status pill. */
-export function SessionLifecycleBadge({ session }: { readonly session: WorkspaceSession }) {
-  if (session.freshness !== "live" || session.status !== null || session.control !== undefined)
-    return null;
-
-  const label =
-    session.lifecycle === "idle"
-      ? "Idle"
-      : session.lifecycle === "closed"
-        ? "Stopped"
-        : "Status unknown";
-  const detail =
-    label === "Status unknown"
-      ? "T4 has saved history for this task, but the runtime did not report whether it is running, idle, or stopped."
-      : label === "Stopped"
-        ? "The runtime reports that this task has stopped."
-        : "The runtime reports that this task is waiting and has no work in progress.";
-
+export function SessionConnectionBadge({
+  state,
+}: {
+  readonly state:
+    | "connected"
+    | "connecting"
+    | "disconnected"
+    | "pairing-required"
+    | "error";
+}) {
+  const connected = state === "connected";
+  const label = connected
+    ? "Connected"
+    : state === "connecting"
+      ? "Reconnecting"
+      : state === "pairing-required"
+        ? "Pairing required"
+        : state === "error"
+          ? "Connection error"
+          : "Offline";
+  const busy = state === "connecting";
   return (
     <Tooltip>
-      <TooltipTrigger render={<Badge variant="outline">{label}</Badge>} />
-      <TooltipPopup side="bottom">{detail}</TooltipPopup>
+      <TooltipTrigger
+        render={
+          <Badge
+            aria-label={label}
+            className="w-7 justify-center gap-1.5 px-0 sm:w-28 sm:px-2"
+            variant="outline"
+          >
+            <span aria-hidden="true" className="relative flex size-1.5 shrink-0">
+              {busy && (
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-status-working-dot opacity-75 motion-reduce:hidden" />
+              )}
+              <span
+                className={cn(
+                  "relative inline-flex size-1.5 rounded-full",
+                  connected
+                    ? "bg-success"
+                    : busy
+                      ? "bg-status-working-dot"
+                      : state === "error"
+                        ? "bg-status-error-dot"
+                        : state === "pairing-required"
+                          ? "bg-warning"
+                          : "bg-muted-foreground",
+                )}
+              />
+            </span>
+            <span className="hidden truncate sm:inline">{label}</span>
+          </Badge>
+        }
+      />
+      <TooltipPopup side="bottom">
+        {connected
+          ? "Connected to the host. New session state and transcript updates can arrive live."
+          : busy
+            ? "Reconnecting to the host. Saved session records remain readable."
+            : state === "pairing-required"
+              ? "Pair this device before live session updates can resume."
+              : state === "error"
+                ? "The host connection failed. Open Hosts for diagnostics."
+                : "The session host is unreachable. Showing the last state received."}
+      </TooltipPopup>
     </Tooltip>
   );
 }
 
-/** Subheader ownership badge; mirrors FreshnessBadge, which wins when set. */
-export function SessionOwnershipBadge({ session }: { readonly session: WorkspaceSession }) {
-  if (session.freshness !== "live" || session.control === undefined) return null;
-  if (session.control === "reconciling") {
-    return (
-      <Tooltip>
-        <TooltipTrigger render={<Badge variant="outline">Taking over</Badge>} />
-        <TooltipPopup side="bottom">
-          Input returns once the transcript is confirmed complete.
-        </TooltipPopup>
-      </Tooltip>
-    );
-  }
-  if (session.control === "observer") {
-    return (
-      <Tooltip>
-        <TooltipTrigger render={<Badge variant="outline">Active elsewhere</Badge>} />
-        <TooltipPopup side="bottom">
-          Another app is running this session. You can read along here — run /continue-in-t4 there
-          to move it, or just exit it.
-        </TooltipPopup>
-      </Tooltip>
-    );
-  }
-  // Waiting (quiet owner) or unclear (malformed/unrecognized control): the
-  // badge never claims another app is active — reuse the shared copy source.
-  const presentation = presentSessionControlKind(session.control);
+/** One stable activity/ownership/freshness slot beside the connection badge. */
+export function SessionStateBadge({ session }: { readonly session: WorkspaceSession }) {
+  const presentation = presentSessionState(session);
+  const semantic =
+    presentation.status === null ? null : STATUS_PILLS[presentation.status];
   return (
     <Tooltip>
-      <TooltipTrigger render={<Badge variant="outline">{presentation.railLabel}</Badge>} />
-      <TooltipPopup side="bottom">{presentation.composerReason}</TooltipPopup>
+      <TooltipTrigger
+        render={
+          <Badge
+            aria-label={presentation.label}
+            className={cn(
+              "w-7 justify-center gap-1.5 px-0 sm:w-32 sm:px-2",
+              semantic?.colorClass,
+            )}
+            variant="outline"
+          >
+            <span aria-hidden="true" className="relative flex size-1.5 shrink-0">
+              {presentation.busy && (
+                <span
+                  className={cn(
+                    "absolute inline-flex size-full animate-ping rounded-full opacity-75 motion-reduce:hidden",
+                    semantic?.dotClass ?? "bg-status-working-dot",
+                  )}
+                />
+              )}
+              <span
+                className={cn(
+                  "relative inline-flex size-1.5 rounded-full",
+                  semantic?.dotClass ??
+                    (presentation.busy
+                      ? "bg-status-working-dot"
+                      : "bg-muted-foreground"),
+                )}
+              />
+            </span>
+            <span className="hidden truncate sm:inline">{presentation.label}</span>
+          </Badge>
+        }
+      />
+      <TooltipPopup side="bottom">{presentation.detail}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -175,7 +204,27 @@ function useStableTranscriptRows(rows: ReturnType<typeof deriveTranscriptRows>) 
   }, [rows]);
 }
 
-type SessionActivity = "compacting" | "working" | null;
+export type SessionActivity = "compacting" | "working" | null;
+
+export function resolveSessionActivity(input: {
+  readonly archived: boolean;
+  readonly catchingUp: boolean;
+  readonly controlled: boolean;
+  readonly contextMaintenance: boolean;
+  readonly link: "live" | "cached" | "offline";
+  readonly sessionActive: boolean;
+}): SessionActivity {
+  if (
+    input.archived ||
+    input.link !== "live" ||
+    input.catchingUp ||
+    input.controlled ||
+    !input.sessionActive
+  ) {
+    return null;
+  }
+  return input.contextMaintenance ? "compacting" : "working";
+}
 
 function activityLabel(activity: SessionActivity): string {
   if (activity === "compacting") return "Compacting context";
@@ -567,12 +616,21 @@ export function SessionMain({
   useEffect(() => {
     const element = dockRef.current;
     if (element === null) return;
-    const observer = new ResizeObserver(() => {
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
       const next = Math.ceil(element.getBoundingClientRect().height);
       setDockHeight((current) => (Math.abs(current - next) < 1 ? current : next));
+    };
+    const observer = new ResizeObserver(() => {
+      if (frame !== 0) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
     });
     observer.observe(element);
-    return () => observer.disconnect();
+    return () => {
+      if (frame !== 0) cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
   }, []);
 
   const catchingUp = projection.phase === "resyncing" || projection.phase === "paused";
@@ -583,16 +641,14 @@ export function SessionMain({
     sessionControl?.mode === "observer",
     projection.entries,
   );
-  const sessionActivity: SessionActivity =
-    !archived &&
-    sessionControl === null &&
-    snapshot.link === "live" &&
-    !catchingUp &&
-    snapshot.sessionActive
-      ? projection.contextMaintenance === null
-        ? "working"
-        : "compacting"
-      : null;
+  const sessionActivity = resolveSessionActivity({
+    archived,
+    catchingUp,
+    controlled: sessionControl !== null,
+    contextMaintenance: projection.contextMaintenance !== null,
+    link: snapshot.link,
+    sessionActive: snapshot.sessionActive,
+  });
   const showAttention = shouldShowAttention(
     attention,
     revisingPlanId,

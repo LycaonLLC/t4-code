@@ -13,7 +13,7 @@ const MAX_FRAMES = 32;
 const SAFE_AGENT_ID_KEYS = ["agentId", "rootAgentId", "activeAgentId", "parentAgentId"];
 const CLUSTER_HOST = "t4-dev.tailb18de3.ts.net";
 const EXPECTED_OMP_VERSION = "17.0.5";
-const EXPECTED_OMP_BUILD = "8476f4451ed95c5d5401785d279a93d3c659fac4";
+const EXPECTED_OMP_BUILD = "fc0c391334c08ab260057756aa84bd2b07741ee7";
 const REQUIRED_CAPABILITIES = Object.freeze([
   "sessions.read",
   "ci.trigger",

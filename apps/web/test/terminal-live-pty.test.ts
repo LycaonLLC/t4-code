@@ -6,6 +6,8 @@
 // no replay after a dropped connection, cross-session isolation, bounded
 // pre-ownership buffering, and an untouched fixture bridge.
 import {
+  commandId,
+  confirmationId,
   hostId,
   PROTOCOL_VERSION,
   requestId as brandRequestId,
@@ -56,6 +58,7 @@ import { resolveLiveSession, sessionViewId } from "../src/platform/live-workspac
 import { presentSessionControl } from "../src/features/session-runtime/session-observer.ts";
 import {
   createLivePtySessionFactory,
+  createResolvingLivePtySessionFactory,
   resolveLiveTerminalAvailability,
   type LivePtyBridge,
   type LivePtyBridgeOptions,
@@ -191,6 +194,21 @@ function openResponseFrame(
   return { ...base, ok: false, error: { code: outcome.code, message: outcome.message } };
 }
 
+function openConfirmationFrame(commandIdValue: string): Record<string, unknown> {
+  return {
+    v: PROTOCOL_VERSION,
+    type: "confirmation",
+    confirmationId: confirmationId("confirm-term-open"),
+    commandId: commandId(commandIdValue),
+    hostId: hostId(HOST),
+    sessionId: sessionId(SESSION),
+    commandHash: "sha256:term-open",
+    revision: brandRevision("rev-1"),
+    expiresAt: "2999-01-01T00:00:00.000Z",
+    summary: "Open a terminal",
+  };
+}
+
 function outputFrame(
   seq: number,
   data: string,
@@ -237,11 +255,13 @@ class FakeShell implements DesktopShellPort {
   readonly inputs: TerminalInputRequest[] = [];
   readonly resizes: TerminalResizeRequest[] = [];
   readonly closes: TerminalCloseRequest[] = [];
+  readonly confirms: ConfirmRequest[] = [];
   readonly heldInputs: HeldCall<TerminalInputRequest>[] = [];
   readonly heldResizes: HeldCall<TerminalResizeRequest>[] = [];
   holdInput = false;
   holdResize = false;
   rejectOpen = false;
+  challengeOpen = false;
   leaseRefused = false;
   /** Emit the term.open response before the command promise resolves. */
   respondOpenSynchronously = false;
@@ -294,14 +314,21 @@ class FakeShell implements DesktopShellPort {
     if (intent.command === "term.open") {
       this.openCount += 1;
       const requestIdValue = `open-req-${this.openCount}`;
+      const commandIdValue = `open-cmd-${this.openCount}`;
       this.lastOpenRequestId = requestIdValue;
       if (this.rejectOpen) {
         return {
           targetId: request.targetId,
           requestId: requestIdValue,
-          commandId: `open-cmd-${this.openCount}`,
+          commandId: commandIdValue,
           accepted: false,
         };
+      }
+      if (this.challengeOpen) {
+        this.emitFrame({
+          targetId: request.targetId,
+          frame: openConfirmationFrame(commandIdValue),
+        });
       }
       if (this.respondOpenSynchronously) {
         this.emitFrame({
@@ -312,7 +339,7 @@ class FakeShell implements DesktopShellPort {
       return {
         targetId: request.targetId,
         requestId: requestIdValue,
-        commandId: `open-cmd-${this.openCount}`,
+        commandId: commandIdValue,
         accepted: true,
       };
     }
@@ -324,6 +351,16 @@ class FakeShell implements DesktopShellPort {
     };
   }
   async confirm(request: ConfirmRequest): Promise<ConfirmResult> {
+    this.confirms.push(request);
+    if (this.challengeOpen && String(request.commandId) === `open-cmd-${this.openCount}`) {
+      this.emitFrame({
+        targetId: request.targetId,
+        frame: openResponseFrame(this.lastOpenRequestId, {
+          ok: true,
+          terminalId: SERVER_TERMINAL,
+        }),
+      });
+    }
     return {
       targetId: request.targetId,
       requestId: "confirm-req",
@@ -560,7 +597,67 @@ describe("availability gates", () => {
 });
 
 describe("term.open through the controller lease", () => {
-  it("sends the exact session-scoped command with a relative cwd and the injected lease", async () => {
+  it("recovers a drawer created before its cached session is rebound", async () => {
+    const h = await harness();
+    let address: LiveSessionAddress | null = null;
+    const bridge = createResolvingLivePtySessionFactory(
+      h.controller,
+      () => h.controller.getSnapshot(),
+      () => address,
+    );
+
+    expect(bridge.availability()).toMatchObject({ available: false, kind: "transport" });
+    expect(() => bridge.open(openRequest())).toThrow(/live host/);
+
+    address = ADDRESS;
+    const session = bridge.open(openRequest());
+    const events = watch(session);
+    await settle();
+    h.shell.emitFrame({
+      targetId: TARGET,
+      frame: openResponseFrame(h.shell.lastOpenRequestId, {
+        ok: true,
+        terminalId: SERVER_TERMINAL,
+      }),
+    });
+    await settle();
+    h.shell.emitFrame({ targetId: TARGET, frame: outputFrame(1, "rebound-ready") });
+    expect(events.errors).toEqual([]);
+    expect(events.data).toEqual(["rebound-ready"]);
+    bridge.dispose();
+  });
+
+  it("waits for the visible host challenge before opening the shell", async () => {
+    const h = await harness();
+    h.shell.challengeOpen = true;
+    const session = h.bridge.open(openRequest());
+    const events = watch(session);
+    await settle();
+
+    expect(h.shell.confirms).toHaveLength(0);
+    const challenge = [
+      ...(h.controller.getSnapshot().projection.sessions.get(`${HOST}\u0000${SESSION}`)
+        ?.confirmations.values() ?? []),
+    ][0];
+    expect(challenge).toBeDefined();
+    if (challenge === undefined) throw new Error("missing term.open confirmation");
+    await h.controller.confirm({
+      targetId: TARGET,
+      confirmationId: challenge.confirmationId,
+      commandId: challenge.commandId,
+      hostId: challenge.hostId,
+      ...(challenge.sessionId === undefined ? {} : { sessionId: challenge.sessionId }),
+      decision: "approve",
+    });
+    await settle();
+    expect(h.shell.confirms).toHaveLength(1);
+    expect(events.errors).toEqual([]);
+
+    h.shell.emitFrame({ targetId: TARGET, frame: outputFrame(1, "challenge-ready") });
+    expect(events.data).toEqual(["challenge-ready"]);
+  });
+
+  it("omits cwd for the project root and injects the controller lease", async () => {
     const h = await harness();
     await openLive(h);
     const leaseCommands = h.shell.commands.filter((entry) =>
@@ -574,10 +671,21 @@ describe("term.open through the controller lease", () => {
     expect(String(open?.intent.sessionId)).toBe(SESSION);
     expect(String(open?.intent.expectedRevision)).toBe("rev-1");
     expect(open?.intent.args).toEqual({
-      cwd: ".",
       cols: 80,
       rows: 24,
       leaseId: "lease-fixture",
+    });
+  });
+
+  it("passes a safe project-relative cwd through unchanged", async () => {
+    const h = await harness();
+    const session = h.bridge.open(openRequest({ cwd: "packages/web" }));
+    watch(session);
+    await settle();
+    expect(h.shell.termOpenRequests()[0]?.intent.args).toMatchObject({
+      cwd: "packages/web",
+      cols: 80,
+      rows: 24,
     });
   });
 
@@ -593,7 +701,6 @@ describe("term.open through the controller lease", () => {
     });
     await openLive(advertised);
     expect(advertised.shell.termOpenRequests()[0]?.intent.args).toEqual({
-      cwd: ".",
       cols: 80,
       rows: 24,
       shell: "bash",

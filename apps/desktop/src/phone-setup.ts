@@ -15,6 +15,26 @@ import type { PhoneSetupState } from "@t4-code/protocol/desktop-ipc";
 const LOCAL_GATEWAY_PORT = 4_194;
 const TAILSCALE_HTTPS_PORT = 8_445;
 
+function gatewayOriginFromStatus(output: string): string | undefined {
+  const match = /^allowed origin:\s*(\S+)\s*$/imu.exec(output);
+  if (match?.[1] === undefined) return undefined;
+  try {
+    const url = new URL(match[1]);
+    if (
+      url.protocol !== "https:"
+      || url.username !== ""
+      || url.password !== ""
+      || url.pathname !== "/"
+      || url.search !== ""
+      || url.hash !== ""
+      || !url.hostname.endsWith(".ts.net")
+    ) return undefined;
+    return url.origin;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface PhoneSetupServiceOptions {
   readonly platform?: NodeJS.Platform;
   readonly arch?: string;
@@ -100,6 +120,32 @@ export class PhoneSetupService {
       env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", ELECTRON_RUN_AS_NODE: "1" },
       timeoutMs: 20_000,
     });
+  }
+
+  private installGateway(origin: string, deploymentIdentity: string): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+    return this.runGatewayService([
+      "install",
+      "--origin", origin,
+      "--web-root", join(this.resourcesPath, "web"),
+      "--deployment-identity", deploymentIdentity,
+      "--electron-run-as-node",
+    ]);
+  }
+
+  private async repairStaleGateway(deploymentIdentity: string): Promise<void> {
+    let status: { exitCode: number | null; stdout: string; stderr: string };
+    try {
+      status = await this.runGatewayService(["status", "--deployment-identity", deploymentIdentity]);
+    } catch {
+      return;
+    }
+    if (!/^deployment identity:\s*stale\s*$/imu.test(status.stdout)) return;
+    const origin = gatewayOriginFromStatus(status.stdout);
+    if (origin === undefined) return;
+    const install = await this.installGateway(origin, deploymentIdentity);
+    if (install.exitCode !== 0) {
+      throw new Error(install.stderr.trim().slice(0, 512) || "The private phone gateway could not be upgraded.");
+    }
   }
 
   private async gatewayIsHealthy(deploymentIdentity: string): Promise<boolean> {
@@ -196,13 +242,7 @@ export class PhoneSetupService {
       return { phase: "tailscale-required", message: error instanceof Error ? error.message : "Tailscale is unavailable." };
     }
     const deploymentIdentity = await this.identity();
-    const service = await this.runGatewayService([
-      "install",
-      "--origin", facts.url,
-      "--web-root", join(this.resourcesPath, "web"),
-      "--deployment-identity", deploymentIdentity,
-      "--electron-run-as-node",
-    ]);
+    const service = await this.installGateway(facts.url, deploymentIdentity);
     if (service.exitCode !== 0) {
       return { phase: "error", message: service.stderr.trim().slice(0, 512) || "The private phone gateway could not start." };
     }
@@ -231,6 +271,8 @@ export class PhoneSetupService {
   private async restoreInternal(): Promise<PhoneSetupState> {
     const unsupported = this.unsupported();
     if (unsupported) return unsupported;
+    const deploymentIdentity = await this.identity();
+    await this.repairStaleGateway(deploymentIdentity);
     let facts: { executable: string; url: string };
     try {
       facts = await this.tailscaleFacts();
@@ -240,17 +282,10 @@ export class PhoneSetupService {
     if (!await this.hasExpectedServe(facts.executable, facts.url)) {
       return { phase: "not-configured", message: "Set up private phone access, then scan the QR code with your phone.", url: facts.url };
     }
-    const deploymentIdentity = await this.identity();
     if (await this.gatewayIsHealthy(deploymentIdentity)) {
       return { phase: "ready", message: "Phone access is ready on your private Tailscale network.", url: facts.url };
     }
-    const service = await this.runGatewayService([
-      "install",
-      "--origin", facts.url,
-      "--web-root", join(this.resourcesPath, "web"),
-      "--deployment-identity", deploymentIdentity,
-      "--electron-run-as-node",
-    ]);
+    const service = await this.installGateway(facts.url, deploymentIdentity);
     if (service.exitCode !== 0) {
       return { phase: "error", message: service.stderr.trim().slice(0, 512) || "The private phone gateway could not restart." };
     }

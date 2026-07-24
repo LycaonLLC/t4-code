@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "purpose": "one-time-omp-fork-authority-transfer",
+  "repositories": {
+    "official": {
+      "fullName": "can1357/oh-my-pi",
+      "id": 1125856365,
+      "nodeId": "R_kgDOQxs0bQ"
+    },
+    "legacy": {
+      "fullName": "lyc-aon/oh-my-pi",
+      "id": 1271877000,
+      "nodeId": "R_kgDOS89NiA",
+      "parentId": 1125856365,
+      "parentNodeId": "R_kgDOQxs0bQ"
+    },
+    "current": {
+      "fullName": "wolfiesch/oh-my-pi",
+      "id": 1271775475,
+      "nodeId": "R_kgDOS83A8w",
+      "parentId": 1125856365,
+      "parentNodeId": "R_kgDOQxs0bQ"
+    }
+  },
+  "publication": {
+    "upstreamTag": "v17.0.5",
+    "upstreamCommit": "9fd6e97113f5ed3a847e66d346970efdf8afcad9",
+    "upstreamTagObject": "9fd6e97113f5ed3a847e66d346970efdf8afcad9",
+    "currentBaseTagObject": null,
+    "currentBaseCommitAccessible": true,
+    "productBranch": "t4code/main",
+    "productCommit": "fc0c391334c08ab260057756aa84bd2b07741ee7",
+    "integrationTag": "t4code-17.0.5-appserver-13",
+    "integrationCommit": "fc0c391334c08ab260057756aa84bd2b07741ee7",
+    "integrationTagObject": "bdaef9e0073bdb5f889a36adef93322aaf82fcec"
+  },
+  "releaseAssets": [
+    {"name":"omp-darwin-arm64","size":120893008,"digest":"sha256:60ce5193eadc2884a4313289ff1166b6a1daae97f3a3ec66dc260ea5c5713756"},
+    {"name":"omp-darwin-x64","size":126353216,"digest":"sha256:713a4ea2293704fd1958e8cdc91786af292323a9af1169b2013c2498c62d808c"},
+    {"name":"omp-linux-arm64","size":150513808,"digest":"sha256:46d29f223a7481d42b3f7219e71afe389604c2b61f7d309369397a8932837770"},
+    {"name":"omp-linux-x64","size":175376512,"digest":"sha256:ef66a95a45185c35a19ed997b68f62f86de5497414f6a9b939c4f228a52471b8"},
+    {"name":"omp-windows-x64.exe","size":154444800,"digest":"sha256:fc09b7f3f167478095570a8fed367a76f7ad8d9d4c48e0db8bdadbcb1cbe9fea"}
+  ]
+}

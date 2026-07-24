@@ -100,7 +100,7 @@ Resources:
     Properties:
       ResponseHeadersPolicyConfig:
         Name: t4-code-demo-security
-        Comment: Security headers for the Flutter web demo
+        Comment: Security headers for the read-only React web demo
         CustomHeadersConfig:
           Items:
             - Header: Cross-Origin-Opener-Policy
@@ -111,7 +111,7 @@ Resources:
               Value: camera=(), geolocation=(), microphone=(), payment=(), usb=()
         SecurityHeadersConfig:
           ContentSecurityPolicy:
-            ContentSecurityPolicy: "default-src 'self'; base-uri 'self'; connect-src 'self' https://fonts.gstatic.com; font-src 'self' https://fonts.gstatic.com; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; upgrade-insecure-requests"
+            ContentSecurityPolicy: "default-src 'self'; base-uri 'self'; connect-src 'self' https://fonts.gstatic.com; font-src 'self' https://fonts.gstatic.com; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; upgrade-insecure-requests"
             Override: true
           ContentTypeOptions:
             Override: true

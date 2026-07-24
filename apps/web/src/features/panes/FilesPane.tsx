@@ -68,9 +68,14 @@ function TreeRows({ api, query }: { readonly api: InspectorStoreApi; readonly qu
   }
   if (rootState === "error") {
     return (
-      <p className="px-3 py-4 text-muted-foreground text-xs">
-        The host could not list this project's files right now.
-      </p>
+      <div className="flex items-center justify-between gap-3 px-3 py-4">
+        <p className="text-muted-foreground text-xs">
+          The host could not list this project's files right now.
+        </p>
+        <Button onClick={() => api.getState().requestDir("")} size="xs" variant="outline">
+          Try again
+        </Button>
+      </div>
     );
   }
   if (rows.length === 0) {
@@ -265,6 +270,7 @@ export function FilesPane({
   const query = useInspector(api, (state) => state.files.query);
   const selectedPath = useInspector(api, (state) => state.files.selectedPath);
   const preview = useInspector(api, (state) => state.files.preview);
+  const previewRevision = useInspector(api, (state) => state.files.previewRevision);
   const offline = useInspector(api, (state) => state.files.offline);
   const draftsByPath = useInspector(api, (state) => state.files.draftsByPath);
   const fileWrite = useInspector(api, (state) => state.actions.fileWrite);
@@ -273,7 +279,11 @@ export function FilesPane({
     (state) => state.contextItemsBySessionId[sessionId] ?? EMPTY_CONTEXT_ITEMS,
   );
   const editablePreview =
-    preview !== null && preview !== "loading" && preview.kind === "code" && !preview.truncated;
+    preview !== null &&
+    preview !== "loading" &&
+    preview.kind === "code" &&
+    !preview.truncated &&
+    previewRevision !== null;
   const rootKnown = useInspector(api, (state) => state.files.childrenByPath[""] !== undefined);
   const contextPreview: FilePreview | null =
     draft !== undefined
@@ -361,7 +371,9 @@ export function FilesPane({
                     title={
                       preview.truncated
                         ? "The host returned only part of this file."
-                        : (fileWrite.reason ?? undefined)
+                        : previewRevision === null
+                          ? "The host did not provide the file revision required for a safe edit."
+                          : (fileWrite.reason ?? undefined)
                     }
                     variant="outline"
                   >
