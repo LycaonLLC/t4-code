@@ -490,9 +490,11 @@ jobs:
 
       - name: Dispatch and await the exact immutable production deployment
         env:
+          CONTROL_SHA: ${{ github.sha }}
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
         run: >-
           node scripts/dispatch-site-deployment.mjs
           --tag "$RELEASE_TAG"
           --commit "$SOURCE_SHA"
+          --control-commit "$CONTROL_SHA"
