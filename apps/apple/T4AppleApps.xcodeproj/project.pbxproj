@@ -1,0 +1,459 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0522AB8551C0091E125953D0 /* T4IOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C0A1BAA36142F08EBC2ACDE /* T4IOSApp.swift */; };
+		4D52BB37AA04636961AB81ED /* T4MacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52D5AD9EE42402FC33165ED3 /* T4MacApp.swift */; };
+		6ABC124C2A14723127A3E56B /* T4UI in Frameworks */ = {isa = PBXBuildFile; productRef = D9B148532BA22C50B335B900 /* T4UI */; };
+		84A107D5638F8836E2C905F6 /* T4UI in Frameworks */ = {isa = PBXBuildFile; productRef = ADF7E98FA68DCC63CDD01F7E /* T4UI */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		1C0A1BAA36142F08EBC2ACDE /* T4IOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = T4IOSApp.swift; sourceTree = "<group>"; };
+		52D5AD9EE42402FC33165ED3 /* T4MacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = T4MacApp.swift; sourceTree = "<group>"; };
+		597CDD7B091412A800C8B11D /* T4MacApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = T4MacApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		79682F63EACA2AB5BD8B5A41 /* apple */ = {isa = PBXFileReference; lastKnownFileType = folder; name = apple; path = .; sourceTree = SOURCE_ROOT; };
+		E1B2C06EFB8C24AFB65F8E79 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		ED3A5711B3A65EEEDC777D4A /* T4IOSApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = T4IOSApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		54420830AE2C1140D3B05648 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6ABC124C2A14723127A3E56B /* T4UI in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6F4C76AC544A5A3C3E894704 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				84A107D5638F8836E2C905F6 /* T4UI in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1883A67059F6079B4A408841 /* T4MacApp */ = {
+			isa = PBXGroup;
+			children = (
+				52D5AD9EE42402FC33165ED3 /* T4MacApp.swift */,
+			);
+			name = T4MacApp;
+			path = Sources/T4MacApp;
+			sourceTree = "<group>";
+		};
+		4FF9B2387DAB1F7F84086C3D /* T4IOSApp */ = {
+			isa = PBXGroup;
+			children = (
+				E1B2C06EFB8C24AFB65F8E79 /* Info.plist */,
+				1C0A1BAA36142F08EBC2ACDE /* T4IOSApp.swift */,
+			);
+			name = T4IOSApp;
+			path = Apps/T4IOSApp;
+			sourceTree = "<group>";
+		};
+		A67F206CC6E1C0DB5B806517 = {
+			isa = PBXGroup;
+			children = (
+				B15859A65FE3ACD242438A08 /* Packages */,
+				4FF9B2387DAB1F7F84086C3D /* T4IOSApp */,
+				1883A67059F6079B4A408841 /* T4MacApp */,
+				EA30222FBE1DB76EAD331EC5 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		B15859A65FE3ACD242438A08 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				79682F63EACA2AB5BD8B5A41 /* apple */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		EA30222FBE1DB76EAD331EC5 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				ED3A5711B3A65EEEDC777D4A /* T4IOSApp.app */,
+				597CDD7B091412A800C8B11D /* T4MacApp.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		2A665232EE7EA39F71555B22 /* T4MacApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8B5E929AC1BE1F657183A2F9 /* Build configuration list for PBXNativeTarget "T4MacApp" */;
+			buildPhases = (
+				DA95FBF2D3583F38942E71F8 /* Stage local runtime */,
+				FAC0ECA9BCF44EBBF8B04CE4 /* Sources */,
+				54420830AE2C1140D3B05648 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = T4MacApp;
+			packageProductDependencies = (
+				D9B148532BA22C50B335B900 /* T4UI */,
+			);
+			productName = T4MacApp;
+			productReference = 597CDD7B091412A800C8B11D /* T4MacApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+		ECDCD42653612E9CC2DA8E06 /* T4IOSApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5EF92CA1F5BBF100A30C693E /* Build configuration list for PBXNativeTarget "T4IOSApp" */;
+			buildPhases = (
+				8EDA7BB91A48B3C55A0565C8 /* Sources */,
+				6F4C76AC544A5A3C3E894704 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = T4IOSApp;
+			packageProductDependencies = (
+				ADF7E98FA68DCC63CDD01F7E /* T4UI */,
+			);
+			productName = T4IOSApp;
+			productReference = ED3A5711B3A65EEEDC777D4A /* T4IOSApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B206C83EC56B4FB5C2ED0046 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					ECDCD42653612E9CC2DA8E06 = {
+						ProvisioningStyle = Manual;
+					};
+				};
+			};
+			buildConfigurationList = 56C47D289195C7EAB8D5146A /* Build configuration list for PBXProject "T4AppleApps" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = A67F206CC6E1C0DB5B806517;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				673B12545CA29256F4833D38 /* XCLocalSwiftPackageReference "." */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = EA30222FBE1DB76EAD331EC5 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				ECDCD42653612E9CC2DA8E06 /* T4IOSApp */,
+				2A665232EE7EA39F71555B22 /* T4MacApp */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		DA95FBF2D3583F38942E71F8 /* Stage local runtime */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/scripts/stage-local-runtime.sh",
+			);
+			name = "Stage local runtime";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/stage-local-runtime.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		8EDA7BB91A48B3C55A0565C8 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0522AB8551C0091E125953D0 /* T4IOSApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FAC0ECA9BCF44EBBF8B04CE4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4D52BB37AA04636961AB81ED /* T4MacApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		09C236BEFF4D8B949847614D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = Apps/T4MacApp/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.oh-my-pi.t4code.macos";
+				SDKROOT = macosx;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		0D1274E0184C86C5D67E237E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		3D5FD3B287E713037DD24CCB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Manual;
+				INFOPLIST_FILE = Apps/T4IOSApp/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.oh-my-pi.t4code";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		62C517E8BF634B9E4BC22DF5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Manual;
+				INFOPLIST_FILE = Apps/T4IOSApp/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.oh-my-pi.t4code";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		BC6D3FB95174727D1FFBD65A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		C10643C7413221F4F63B2A43 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = Apps/T4MacApp/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.oh-my-pi.t4code.macos";
+				SDKROOT = macosx;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		56C47D289195C7EAB8D5146A /* Build configuration list for PBXProject "T4AppleApps" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BC6D3FB95174727D1FFBD65A /* Debug */,
+				0D1274E0184C86C5D67E237E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		5EF92CA1F5BBF100A30C693E /* Build configuration list for PBXNativeTarget "T4IOSApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3D5FD3B287E713037DD24CCB /* Debug */,
+				62C517E8BF634B9E4BC22DF5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		8B5E929AC1BE1F657183A2F9 /* Build configuration list for PBXNativeTarget "T4MacApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C10643C7413221F4F63B2A43 /* Debug */,
+				09C236BEFF4D8B949847614D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		673B12545CA29256F4833D38 /* XCLocalSwiftPackageReference "." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = .;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		ADF7E98FA68DCC63CDD01F7E /* T4UI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = T4UI;
+		};
+		D9B148532BA22C50B335B900 /* T4UI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = T4UI;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = B206C83EC56B4FB5C2ED0046 /* Project object */;
+}
