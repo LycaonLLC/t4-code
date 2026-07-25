@@ -1,0 +1,74 @@
+name: T4AppleApps
+
+packages:
+  T4Apple:
+    path: .
+
+targets:
+  T4IOSApp:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Apps/T4IOSApp
+    info:
+      path: Apps/T4IOSApp/Info.plist
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        PRODUCT_BUNDLE_IDENTIFIER: "dev.oh-my-pi.t4code"
+        CODE_SIGN_STYLE: "Manual"
+        CODE_SIGNING_ALLOWED: "NO"
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGN_IDENTITY: ""
+    dependencies:
+      - package: T4Apple
+        product: T4UI
+
+  T4MacApp:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/T4MacApp
+    info:
+      path: Apps/T4MacApp/Info.plist
+      properties:
+        CFBundleDisplayName: T4 Code
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        NSPrincipalClass: NSApplication
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        PRODUCT_BUNDLE_IDENTIFIER: "dev.oh-my-pi.t4code.macos"
+        CODE_SIGNING_ALLOWED: "NO"
+        CODE_SIGNING_REQUIRED: "NO"
+    dependencies:
+      - package: T4Apple
+        product: T4UI
+    preBuildScripts:
+      - name: Stage local runtime
+        script: |
+          "$SRCROOT/scripts/stage-local-runtime.sh"
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - "$(SRCROOT)/scripts/stage-local-runtime.sh"
+
+schemes:
+  T4IOSApp:
+    build:
+      targets:
+        T4IOSApp: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  T4MacApp:
+    build:
+      targets:
+        T4MacApp: all
+    run:
+      config: Debug
+    archive:
+      config: Release
