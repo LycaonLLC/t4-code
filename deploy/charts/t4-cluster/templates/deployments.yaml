@@ -42,13 +42,15 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       affinity:
+        {{- with .Values.session.nodeExclude }}
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
               - matchExpressions:
                   - key: kubernetes.io/hostname
                     operator: NotIn
-                    values: ["k3s-worker-02"]
+                    values: {{ toJson . }}
+        {{- end }}
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
             - weight: 100
@@ -196,13 +198,15 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       affinity:
+        {{- with .Values.session.nodeExclude }}
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
               - matchExpressions:
                   - key: kubernetes.io/hostname
                     operator: NotIn
-                    values: ["k3s-worker-02"]
+                    values: {{ toJson . }}
+        {{- end }}
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
             - weight: 100
@@ -402,13 +406,15 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       affinity:
+        {{- with .Values.session.nodeExclude }}
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
               - matchExpressions:
                   - key: kubernetes.io/hostname
                     operator: NotIn
-                    values: ["k3s-worker-02"]
+                    values: {{ toJson . }}
+        {{- end }}
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
             - weight: 100

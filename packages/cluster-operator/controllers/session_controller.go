@@ -420,7 +420,6 @@ func (r *SessionReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.updateSessionFailure(ctx, &session, true, false, "WorkspaceReady", reason, message)
 	}
 
-
 	serviceName := SessionServiceName(&session)
 	podName := SessionPodName(&session)
 	labels := map[string]string{
@@ -650,9 +649,9 @@ func (r *SessionReconciler) desiredPod(session *clusterv1alpha1.T4Session, pvcNa
 	if kubernetesAPIAudience == "" {
 		kubernetesAPIAudience = DefaultKubernetesAPIAudience
 	}
-	excluded := r.ExcludedNodeNames
-	if len(excluded) == 0 {
-		excluded = []string{"k3s-worker-02"}
+	var affinity *corev1.Affinity
+	if len(r.ExcludedNodeNames) > 0 {
+		affinity = &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "kubernetes.io/hostname", Operator: corev1.NodeSelectorOpNotIn, Values: r.ExcludedNodeNames}}}}}}}
 	}
 	stateID := strings.TrimPrefix(podName, "t4-session-")
 	container := corev1.Container{
@@ -727,7 +726,7 @@ func (r *SessionReconciler) desiredPod(session *clusterv1alpha1.T4Session, pvcNa
 			EnableServiceLinks:            &falseValue,
 			TerminationGracePeriodSeconds: &grace,
 			SecurityContext:               &corev1.PodSecurityContext{RunAsNonRoot: &trueValue, RunAsUser: &runAsUser, FSGroup: &fsGroup, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
-			Affinity:                      &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "kubernetes.io/hostname", Operator: corev1.NodeSelectorOpNotIn, Values: excluded}}}}}}},
+			Affinity:                      affinity,
 			Containers:                    []corev1.Container{container}, Volumes: volumes,
 		},
 	}

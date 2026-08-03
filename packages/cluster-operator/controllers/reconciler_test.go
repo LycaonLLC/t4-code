@@ -876,6 +876,9 @@ func TestSessionWaitsForBoundRWXThenCreatesExactlyOnePodAndService(t *testing.T)
 		t.Fatal(err)
 	}
 	pod := pods.Items[0]
+	if pod.Spec.Affinity != nil {
+		t.Fatalf("session pod inherited undeclared node exclusions: %#v", pod.Spec.Affinity)
+	}
 	if pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken {
 		t.Fatal("session pod must disable automatic ServiceAccount token mounting")
 	}

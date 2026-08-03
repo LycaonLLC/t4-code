@@ -58,7 +58,7 @@ kubernetes:
   # Set this to an audience accepted by this cluster's API server.
   apiAudience: https://kubernetes.default.svc
 session:
-  nodeExclude: [k3s-worker-02]
+  nodeExclude: [reserved-node-a]
   omp:
     # Existing same-namespace ConfigMap; the chart does not create it.
     configMap: omp-runtime-config
@@ -123,7 +123,7 @@ The optional built-in model gateway is a separate workload and the only chart-ma
 
 Install a new release with immutable digests by adding `--values operator-values.yaml` to the lifecycle-runner `install` command above. For an existing release, use the lifecycle-runner `upgrade` procedure below. Do not use `helm upgrade --install`: install and upgrade have different compatibility preflights.
 
-The controller always has two replicas and uses a Kubernetes Lease named from `t4-cluster-operator.cluster.t4.dev`; one replica reconciles at a time. The server defaults to three stateless replicas and supports a minimum of two. Its Deployment uses `maxUnavailable: 0`, a `minAvailable: 2` PDB, topology spread, anti-affinity, readiness draining, and an explicit `k3s-worker-02` exclusion. Session pods also exclude that node by default. Additional cluster-specific exclusions belong in deployment values, not this portable chart.
+The controller always has two replicas and uses a Kubernetes Lease named from `t4-cluster-operator.cluster.t4.dev`; one replica reconciles at a time. The server defaults to three stateless replicas and supports a minimum of two. Its Deployment uses `maxUnavailable: 0`, a `minAvailable: 2` PDB, topology spread, anti-affinity, and readiness draining. The portable chart declares no node names; set `session.nodeExclude` to cluster-specific DNS-label node names when controller, server, model-gateway, and session workloads must avoid reserved nodes.
 
 The chart creates dedicated controller, server, session, and optional model-gateway ServiceAccounts. Controller and server pods disable automatic token mounting and receive explicit short-lived Kubernetes API projections. The model gateway receives no Kubernetes API token or RBAC. Each server pod also receives a separate 10-minute projected token with the fixed `t4-cluster-internal` audience and presents it only in the existing `omp-app/1` upstream authentication field when dialing a session host. Session pods use `automountServiceAccountToken: false`; their only Kubernetes identity mount is an explicit short-lived API-audience token plus the cluster CA and namespace. The session ServiceAccount may only create `authentication.k8s.io/tokenreviews`, and the host accepts a connection only when TokenReview confirms the expected server ServiceAccount username and audience.
 

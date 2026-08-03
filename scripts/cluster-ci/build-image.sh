@@ -3,8 +3,7 @@ set -eu
 
 umask 077
 canonical_build_source_repository=usr-bin-roygbiv/t4-code
-authorized_ci_mirror=z-peterson/t4-code
-
+authorized_ci_mirror=roycorp/t4-code
 component=${1:-}
 repository_suffix=${2:-}
 dockerfile=${3:-}

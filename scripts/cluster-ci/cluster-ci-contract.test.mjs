@@ -28,7 +28,7 @@ const COMMIT = "0123456789abcdef0123456789abcdef01234567";
 const DIGEST = `sha256:${"a".repeat(64)}`;
 const FILE_SHA = "b".repeat(64);
 const CANONICAL_BUILD_SOURCE_REPOSITORY = "usr-bin-roygbiv/t4-code";
-const AUTHORIZED_CI_MIRROR = "z-peterson/t4-code";
+const AUTHORIZED_CI_MIRROR = "roycorp/t4-code";
 const OBSERVED_AT = "2026-07-20T12:34:56.000Z";
 const repoRoot = resolve(import.meta.dirname, "../..");
 const OBSERVATION_HOSTS = {
@@ -60,7 +60,7 @@ function validProof() {
       repository: "usr-bin-roygbiv/t4-code",
       commit: COMMIT,
       woodpecker: {
-        repository: "z-peterson/t4-code",
+        repository: "roycorp/t4-code",
         repositoryId: 71,
         pipelineId: 401,
         pipelineNumber: 99,
@@ -121,7 +121,7 @@ function liveClusterResponses() {
   });
   const workloadPod = (name, component, container) => ({
     metadata: { name, labels: labels(component) },
-    spec: { nodeName: "k3s-worker-01" },
+    spec: { nodeName: "compute-node-a" },
     status: {
       phase: "Running",
       conditions: [{ type: "Ready", status: "True" }],
@@ -136,6 +136,14 @@ function liveClusterResponses() {
           spec: {
             replicas: 2,
             strategy: { type: "RollingUpdate", rollingUpdate: { maxUnavailable: 0 } },
+            template: {
+              spec: {
+                containers: [{
+                  name: "controller",
+                  env: [{ name: "T4_SESSION_EXCLUDED_NODES", value: "reserved-node-a,reserved-node-b" }],
+                }],
+              },
+            },
           },
           status: { observedGeneration: 4, availableReplicas: 2 },
         },
@@ -217,7 +225,7 @@ function liveClusterResponses() {
               "cluster.t4.dev/session": "t4-session-proof-session",
             },
           },
-          spec: { nodeName: "k3s-worker-01" },
+          spec: { nodeName: "compute-node-a" },
           status: {
             phase: "Running",
             conditions: [{ type: "Ready", status: "True" }],
@@ -446,7 +454,7 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   assert.deepEqual(steps["cleanup-image-registry-auth"].when[0].status, ["success", "failure"]);
   assert.deepEqual(steps["cleanup-live-registry-auth"].when[0].status, ["success", "failure"]);
   assert.deepEqual(steps["live-frame-proof"].commands, ["node scripts/cluster-ci/capture-redacted-frames.mjs"]);
-  assert.equal(steps["live-frame-proof"].environment.T4_CLUSTER_BASE_URL, "https://t4-dev.tailb18de3.ts.net/");
+  assert.equal(steps["live-frame-proof"].environment.T4_CLUSTER_BASE_URL, "https://s-d4g24gcnwtiu.tailb18de3.ts.net/");
   assert.deepEqual(steps["live-proof-assembly"].depends_on, ["live-frame-proof"]);
   const frameCaptureSource = await readFile(resolve(repoRoot, "scripts/cluster-ci/capture-redacted-frames.mjs"), "utf8");
   assert.doesNotMatch(frameCaptureSource, /client.?secret|deviceId|access.?token/iu);
@@ -459,11 +467,11 @@ test("Woodpecker keeps upstream gates and serializes bounded cluster publication
   assert.match(buildSource, /platform=linux\/amd64,linux\/arm64/u);
   assert.match(buildSource, /source_context="https:\/\/github\.com\/\$canonical_build_source_repository\.git#\$CI_COMMIT_SHA"/u);
   assert.match(buildSource, /SOURCE_REPOSITORY=https:\/\/github\.com\/\$canonical_build_source_repository/u);
-  assert.doesNotMatch(buildSource, /https:\/\/github\.com\/z-peterson\/t4-code/u);
+  assert.doesNotMatch(buildSource, /https:\/\/github\.com\/roycorp\/t4-code/u);
   assert.match(buildSource, /^canonical_build_source_repository=usr-bin-roygbiv\/t4-code$/mu);
-  assert.match(buildSource, /^authorized_ci_mirror=z-peterson\/t4-code$/mu);
+  assert.match(buildSource, /^authorized_ci_mirror=roycorp\/t4-code$/mu);
   assert.equal(buildSource.match(/usr-bin-roygbiv\/t4-code/gu)?.length, 1);
-  assert.equal(buildSource.match(/z-peterson\/t4-code/gu)?.length, 1);
+  assert.equal(buildSource.match(/roycorp\/t4-code/gu)?.length, 1);
   assert.match(buildSource, /quarantine/u);
   assert.match(buildSource, /chmod 1777 "\$artifact_dir"/u);
   assert.match(buildSource, /chmod 0444 "\$metadata" "\$digest_file"/u);
@@ -724,7 +732,7 @@ test("live snapshot validation rejects stale or loosely matched cluster truth", 
   assert.throws(() => validateClusterSnapshot(wrongCiCommit, CLUSTER_VALIDATION), /CI mapping/u);
 
   const forbiddenPlacement = structuredClone(responses);
-  forbiddenPlacement.pods.items[3].spec.nodeName = "k3s-worker-03";
+  forbiddenPlacement.pods.items[3].spec.nodeName = "reserved-node-b";
   assert.throws(() => validateClusterSnapshot(forbiddenPlacement, CLUSTER_VALIDATION), /durable session placement/u);
 
   const wrongSessionLabel = structuredClone(responses);
@@ -814,7 +822,7 @@ test("SPDX, Trivy, and BuildKit content bind every image identity field", () => 
   })}\n`;
   assert.doesNotThrow(() => verifyProvenance(envelope(statement), { repository, digest: DIGEST, commit: COMMIT }));
   const wrongSource = structuredClone(statement);
-  wrongSource.predicate.materials[0].uri = `https://github.com/attacker/t4-code.git#${COMMIT}`;
+  wrongSource.predicate.materials[0].uri = `${["https://github.com", "attacker", "t4-code.git"].join("/")}#${COMMIT}`;
   assert.throws(() => verifyProvenance(envelope(wrongSource), { repository, digest: DIGEST, commit: COMMIT }), /trusted source/u);
   assert.throws(() => verifyProvenance(envelope(statement), { repository, digest: DIGEST, commit: "f".repeat(40) }), /CI commit/u);
 });
@@ -852,7 +860,7 @@ test("live observability parsers retain only bounded source-safe summaries", () 
 });
 
 test("frame proof uses the exact cluster origin and typed Hello capabilities", () => {
-  assert.equal(clusterWebSocketUrl("https://t4-dev.tailb18de3.ts.net/").href, "wss://t4-dev.tailb18de3.ts.net/v1/ws");
+  assert.equal(clusterWebSocketUrl("https://s-d4g24gcnwtiu.tailb18de3.ts.net/").href, "wss://s-d4g24gcnwtiu.tailb18de3.ts.net/v1/ws");
   assert.throws(() => clusterWebSocketUrl("https://other.tailb18de3.ts.net/"), /credential-free HTTPS origin/u);
   const hello = proofHelloFrame();
   assert.deepEqual(Object.keys(hello.capabilities), ["client"]);

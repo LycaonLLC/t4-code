@@ -57,8 +57,7 @@ server:
       memory: 2Gi
 
 session:
-  nodeExclude:
-    - k3s-worker-02
+  nodeExclude: []
   resources:
     requests:
       cpu: 500m

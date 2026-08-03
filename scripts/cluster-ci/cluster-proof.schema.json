@@ -52,7 +52,7 @@
           "additionalProperties": false,
           "required": ["repository", "repositoryId", "pipelineId", "pipelineNumber", "url"],
           "properties": {
-            "repository": { "const": "z-peterson/t4-code" },
+            "repository": { "const": "roycorp/t4-code" },
             "repositoryId": { "type": "integer", "minimum": 1 },
             "pipelineId": { "type": "integer", "minimum": 1 },
             "pipelineNumber": { "type": "integer", "minimum": 1 },

@@ -7,7 +7,6 @@ const MAX_LEASE_AGE_MS = 30_000;
 const MAX_CLOCK_SKEW_MS = 5_000;
 const NAMESPACE_PATTERN = /^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/u;
 const DIGEST_PATTERN = /@sha256:[0-9a-f]{64}$/u;
-const FORBIDDEN_SESSION_NODES = new Set(["k3s-worker-02", "k3s-worker-03"]);
 const WORKLOAD_KINDS = new Set(["CronJob", "DaemonSet", "Deployment", "Job", "Pod", "StatefulSet"]);
 const LEASE_NAME = "t4-cluster-operator.cluster.t4.dev";
 const DEPLOYMENTS = Object.freeze([
@@ -162,8 +161,26 @@ function validateCiMapping(sessions, expected) {
   return mappings;
 }
 
+function sessionExcludedNodes(deployments) {
+  const controller = exactNamed(deployments, "t4-cluster-controller", "controller Deployment");
+  const containers = controller.spec?.template?.spec?.containers;
+  const matchingContainers = Array.isArray(containers)
+    ? containers.filter(({ name }) => name === "controller")
+    : [];
+  const exclusions = matchingContainers[0]?.env?.filter(({ name }) => name === "T4_SESSION_EXCLUDED_NODES") ?? [];
+  if (matchingContainers.length !== 1 || exclusions.length !== 1 || typeof exclusions[0].value !== "string") {
+    fail("controller Deployment does not declare exactly one session exclusion contract");
+  }
+  const nodes = exclusions[0].value.split(",").filter((node) => node.length > 0);
+  if (nodes.length > 16 || new Set(nodes).size !== nodes.length || nodes.some((node) => !NAMESPACE_PATTERN.test(node))) {
+    fail("controller Deployment session exclusions are malformed");
+  }
+  return new Set(nodes);
+}
+
 export function validateClusterSnapshot(snapshot, { now = Date.now(), ciMapping } = {}) {
   const deployments = list(snapshot, "deployments");
+  const forbiddenSessionNodes = sessionExcludedNodes(deployments);
   for (const contract of DEPLOYMENTS) {
     deploymentContract(exactNamed(deployments, contract.name, `${contract.component} Deployment`), contract);
   }
@@ -253,7 +270,7 @@ export function validateClusterSnapshot(snapshot, { now = Date.now(), ciMapping 
     label(pod, "cluster.t4.dev/session", podName, `session ${name} Pod`);
     readyPod(pod, `session ${name} Pod`);
     currentContainer(pod, "session-runtime", `session ${name} Pod`);
-    if (FORBIDDEN_SESSION_NODES.has(pod.spec?.nodeName)) {
+    if (forbiddenSessionNodes.has(pod.spec?.nodeName)) {
       fail(`durable session placement is invalid for ${podName}`);
     }
   }
