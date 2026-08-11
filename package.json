@@ -57,7 +57,7 @@
     "@types/node": "catalog:",
     "@typescript/native-preview": "catalog:",
     "jiti": "2.7.0",
-    "js-yaml": "4.3.0",
+    "js-yaml": "4.3.1",
     "vite-plus": "catalog:"
   },
   "engines": {
