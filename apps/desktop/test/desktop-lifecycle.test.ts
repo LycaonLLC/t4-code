@@ -9,26 +9,17 @@ import {
   discoverT4HostExecutable,
   inspectPathOmpCompatibility,
   NodeServiceRunner,
-  OmpAppserverCompatibilityError,
-  probeOmpAppserver,
+  OFFICIAL_OMP_VERSION,
+  OmpRuntimeCompatibilityError,
+  probeOmpRuntime,
   repairAppserverService,
 } from "../src/service.ts";
 import type { ServiceManager } from "@t4-code/service-manager";
 
-const bridgeHelpResult = {
+const officialVersionResult = {
   exitCode: 0,
   signal: null,
-  stdout:
-    "Expose the private OMP authority bridge used by T4 Code\n\nFLAGS\n  --stdio  Use the versioned JSON-lines standard I/O transport\n",
-  stderr: "",
-  stdoutTruncated: false,
-  stderrTruncated: false,
-} as const;
-
-const stoppedStatusResult = {
-  exitCode: 0,
-  signal: null,
-  stdout: JSON.stringify({ state: "stopped", reason: "unreachable" }),
+  stdout: `omp/${OFFICIAL_OMP_VERSION}\n`,
   stderr: "",
   stdoutTruncated: false,
   stderrTruncated: false,
@@ -53,6 +44,7 @@ describe("desktop lifecycle boundaries", () => {
       }),
     ).toBeUndefined();
   });
+
   it("only discovers bounded executable candidates and honors explicit environment", async () => {
     const executable = await discoverOmpExecutable({
       environment: { OMP_EXECUTABLE: "/not/a/real/omp", PATH: "" },
@@ -60,7 +52,8 @@ describe("desktop lifecycle boundaries", () => {
     });
     expect(executable).toBe(undefined);
   });
-  it("uses explicit executable before PATH and ignores renderer URL as a service candidate", async () => {
+
+  it("uses an exact official OMP runtime before PATH and ignores renderer URLs", async () => {
     const root = await mkdtemp(join(tmpdir(), "t4-desktop-"));
     const explicitDir = join(root, "explicit");
     const pathDir = join(root, "path");
@@ -72,12 +65,13 @@ describe("desktop lifecycle boundaries", () => {
     await writeFile(pathCandidate, "");
     await chmod(explicit, 0o755);
     await chmod(pathCandidate, 0o755);
-    const probeRunner: ProcessRunner = {
-      spawn: async (spec) => ({
+    const runner: ProcessRunner = {
+      spawn: async () => ({
         kill: () => {},
-        result: Promise.resolve(spec.args?.[0] === "bridge" ? bridgeHelpResult : stoppedStatusResult),
+        result: Promise.resolve(officialVersionResult),
       }),
     };
+
     expect(
       await discoverOmpExecutable({
         environment: {
@@ -86,64 +80,19 @@ describe("desktop lifecycle boundaries", () => {
           OMP_DESKTOP_RENDERER_URL: "http://127.0.0.1:5173/",
         },
         homeDirectory: root,
-        runner: probeRunner,
+        runner,
       }),
     ).toBe(explicit);
     expect(
       await discoverOmpExecutable({
         environment: { PATH: "", OMP_DESKTOP_RENDERER_URL: explicit },
         homeDirectory: root,
-        runner: probeRunner,
-      }),
-    ).toBeUndefined();
-  });
-  it("rejects an executable that does not implement appserver status", async () => {
-    const root = await mkdtemp(join(tmpdir(), "t4-desktop-"));
-    const executable = join(root, "omp");
-    await writeFile(executable, "");
-    await chmod(executable, 0o755);
-    const runner: ProcessRunner = {
-      spawn: async (spec) => ({
-        kill: () => {},
-        result: Promise.resolve(
-          spec.args?.[0] === "bridge"
-            ? bridgeHelpResult
-            : {
-                ...stoppedStatusResult,
-                stdout: "normal agent help",
-              },
-        ),
-      }),
-    };
-    expect(
-      await discoverOmpExecutable({
-        environment: { OMP_EXECUTABLE: executable },
-        homeDirectory: root,
         runner,
       }),
     ).toBeUndefined();
   });
-  it("rejects a legacy appserver build that does not expose the authority bridge", async () => {
-    const root = await mkdtemp(join(tmpdir(), "t4-desktop-"));
-    const executable = join(root, "omp");
-    await writeFile(executable, "");
-    await chmod(executable, 0o755);
-    let calls = 0;
-    const runner: ProcessRunner = {
-      spawn: async () => {
-        calls += 1;
-        return { kill: () => {}, result: Promise.resolve(stoppedStatusResult) };
-      },
-    };
-    const error = await discoverOmpExecutable({
-      environment: { OMP_EXECUTABLE: executable, PATH: "" },
-      homeDirectory: root,
-      runner,
-    }).catch((cause: unknown) => cause);
-    expect(error instanceof OmpAppserverCompatibilityError).toBe(true);
-    expect(calls).toBe(1);
-  });
-  it("reports old OMP builds that reject the required JSON status flag", async () => {
+
+  it("reports a different official OMP version as incompatible", async () => {
     const root = await mkdtemp(join(tmpdir(), "t4-desktop-"));
     const executable = join(root, "omp");
     await writeFile(executable, "");
@@ -152,85 +101,62 @@ describe("desktop lifecycle boundaries", () => {
     const runner: ProcessRunner = {
       spawn: async (spec) => {
         calls += 1;
-        if (spec.args?.[0] === "bridge") {
-          return { kill: () => {}, result: Promise.resolve(bridgeHelpResult) };
-        }
-        expect(spec.args).toEqual(["appserver", "status", "--json"]);
+        expect(spec.args).toEqual(["--version"]);
         return {
           kill: () => {},
-          result: Promise.resolve({
-            exitCode: 2,
-            signal: null,
-            stdout: "",
-            stderr: "Error: unknown flag: --json\nRun omp --help for usage.\n",
-            stdoutTruncated: false,
-            stderrTruncated: false,
-          }),
+          result: Promise.resolve({ ...officialVersionResult, stdout: "omp/18.0.10\n" }),
         };
       },
     };
+
     const error = await discoverOmpExecutable({
       environment: { OMP_EXECUTABLE: executable, PATH: "" },
       homeDirectory: root,
       runner,
     }).catch((cause: unknown) => cause);
-    expect(error instanceof OmpAppserverCompatibilityError).toBe(true);
-    if (!(error instanceof OmpAppserverCompatibilityError))
+    expect(error instanceof OmpRuntimeCompatibilityError).toBe(true);
+    if (!(error instanceof OmpRuntimeCompatibilityError))
       throw new Error("expected compatibility error");
-    expect(error.code).toBe("omp_authority_bridge_required");
-    expect(error.message.includes("requires the versioned `omp bridge --stdio`")).toBe(true);
-    expect(calls).toBe(2);
+    expect(error.code).toBe("omp_official_runtime_required");
+    expect(error.message).toContain(`requires unmodified official OMP ${OFFICIAL_OMP_VERSION}`);
+    expect(calls).toBe(1);
   });
-  it("detects mixed PATH candidates instead of blessing only the first compatible one", async () => {
+
+  it("detects mixed PATH versions instead of blessing only the first runtime", async () => {
     const root = await mkdtemp(join(tmpdir(), "t4-desktop-"));
     const oldDir = join(root, "old");
-    const newDir = join(root, "new");
+    const currentDir = join(root, "current");
     await mkdir(oldDir);
-    await mkdir(newDir);
+    await mkdir(currentDir);
     await writeFile(join(oldDir, "omp"), "");
-    await writeFile(join(newDir, "omp"), "");
+    await writeFile(join(currentDir, "omp"), "");
     await chmod(join(oldDir, "omp"), 0o755);
-    await chmod(join(newDir, "omp"), 0o755);
+    await chmod(join(currentDir, "omp"), 0o755);
     let calls = 0;
     const runner: ProcessRunner = {
       spawn: async (spec) => {
         calls += 1;
-        if (spec.command === join(newDir, "omp") && spec.args?.[0] === "bridge") {
-          return { kill: () => {}, result: Promise.resolve(bridgeHelpResult) };
-        }
-        if (spec.command === join(newDir, "omp")) {
-          return {
-            kill: () => {},
-            result: Promise.resolve({
-              exitCode: 0,
-              signal: null,
-              stdout: JSON.stringify({ state: "stopped", reason: "unreachable" }),
-              stderr: "",
-              stdoutTruncated: false,
-              stderrTruncated: false,
-            }),
-          };
-        }
         return {
           kill: () => {},
-          result: Promise.resolve({
-            exitCode: 2,
-            signal: null,
-            stdout: "",
-            stderr: "Error: unknown flag: --json",
-            stdoutTruncated: false,
-            stderrTruncated: false,
-          }),
+          result: Promise.resolve(
+            spec.command === join(currentDir, "omp")
+              ? officialVersionResult
+              : { ...officialVersionResult, stdout: "omp/18.0.10\n" },
+          ),
         };
       },
     };
 
     expect(
-      await inspectPathOmpCompatibility({ environment: { PATH: `${oldDir}:${newDir}` }, runner }),
+      await inspectPathOmpCompatibility({
+        environment: { PATH: `${oldDir}:${currentDir}` },
+        runner,
+      }),
     ).toBe("mixed");
-    expect(calls).toBe(3);
+    expect(calls).toBe(2);
   });
-  it("scopes named appserver probes without inheriting provider credentials", async () => {
+
+  it("probes the runtime without inheriting provider credentials", async () => {
     const root = await mkdtemp(join(tmpdir(), "t4-desktop-"));
     const executable = join(root, "omp");
     await writeFile(executable, "");
@@ -239,26 +165,12 @@ describe("desktop lifecycle boundaries", () => {
     const runner: ProcessRunner = {
       spawn: async (spec) => {
         calls.push(spec);
-        return {
-          kill: () => {},
-          result: Promise.resolve({
-            exitCode: 0,
-            signal: null,
-            stdout: JSON.stringify({
-              state: "running",
-              health: { ok: true, hostId: "host-fable", epoch: "epoch-fable" },
-            }),
-            stderr: "",
-            stdoutTruncated: false,
-            stderrTruncated: false,
-          }),
-        };
+        return { kill: () => {}, result: Promise.resolve(officialVersionResult) };
       },
     };
 
     expect(
-      await probeOmpAppserver(executable, {
-        profileId: "fable-swarm",
+      await probeOmpRuntime(executable, {
         environment: {
           HOME: "/home/test",
           PATH: "/usr/bin:/bin",
@@ -268,55 +180,48 @@ describe("desktop lifecycle boundaries", () => {
       }),
     ).toBe(true);
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.args).toEqual(["appserver", "status", "--json"]);
+    expect(calls[0]?.args).toEqual(["--version"]);
     expect(calls[0]?.env).toEqual({
       HOME: "/home/test",
       PATH: "/usr/bin:/bin",
-      OMP_PROFILE: "fable-swarm",
     });
   });
-  it("rejects malformed, oversized, and timed-out appserver probes", async () => {
+
+  it("rejects malformed, oversized, and timed-out runtime probes", async () => {
     const root = await mkdtemp(join(tmpdir(), "t4-desktop-"));
     const executable = join(root, "omp");
     await writeFile(executable, "");
     await chmod(executable, 0o755);
     const malformed: ProcessRunner = {
-      spawn: async (spec) => ({
+      spawn: async () => ({
         kill: () => {},
-        result: Promise.resolve(
-          spec.args?.[0] === "bridge" ? bridgeHelpResult : { ...stoppedStatusResult, stdout: "{" },
-        ),
+        result: Promise.resolve({ ...officialVersionResult, stdout: "not-omp" }),
       }),
     };
-    expect(
-      await discoverOmpExecutable({
-        environment: { OMP_EXECUTABLE: executable },
+    await expect(
+      discoverOmpExecutable({
+        environment: { OMP_EXECUTABLE: executable, PATH: "" },
         homeDirectory: root,
         runner: malformed,
       }),
-    ).toBeUndefined();
+    ).rejects.toThrow(OmpRuntimeCompatibilityError);
+
     const oversized: ProcessRunner = {
-      spawn: async (spec) => ({
+      spawn: async () => ({
         kill: () => {},
-        result: Promise.resolve(
-          spec.args?.[0] === "bridge"
-            ? bridgeHelpResult
-            : { ...stoppedStatusResult, stdout: "x".repeat(17 * 1024) },
-        ),
+        result: Promise.resolve({ ...officialVersionResult, stdout: "x".repeat(5 * 1024) }),
       }),
     };
     expect(
       await discoverOmpExecutable({
-        environment: { OMP_EXECUTABLE: executable },
+        environment: { OMP_EXECUTABLE: executable, PATH: "" },
         homeDirectory: root,
         runner: oversized,
       }),
     ).toBeUndefined();
+
     const timedOut: ProcessRunner = {
-      spawn: async (spec, signal) => {
-        if (spec.args?.[0] === "bridge") {
-          return { kill: () => {}, result: Promise.resolve(bridgeHelpResult) };
-        }
+      spawn: async (_spec, signal) => {
         const result = Promise.withResolvers<{
           exitCode: number | null;
           signal: null;
@@ -343,14 +248,15 @@ describe("desktop lifecycle boundaries", () => {
     };
     expect(
       await discoverOmpExecutable({
-        environment: { OMP_EXECUTABLE: executable },
+        environment: { OMP_EXECUTABLE: executable, PATH: "" },
         homeDirectory: root,
         runner: timedOut,
         timeoutMs: 10,
       }),
     ).toBeUndefined();
   });
-  it("does not execute ompd candidates that have no status CLI", async () => {
+
+  it("does not execute similarly named non-OMP candidates", async () => {
     const root = await mkdtemp(join(tmpdir(), "t4-desktop-"));
     const executable = join(root, "ompd");
     await writeFile(executable, "");
@@ -359,22 +265,12 @@ describe("desktop lifecycle boundaries", () => {
     const runner: ProcessRunner = {
       spawn: async () => {
         calls += 1;
-        return {
-          kill: () => {},
-          result: Promise.resolve({
-            exitCode: 0,
-            signal: null,
-            stdout: "{}",
-            stderr: "",
-            stdoutTruncated: false,
-            stderrTruncated: false,
-          }),
-        };
+        return { kill: () => {}, result: Promise.resolve(officialVersionResult) };
       },
     };
     expect(
       await discoverOmpExecutable({
-        environment: { OMP_EXECUTABLE: executable },
+        environment: { OMP_EXECUTABLE: executable, PATH: "" },
         homeDirectory: root,
         runner,
       }),

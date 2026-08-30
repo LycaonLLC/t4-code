@@ -49,11 +49,15 @@ async function main(): Promise<void> {
 	const sessionsRoot = join(root, "sessions");
 	const stateRoot = join(root, "state");
 	const runtimeRoot = join(root, "run");
-	const profile = `gate0-${Bun.randomUUIDv7().slice(-12)}`;
-	const agentDir = join(home, ".omp", "profiles", profile, "agent");
+	const profile = "default";
+	const agentDir = join(home, ".omp", "agent");
 	const model = startDeterministicModel();
 	let child: Bun.Subprocess | undefined;
 	let client: RawUdsWebSocket | undefined;
+	let stdout = Promise.resolve("");
+	let stderr = Promise.resolve("");
+	let stage = "starting host";
+	let transcriptPath: string | undefined;
 	try {
 		await Promise.all([
 			mkdir(project, { recursive: true }),
@@ -69,6 +73,7 @@ async function main(): Promise<void> {
 		});
 		await seed.initialize();
 		const session = await seed.create(project, "Packaged official OMP");
+		transcriptPath = session.path;
 		await seed.close();
 		const socketPath = profileSocketPath(profile, process.platform, home, runtimeRoot);
 		const environment = {
@@ -103,9 +108,10 @@ async function main(): Promise<void> {
 				stderr: "pipe",
 			},
 		);
-		const stdout = new Response(child.stdout).text();
-		const stderr = new Response(child.stderr).text();
+		stdout = new Response(child.stdout).text();
+		stderr = new Response(child.stderr).text();
 		await waitForSocket(socketPath, child);
+		stage = "waiting for welcome";
 		client = await RawUdsWebSocket.connect(socketPath);
 		client.sendJson({
 			v: "omp-app/1",
@@ -118,11 +124,14 @@ async function main(): Promise<void> {
 		});
 		const welcome = await next(client);
 		if (welcome.type !== "welcome") throw new Error("packaged T4 host did not send Welcome");
+		stage = "waiting for session inventory";
 		const sessions = await next(client);
 		if (sessions.type !== "sessions" || !sessions.sessions.some(item => item.sessionId === session.sessionId))
 			throw new Error("packaged T4 host did not discover the official OMP session");
+		const initialRevision = sessions.sessions.find(item => item.sessionId === session.sessionId)?.revision;
+		if (!initialRevision) throw new Error("packaged T4 host session revision missing");
 		let command = 0;
-		const send = (requestId: string, name: string, args: Record<string, unknown>): void => {
+		const send = (requestId: string, name: string, args: Record<string, unknown>, expectedRevision?: string): void => {
 			command += 1;
 			client!.sendJson({
 				v: "omp-app/1",
@@ -131,13 +140,16 @@ async function main(): Promise<void> {
 				commandId: `packaged-${command}`,
 				hostId: welcome.hostId,
 				sessionId: session.sessionId,
+				...(expectedRevision ? { expectedRevision } : {}),
 				command: name,
 				args,
 			});
 		};
+		stage = "attaching session";
 		send("attach", "session.attach", {});
 		const attached = await responseFor(client, "attach");
 		if (!attached.ok) throw new Error(`packaged session attach failed: ${attached.error.message}`);
+		stage = "waiting for writable session state";
 		let stateReady = false;
 		let stateFailure = "unknown";
 		for (let attempt = 0; attempt < 40 && !stateReady; attempt += 1) {
@@ -149,9 +161,21 @@ async function main(): Promise<void> {
 			if (!stateReady) await Bun.sleep(100);
 		}
 		if (!stateReady) throw new Error(`packaged session did not become writable (${stateFailure})`);
+		stage = "selecting deterministic model";
+		send("model", "session.model.set", { selector: "gate0/deterministic", persistence: "session" }, initialRevision);
+		let selectedModel = await responseFor(client, "model");
+		if (!selectedModel.ok && selectedModel.error.code === "stale_revision") {
+			const currentRevision = (selectedModel.error.details as { actualRevision?: string } | undefined)?.actualRevision;
+			if (!currentRevision) throw new Error("packaged session current revision missing");
+			send("model-current", "session.model.set", { selector: "gate0/deterministic", persistence: "session" }, currentRevision);
+			selectedModel = await responseFor(client, "model-current");
+		}
+		if (!selectedModel.ok) throw new Error(`packaged session model selection failed: ${selectedModel.error.message}`);
+		stage = "submitting prompt";
 		send("prompt", "session.prompt", { message: "Packaged host prompt" });
 		const prompted = await responseFor(client, "prompt");
 		if (!prompted.ok) throw new Error(`packaged session prompt failed: ${prompted.error.message}`);
+		stage = "waiting for projected assistant entry";
 		let assistantProjected = false;
 		const deadline = Date.now() + TIMEOUT_MS;
 		while (Date.now() < deadline && !assistantProjected) {
@@ -190,6 +214,16 @@ async function main(): Promise<void> {
 		if ((await child.exited) !== 0) throw new Error(`packaged T4 host failed: ${(await stderr).trim().slice(-4_096)}`);
 		child = undefined;
 		await stdout;
+	} catch (error) {
+		child?.kill("SIGTERM");
+		const details = (await stderr.catch(() => "")).trim().slice(-4_096);
+		const transcript = transcriptPath
+			? (await readFile(transcriptPath, "utf8").catch(() => "")).trim().slice(-4_096)
+			: "";
+		throw new Error(
+			`packaged host proof failed while ${stage}: ${error instanceof Error ? error.message : String(error)}${details ? `\nhost stderr:\n${details}` : ""}${transcript ? `\ntranscript:\n${transcript}` : ""}`,
+			{ cause: error },
+		);
 	} finally {
 		client?.destroy();
 		if (child) {

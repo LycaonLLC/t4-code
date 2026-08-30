@@ -29,8 +29,8 @@ import {
   createAppserverServiceManager,
   discoverOmpExecutable,
   discoverT4HostExecutable,
-  OmpAppserverCompatibilityError,
-  probeOmpAppserver,
+  OmpRuntimeCompatibilityError,
+  probeOmpRuntime,
   repairAppserverService,
   NodeServiceFileSystem,
 } from "./service.ts";
@@ -67,6 +67,13 @@ export function appserverLogsDirectory(
   return profile === "default" ? base : join(base, "profiles", profile);
 }
 
+export function officialOmpSessionsRoot(homeDirectory: string, profileId = "default"): string {
+  const profile = decodeLocalProfileId(profileId);
+  return profile === "default"
+    ? join(homeDirectory, ".omp", "agent", "sessions")
+    : join(homeDirectory, ".omp", "profiles", profile, "agent", "sessions");
+}
+
 export interface DesktopLifecycleOptions {
   readonly app?: typeof app;
   readonly getAllWindows?: () => readonly BrowserWindow[];
@@ -82,7 +89,7 @@ export interface DesktopLifecycleOptions {
   readonly createProjectionCache?: () => ProjectionCacheRuntime;
   readonly discoverExecutable?: () => Promise<string | undefined>;
   readonly discoverHostExecutable?: () => Promise<string | undefined>;
-  readonly probeAppserver?: (executable: string) => Promise<boolean>;
+  readonly probeRuntime?: (executable: string) => Promise<boolean>;
   readonly createServiceManager?: (
     options: Parameters<typeof createAppserverServiceManager>[0],
   ) => ServiceManager;
@@ -123,7 +130,7 @@ export class DesktopLifecycle {
   private readonly speechServiceFactory: (options: {
     readonly discoverExecutable: () => Promise<string | undefined>;
   }) => DesktopSpeechService;
-  private readonly appserverProbe: (executable: string) => Promise<boolean>;
+  private readonly runtimeProbe: (executable: string) => Promise<boolean>;
   private readonly targetManagerFactory: (options: TargetManagerOptions) => LocalTargetManager;
   private readonly updateControllerFactory: () => DesktopUpdateController;
   private readonly menuInstaller: (options: ApplicationMenuOptions) => void;
@@ -211,7 +218,7 @@ export class DesktopLifecycle {
             ? { packagedExecutable: join(process.resourcesPath, "runtime", "t4-host") }
             : {},
         ));
-    this.appserverProbe = options.probeAppserver ?? ((executable) => probeOmpAppserver(executable));
+    this.runtimeProbe = options.probeRuntime ?? ((executable) => probeOmpRuntime(executable));
     this.serviceFactory = options.createServiceManager ?? createAppserverServiceManager;
     this.targetManagerFactory =
       options.createTargetManager ?? ((managerOptions) => new LocalTargetManager(managerOptions));
@@ -407,7 +414,7 @@ export class DesktopLifecycle {
       this.assertServiceRecoveryActive();
       inspection = await manager.inspect();
       this.assertServiceRecoveryActive();
-      const ready = inspection.service === "running" && (await this.appserverProbe(executable));
+      const ready = inspection.service === "running" && (await this.runtimeProbe(executable));
       this.assertServiceRecoveryActive();
       if (ready) return;
       if (Date.now() >= deadline)
@@ -514,12 +521,23 @@ export class DesktopLifecycle {
       return undefined;
     }
     try {
+      const homeDirectory = homedir();
       const candidate = this.serviceFactory({
         profileId,
-        homeDirectory: homedir(),
-        logsDirectory: appserverLogsDirectory(homedir(), process.platform, process.env, profileId),
+        homeDirectory,
+        logsDirectory: appserverLogsDirectory(homeDirectory, process.platform, process.env, profileId),
         executable: hostExecutable,
-        argv: ["serve", "--omp", executable, "--profile", profileId],
+        argv: [
+          "serve",
+          "--omp",
+          executable,
+          "--omp-authority",
+          "official",
+          "--omp-sessions-root",
+          officialOmpSessionsRoot(homeDirectory, profileId),
+          "--profile",
+          profileId,
+        ],
         fs: new NodeServiceFileSystem(),
       });
       this.assertServiceRecoveryActive();
@@ -583,7 +601,7 @@ export class DesktopLifecycle {
 
   private recordServiceFailure(error: unknown, profileId = "default"): void {
     const issue: ServiceAvailabilityIssue =
-      error instanceof OmpAppserverCompatibilityError
+      error instanceof OmpRuntimeCompatibilityError
         ? { code: "omp_incompatible", message: error.message }
         : {
             code: "service_unavailable",

@@ -2,8 +2,8 @@
 
 This package is T4's local control service. It owns the WebSocket server, replay and projections, remote pairing and authorization, transcript search, artifacts, backend-neutral ACP runtime adapters, and Git workspace lifecycle.
 
-OMP still owns its session files, locks, agent workers, settings, credentials, and takeover decisions. Those responsibilities enter through the injected authority interfaces in `src/types.ts`. The standalone T4 host receives them through the versioned `t4-omp-authority/1` stdio bridge.
+OMP still owns its session files, locks, agent workers, settings, credentials, and takeover decisions. Those responsibilities enter through the injected authority interfaces in `src/types.ts`. The released standalone T4 host supplies them with `OfficialOmpProfileAuthority`, which reads the verified official JSONL format and starts the same official OMP executable in RPC mode for live control.
 
-The package retains a bounded, read-only OMP JSONL projector for transcript indexing. It must not mutate OMP files or infer lock ownership. All authoritative discovery, locking, mutation, settings, operation, terminal, and usage decisions cross the public bridge instead of importing OMP source files.
+The package retains the legacy `t4-omp-authority/1` bridge client as an optional adapter, but released desktop and cluster paths do not select it. The official authority projector is bounded and refuses ambiguous or actively owned sessions. Message mutation and agent execution stay inside OMP.
 
-The client-facing `omp-app/1` protocol name remains stable so existing T4 clients keep speaking the same wire contract. Package ownership and protocol compatibility are separate: T4 owns this implementation while OMP exposes only the smaller authority bridge.
+The client-facing `omp-app/1` protocol name remains stable. Package ownership and protocol compatibility are separate: T4 owns this service and official OMP owns the durable session and runtime contracts.
