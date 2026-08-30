@@ -150,9 +150,10 @@ async function main(): Promise<void> {
 		const attached = await responseFor(client, "attach");
 		if (!attached.ok) throw new Error(`packaged session attach failed: ${attached.error.message}`);
 		stage = "waiting for writable session state";
+		const stateDeadline = Date.now() + TIMEOUT_MS;
 		let stateReady = false;
 		let stateFailure = "unknown";
-		for (let attempt = 0; attempt < 40 && !stateReady; attempt += 1) {
+		for (let attempt = 0; Date.now() < stateDeadline && !stateReady; attempt += 1) {
 			const requestId = `state-${attempt}`;
 			send(requestId, "session.state.get", {});
 			const state = await responseFor(client, requestId);

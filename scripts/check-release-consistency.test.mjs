@@ -93,8 +93,8 @@ test("rejects duplicate keys in JSON release contracts", () => {
 
 test("promotes the verified runtime into the product release", () => {
   const matrix = JSON.parse(files.get("compat/omp-app-matrix.json"));
-  assert.equal(matrix.verifiedRuntime.sourceTag, "t4code-17.0.5-appserver-13");
-  assert.equal(matrix.publishedRuntime.sourceTag, "t4code-17.0.5-appserver-13");
+  assert.equal(matrix.verifiedRuntime.sourceTag, "v18.0.11");
+  assert.equal(matrix.publishedRuntime.sourceTag, "v18.0.11");
   assert.deepEqual(matrix.publishedRuntime, matrix.verifiedRuntime);
 });
 
@@ -211,43 +211,28 @@ test("tagged releases reject published provenance drift", () => {
   }
 
   const runtimeCases = [
-    [
-      "version",
-      (runtime) => {
-        runtime.version = "17.0.0";
-      },
-    ],
-    [
-      "commit",
-      (runtime) => {
-        runtime.sourceCommit = "0".repeat(40);
-      },
-    ],
-    [
-      "tag",
-      (runtime) => {
-        runtime.sourceTag = "t4code-17.0.5-appserver-2";
-      },
-    ],
-    [
-      "upstream commit",
-      (runtime) => {
-        runtime.upstreamCommit = "0".repeat(40);
-      },
-    ],
-    [
-      "integration patches",
-      (runtime) => {
-        runtime.integrationPatches = runtime.integrationPatches.slice(0, -1);
-      },
-    ],
+    (runtime) => {
+      runtime.version = "18.0.10";
+    },
+    (runtime) => {
+      runtime.sourceCommit = "0".repeat(40);
+    },
+    (runtime) => {
+      runtime.sourceTag = "v18.0.10";
+    },
+    (runtime) => {
+      runtime.sourceRepository = "https://example.test/omp";
+    },
+    (runtime) => {
+      runtime.artifacts["linux-arm64"].sha256 = "0".repeat(64);
+    },
   ];
-  for (const [field, mutate] of runtimeCases) {
+  for (const mutate of runtimeCases) {
     const drifted = changedRuntime("publishedRuntime", mutate);
     assert.ok(
       collectReleaseConsistencyErrors(drifted, "v0.1.32").some((error) =>
         error.includes(
-          `published runtime ${field} must match current verified runtime for tagged releases`,
+          "published runtime must exactly match current verified runtime for tagged releases",
         ),
       ),
     );
@@ -328,7 +313,7 @@ test("rejects updater channel, stable manifest, and publication-contract drift",
       ".github/workflows/ci.yml",
       (text) =>
         text.replace(
-          "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
+          "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
           "needs: [changes, core, tooling, android-debug]",
         ),
     ],
@@ -560,12 +545,13 @@ test("rejects drift in verified OMP runtime provenance", () => {
       runtime.sourceTag = "wrong-tag";
     },
     (runtime) => {
-      runtime.upstreamCommit = "invalid";
+      runtime.sourceRepository = "https://example.test/omp";
     },
     (runtime) => {
-      runtime.integrationPatches = runtime.integrationPatches.map((patch) =>
-        patch === "versioned-agent-view-lifecycle-corpus" ? "Wrong integration patch" : patch,
-      );
+      runtime.sourceUrl = "https://example.test/omp/commit/invalid";
+    },
+    (runtime) => {
+      runtime.artifacts["linux-arm64"].sha256 = "invalid";
     },
   ];
   for (const [index, mutate] of cases.entries()) {
@@ -583,7 +569,10 @@ test("rejects drift in published OMP runtime provenance", () => {
       runtime.sourceTag = "wrong-tag";
     },
     (runtime) => {
-      runtime.upstreamCommit = "0000000000000000000000000000000000000000";
+      runtime.sourceRepository = "https://example.test/omp";
+    },
+    (runtime) => {
+      runtime.artifacts["linux-arm64"].sha256 = "invalid";
     },
   ];
   for (const mutate of cases) {
@@ -654,7 +643,7 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("android-debug:"));
   assert.ok(ciWorkflow.includes("core:"));
   assert.ok(ciWorkflow.includes("legacy-bridge-continuity:"));
-  assert.ok(ciWorkflow.includes("current-bridge-continuity:"));
+  assert.ok(ciWorkflow.includes("official-omp-gate0:"));
   assert.ok(ciWorkflow.includes("ref: ${{ github.event.pull_request.head.sha || github.sha }}"));
   assert.ok(
     ciWorkflow.includes(
@@ -674,16 +663,6 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("T4_OMP_SOURCE_DIR: ${{ github.workspace }}/.continuity/omp"));
   assert.ok(ciWorkflow.includes("run: pnpm test:legacy-bridge-continuity"));
   assert.ok(ciWorkflow.includes("path: artifacts/legacy-bridge-continuity/"));
-  assert.ok(
-    ciWorkflow.includes("sha=\"$(jq -er '.verifiedRuntime.sourceCommit' compat/omp-app-matrix.json)\""),
-  );
-  assert.ok(
-    ciWorkflow.includes("T4_CURRENT_OMP_SOURCE_DIR: ${{ github.workspace }}/.current-continuity/omp"),
-  );
-  assert.ok(
-    ciWorkflow.includes("run: pnpm --filter @t4-code/host-service verify:current-omp-bridge"),
-  );
-  assert.ok(ciWorkflow.includes("path: artifacts/current-omp-bridge/"));
   assert.ok(ciWorkflow.includes("if-no-files-found: error"));
   assert.ok(ciWorkflow.includes("tooling:"));
   assert.ok(ciWorkflow.includes("cluster:"));
@@ -695,16 +674,12 @@ test("deploys release site source only after artifact publication", () => {
   assert.ok(ciWorkflow.includes("if: ${{ always() }}"));
   assert.ok(
     ciWorkflow.includes(
-      "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
+      "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
     ),
   );
   assert.ok(ciWorkflow.includes('test "$CHANGES_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$T4_API_GENERATION_RESULT" = success'));
   assert.ok(ciWorkflow.includes('test "$CORE_RESULT" = success'));
-  assert.ok(
-    ciWorkflow.includes("CURRENT_CONTINUITY_RESULT: ${{ needs.current-bridge-continuity.result }}"),
-  );
-  assert.ok(ciWorkflow.includes('"$CURRENT_CONTINUITY_RESULT" \\'));
   assert.ok(ciWorkflow.includes("for result in \\"));
   assert.ok(ciWorkflow.includes("success|skipped) ;;"));
   assert.ok(ciWorkflow.includes("github.event_name == 'pull_request' && github.ref || github.sha"));

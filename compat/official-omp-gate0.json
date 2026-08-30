@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "gate": "official-omp-gate0",
   "runtime": {
-    "version": "17.0.9",
-    "tag": "v17.0.9",
-    "commit": "639bac596d94b5993349f3f6696176cb2bf9b5d3"
+    "version": "18.0.11",
+    "tag": "v18.0.11",
+    "commit": "b8ce33a58911c26bed1d84f0db9a5e2e727c49a2"
   },
   "requiredPlatforms": ["darwin-arm64", "linux-x64", "linux-arm64"],
   "requiredScenarios": [
@@ -42,12 +42,12 @@
     "requiredPlatforms": ["darwin-arm64", "linux-x64", "linux-arm64"],
     "requiredScenarios": ["discovery", "attach", "prompt", "durable-jsonl", "t4-wire-projection"],
     "authorityMode": "official-exclusive-profile",
-    "releasedDefault": "lycaon-authority-bridge"
+    "releasedDefault": "official-omp-rpc-jsonl"
   },
   "t4Policy": {
     "transcriptAuthority": "official-omp-jsonl",
     "ambiguousDispatch": "outcome-unknown-no-auto-replay",
-    "releasedFallback": "lycaon-authority-bridge-until-local-and-managed-cutover"
+    "releasedFallback": "none"
   },
   "evidence": {
     "runtimeHarness": "packages/host-service/bin/official-omp-gate0.ts",

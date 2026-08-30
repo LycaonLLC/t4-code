@@ -1,24 +1,47 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  appserverLogsDirectory,
-  DesktopLifecycle,
-  officialOmpSessionsRoot,
-  type DesktopLifecycleOptions,
-} from "../src/lifecycle.ts";
-import { DesktopIpcRegistry, type IpcMainLike } from "../src/ipc.ts";
-import { discoverOmpExecutable, OFFICIAL_OMP_VERSION } from "../src/service.ts";
+
+import type { DesktopLifecycleOptions } from "../src/lifecycle.ts";
+import type { IpcMainLike } from "../src/ipc.ts";
 import type { TargetManagerOptions } from "../src/target-manager.ts";
 import type { ServiceManager } from "@t4-code/service-manager";
 import type { ProcessRunner } from "@t4-code/remote";
 import type { ApplicationMenuOptions } from "../src/menu.ts";
-import {
-  DEFAULT_LOCAL_PROFILE,
-  LocalProfileRegistry,
-  type LocalProfileRegistryState,
-} from "../src/local-profiles.ts";
+import type { LocalProfileRegistryState } from "../src/local-profiles.ts";
+
+vi.mock("electron", () => ({
+  app: {},
+  BrowserWindow: class {},
+  WebContentsView: class {},
+  contentTracing: {},
+  dialog: {},
+  ipcMain: {},
+  Menu: {},
+  net: {},
+  safeStorage: {},
+  screen: {},
+  session: {},
+  shell: {},
+}));
+vi.mock("electron-store", () => ({
+  default: class {
+    get(): undefined {
+      return undefined;
+    }
+    set(): void {}
+    delete(): void {}
+  },
+}));
+vi.mock("electron-updater", () => ({ autoUpdater: {} }));
+
+// Load Electron-dependent modules only after their native dependencies are mocked.
+const { appserverLogsDirectory, DesktopLifecycle, officialOmpSessionsRoot } =
+  await import("../src/lifecycle.ts");
+const { DesktopIpcRegistry } = await import("../src/ipc.ts");
+const { discoverOmpExecutable, OFFICIAL_OMP_VERSION } = await import("../src/service.ts");
+const { DEFAULT_LOCAL_PROFILE, LocalProfileRegistry } = await import("../src/local-profiles.ts");
 
 describe("appserver log authority", () => {
   it("stays independent from Electron user-data overrides", () => {
@@ -1084,8 +1107,8 @@ describe("desktop Electron lifecycle", () => {
     expect(factories).toBe(1);
     expect(discoveryCalls).toBe(2);
     expect(serviceCalls).toEqual(["inspect", "inspect", "inspect"]);
-    expect(probeArgs).toHaveLength(probesAfterInitialDiscovery + 2);
-    expect(probeArgs.slice(-2)).toEqual([["--version"], ["--version"]]);
+    expect(probeArgs).toHaveLength(probesAfterInitialDiscovery + 1);
+    expect(probeArgs.at(-1)).toEqual(["--version"]);
     expect(serviceArgv).toEqual([
       "serve",
       "--omp",

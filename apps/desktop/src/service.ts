@@ -387,11 +387,9 @@ export function createAppserverServiceManager(options: {
     executable: options.executable,
     argv: options.argv,
     logsDirectory: options.logsDirectory,
-    // Pin both default and named services explicitly. A graphical/login service
-    // manager can retain an imported OMP_PROFILE from an unrelated shell; an
-    // omitted value would let that ambient profile silently hijack T4's
-    // default appserver.
-    environment: { OMP_PROFILE: profileId },
+    // Default sessions live in ~/.omp/agent/sessions. Named T4 services opt into
+    // the corresponding official OMP profile explicitly.
+    ...(profileId === "default" ? {} : { environment: { OMP_PROFILE: profileId } }),
   };
   const runner = options.runner ?? new NodeServiceRunner();
   if (process.platform === "darwin") {

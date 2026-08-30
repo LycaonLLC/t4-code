@@ -11,14 +11,14 @@ import {
   type DoctorRuntime,
   type SourceContract,
 } from "../src/doctor.ts";
-import { OmpAppserverCompatibilityError } from "../src/service.ts";
+import { OmpRuntimeCompatibilityError } from "../src/service.ts";
 
 const contract: SourceContract = {
   nodeEngine: "^24.13.1",
   pnpmVersion: "11.10.0",
-  ompVersion: "17.0.4",
-  ompTag: "t4code-17.0.4-appserver-5",
-  ompUrl: "https://example.test/verified-omp",
+  ompVersion: "18.0.11",
+  ompTag: "v18.0.11",
+  ompUrl: "https://github.com/can1357/oh-my-pi/tree/v18.0.11",
 };
 
 function runtime(overrides: Partial<DoctorRuntime> = {}): DoctorRuntime {
@@ -41,11 +41,9 @@ describe("T4 setup doctor", () => {
   it("uses current verified runtime metadata", async () => {
     const source = await readSourceContract();
 
-    expect(source.ompVersion).toBe("17.0.5");
-    expect(source.ompTag).toBe("t4code-17.0.5-appserver-13");
-    expect(source.ompUrl).toBe(
-      "https://github.com/wolfiesch/oh-my-pi/tree/t4code-17.0.5-appserver-13",
-    );
+    expect(source.ompVersion).toBe("18.0.11");
+    expect(source.ompTag).toBe("v18.0.11");
+    expect(source.ompUrl).toBe("https://github.com/can1357/oh-my-pi/tree/v18.0.11");
   });
 
   it("accepts the checked-in toolchain and a healthy local runtime", async () => {
@@ -58,7 +56,7 @@ describe("T4 setup doctor", () => {
       ["pnpm", "pass"],
       ["omp", "pass"],
       ["terminal-omp", "pass"],
-      ["appserver", "pass"],
+      ["omp-probe", "pass"],
       ["profiles", "pass"],
       ["tailscale", "pass"],
     ]);
@@ -73,7 +71,7 @@ describe("T4 setup doctor", () => {
 
     expect(report.ok).toBe(true);
     expect(terminalOmp).toMatchObject({ status: "warning", label: "OMP commands" });
-    expect(terminalOmp?.detail).toContain("look live in one app but idle or delayed in another");
+    expect(terminalOmp?.detail).toContain("not all report official OMP");
     expect(terminalOmp?.action).toContain(contract.ompTag);
   });
 
@@ -83,7 +81,7 @@ describe("T4 setup doctor", () => {
         nodeVersion: "24.17.0",
         pnpmVersion: async () => "10.0.0",
         discoverOmp: async () => {
-          throw new OmpAppserverCompatibilityError();
+          throw new OmpRuntimeCompatibilityError();
         },
         profileCount: async () => {
           throw new Error("/private/example/.omp contains REDACT_ME");
@@ -96,7 +94,7 @@ describe("T4 setup doctor", () => {
       "pnpm",
       "omp",
     ]);
-    expect(rendered).toContain("does not provide the versioned authority bridge");
+    expect(rendered).toContain("requires unmodified official OMP");
     expect(rendered).toContain(contract.ompTag);
     expect(rendered).not.toContain("/private/example");
     expect(rendered).not.toContain("REDACT_ME");
@@ -158,13 +156,13 @@ describe("T4 setup doctor", () => {
     expect(capturedEnvironment).toEqual({ HOME: "/tmp/t4-doctor", PATH: "/usr/bin" });
   });
 
-  it("treats an optional stopped appserver and missing Tailscale as warnings", async () => {
+  it("treats an unresponsive OMP executable and missing Tailscale as warnings", async () => {
     const report = await collectDoctorReport(
       runtime({ probeOmp: async () => false, inspectTailnet: async () => "not-installed" }),
     );
 
     expect(report.ok).toBe(true);
-    expect(report.checks.find((item) => item.id === "appserver")?.status).toBe("warning");
+    expect(report.checks.find((item) => item.id === "omp-probe")?.status).toBe("warning");
     expect(report.checks.find((item) => item.id === "tailscale")?.status).toBe("warning");
   });
 

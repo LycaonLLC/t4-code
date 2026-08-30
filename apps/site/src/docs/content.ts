@@ -9,8 +9,6 @@ import {
   OMP_RUNTIME_TAG,
   OMP_RUNTIME_URL,
   OMP_RUNTIME_VERSION,
-  OMP_UPSTREAM_COMMIT,
-  OMP_UPSTREAM_URL,
   assetsFor,
   primaryAsset,
   RELEASE_TAG,
@@ -113,15 +111,11 @@ const install: DocTopic = {
     { kind: "h2", id: "install-requirements", text: "Requirements" },
     {
       kind: "p",
-      text: `T4 Code is a client for [Oh My Pi](${OMP_URL}). The installed Apple Silicon Mac app brings its matching OMP runtime. Source builds, Linux hosts, and remote hosts need the verified integration build listed below.`,
+      text: `T4 Code is a client for [Oh My Pi](${OMP_URL}). The installed Apple Silicon Mac app brings its matching official OMP runtime. Source builds, Linux hosts, and remote hosts need official OMP ${OMP_RUNTIME_VERSION} or a compatible later release.`,
     },
     {
       kind: "p",
-      text: `T4 Code v${RELEASE_VERSION} was verified with OMP ${OMP_RUNTIME_VERSION} integration tag [\`${OMP_RUNTIME_TAG}\`](${OMP_RUNTIME_URL}), commit \`${OMP_RUNTIME_COMMIT}\`. That public integration is based on the [official upstream v${OMP_RUNTIME_VERSION} tag](${OMP_UPSTREAM_URL}) at commit [\`${OMP_UPSTREAM_COMMIT.slice(0, 8)}\`](${OMP_URL}/commit/${OMP_UPSTREAM_COMMIT}). The build lets T4 Code follow compatible terminal sessions, reconciles the complete transcript before any takeover, and hands sessions over with \`/continue-in-t4\`, on top of profile-scoped app servers, host-scoped \`usage.read\` and \`broker.status\` queries with redacted results, and each model's real thinking levels and fast support. T4 Code vendors \`@oh-my-pi/app-wire\` ${APP_WIRE_VERSION}.`,
-    },
-    {
-      kind: "note",
-      text: `Official upstream OMP v${OMP_RUNTIME_VERSION} does not ship the \`appserver\` command, so it cannot host T4 Code. Use the public integration tag above. It builds from that repository like any other OMP checkout; T4 Code has no dependency on private home-directory files, an auth broker, or a custom Codex CLI fork.`,
+      text: `T4 Code v${RELEASE_VERSION} runs official OMP ${OMP_RUNTIME_VERSION}, tag [\`${OMP_RUNTIME_TAG}\`](${OMP_RUNTIME_URL}), commit [\`${OMP_RUNTIME_COMMIT.slice(0, 8)}\`](${OMP_URL}/commit/${OMP_RUNTIME_COMMIT}). T4 Code owns the client wire and host service while OMP remains authoritative for sessions, locking, model selection, tools, and agent execution. T4 Code vendors \`@oh-my-pi/app-wire\` ${APP_WIRE_VERSION} as wire-compatibility evidence.`,
     },
   ],
 };
@@ -545,7 +539,7 @@ const troubleshooting: DocTopic = {
     { kind: "h2", id: "troubleshooting-large-session", text: "Session appears but never loads" },
     {
       kind: "p",
-      text: `First confirm that \`omp appserver status --json\` succeeds. Official upstream OMP v${OMP_RUNTIME_VERSION} cannot answer that command and cannot host T4 Code. On older public appserver integration builds, a large, actively growing transcript can exceed the replay limit during attach. T4 Code v${RELEASE_VERSION} stops the resulting reconnect loop, but the client cannot repair a snapshot the host never delivered. Use the [verified OMP integration tag](${OMP_RUNTIME_URL}) or a later public or upstream build that includes appserver support and the same bounded replay behavior.`,
+      text: `First confirm that \`omp --version\` reports ${OMP_RUNTIME_VERSION} or a compatible later official release. T4 Code reads OMP's durable JSONL session files and reconciles the complete transcript before takeover. If a large session appears but does not load, restart the local T4 host, reconnect, and inspect the host diagnostics before sending another prompt.`,
     },
     {
       kind: "h2",

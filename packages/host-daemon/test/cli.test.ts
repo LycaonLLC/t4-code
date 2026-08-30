@@ -174,7 +174,7 @@ describe("T4 host daemon CLI", () => {
     expect(captured).toMatchObject({
       ompVersion: OFFICIAL_OMP_VERSION,
       ompBuild: OFFICIAL_OMP_BUILD,
-      rpcDialect: "official-17.0.9",
+      rpcDialect: "official-18.0.11",
       claimLocklessSessions: true,
       sessionOwnershipPath: expect.stringContaining("/owned-sessions.json"),
     });
@@ -190,7 +190,7 @@ describe("T4 host daemon CLI", () => {
     const commandNames = officialItems.map(item => item.name);
     expect(officialItems.every(item => item.kind === "command")).toBe(true);
     expect(commandNames).toContain("session.model.set");
-    expect(commandNames).not.toContain("session.fast.set");
+    expect(commandNames).toContain("session.fast.set");
     expect(commandNames).not.toContain("session.retry");
     expect(authorityCloses).toBe(1);
   });
