@@ -310,6 +310,9 @@ function launchRpc(
   const extensionArgs = options.extensionPath
     ? ["--extension", options.extensionPath]
     : ["--no-extensions"];
+  const environment = { ...process.env };
+  delete environment.OMP_PROFILE;
+  delete environment.PI_PROFILE;
   const child = Bun.spawn(
     [
       runtimePath,
@@ -330,7 +333,7 @@ function launchRpc(
     {
       cwd: workspace,
       env: {
-        ...process.env,
+        ...environment,
         PI_CODING_AGENT_DIR: profile,
         PI_NOTIFICATIONS: "off",
       },

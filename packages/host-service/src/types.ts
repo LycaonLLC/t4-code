@@ -266,9 +266,9 @@ export interface AppserverOptions {
 	/** OMP RPC executable used when the host owns the generic child factory. */
 	rpcChildInvocation?: RpcChildInvocation;
 	/** Bounded profile environment applied only to per-session OMP children. */
-	rpcChildEnvironment?: Readonly<Record<string, string>>;
+	rpcChildEnvironment?: Readonly<Record<string, string | undefined>>;
 	/** Exact child RPC command dialect; official OMP intentionally exposes a narrower command set. */
-	rpcDialect?: "fork" | "official-17.0.9";
+	rpcDialect?: "fork" | "official-18.0.11";
 	appserverVersion?: string;
 	appserverBuild?: string;
 	supportedFeatures?: readonly string[];

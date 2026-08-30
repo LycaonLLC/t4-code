@@ -8,9 +8,6 @@ import {
   OMP_RUNTIME_COMMIT,
   OMP_RUNTIME_TAG,
   OMP_RUNTIME_URL,
-  OMP_UPSTREAM_COMMIT,
-  OMP_UPSTREAM_TAG,
-  OMP_UPSTREAM_URL,
   primaryAsset,
   RELEASE_ASSETS,
   RELEASE_MANIFEST_URL,
@@ -61,14 +58,9 @@ describe("release assets", () => {
 
 describe("OMP integration contract", () => {
   it("pins the verified runtime tag, commit, and app-wire package", () => {
-    expect(OMP_RUNTIME_TAG).toBe("t4code-17.0.5-appserver-13");
-    expect(OMP_RUNTIME_COMMIT).toBe("fc0c391334c08ab260057756aa84bd2b07741ee7");
-    expect(OMP_RUNTIME_URL).toBe(
-      "https://github.com/wolfiesch/oh-my-pi/tree/t4code-17.0.5-appserver-13",
-    );
-    expect(OMP_UPSTREAM_TAG).toBe("v17.0.5");
-    expect(OMP_UPSTREAM_COMMIT).toBe("9fd6e97113f5ed3a847e66d346970efdf8afcad9");
-    expect(OMP_UPSTREAM_URL).toBe("https://github.com/can1357/oh-my-pi/tree/v17.0.5");
+    expect(OMP_RUNTIME_TAG).toBe("v18.0.11");
+    expect(OMP_RUNTIME_COMMIT).toBe("b8ce33a58911c26bed1d84f0db9a5e2e727c49a2");
+    expect(OMP_RUNTIME_URL).toBe("https://github.com/can1357/oh-my-pi/tree/v18.0.11");
     expect(APP_WIRE_VERSION).toBe("0.7.0");
   });
 });

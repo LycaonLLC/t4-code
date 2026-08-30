@@ -39,23 +39,18 @@ export function createSafeServiceEnvironment(
   return safeEnvironment;
 }
 
-// Cold OMP startup can exceed 1.5 seconds on macOS. A shorter deadline can
-// reject the verified runtime before it returns a healthy status response.
-const APP_SERVER_PROBE_TIMEOUT_MS = 3_000;
-const APP_SERVER_PROBE_MAX_OUTPUT_BYTES = 16 * 1024;
-const AUTHORITY_BRIDGE_HELP_MARKERS = [
-  "Expose the private OMP authority bridge used by T4 Code",
-  "--stdio",
-] as const;
+const OMP_PROBE_TIMEOUT_MS = 3_000;
+const OMP_PROBE_MAX_OUTPUT_BYTES = 4 * 1024;
+export const OFFICIAL_OMP_VERSION = "18.0.11";
 
-export class OmpAppserverCompatibilityError extends Error {
-  readonly code = "omp_authority_bridge_required" as const;
+export class OmpRuntimeCompatibilityError extends Error {
+  readonly code = "omp_official_runtime_required" as const;
 
   constructor() {
     super(
-      "Installed OMP is incompatible with this T4 Code build. T4 Code requires the versioned `omp bridge --stdio` authority bridge. Update OMP, then choose Check again.",
+      `Installed OMP is incompatible with this T4 Code build. T4 Code requires unmodified official OMP ${OFFICIAL_OMP_VERSION}. Update OMP, then choose Check again.`,
     );
-    this.name = "OmpAppserverCompatibilityError";
+    this.name = "OmpRuntimeCompatibilityError";
     Object.defineProperty(this, "stack", {
       value: undefined,
       enumerable: false,
@@ -78,12 +73,10 @@ export interface T4HostExecutableDiscoveryOptions {
   readonly packagedExecutable?: string;
 }
 
-export interface OmpAppserverProbeOptions extends Omit<
+export interface OmpRuntimeProbeOptions extends Omit<
   OmpExecutableDiscoveryOptions,
   "homeDirectory"
-> {
-  readonly profileId?: string;
-}
+> {}
 
 export type PathOmpCompatibility =
   | "compatible"
@@ -92,74 +85,21 @@ export type PathOmpCompatibility =
   | "mixed"
   | "unavailable";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
+type OmpRuntimeProbeState = "compatible" | "incompatible" | false;
 
-function isAppserverStatus(value: unknown): boolean {
-  if (!isRecord(value) || (value.state !== "running" && value.state !== "stopped")) return false;
-  if (value.state === "running") {
-    if (!isRecord(value.health) || value.health.ok !== true) return false;
-    return (
-      typeof value.health.hostId === "string" &&
-      value.health.hostId.length > 0 &&
-      typeof value.health.epoch === "string" &&
-      value.health.epoch.length > 0
-    );
-  }
-  return (
-    value.reason === "unreachable" || value.reason === "malformed" || value.reason === "failed"
-  );
-}
-
-type AppserverProbeState = "running" | "stopped" | "incompatible" | false;
-async function probesAuthorityBridgeCommand(
+async function probesOfficialOmpRuntime(
   executable: string,
   environment: NodeJS.ProcessEnv,
   runner: ProcessRunner,
   timeoutMs: number,
   maxOutputBytes: number,
-): Promise<boolean> {
+): Promise<OmpRuntimeProbeState> {
   try {
     const result = await runProcess({
       runner,
       command: executable,
-      args: ["bridge", "--help"],
+      args: ["--version"],
       env: createSafeServiceEnvironment(environment),
-      timeoutMs,
-    });
-    const stdoutBytes = Buffer.byteLength(result.stdout, "utf8");
-    const stderrBytes = Buffer.byteLength(result.stderr, "utf8");
-    return (
-      result.exitCode === 0 &&
-      !result.stdoutTruncated &&
-      !result.stderrTruncated &&
-      stderrBytes === 0 &&
-      stdoutBytes <= maxOutputBytes &&
-      AUTHORITY_BRIDGE_HELP_MARKERS.every((marker) => result.stdout.includes(marker))
-    );
-  } catch {
-    return false;
-  }
-}
-
-async function probesAppserverStatus(
-  executable: string,
-  environment: NodeJS.ProcessEnv,
-  runner: ProcessRunner,
-  timeoutMs: number,
-  maxOutputBytes: number,
-  profileId = "default",
-): Promise<AppserverProbeState> {
-  try {
-    const result = await runProcess({
-      runner,
-      command: executable,
-      args: ["appserver", "status", "--json"],
-      env: {
-        ...createSafeServiceEnvironment(environment),
-        ...(decodeLocalProfileId(profileId) === "default" ? {} : { OMP_PROFILE: profileId }),
-      },
       timeoutMs,
     });
     const stdoutBytes = Buffer.byteLength(result.stdout, "utf8");
@@ -172,22 +112,10 @@ async function probesAppserverStatus(
       stdoutBytes + stderrBytes > maxOutputBytes
     )
       return false;
-    const diagnosticOutput = `${result.stdout}\n${result.stderr}`;
-    if (
-      /(?:unknown|unrecognized)\s+(?:flag|option)\s*:?\s*--json\b/iu.test(diagnosticOutput) ||
-      /flag provided but not defined\s*:\s*-json\b/iu.test(diagnosticOutput)
-    )
-      return "incompatible";
-    if ((result.exitCode !== 0 && result.exitCode !== 1) || result.stderr.trim().length > 0)
-      return false;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(result.stdout);
-    } catch {
-      return false;
-    }
-    if (!isAppserverStatus(parsed) || !isRecord(parsed)) return false;
-    return parsed.state === "running" ? "running" : "stopped";
+    if (result.exitCode !== 0 || result.stderr.trim().length > 0) return false;
+    return result.stdout.trim() === `omp/${OFFICIAL_OMP_VERSION}`
+      ? "compatible"
+      : "incompatible";
   } catch {
     return false;
   }
@@ -199,8 +127,8 @@ export async function discoverOmpExecutable(
   const environment = options.environment ?? process.env;
   const home = options.homeDirectory ?? homedir();
   const runner = options.runner ?? new NodeProcessRunner();
-  const timeoutMs = options.timeoutMs ?? APP_SERVER_PROBE_TIMEOUT_MS;
-  const maxOutputBytes = options.maxOutputBytes ?? APP_SERVER_PROBE_MAX_OUTPUT_BYTES;
+  const timeoutMs = options.timeoutMs ?? OMP_PROBE_TIMEOUT_MS;
+  const maxOutputBytes = options.maxOutputBytes ?? OMP_PROBE_MAX_OUTPUT_BYTES;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10_000) return undefined;
   if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 1 || maxOutputBytes > 64 * 1024)
     return undefined;
@@ -236,28 +164,17 @@ export async function discoverOmpExecutable(
     } catch {
       continue;
     }
-    const hasAuthorityBridge = await probesAuthorityBridgeCommand(
+    const state = await probesOfficialOmpRuntime(
       candidate,
       environment,
       runner,
       timeoutMs,
       maxOutputBytes,
     );
-    if (!hasAuthorityBridge) {
-      incompatible = true;
-      continue;
-    }
-    const state = await probesAppserverStatus(
-      candidate,
-      environment,
-      runner,
-      timeoutMs,
-      maxOutputBytes,
-    );
-    if (state === "running" || state === "stopped") return candidate;
+    if (state === "compatible") return candidate;
     if (state === "incompatible") incompatible = true;
   }
-  if (incompatible) throw new OmpAppserverCompatibilityError();
+  if (incompatible) throw new OmpRuntimeCompatibilityError();
   return undefined;
 }
 
@@ -300,16 +217,16 @@ export async function discoverT4HostExecutable(
 
 /**
  * Check every `omp` command on PATH. T4 may have its own compatible bundled
- * runtime while another shell or app launch path selects an older build,
- * which makes cross-app activity look idle or arrive in chunks.
+ * runtime while another shell or app launch path selects a different official
+ * OMP version.
  */
 export async function inspectPathOmpCompatibility(
   options: Omit<OmpExecutableDiscoveryOptions, "homeDirectory"> = {},
 ): Promise<PathOmpCompatibility> {
   const environment = options.environment ?? process.env;
   const runner = options.runner ?? new NodeProcessRunner();
-  const timeoutMs = options.timeoutMs ?? APP_SERVER_PROBE_TIMEOUT_MS;
-  const maxOutputBytes = options.maxOutputBytes ?? APP_SERVER_PROBE_MAX_OUTPUT_BYTES;
+  const timeoutMs = options.timeoutMs ?? OMP_PROBE_TIMEOUT_MS;
+  const maxOutputBytes = options.maxOutputBytes ?? OMP_PROBE_MAX_OUTPUT_BYTES;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10_000) return "unavailable";
   if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 1 || maxOutputBytes > 64 * 1024)
     return "unavailable";
@@ -331,19 +248,14 @@ export async function inspectPathOmpCompatibility(
     } catch {
       continue;
     }
-    const hasAuthorityBridge = await probesAuthorityBridgeCommand(
+    const state = await probesOfficialOmpRuntime(
       candidate,
       environment,
       runner,
       timeoutMs,
       maxOutputBytes,
     );
-    if (!hasAuthorityBridge) {
-      incompatible += 1;
-      continue;
-    }
-    const state = await probesAppserverStatus(candidate, environment, runner, timeoutMs, maxOutputBytes);
-    if (state === "running" || state === "stopped") compatible += 1;
+    if (state === "compatible") compatible += 1;
     else if (state === "incompatible") incompatible += 1;
     else unavailable += 1;
   }
@@ -354,14 +266,14 @@ export async function inspectPathOmpCompatibility(
   return "missing";
 }
 
-export async function probeOmpAppserver(
+export async function probeOmpRuntime(
   executable: string,
-  options: OmpAppserverProbeOptions = {},
+  options: OmpRuntimeProbeOptions = {},
 ): Promise<boolean> {
   const environment = options.environment ?? process.env;
   const runner = options.runner ?? new NodeProcessRunner();
-  const timeoutMs = options.timeoutMs ?? APP_SERVER_PROBE_TIMEOUT_MS;
-  const maxOutputBytes = options.maxOutputBytes ?? APP_SERVER_PROBE_MAX_OUTPUT_BYTES;
+  const timeoutMs = options.timeoutMs ?? OMP_PROBE_TIMEOUT_MS;
+  const maxOutputBytes = options.maxOutputBytes ?? OMP_PROBE_MAX_OUTPUT_BYTES;
   if (!executable.startsWith("/") || !executable.endsWith("/omp")) return false;
   try {
     await access(executable, fsConstants.X_OK);
@@ -369,14 +281,13 @@ export async function probeOmpAppserver(
     return false;
   }
   return (
-    (await probesAppserverStatus(
+    (await probesOfficialOmpRuntime(
       executable,
       environment,
       runner,
       timeoutMs,
       maxOutputBytes,
-      options.profileId,
-    )) === "running"
+    )) === "compatible"
   );
 }
 
@@ -476,11 +387,9 @@ export function createAppserverServiceManager(options: {
     executable: options.executable,
     argv: options.argv,
     logsDirectory: options.logsDirectory,
-    // Pin both default and named services explicitly. A graphical/login service
-    // manager can retain an imported OMP_PROFILE from an unrelated shell; an
-    // omitted value would let that ambient profile silently hijack T4's
-    // default appserver.
-    environment: { OMP_PROFILE: profileId },
+    // Default sessions live in ~/.omp/agent/sessions. Named T4 services opt into
+    // the corresponding official OMP profile explicitly.
+    ...(profileId === "default" ? {} : { environment: { OMP_PROFILE: profileId } }),
   };
   const runner = options.runner ?? new NodeServiceRunner();
   if (process.platform === "darwin") {

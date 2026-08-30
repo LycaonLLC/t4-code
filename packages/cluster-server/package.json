@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@t4-code/host-service": "workspace:*",
+    "@t4-code/protocol": "workspace:*",
     "@t4-code/host-wire": "workspace:*"
   },
   "devDependencies": {

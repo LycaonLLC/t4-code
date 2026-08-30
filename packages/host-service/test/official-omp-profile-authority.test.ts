@@ -32,6 +32,7 @@ test("isolated official OMP profile authority persists compatible lifecycle stat
 	expect(record).toMatchObject({ sessionId: created.sessionId, cwd: created.cwd, title: "Official session" });
 	expect(await authority.projectRootForSession(created.sessionId)).toBe(created.cwd);
 	expect(await authority.projectRootForProject(record!.projectId)).toBe(created.cwd);
+	await authority.lockCheck(record!);
 
 	const archivedAt = "2026-07-21T00:00:00.000Z";
 	await authority.archive(record!, archivedAt);

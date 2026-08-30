@@ -40,7 +40,7 @@ export const RELEASE_CONTRACT_PATHS = [
 ];
 
 const REPOSITORY_URL = "https://github.com/LycaonLLC/t4-code";
-const OMP_RUNTIME_REPOSITORY = "https://github.com/wolfiesch/oh-my-pi";
+const OMP_RUNTIME_REPOSITORY = "https://github.com/can1357/oh-my-pi";
 const OMP_APP_WIRE_SOURCE_REPOSITORY = "https://github.com/lyc-aon/oh-my-pi";
 const OMP_UPSTREAM_REPOSITORY = "https://github.com/can1357/oh-my-pi";
 const OMP_HOST_MIGRATION_SOURCE_REPOSITORY = "https://github.com/lyc-aon/oh-my-pi";
@@ -233,80 +233,28 @@ function requireWorkflowStepText(step, expected, message, errors) {
 }
 
 function validateRuntimeMetadata(value, label, matrixPath, errors) {
+  validateOfficialRuntimeMetadata(value, matrixPath, errors, label);
   const version = value?.version;
   const sourceCommit = value?.sourceCommit;
   const sourceTag = value?.sourceTag;
-  const upstreamTag = value?.upstreamTag;
-  const upstreamCommit = value?.upstreamCommit;
   const sourceCommitUrl = `${OMP_RUNTIME_REPOSITORY}/commit/${sourceCommit ?? ""}`;
   const sourceTagUrl = `${OMP_RUNTIME_REPOSITORY}/tree/${sourceTag ?? ""}`;
-  const upstreamTagUrl = `${OMP_UPSTREAM_REPOSITORY}/tree/${upstreamTag ?? ""}`;
-  const upstreamCommitUrl = `${OMP_UPSTREAM_REPOSITORY}/commit/${upstreamCommit ?? ""}`;
-  const prefix = `${matrixPath} ${label}`;
-
-  if (value?.package !== "omp") {
-    errors.push(`${prefix} package must be omp`);
-  }
-  if (typeof version !== "string" || !VERSION_PATTERN.test(version)) {
-    errors.push(`${prefix} version must be a stable x.y.z version`);
-  }
-  if (value?.sourceRepository !== OMP_RUNTIME_REPOSITORY) {
-    errors.push(`${prefix} repository must be ${OMP_RUNTIME_REPOSITORY}`);
-  }
-  if (typeof sourceCommit !== "string" || !SHA_PATTERN.test(sourceCommit)) {
-    errors.push(`${prefix} commit must be a lowercase 40-character Git SHA`);
-  }
-  if (value?.sourceUrl !== sourceCommitUrl) {
-    errors.push(`${prefix} URL must be ${sourceCommitUrl}`);
-  }
-  if (
-    typeof version === "string" &&
-    (typeof sourceTag !== "string" ||
-      !new RegExp(`^t4code-${version.replaceAll(".", "\\.")}-appserver-[1-9]\\d*$`, "u").test(
-        sourceTag,
-      ))
-  ) {
-    errors.push(`${prefix} tag must identify the OMP version and appserver revision`);
-  }
-  if (value?.upstreamRepository !== OMP_UPSTREAM_REPOSITORY) {
-    errors.push(`${prefix} upstream repository must be ${OMP_UPSTREAM_REPOSITORY}`);
-  }
-  if (typeof version === "string" && upstreamTag !== `v${version}`) {
-    errors.push(`${prefix} upstream tag must be v${version}`);
-  }
-  if (typeof upstreamCommit !== "string" || !SHA_PATTERN.test(upstreamCommit)) {
-    errors.push(`${prefix} upstream commit must be a lowercase 40-character Git SHA`);
-  }
-  const integrationPatches = value?.integrationPatches;
-  if (
-    !Array.isArray(integrationPatches) ||
-    integrationPatches.length === 0 ||
-    integrationPatches.some(
-      (patch) => typeof patch !== "string" || !PATCH_NAME_PATTERN.test(patch),
-    ) ||
-    new Set(integrationPatches).size !== integrationPatches.length
-  ) {
-    errors.push(`${prefix} integration patches must be unique kebab-case names`);
-  }
-  if (value?.upstreamTagContainsIntegrationPatches !== false) {
-    errors.push(`${prefix} must record that stock upstream lacks the integration patches`);
-  }
-
   return Object.freeze({
     version,
     sourceCommit,
     sourceTag,
-    upstreamTag,
-    upstreamCommit,
     sourceCommitUrl,
     sourceTagUrl,
-    upstreamTagUrl,
-    upstreamCommitUrl,
   });
 }
 
-function validateOfficialRuntimeMetadata(value, matrixPath, errors) {
-  const prefix = `${matrixPath} official runtime`;
+function validateOfficialRuntimeMetadata(
+  value,
+  matrixPath,
+  errors,
+  label = "official runtime",
+) {
+  const prefix = `${matrixPath} ${label}`;
   const version = value?.version;
   const sourceCommit = value?.sourceCommit;
   if (value?.package !== "omp") errors.push(`${prefix} package must be omp`);
@@ -424,11 +372,14 @@ function validateOfficialGate0Snapshot(snapshot, officialRuntime, path, errors) 
   if (snapshot?.packagedHostProof?.authorityMode !== "official-exclusive-profile") {
     errors.push(`${path} packagedHostProof.authorityMode must be official-exclusive-profile`);
   }
-  if (snapshot?.packagedHostProof?.releasedDefault !== "lycaon-authority-bridge") {
-    errors.push(`${path} packagedHostProof.releasedDefault must preserve the Lycaon fallback`);
+  if (snapshot?.packagedHostProof?.releasedDefault !== "official-omp-rpc-jsonl") {
+    errors.push(`${path} packagedHostProof.releasedDefault must be official OMP RPC with durable JSONL`);
   }
   if (snapshot?.t4Policy?.ambiguousDispatch !== "outcome-unknown-no-auto-replay") {
     errors.push(`${path} ambiguous dispatch policy must fail closed without automatic replay`);
+  }
+  if (snapshot?.t4Policy?.releasedFallback !== "none") {
+    errors.push(`${path} releasedFallback must be none`);
   }
 }
 
@@ -677,56 +628,11 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
       `${matrixPath} published runtime must exactly match current verified runtime for tagged releases`,
     );
   }
-  if (releaseTag !== undefined) {
-    for (const [field, currentValue, publishedValue] of [
-      ["package", matrix?.verifiedRuntime?.package, matrix?.publishedRuntime?.package],
-      ["version", matrix?.verifiedRuntime?.version, matrix?.publishedRuntime?.version],
-      [
-        "repository",
-        matrix?.verifiedRuntime?.sourceRepository,
-        matrix?.publishedRuntime?.sourceRepository,
-      ],
-      ["commit", matrix?.verifiedRuntime?.sourceCommit, matrix?.publishedRuntime?.sourceCommit],
-      ["URL", matrix?.verifiedRuntime?.sourceUrl, matrix?.publishedRuntime?.sourceUrl],
-      ["tag", matrix?.verifiedRuntime?.sourceTag, matrix?.publishedRuntime?.sourceTag],
-      [
-        "upstream repository",
-        matrix?.verifiedRuntime?.upstreamRepository,
-        matrix?.publishedRuntime?.upstreamRepository,
-      ],
-      ["upstream tag", matrix?.verifiedRuntime?.upstreamTag, matrix?.publishedRuntime?.upstreamTag],
-      [
-        "upstream commit",
-        matrix?.verifiedRuntime?.upstreamCommit,
-        matrix?.publishedRuntime?.upstreamCommit,
-      ],
-      [
-        "integration patches",
-        JSON.stringify(matrix?.verifiedRuntime?.integrationPatches),
-        JSON.stringify(matrix?.publishedRuntime?.integrationPatches),
-      ],
-      [
-        "upstream patch status",
-        matrix?.verifiedRuntime?.upstreamTagContainsIntegrationPatches,
-        matrix?.publishedRuntime?.upstreamTagContainsIntegrationPatches,
-      ],
-    ]) {
-      if (publishedValue !== currentValue) {
-        errors.push(
-          `${matrixPath} published runtime ${field} must match current verified runtime for tagged releases`,
-        );
-      }
-    }
-  }
   const ompRuntimeVersion = publishedRuntime.version;
   const ompRuntimeCommit = publishedRuntime.sourceCommit;
   const ompRuntimeSourceTag = publishedRuntime.sourceTag;
-  const ompUpstreamTag = publishedRuntime.upstreamTag;
-  const ompUpstreamCommit = publishedRuntime.upstreamCommit;
   const ompRuntimeCommitUrl = publishedRuntime.sourceCommitUrl;
   const ompRuntimeSourceUrl = publishedRuntime.sourceTagUrl;
-  const ompUpstreamTagUrl = publishedRuntime.upstreamTagUrl;
-  const ompUpstreamCommitUrl = publishedRuntime.upstreamCommitUrl;
 
   const site = files.get("apps/site/src/release.ts") ?? "";
   requireText(
@@ -767,25 +673,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   requireText(
     site,
-    `export const OMP_UPSTREAM_TAG = "${ompUpstreamTag}";`,
-    "apps/site/src/release.ts",
-    errors,
-  );
-  requireText(
-    site,
-    `export const OMP_UPSTREAM_COMMIT = "${ompUpstreamCommit}";`,
-    "apps/site/src/release.ts",
-    errors,
-  );
-  requireText(
-    site,
-    "export const OMP_UPSTREAM_URL = `${OMP_URL}/tree/${OMP_UPSTREAM_TAG}`;",
-    "apps/site/src/release.ts",
-    errors,
-  );
-  requireText(
-    site,
-    "export const OMP_RUNTIME_URL = `https://github.com/wolfiesch/oh-my-pi/tree/${OMP_RUNTIME_TAG}`;",
+    "export const OMP_RUNTIME_URL = `${OMP_URL}/tree/${OMP_RUNTIME_TAG}`;",
     "apps/site/src/release.ts",
     errors,
   );
@@ -820,19 +708,7 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   );
   requireText(
     readme,
-    `T4 Code ${expectedTag} was verified with OMP ${ompRuntimeVersion} built from [\`${String(ompRuntimeCommit).slice(0, 8)}\`](${ompRuntimeCommitUrl}), tagged [\`${ompRuntimeSourceTag}\`](${ompRuntimeSourceUrl}).`,
-    "README.md",
-    errors,
-  );
-  requireText(
-    readme,
-    `official upstream [\`${ompUpstreamTag}\`](${ompUpstreamTagUrl}) tag at [\`${String(ompUpstreamCommit).slice(0, 8)}\`](${ompUpstreamCommitUrl})`,
-    "README.md",
-    errors,
-  );
-  requireText(
-    readme,
-    `The official upstream ${ompUpstreamTag} tag has no \`appserver\` command, so it cannot host T4 Code.`,
+    `T4 Code ${expectedTag} uses official OMP ${ompRuntimeVersion} from [\`${String(ompRuntimeCommit).slice(0, 8)}\`](${ompRuntimeCommitUrl}), tagged [\`${ompRuntimeSourceTag}\`](${ompRuntimeSourceUrl}).`,
     "README.md",
     errors,
   );
@@ -871,8 +747,6 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     `OMP ${ompRuntimeVersion}`,
     `[${String(ompRuntimeCommit).slice(0, 8)}](${ompRuntimeCommitUrl})`,
     `[${ompRuntimeSourceTag}](${ompRuntimeSourceUrl})`,
-    `[${ompUpstreamTag} tag](${ompUpstreamTagUrl})`,
-    `[${String(ompUpstreamCommit).slice(0, 8)}](${ompUpstreamCommitUrl})`,
   ]) {
     requireText(releaseNotes, expected, "docs/CURRENT_RELEASE_NOTES.md", errors);
   }
@@ -910,14 +784,6 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
 
   const siteDocs = files.get("apps/site/src/docs/content.ts") ?? "";
   requireText(siteDocs, "OMP_RUNTIME_URL", "apps/site/src/docs/content.ts", errors);
-  requireText(siteDocs, "OMP_UPSTREAM_URL", "apps/site/src/docs/content.ts", errors);
-  requireText(siteDocs, "OMP_UPSTREAM_COMMIT", "apps/site/src/docs/content.ts", errors);
-  requireText(
-    siteDocs,
-    "Official upstream OMP v${OMP_RUNTIME_VERSION} does not ship the \\`appserver\\` command, so it cannot host T4 Code.",
-    "apps/site/src/docs/content.ts",
-    errors,
-  );
   requireText(
     siteDocs,
     'id: "troubleshooting-large-session"',
@@ -928,20 +794,6 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
   const releaseWorkflow = files.get(".github/workflows/release.yml") ?? "";
   const ciWorkflow = files.get(".github/workflows/ci.yml") ?? "";
   const woodpeckerWorkflow = files.get(".woodpecker.yml") ?? "";
-  requireText(
-    woodpeckerWorkflow,
-    "https://github.com/wolfiesch/oh-my-pi.git",
-    ".woodpecker.yml",
-    errors,
-  );
-  for (const expected of [
-    `git -C .current-continuity/omp fetch --depth=1 origin ${ompRuntimeCommit}`,
-    `test "$(git -C .current-continuity/omp rev-parse HEAD)" = ${ompRuntimeCommit}`,
-    "T4_CURRENT_OMP_SOURCE_DIR: .current-continuity/omp",
-    "pnpm --filter @t4-code/host-service verify:current-omp-bridge",
-  ]) {
-    requireText(woodpeckerWorkflow, expected, ".woodpecker.yml", errors);
-  }
   if (woodpeckerWorkflow.includes("https://github.com/lyc-aon/oh-my-pi.git")) {
     errors.push(".woodpecker.yml must not use the retired Lycaon OMP integration fork");
   }
@@ -1013,94 +865,6 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     );
   }
 
-  const currentJob = extractWorkflowJob(ciWorkflow, "current-bridge-continuity", errors);
-  const currentAuthorityStep = extractWorkflowStep(
-    currentJob,
-    "Resolve current OMP authority source",
-    errors,
-  );
-  const currentCheckoutStep = extractWorkflowStep(
-    currentJob,
-    "Check out current OMP authority source",
-    errors,
-  );
-  const sourceTestStep = extractWorkflowStep(
-    currentJob,
-    "Run current OMP authority source tests",
-    errors,
-  );
-  const proofStep = extractWorkflowStep(
-    currentJob,
-    "Run current bridge compatibility proof",
-    errors,
-  );
-  const currentUploadStep = extractWorkflowStep(
-    currentJob,
-    "Upload current bridge evidence",
-    errors,
-  );
-  for (const command of [
-    `source_repository="$(jq -er '.verifiedRuntime.sourceRepository' compat/omp-app-matrix.json)"`,
-    `test "$source_repository" = "https://github.com/wolfiesch/oh-my-pi"`,
-    `sha="$(jq -er '.verifiedRuntime.sourceCommit' compat/omp-app-matrix.json)"`,
-    '[[ "$sha" =~ ^[0-9a-f]{40}$ ]]',
-    `echo "repository=wolfiesch/oh-my-pi" >> "$GITHUB_OUTPUT"`,
-    `echo "sha=$sha" >> "$GITHUB_OUTPUT"`,
-  ]) {
-    requireWorkflowStepText(
-      currentAuthorityStep,
-      command,
-      `.github/workflows/ci.yml current authority step is missing ${JSON.stringify(command)}`,
-      errors,
-    );
-  }
-  for (const expected of [
-    "repository: ${{ steps.current-authority.outputs.repository }}",
-    "ref: ${{ steps.current-authority.outputs.sha }}",
-    "path: .current-continuity/omp",
-  ]) {
-    requireWorkflowStepText(
-      currentCheckoutStep,
-      expected,
-      ".github/workflows/ci.yml current checkout must use the validated authority source",
-      errors,
-    );
-  }
-  for (const expected of [
-    "working-directory: .current-continuity/omp",
-    "run: bun test packages/coding-agent/test/appserver-bridge.test.ts packages/coding-agent/test/appserver-session-lifecycle.test.ts",
-  ]) {
-    requireWorkflowStepText(
-      sourceTestStep,
-      expected,
-      ".github/workflows/ci.yml current authority source tests are incomplete",
-      errors,
-    );
-  }
-  for (const expected of [
-    "T4_CURRENT_OMP_SOURCE_DIR: ${{ github.workspace }}/.current-continuity/omp",
-    "run: pnpm --filter @t4-code/host-service verify:current-omp-bridge",
-  ]) {
-    requireWorkflowStepText(
-      proofStep,
-      expected,
-      ".github/workflows/ci.yml current bridge proof must target the checked-out current source",
-      errors,
-    );
-  }
-  for (const expected of [
-    "if: ${{ success() }}",
-    "path: artifacts/current-omp-bridge/",
-    "if-no-files-found: error",
-  ]) {
-    requireWorkflowStepText(
-      currentUploadStep,
-      expected,
-      ".github/workflows/ci.yml current bridge evidence upload is not fail-closed",
-      errors,
-    );
-  }
-
   for (const expected of [
     "core:",
     "legacy-bridge-continuity:",
@@ -1116,13 +880,6 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "run: pnpm test:legacy-bridge-continuity",
     "path: artifacts/legacy-bridge-continuity/",
     "if-no-files-found: error",
-    "current-bridge-continuity:",
-    `sha="$(jq -er '.verifiedRuntime.sourceCommit' compat/omp-app-matrix.json)"`,
-    "repository: ${{ steps.current-authority.outputs.repository }}",
-    "ref: ${{ steps.current-authority.outputs.sha }}",
-    "T4_CURRENT_OMP_SOURCE_DIR: ${{ github.workspace }}/.current-continuity/omp",
-    "run: pnpm --filter @t4-code/host-service verify:current-omp-bridge",
-    "path: artifacts/current-omp-bridge/",
     "official-omp-gate0:",
     "runner: ubuntu-24.04-arm",
     "run: pnpm --filter @t4-code/host-service verify:official-omp-lifecycle",
@@ -1138,12 +895,10 @@ export function collectReleaseConsistencyErrors(files, releaseTag) {
     "android-debug:",
     "name: verify",
     "if: ${{ always() }}",
-    "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, current-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
+    "needs: [changes, t4-api-generation, core, legacy-bridge-continuity, official-omp-gate0, cluster, tooling, android-debug]",
     'test "$CHANGES_RESULT" = success',
     'test "$T4_API_GENERATION_RESULT" = success',
     'test "$CORE_RESULT" = success',
-    "CURRENT_CONTINUITY_RESULT: ${{ needs.current-bridge-continuity.result }}",
-    '"$CURRENT_CONTINUITY_RESULT" \\',
     "for result in \\",
     "success|skipped) ;;",
     "github.event_name == 'pull_request' && github.ref || github.sha",

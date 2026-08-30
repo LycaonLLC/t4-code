@@ -16,9 +16,9 @@ import {
   createSafeServiceEnvironment,
   discoverOmpExecutable,
   inspectPathOmpCompatibility,
-  OmpAppserverCompatibilityError,
+  OmpRuntimeCompatibilityError,
   type PathOmpCompatibility,
-  probeOmpAppserver,
+  probeOmpRuntime,
 } from "./service.ts";
 
 export type DoctorStatus = "pass" | "warning" | "fail";
@@ -197,7 +197,7 @@ export function createDoctorRuntime(): DoctorRuntime {
     pnpmVersion: installedPnpmVersion,
     discoverOmp: () => discoverOmpExecutable(),
     inspectPathOmp: () => inspectPathOmpCompatibility(),
-    probeOmp: (executable) => probeOmpAppserver(executable),
+    probeOmp: (executable) => probeOmpRuntime(executable),
     profileCount: async () => (await discoverNativeOmpProfiles()).length,
     inspectTailnet,
   };
@@ -298,25 +298,25 @@ export async function collectDoctorReport(
             "omp",
             "OMP runtime",
             "fail",
-            "No compatible OMP authority bridge was found.",
-            `Install the verified OMP ${contract.ompVersion} integration (${contract.ompTag}): ${contract.ompUrl}`,
+            `Official OMP ${contract.ompVersion} was not found.`,
+            `Install official OMP ${contract.ompVersion} (${contract.ompTag}): ${contract.ompUrl}`,
           )
         : check(
             "omp",
             "OMP runtime",
             "pass",
-            `A compatible OMP ${contract.ompVersion} authority bridge is available.`,
+            `Official OMP ${contract.ompVersion} is available.`,
           ),
     );
   } catch (error) {
     checks.push(
-      error instanceof OmpAppserverCompatibilityError
+      error instanceof OmpRuntimeCompatibilityError
         ? check(
             "omp",
             "OMP runtime",
             "fail",
-            "OMP is installed, but it does not provide the versioned authority bridge T4 Code requires.",
-            `Install the verified OMP ${contract.ompVersion} integration (${contract.ompTag}): ${contract.ompUrl}`,
+            `OMP is installed, but T4 Code requires unmodified official OMP ${contract.ompVersion}.`,
+            `Install official OMP ${contract.ompVersion} (${contract.ompTag}): ${contract.ompUrl}`,
           )
         : check(
             "omp",
@@ -334,55 +334,55 @@ export async function collectDoctorReport(
       "terminal-omp",
       "OMP commands",
       "pass",
-      "Every omp command found on PATH provides the authority bridge T4 requires.",
+      `Every omp command found on PATH reports official OMP ${contract.ompVersion}.`,
     ),
     incompatible: check(
       "terminal-omp",
       "OMP commands",
       "warning",
-      "The omp commands found on PATH are too old for T4 live ownership signals. T4 can still open saved history, but a running task may look idle or update in chunks.",
-      `Install the verified OMP integration (${contract.ompTag}) in every shell or app launch path: ${contract.ompUrl}`,
+      `The omp commands found on PATH do not report the required official OMP ${contract.ompVersion}.`,
+      `Install official OMP ${contract.ompVersion} (${contract.ompTag}) in every shell or app launch path: ${contract.ompUrl}`,
     ),
     missing: check(
       "terminal-omp",
       "OMP commands",
       "warning",
       "No omp command was found on PATH.",
-      `Install the verified OMP integration (${contract.ompTag}) before starting tasks from another shell or app: ${contract.ompUrl}`,
+      `Install official OMP ${contract.ompVersion} (${contract.ompTag}) before starting tasks from another shell or app: ${contract.ompUrl}`,
     ),
     mixed: check(
       "terminal-omp",
       "OMP commands",
       "warning",
-      "Different omp commands are installed, and they do not all pass T4's authority-bridge check. A task can therefore look live in one app but idle or delayed in another.",
-      `Update or remove stale OMP copies so every shell and app uses the verified integration (${contract.ompTag}): ${contract.ompUrl}`,
+      `Different omp commands are installed, and not all report official OMP ${contract.ompVersion}.`,
+      `Update or remove stale OMP copies so every shell and app uses official OMP ${contract.ompVersion} (${contract.ompTag}): ${contract.ompUrl}`,
     ),
     unavailable: check(
       "terminal-omp",
       "OMP commands",
       "warning",
       "The omp commands found on PATH could not be verified safely.",
-      `Check that every shell and app uses the verified OMP integration (${contract.ompTag}): ${contract.ompUrl}`,
+      `Check that every shell and app uses official OMP ${contract.ompVersion} (${contract.ompTag}): ${contract.ompUrl}`,
     ),
   };
   checks.push(pathOmpChecks[pathOmp]);
 
   if (executable !== undefined) {
-    const running = await runtime.probeOmp(executable).catch(() => false);
+    const responsive = await runtime.probeOmp(executable).catch(() => false);
     checks.push(
-      running
+      responsive
         ? check(
-            "appserver",
-            "T4 host",
+            "omp-probe",
+            "OMP executable",
             "pass",
-            "The default T4 host is running and healthy.",
+            "The verified official OMP executable responds correctly.",
           )
         : check(
-            "appserver",
-            "T4 host",
+            "omp-probe",
+            "OMP executable",
             "warning",
-            "The compatible OMP runtime was found, but the default T4 host is not running.",
-            "Open T4 Code and start the default local profile.",
+            "The verified official OMP executable stopped responding.",
+            "Run the check again. If it still fails, update OMP.",
           ),
     );
   }

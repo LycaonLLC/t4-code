@@ -369,12 +369,12 @@ export class BunRpcChildFactory implements RpcChildFactory {
 	#executable: string;
 	#prefixArgv: readonly string[];
 	#imageRoot: string | undefined;
-	#environment: Readonly<Record<string, string>>;
+	#environment: Readonly<Record<string, string | undefined>>;
 
 	constructor(
 		invocation: string | RpcChildInvocation = resolveRpcChildInvocation(),
 		imageRoot?: string,
-		environment: Readonly<Record<string, string>> = {},
+		environment: Readonly<Record<string, string | undefined>> = {},
 	) {
 		const resolved = typeof invocation === "string" ? { executable: invocation, prefixArgv: [] } : invocation;
 		if (typeof resolved.executable !== "string" || resolved.executable.trim().length === 0) {
@@ -393,11 +393,15 @@ export class BunRpcChildFactory implements RpcChildFactory {
 	}
 
 	spawn(spec: { session: SessionRecord; argv: string[]; cwd: string }): ChildHandle {
+		const environment = { ...process.env };
+		for (const [name, value] of Object.entries(this.#environment)) {
+			if (value === undefined) delete environment[name];
+			else environment[name] = value;
+		}
 		const child = Bun.spawn(spec.argv, {
 			cwd: spec.cwd,
 			env: {
-				...process.env,
-				...this.#environment,
+				...environment,
 				OMP_APP_RPC_INLINE_IMAGE_DATA: "omit",
 				OMP_APP_RPC_SESSION_ENTRIES: "1",
 				OMP_APP_SUBAGENT_SUBSCRIPTION: "progress",

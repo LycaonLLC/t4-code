@@ -20,8 +20,8 @@ import {
 import { COMMAND_DESCRIPTORS, type ProjectId, type SessionId } from "@t4-code/protocol";
 
 export const T4_HOST_VERSION = "0.1.32";
-export const OFFICIAL_OMP_VERSION = "17.0.9";
-export const OFFICIAL_OMP_BUILD = "639bac596d94b5993349f3f6696176cb2bf9b5d3";
+export const OFFICIAL_OMP_VERSION = "18.0.11";
+export const OFFICIAL_OMP_BUILD = "51f03804476c3fd3c15748ae07e4849d1efc883b";
 const PROFILE = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
 const ORIGIN_LIMIT = 32;
 const VERSION_OUTPUT_BYTES = 4 * 1024;
@@ -34,6 +34,7 @@ const OFFICIAL_CATALOG_COMMANDS = Object.freeze([
   "session.delete",
   "session.model.set",
   "session.thinking.set",
+  "session.fast.set",
   "session.cancel",
   "session.close",
 ]);
@@ -354,8 +355,10 @@ export async function runHostDaemon(
       ...(config.authorityMode === "official" ? { claimLocklessSessions: true } : {}),
       ...(transcriptImageRoot ? { transcriptImageRoot } : {}),
       rpcChildInvocation: { executable: config.ompExecutable, prefixArgv: [] },
-      rpcChildEnvironment: { OMP_PROFILE: config.profileId },
-      ...(config.authorityMode === "official" ? { rpcDialect: "official-17.0.9" as const } : {}),
+      rpcChildEnvironment: config.profileId === "default"
+        ? { OMP_PROFILE: undefined, PI_PROFILE: undefined, PI_CODING_AGENT_DIR: undefined }
+        : { OMP_PROFILE: config.profileId, PI_PROFILE: undefined, PI_CODING_AGENT_DIR: undefined },
+      ...(config.authorityMode === "official" ? { rpcDialect: "official-18.0.11" as const } : {}),
       ...(process.platform === "darwin"
         ? {
             projectRevealer: async (root: string): Promise<boolean> => {

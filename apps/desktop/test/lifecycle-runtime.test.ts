@@ -1,23 +1,47 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { chmod, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  appserverLogsDirectory,
-  DesktopLifecycle,
-  type DesktopLifecycleOptions,
-} from "../src/lifecycle.ts";
-import { DesktopIpcRegistry, type IpcMainLike } from "../src/ipc.ts";
-import { discoverOmpExecutable } from "../src/service.ts";
+
+import type { DesktopLifecycleOptions } from "../src/lifecycle.ts";
+import type { IpcMainLike } from "../src/ipc.ts";
 import type { TargetManagerOptions } from "../src/target-manager.ts";
 import type { ServiceManager } from "@t4-code/service-manager";
 import type { ProcessRunner } from "@t4-code/remote";
 import type { ApplicationMenuOptions } from "../src/menu.ts";
-import {
-  DEFAULT_LOCAL_PROFILE,
-  LocalProfileRegistry,
-  type LocalProfileRegistryState,
-} from "../src/local-profiles.ts";
+import type { LocalProfileRegistryState } from "../src/local-profiles.ts";
+
+vi.mock("electron", () => ({
+  app: {},
+  BrowserWindow: class {},
+  WebContentsView: class {},
+  contentTracing: {},
+  dialog: {},
+  ipcMain: {},
+  Menu: {},
+  net: {},
+  safeStorage: {},
+  screen: {},
+  session: {},
+  shell: {},
+}));
+vi.mock("electron-store", () => ({
+  default: class {
+    get(): undefined {
+      return undefined;
+    }
+    set(): void {}
+    delete(): void {}
+  },
+}));
+vi.mock("electron-updater", () => ({ autoUpdater: {} }));
+
+// Load Electron-dependent modules only after their native dependencies are mocked.
+const { appserverLogsDirectory, DesktopLifecycle, officialOmpSessionsRoot } =
+  await import("../src/lifecycle.ts");
+const { DesktopIpcRegistry } = await import("../src/ipc.ts");
+const { discoverOmpExecutable, OFFICIAL_OMP_VERSION } = await import("../src/service.ts");
+const { DEFAULT_LOCAL_PROFILE, LocalProfileRegistry } = await import("../src/local-profiles.ts");
 
 describe("appserver log authority", () => {
   it("stays independent from Electron user-data overrides", () => {
@@ -35,6 +59,14 @@ describe("appserver log authority", () => {
     );
     expect(appserverLogsDirectory("/Users/alice", "darwin", {}, "fable-swarm")).toBe(
       "/Users/alice/Library/Logs/T4 Code/appserver/profiles/fable-swarm",
+    );
+  });
+  it("uses each OMP profile's native session root", () => {
+    expect(officialOmpSessionsRoot("/Users/alice")).toBe(
+      "/Users/alice/.omp/agent/sessions",
+    );
+    expect(officialOmpSessionsRoot("/Users/alice", "fable-swarm")).toBe(
+      "/Users/alice/.omp/profiles/fable-swarm/agent/sessions",
     );
   });
 });
@@ -137,7 +169,7 @@ class FakeIpc implements IpcMainLike {
 }
 function setup(
   serviceManager?: ServiceManager,
-  probeAppserver: (executable: string) => Promise<boolean> = async () => true,
+  probeRuntime: (executable: string) => Promise<boolean> = async () => true,
   overrides: {
     readonly discoverExecutable?: () => Promise<string | undefined>;
     readonly discoverHostExecutable?: () => Promise<string | undefined>;
@@ -248,7 +280,7 @@ function setup(
       ? {}
       : {
           createServiceManager: overrides.createServiceManager ?? (() => serviceManager!),
-          probeAppserver,
+          probeRuntime,
         }),
     createTargetManager: (options) => {
       managerOptions = options;
@@ -986,35 +1018,14 @@ describe("desktop Electron lifecycle", () => {
         probeArgs.push([...(spec.args ?? [])]);
         return {
           kill: () => {},
-          result: Promise.resolve(
-            compatible && spec.args?.[0] === "bridge"
-              ? {
-                  exitCode: 0,
-                  signal: null,
-                  stdout:
-                    "Expose the private OMP authority bridge used by T4 Code\n\nFLAGS\n  --stdio  Use the versioned JSON-lines standard I/O transport\n",
-                  stderr: "",
-                  stdoutTruncated: false,
-                  stderrTruncated: false,
-                }
-              : compatible
-              ? {
-                  exitCode: 0,
-                  signal: null,
-                  stdout: JSON.stringify({ state: "stopped", reason: "unreachable" }),
-                  stderr: "",
-                  stdoutTruncated: false,
-                  stderrTruncated: false,
-                }
-              : {
-                  exitCode: 2,
-                  signal: null,
-                  stdout: "",
-                  stderr: "Error: unknown flag: --json\n",
-                  stdoutTruncated: false,
-                  stderrTruncated: false,
-                },
-          ),
+          result: Promise.resolve({
+            exitCode: 0,
+            signal: null,
+            stdout: compatible ? `omp/${OFFICIAL_OMP_VERSION}\n` : "omp/18.0.10\n",
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          }),
         };
       },
     };
@@ -1041,6 +1052,7 @@ describe("desktop Electron lifecycle", () => {
       },
     };
     let factories = 0;
+    let serviceArgv: readonly string[] | undefined;
     const fixture = setup(undefined, async () => true, {
       discoverExecutable: () => {
         discoveryCalls += 1;
@@ -1050,8 +1062,9 @@ describe("desktop Electron lifecycle", () => {
           runner,
         });
       },
-      createServiceManager: () => {
+      createServiceManager: (options) => {
         factories += 1;
+        serviceArgv = options.argv;
         return recovered;
       },
     });
@@ -1094,10 +1107,18 @@ describe("desktop Electron lifecycle", () => {
     expect(factories).toBe(1);
     expect(discoveryCalls).toBe(2);
     expect(serviceCalls).toEqual(["inspect", "inspect", "inspect"]);
-    expect(probeArgs).toHaveLength(probesAfterInitialDiscovery + 2);
-    expect(probeArgs.slice(-2)).toEqual([
-      ["bridge", "--help"],
-      ["appserver", "status", "--json"],
+    expect(probeArgs).toHaveLength(probesAfterInitialDiscovery + 1);
+    expect(probeArgs.at(-1)).toEqual(["--version"]);
+    expect(serviceArgv).toEqual([
+      "serve",
+      "--omp",
+      executable,
+      "--omp-authority",
+      "official",
+      "--omp-sessions-root",
+      officialOmpSessionsRoot(homedir()),
+      "--profile",
+      "default",
     ]);
 
     const start = fixture.ipc.handlers.get("omp:service:start") as (
@@ -1106,10 +1127,7 @@ describe("desktop Electron lifecycle", () => {
     ) => Promise<unknown>;
     await start(event, { channel: "omp:service:start", payload: {} });
     expect(serviceCalls).toEqual(["inspect", "inspect", "inspect", "start"]);
-    expect(probeArgs.slice(-2)).toEqual([
-      ["bridge", "--help"],
-      ["appserver", "status", "--json"],
-    ]);
+    expect(probeArgs.slice(-2)).toEqual([["--version"], ["--version"]]);
     await fixture.lifecycle.stop();
   });
 });

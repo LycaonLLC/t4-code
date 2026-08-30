@@ -2,36 +2,36 @@
   "appProtocol": "omp-app/1",
   "officialRuntime": {
     "package": "omp",
-    "version": "17.0.9",
+    "version": "18.0.11",
     "sourceRepository": "https://github.com/can1357/oh-my-pi",
-    "sourceCommit": "639bac596d94b5993349f3f6696176cb2bf9b5d3",
-    "sourceUrl": "https://github.com/can1357/oh-my-pi/commit/639bac596d94b5993349f3f6696176cb2bf9b5d3",
-    "sourceTag": "v17.0.9",
+    "sourceCommit": "b8ce33a58911c26bed1d84f0db9a5e2e727c49a2",
+    "sourceUrl": "https://github.com/can1357/oh-my-pi/commit/b8ce33a58911c26bed1d84f0db9a5e2e727c49a2",
+    "sourceTag": "v18.0.11",
     "artifacts": {
       "darwin-arm64": {
         "name": "omp-darwin-arm64",
-        "size": 121901952,
-        "sha256": "dd1430ba4809a55f4d6f2f646211cee51535f9619eb6670f1bfcf7484c23b931"
+        "size": 131679120,
+        "sha256": "88b4a3e68e19904b8fcc1ba4b319ef68795f4fe06a6d101d564fc482cb0cc252"
       },
       "darwin-x64": {
         "name": "omp-darwin-x64",
-        "size": 127378672,
-        "sha256": "b3fb6ea340d5eec33adcdae8e1e9923925599c1068c83a51fa5b3a02dd4f2c32"
+        "size": 139642688,
+        "sha256": "80f7dc579b88d0e55b5ce4eb4d0e940711af69328f4ffb2c293b8e1497ff7a2d"
       },
       "linux-arm64": {
         "name": "omp-linux-arm64",
-        "size": 151496848,
-        "sha256": "c29907233107fc57ae18f81e91877431f69252ba071936b5c6672592d84cc984"
+        "size": 152487928,
+        "sha256": "e5f77cb65aa2dc777a8a5932be3b2e6a44271c8df2eb209cea6f04f212f3f010"
       },
       "linux-x64": {
         "name": "omp-linux-x64",
-        "size": 176400512,
-        "sha256": "485cc301d6fdff26bab5d3ab45ab137634a73b71b2ed7a91c6c8545842ff4c09"
+        "size": 194573512,
+        "sha256": "6054460b29e9bad5eba78336f291e1979c2fa0a5cd96fc2d92afd666cc681d26"
       },
       "win32-x64": {
         "name": "omp-windows-x64.exe",
-        "size": 155415040,
-        "sha256": "feeb48925791b267dc35912e26e95af4fab66e213ad8dfcfc73ff82ab2c8e84d"
+        "size": 158078976,
+        "sha256": "3402325fff22ab8972d890af28ca4ea6670bfc43aa5a9042b9b02b7ab93e6f6a"
       }
     }
   },
@@ -54,215 +54,73 @@
   },
   "publishedRuntime": {
     "package": "omp",
-    "version": "17.0.5",
-    "sourceRepository": "https://github.com/wolfiesch/oh-my-pi",
-    "sourceCommit": "fc0c391334c08ab260057756aa84bd2b07741ee7",
-    "sourceUrl": "https://github.com/wolfiesch/oh-my-pi/commit/fc0c391334c08ab260057756aa84bd2b07741ee7",
-    "sourceTag": "t4code-17.0.5-appserver-13",
+    "version": "18.0.11",
+    "sourceRepository": "https://github.com/can1357/oh-my-pi",
+    "sourceCommit": "b8ce33a58911c26bed1d84f0db9a5e2e727c49a2",
+    "sourceUrl": "https://github.com/can1357/oh-my-pi/commit/b8ce33a58911c26bed1d84f0db9a5e2e727c49a2",
+    "sourceTag": "v18.0.11",
     "artifacts": {
       "darwin-arm64": {
         "name": "omp-darwin-arm64",
-        "size": 120893008,
-        "sha256": "60ce5193eadc2884a4313289ff1166b6a1daae97f3a3ec66dc260ea5c5713756",
-        "releaseCodeSignature": "adhoc",
-        "distributionSigningBoundary": "t4-product-package"
+        "size": 131679120,
+        "sha256": "88b4a3e68e19904b8fcc1ba4b319ef68795f4fe06a6d101d564fc482cb0cc252"
+      },
+      "darwin-x64": {
+        "name": "omp-darwin-x64",
+        "size": 139642688,
+        "sha256": "80f7dc579b88d0e55b5ce4eb4d0e940711af69328f4ffb2c293b8e1497ff7a2d"
       },
       "linux-arm64": {
         "name": "omp-linux-arm64",
-        "size": 150513808,
-        "sha256": "46d29f223a7481d42b3f7219e71afe389604c2b61f7d309369397a8932837770"
+        "size": 152487928,
+        "sha256": "e5f77cb65aa2dc777a8a5932be3b2e6a44271c8df2eb209cea6f04f212f3f010"
       },
       "linux-x64": {
         "name": "omp-linux-x64",
-        "size": 175376512,
-        "sha256": "ef66a95a45185c35a19ed997b68f62f86de5497414f6a9b939c4f228a52471b8"
+        "size": 194573512,
+        "sha256": "6054460b29e9bad5eba78336f291e1979c2fa0a5cd96fc2d92afd666cc681d26"
+      },
+      "win32-x64": {
+        "name": "omp-windows-x64.exe",
+        "size": 158078976,
+        "sha256": "3402325fff22ab8972d890af28ca4ea6670bfc43aa5a9042b9b02b7ab93e6f6a"
       }
-    },
-    "upstreamRepository": "https://github.com/can1357/oh-my-pi",
-    "upstreamTag": "v17.0.5",
-    "upstreamCommit": "9fd6e97113f5ed3a847e66d346970efdf8afcad9",
-    "integrationPatches": [
-      "bounded-growing-session-replay",
-      "complete-session-event-projection",
-      "session-lifecycle-management",
-      "ordered-remote-outbound-frames",
-      "restart-safe-rpc-session-teardown",
-      "catalog-advertised-session-management",
-      "cross-client-control-state-convergence",
-      "terminal-streaming-state-settlement",
-      "bounded-rpc-terminal-events",
-      "reader-failure-runtime-reaping",
-      "recoverable-runtime-crash-status",
-      "settled-runtime-close-state",
-      "bounded-prompt-image-uploads",
-      "bounded-transcript-image-reads",
-      "strict-app-wire-frame-contracts",
-      "app-wire-metadata-key-separator-folding",
-      "portable-app-wire-module-specifiers",
-      "nodenext-app-wire-consumer-support",
-      "future-app-wire-feature-tolerance",
-      "public-app-wire-package-hardening",
-      "bounded-rpc-agent-end-frames",
-      "bounded-rpc-subagent-end-events",
-      "bounded-rpc-terminal-metadata",
-      "typed-command-result-validation",
-      "canonical-response-boundaries",
-      "managed-rpc-session-entry-projection",
-      "tiny-transcript-image-externalization",
-      "atomic-maintenance-drain",
-      "structured-tool-result-details",
-      "agent-transcript-streaming",
-      "bounded-subagent-rpc-reads",
-      "child-transcript-image-reads",
-      "clean-source-appserver-typecheck",
-      "required-appserver-runtime-release-gates",
-      "custom-message-metadata-preservation",
-      "xdev-tool-envelope-normalization",
-      "plain-text-xdev-device-normalization",
-      "accepted-prompt-lifecycle-preservation",
-      "profile-scoped-appserver-lifecycle",
-      "bounded-project-catalog-resolution",
-      "host-scoped-usage-and-broker-status",
-      "semantic-thinking-and-fast-state",
-      "trusted-native-build-artifact-reuse",
-      "lock-aware-external-session-observation",
-      "complete-line-transcript-reconciliation",
-      "missing-lock-only-session-promotion",
-      "cooperative-tui-to-t4-handoff",
-      "deterministic-session-file-ordering",
-      "macos-system-temp-alias-support",
-      "workspace-native-build-artifact-preference",
-      "retry-safe-integration-release-metadata",
-      "versioned-agent-view-lifecycle-corpus",
-      "session-owned-agent-cancellation",
-      "codex-provider-transport-diagnostics",
-      "cross-session-attention-contract",
-      "cross-session-transcript-search",
-      "fast-appserver-startup",
-      "lazy-session-transcript-indexing",
-      "browser-preview-contract",
-      "hardened-preview-frame-decoding",
-      "complete-preview-command-surface",
-      "privacy-safe-local-project-reveal",
-      "stale-appserver-owner-recovery",
-      "t4-owned-host-package-integration",
-      "bounded-transcript-tail-paging",
-      "thin-omp-authority-bridge",
-      "bounded-authority-bridge-streams",
-      "legacy-appserver-launcher-removal",
-      "sparse-authority-session-lists",
-      "atomic-xdev-mount-publication",
-      "snapshot-consistent-authority-session-paging",
-      "explicit-partial-authority-inventory",
-      "stale-session-lock-lifecycle-recovery"
-    ],
-    "upstreamTagContainsIntegrationPatches": false
+    }
   },
   "verifiedRuntime": {
     "package": "omp",
-    "version": "17.0.5",
-    "sourceRepository": "https://github.com/wolfiesch/oh-my-pi",
-    "sourceCommit": "fc0c391334c08ab260057756aa84bd2b07741ee7",
-    "sourceUrl": "https://github.com/wolfiesch/oh-my-pi/commit/fc0c391334c08ab260057756aa84bd2b07741ee7",
-    "sourceTag": "t4code-17.0.5-appserver-13",
+    "version": "18.0.11",
+    "sourceRepository": "https://github.com/can1357/oh-my-pi",
+    "sourceCommit": "b8ce33a58911c26bed1d84f0db9a5e2e727c49a2",
+    "sourceUrl": "https://github.com/can1357/oh-my-pi/commit/b8ce33a58911c26bed1d84f0db9a5e2e727c49a2",
+    "sourceTag": "v18.0.11",
     "artifacts": {
       "darwin-arm64": {
         "name": "omp-darwin-arm64",
-        "size": 120893008,
-        "sha256": "60ce5193eadc2884a4313289ff1166b6a1daae97f3a3ec66dc260ea5c5713756",
-        "releaseCodeSignature": "adhoc",
-        "distributionSigningBoundary": "t4-product-package"
+        "size": 131679120,
+        "sha256": "88b4a3e68e19904b8fcc1ba4b319ef68795f4fe06a6d101d564fc482cb0cc252"
+      },
+      "darwin-x64": {
+        "name": "omp-darwin-x64",
+        "size": 139642688,
+        "sha256": "80f7dc579b88d0e55b5ce4eb4d0e940711af69328f4ffb2c293b8e1497ff7a2d"
       },
       "linux-arm64": {
         "name": "omp-linux-arm64",
-        "size": 150513808,
-        "sha256": "46d29f223a7481d42b3f7219e71afe389604c2b61f7d309369397a8932837770"
+        "size": 152487928,
+        "sha256": "e5f77cb65aa2dc777a8a5932be3b2e6a44271c8df2eb209cea6f04f212f3f010"
       },
       "linux-x64": {
         "name": "omp-linux-x64",
-        "size": 175376512,
-        "sha256": "ef66a95a45185c35a19ed997b68f62f86de5497414f6a9b939c4f228a52471b8"
+        "size": 194573512,
+        "sha256": "6054460b29e9bad5eba78336f291e1979c2fa0a5cd96fc2d92afd666cc681d26"
+      },
+      "win32-x64": {
+        "name": "omp-windows-x64.exe",
+        "size": 158078976,
+        "sha256": "3402325fff22ab8972d890af28ca4ea6670bfc43aa5a9042b9b02b7ab93e6f6a"
       }
-    },
-    "upstreamRepository": "https://github.com/can1357/oh-my-pi",
-    "upstreamTag": "v17.0.5",
-    "upstreamCommit": "9fd6e97113f5ed3a847e66d346970efdf8afcad9",
-    "integrationPatches": [
-      "bounded-growing-session-replay",
-      "complete-session-event-projection",
-      "session-lifecycle-management",
-      "ordered-remote-outbound-frames",
-      "restart-safe-rpc-session-teardown",
-      "catalog-advertised-session-management",
-      "cross-client-control-state-convergence",
-      "terminal-streaming-state-settlement",
-      "bounded-rpc-terminal-events",
-      "reader-failure-runtime-reaping",
-      "recoverable-runtime-crash-status",
-      "settled-runtime-close-state",
-      "bounded-prompt-image-uploads",
-      "bounded-transcript-image-reads",
-      "strict-app-wire-frame-contracts",
-      "app-wire-metadata-key-separator-folding",
-      "portable-app-wire-module-specifiers",
-      "nodenext-app-wire-consumer-support",
-      "future-app-wire-feature-tolerance",
-      "public-app-wire-package-hardening",
-      "bounded-rpc-agent-end-frames",
-      "bounded-rpc-subagent-end-events",
-      "bounded-rpc-terminal-metadata",
-      "typed-command-result-validation",
-      "canonical-response-boundaries",
-      "managed-rpc-session-entry-projection",
-      "tiny-transcript-image-externalization",
-      "atomic-maintenance-drain",
-      "structured-tool-result-details",
-      "agent-transcript-streaming",
-      "bounded-subagent-rpc-reads",
-      "child-transcript-image-reads",
-      "clean-source-appserver-typecheck",
-      "required-appserver-runtime-release-gates",
-      "custom-message-metadata-preservation",
-      "xdev-tool-envelope-normalization",
-      "plain-text-xdev-device-normalization",
-      "accepted-prompt-lifecycle-preservation",
-      "profile-scoped-appserver-lifecycle",
-      "bounded-project-catalog-resolution",
-      "host-scoped-usage-and-broker-status",
-      "semantic-thinking-and-fast-state",
-      "trusted-native-build-artifact-reuse",
-      "lock-aware-external-session-observation",
-      "complete-line-transcript-reconciliation",
-      "missing-lock-only-session-promotion",
-      "cooperative-tui-to-t4-handoff",
-      "deterministic-session-file-ordering",
-      "macos-system-temp-alias-support",
-      "workspace-native-build-artifact-preference",
-      "retry-safe-integration-release-metadata",
-      "versioned-agent-view-lifecycle-corpus",
-      "session-owned-agent-cancellation",
-      "codex-provider-transport-diagnostics",
-      "cross-session-attention-contract",
-      "cross-session-transcript-search",
-      "fast-appserver-startup",
-      "lazy-session-transcript-indexing",
-      "browser-preview-contract",
-      "hardened-preview-frame-decoding",
-      "complete-preview-command-surface",
-      "privacy-safe-local-project-reveal",
-      "stale-appserver-owner-recovery",
-      "t4-owned-host-package-integration",
-      "bounded-transcript-tail-paging",
-      "thin-omp-authority-bridge",
-      "bounded-authority-bridge-streams",
-      "legacy-appserver-launcher-removal",
-      "sparse-authority-session-lists",
-      "atomic-xdev-mount-publication",
-      "snapshot-consistent-authority-session-paging",
-      "explicit-partial-authority-inventory",
-      "stale-session-lock-lifecycle-recovery"
-    ],
-    "upstreamTagContainsIntegrationPatches": false
+    }
   },
   "t4Host": {
     "wirePackage": "@t4-code/host-wire",
